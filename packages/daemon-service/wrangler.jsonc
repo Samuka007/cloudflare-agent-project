@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "daemon-service",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      // The per-machine service DO (claim authority, unified-turn-state §1.2,
+      // model two). Binding name matches what packages/agent-do's seam
+      // resolves: env.DAEMON_SERVICE.<namespace>(idFromName(machineId)).
+      { "name": "DAEMON_SERVICE", "class_name": "DaemonServiceDO" },
+      // POC agent-update sink standing in for packages/agent-do's AgentDO
+      // during this package's L1 tests and the local smoke. The integration
+      // worker binds AGENT_DO to the real AgentDO instead.
+      { "name": "AGENT_DO", "class_name": "TestAgentSinkDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["DaemonServiceDO", "TestAgentSinkDO"] }
+  ],
+  "vars": {
+    // POC dev defaults. Production would inject these as secrets; the enroll
+    // flow (bb §5 shape) hands them to the client once, the client persists
+    // them in its dataDir (0600).
+    "ENROLL_KEY": "[REDACTED-staging-secret]",
+    "DAEMON_HOST_KEY": "[REDACTED-staging-secret]",
+    "DAEMON_HOST_ID": "poc-local",
+    "DAEMON_MACHINE_ID": "poc-local"
+  }
+}
