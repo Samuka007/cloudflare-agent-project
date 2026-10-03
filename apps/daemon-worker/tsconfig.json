@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "types": ["@cloudflare/workers-types"],
+    "lib": ["ES2024"],
+    "useDefineForClassFields": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "worker-configuration.d.ts"]
+}
