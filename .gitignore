@@ -4,3 +4,4 @@ dist/
 *.tsbuildinfo
 .dev.vars
 .dev.vars.*
+apps/server-worker/public/

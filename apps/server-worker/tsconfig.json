@@ -1,11 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": ".",
-    "baseUrl": ".",
-    "paths": {
-      "@cap/agent-do": ["./src/types/agent-do-stub.ts"]
-    },
     "types": ["@cloudflare/workers-types"],
     "lib": ["ES2024"],
     "experimentalDecorators": true,
