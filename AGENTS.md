@@ -24,6 +24,10 @@ No leading marker. When only reviewing or commenting on agent-authored work, do 
 
 - Do not assume. Inspect logs, query state, or call APIs to observe real behavior.
 
+### Project board
+
+- Project membership is milestone-driven but **not automatic**: `gh issue create` never adds to the board. After any issue create/close/milestone change, run `node scripts/issue-sync.mjs sync` (dry run: `check`, exits 1 on drift). No issue op is complete until `check` reports OK.
+
 ## Agent skills
 
 ### Issue tracker
