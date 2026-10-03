@@ -44,6 +44,9 @@ export interface OrchestratorStub {
       leaseTimeoutMs?: number;
     },
   ): Promise<SessionOpenOutcome>;
+  ensureHost(args: {
+    hostId: string;
+  }): Promise<{ kind: "bound"; hostId: string } | { kind: "host_mismatch"; boundHostId: string }>;
   attachSocket(args: {
     sessionId: string;
     hostId: string;

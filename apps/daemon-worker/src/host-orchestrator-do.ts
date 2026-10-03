@@ -518,6 +518,25 @@ export class HostOrchestratorDO extends DurableObject {
   }
 
   /**
+   * Bind the command journal's host identity without opening a session
+   * (#31 composition seam): provider-route commands are journalable before
+   * any daemon client has enrolled — the server-side bridge calls this once
+   * per orchestrator before its first enqueue. Idempotent; the first hostId
+   * wins (same pinning rule as openSession). A mismatch is an outcome, not a
+   * thrown RPC error — the bridge maps it to a control-plane 500.
+   */
+  async ensureHost(args: {
+    hostId: string;
+  }): Promise<{ kind: "bound"; hostId: string } | { kind: "host_mismatch"; boundHostId: string }> {
+    const stored = this.metaGet("host_id");
+    if (stored !== undefined && stored !== args.hostId) {
+      return { kind: "host_mismatch", boundHostId: stored };
+    }
+    this.requireHostId(args.hostId);
+    return { kind: "bound", hostId: this.hostId ?? args.hostId };
+  }
+
+  /**
    * bb validateDaemonWebSocket (M0 minus bearer auth — the hostKey gate is a
    * control-plane concern): subprotocol check, session must belong to the
    * host and be active with an unexpired lease. A successful attach also
