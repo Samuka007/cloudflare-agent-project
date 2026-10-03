@@ -1,0 +1,47 @@
+{
+  // $schema: node_modules/wrangler/config-schema.json
+  "name": "cap-server-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    "not_found_handling": "none",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cap-control-plane",
+      // Undeployed in M0 (ticket #26: no CF credentials assumed); replaced at
+      // staging provisioning time.
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "HUB", "class_name": "NotificationHubDO" },
+      { "name": "LEASES", "class_name": "LeaseStoreDO" },
+      // Per-thread event log + turn state, owned by ticket #29.
+      { "name": "AGENT_DO", "class_name": "AgentDO" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["NotificationHubDO", "LeaseStoreDO", "AgentDO"]
+    }
+  ],
+  "triggers": {
+    // Backstop sweep; per-item timing rides DO alarms (bb ran a 10s
+    // in-process sweep).
+    "crons": ["*/5 * * * *"]
+  },
+  "vars": {
+    // Staging flag: flip to "true" (with ACCESS_TEAM_DOMAIN + ACCESS_AUD
+    // secrets set) once the Worker fronts real Cloudflare Access.
+    "ACCESS_CHECK_ENABLED": "false",
+    "DATA_DIR": "/data"
+  }
+}
