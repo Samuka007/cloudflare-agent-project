@@ -147,21 +147,22 @@ export function assertFailure(
   expect(outcome.errorCode).toBe(errorCode);
 }
 
-export async function eventsOf(agentName: string): Promise<AgentEvent[]> {
-  const result = await agentStubByName(agentName).getEvents({});
+/** Events of the thread's agent DO (DO name = threadId, #31 convention). */
+export async function eventsOf(threadId: string): Promise<AgentEvent[]> {
+  const result = await agentStubByName(threadId).getEvents({});
   return result.events;
 }
 
 /** Poll until the agent DO reports a terminal event for the turn. */
 export async function waitTurnComplete(
-  agentName: string,
+  threadId: string,
   turnId: string,
 ): Promise<AgentEvent[]> {
   let snapshot: AgentEvent[] = [];
   await expect
     .poll(
       async () => {
-        snapshot = await eventsOf(agentName);
+        snapshot = await eventsOf(threadId);
         return snapshot.some(
           (event) =>
             (event.type === "turn.completed" ||

@@ -87,7 +87,7 @@ test("full chain: thread/start → turn/start → event stream → relay parity"
   expect(sent.agentInvoked).toBe(true);
 
   const turnId = stringField(sent, "turnId");
-  const events = await waitTurnComplete(providerThreadId, turnId);
+  const events = await waitTurnComplete(threadId, turnId);
   expect(events.map((event) => event.type)).toContain("turn.input");
   expect(events.map((event) => event.type)).toContain("model.call_started");
   expect(events.map((event) => event.type)).toContain("turn.completed");
@@ -123,7 +123,7 @@ test("full chain survives manager + agent DO eviction through the adapter", asyn
   const firstTurn = expectOk(
     await handle(adapter, turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`)),
   );
-  await waitTurnComplete(providerThreadId, stringField(firstTurn, "turnId"));
+  await waitTurnComplete(threadId, stringField(firstTurn, "turnId"));
 
   await abortAllDurableObjects();
 
@@ -147,7 +147,7 @@ test("full chain survives manager + agent DO eviction through the adapter", asyn
       handle(freshAdapter, turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`)),
     ),
   );
-  const events = await afterAbort(() => waitTurnComplete(providerThreadId, stringField(secondTurn, "turnId")));
+  const events = await afterAbort(() => waitTurnComplete(threadId, stringField(secondTurn, "turnId")));
   expect(events.filter((event) => event.type === "turn.completed")).toHaveLength(2);
 });
 
@@ -189,9 +189,9 @@ test("steer rides the active turn; mismatched expected turn is refused", async (
       options: executionContext(),
     }),
   );
-  expect(steered).toEqual({ steered: true });
+  expect(steered).toMatchObject({ steered: true, turnId });
 
-  const events = await eventsOf(providerThreadId);
+  const events = await eventsOf(threadId);
   const steerEvent = events.find((event) => event.type === "turn.steer");
   expect(steerEvent?.data).toMatchObject({ turnId, inputId: steerId });
 
@@ -199,7 +199,7 @@ test("steer rides the active turn; mismatched expected turn is refused", async (
   expectOk(
     await handle(adapter, { type: "thread/stop", threadId, providerThreadId, activeTurnId: turnId }),
   );
-  const after = await waitTurnComplete(providerThreadId, turnId);
+  const after = await waitTurnComplete(threadId, turnId);
   expect(after.some((event) => event.type === "turn.cancelled")).toBe(true);
 });
 
