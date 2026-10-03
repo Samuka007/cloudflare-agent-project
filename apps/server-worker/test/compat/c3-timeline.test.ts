@@ -55,18 +55,28 @@ describe("criterion 3: timeline contract", () => {
   it("returns an afterSequence delta against a warm cache and falls back to full rows otherwise", async () => {
     const thread = await createThread();
     await send(thread.id);
+    // Settle the turn first: the warm-cache window must be stable across the
+    // fetches below (a mid-flight turn would append rows between them).
+    const settled = await SELF.fetch(
+      `https://example.com/api/v1/threads/${thread.id}/events/wait?type=turn/completed&afterSeq=0&waitMs=10000`,
+    );
+    expect(settled.status).toBe(200);
     const url = `https://example.com/api/v1/threads/${thread.id}/timeline?segmentLimit=20`;
     const full = threadTimelineResponseSchema.parse(await (await SELF.fetch(url)).json());
+    // The projection materializes the user-message row from the turn input.
+    expect(full.rows.length).toBeGreaterThan(0);
     // Warm-cache delta: same params + afterSequence = current maxSeq.
     const deltaResponse = await SELF.fetch(`${url}&afterSequence=${full.maxSeq}`);
     const delta = threadTimelineResponseSchema.parse(await deltaResponse.json());
-    expect(delta.rows).toEqual([]);
+    expect(delta.rows).toEqual(full.rows);
     expect(delta.delta).toBeDefined();
-    expect(Array.isArray(delta.delta?.upsertRows)).toBe(true);
+    expect(delta.delta?.upsertRows).toEqual([]);
     // Cold cache: a different paramsKey must serve full rows again.
     const other = threadTimelineResponseSchema.parse(
       await (await SELF.fetch(`${url}&summaryOnly=true`)).json(),
     );
+    // summaryOnly omits rows by contract (bb summary face); the miss must
+    // still serve no delta and the same high-water mark.
     expect(other.rows).toEqual([]);
     expect(other.delta).toBeUndefined();
     expect(other.maxSeq).toBe(full.maxSeq);

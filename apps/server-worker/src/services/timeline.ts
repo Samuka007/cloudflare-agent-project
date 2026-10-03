@@ -1,54 +1,6 @@
 import { timelineRowSchema, type TimelineRow } from "../contract/thread-timeline.js";
-import { z } from "zod";
-import { jsonValueSchema } from "../contract/domain/json-value.js";
+import { threadEventDataSchemas } from "@cap/protocol";
 import type { UxThreadEvent } from "../seam/agent-do.js";
-
-/**
- * Event data schemas for the #29 UX projection (packages/agent-do contract).
- * The union members carry what projection needs; unknown fields are allowed
- * forward-compatibly but every read field is validated.
- */
-const turnRefSchema = z.object({ turnId: z.string() }).partial();
-
-const userMessageStartedSchema = turnRefSchema.extend({
-  kind: z.literal("userMessage"),
-  itemId: z.string().optional(),
-  text: z.string().optional(),
-});
-
-const toolCallStartedSchema = turnRefSchema.extend({
-  kind: z.literal("toolCall"),
-  itemId: z.string().optional(),
-  callId: z.string().optional(),
-  toolName: z.string().optional(),
-  args: z.record(z.string(), jsonValueSchema).nullish(),
-});
-
-const agentMessageDeltaSchema = z.object({
-  itemId: z.string().optional(),
-  turnId: z.string().optional(),
-  delta: z.string().optional(),
-});
-
-const itemCompletedSchema = z.object({
-  kind: z.enum(["userMessage", "agentMessage", "toolCall"]).optional(),
-  itemId: z.string().optional(),
-  turnId: z.string().optional(),
-  text: z.string().optional(),
-  output: z.string().optional(),
-  status: z.enum(["completed", "failed", "interrupted"]).optional(),
-});
-
-const turnCompletedSchema = z.object({
-  turnId: z.string().optional(),
-  status: z.enum(["completed", "failed", "interrupted"]).optional(),
-});
-
-const systemErrorSchema = z.object({
-  category: z.string().optional(),
-  message: z.string().optional(),
-  turnId: z.string().optional(),
-});
 
 /**
  * M0 timeline projection: AgentDO UX-projected events (protocol union —
@@ -68,16 +20,23 @@ type RowDraft = TimelineRow & { __order: number };
 
 type EventData = Record<string, unknown>;
 
-function pickKind(data: EventData): string | undefined {
-  return typeof data.kind === "string" ? data.kind : undefined;
-}
-
-function pickItemId(data: EventData, fallback: string): string {
-  return typeof data.itemId === "string" && data.itemId !== "" ? data.itemId : fallback;
-}
-
 function pickTurnId(data: EventData): string | null {
   return typeof data.turnId === "string" ? data.turnId : null;
+}
+
+/**
+ * bb joins the text parts of a prompt-content array into the row preview
+ * (packages/thread-view user-message projection). Non-text parts contribute
+ * nothing to the M0 face.
+ */
+function textOfContent(content: readonly unknown[]): string {
+  return content
+    .map((part) =>
+      part !== null && typeof part === "object" &&
+      (part as EventData).type === "text" && typeof (part as EventData).text === "string"
+        ? ((part as EventData).text as string)
+        : "")
+    .join("");
 }
 
 export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineRow[] {
@@ -99,28 +58,27 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
       event.data !== null && typeof event.data === "object"
         ? (event.data as EventData)
         : {};
-    const itemId = pickItemId(raw, event.id);
     const turnId = pickTurnId(raw);
-    const kind = pickKind(raw);
 
     switch (event.type) {
       case "item/started": {
-        if (kind === "userMessage") {
-          const parsed = userMessageStartedSchema.safeParse(raw);
-          if (!parsed.success) {
-            break;
-          }
-          rows.set(itemId, {
+        const parsed = threadEventDataSchemas["item/started"].safeParse(raw);
+        if (!parsed.success) {
+          break;
+        }
+        const item = parsed.data.item;
+        if (item.type === "userMessage") {
+          rows.set(item.id, {
             kind: "conversation",
             role: "user",
-            id: itemId,
+            id: item.id,
             threadId: event.threadId,
             turnId,
             sourceSeqStart: event.seq,
             sourceSeqEnd: event.seq,
             startedAt: event.createdAt,
             createdAt: event.createdAt,
-            text: parsed.data.text ?? "",
+            text: textOfContent(item.content),
             attachments: null,
             initiator: "user",
             senderThreadId: null,
@@ -131,10 +89,10 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
             __order: event.seq,
           });
           if (turnId) {
-            registerTurnRow(turnId, itemId);
+            registerTurnRow(turnId, item.id);
           }
-        } else if (kind === "agentMessage") {
-          const rowId = `assistant:${itemId}`;
+        } else if (item.type === "agentMessage") {
+          const rowId = `assistant:${item.id}`;
           rows.set(rowId, {
             kind: "conversation",
             role: "assistant",
@@ -150,19 +108,15 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
             turnRequest: null,
             __order: event.seq,
           });
-          assistantByItemId.set(itemId, rowId);
+          assistantByItemId.set(item.id, rowId);
           if (turnId) {
             registerTurnRow(turnId, rowId);
           }
-        } else if (kind === "toolCall") {
-          const parsed = toolCallStartedSchema.safeParse(raw);
-          if (!parsed.success) {
-            break;
-          }
-          rows.set(itemId, {
+        } else if (item.type === "toolCall") {
+          rows.set(item.id, {
             kind: "work",
             workKind: "tool",
-            id: itemId,
+            id: item.id,
             threadId: event.threadId,
             turnId,
             sourceSeqStart: event.seq,
@@ -170,64 +124,67 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
             startedAt: event.createdAt,
             createdAt: event.createdAt,
             status: "pending",
-            callId: parsed.data.callId ?? itemId,
-            toolName: parsed.data.toolName ?? "tool",
-            toolArgs: parsed.data.args ?? null,
-            output: "",
-            completedAt: null,
+            callId: item.id,
+            toolName: item.tool,
+            toolArgs: (item.arguments ?? null) as RowDraft["toolArgs"],
+            output: item.output,
+            completedAt: item.completedAt,
             approvalStatus: null,
             activityIntents: [],
             __order: event.seq,
           });
           if (turnId) {
-            registerTurnRow(turnId, itemId);
+            registerTurnRow(turnId, item.id);
           }
         }
         break;
       }
       case "item/agentMessage/delta": {
-        const parsed = agentMessageDeltaSchema.safeParse(raw);
+        const parsed = threadEventDataSchemas["item/agentMessage/delta"].safeParse(raw);
         if (!parsed.success) {
           break;
         }
-        const rowId = assistantByItemId.get(parsed.data.itemId ?? itemId);
+        const rowId = assistantByItemId.get(parsed.data.itemId);
         const row = rowId ? rows.get(rowId) : undefined;
         if (row && row.kind === "conversation" && row.role === "assistant") {
-          row.text += parsed.data.delta ?? "";
+          row.text += parsed.data.delta;
           row.sourceSeqEnd = event.seq;
         }
         break;
       }
       case "item/completed": {
-        const parsed = itemCompletedSchema.safeParse(raw);
+        const parsed = threadEventDataSchemas["item/completed"].safeParse(raw);
         if (!parsed.success) {
           break;
         }
-        const assistantRowId = assistantByItemId.get(parsed.data.itemId ?? itemId);
+        const item = parsed.data.item;
+        const assistantRowId = assistantByItemId.get(item.id);
         const assistantRow = assistantRowId ? rows.get(assistantRowId) : undefined;
         if (assistantRow && assistantRow.kind === "conversation") {
-          if (parsed.data.text !== undefined && parsed.data.text.length > 0) {
-            assistantRow.text = parsed.data.text;
+          if (item.type === "agentMessage" && item.text.length > 0) {
+            assistantRow.text = item.text;
           }
           assistantRow.sourceSeqEnd = event.seq;
           break;
         }
-        const workRow = rows.get(parsed.data.itemId ?? itemId);
+        const workRow = rows.get(item.id);
         if (workRow && workRow.kind === "work" && workRow.workKind === "tool") {
-          workRow.output = parsed.data.output ?? workRow.output;
-          workRow.completedAt = event.createdAt;
+          if (item.type === "toolCall") {
+            workRow.output = item.output;
+            workRow.completedAt = item.completedAt ?? event.createdAt;
+            workRow.status =
+              item.status === "failed"
+                ? "error"
+                : item.status === "interrupted"
+                  ? "interrupted"
+                  : "completed";
+          }
           workRow.sourceSeqEnd = event.seq;
-          workRow.status =
-            parsed.data.status === "failed"
-              ? "error"
-              : parsed.data.status === "interrupted"
-                ? "interrupted"
-                : "completed";
         }
         break;
       }
       case "turn/completed": {
-        const parsed = turnCompletedSchema.safeParse(raw);
+        const parsed = threadEventDataSchemas["turn/completed"].safeParse(raw);
         if (!parsed.success) {
           break;
         }
@@ -253,7 +210,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
         break;
       }
       case "system/error": {
-        const parsed = systemErrorSchema.safeParse(raw);
+        const parsed = threadEventDataSchemas["system/error"].safeParse(raw);
         const rowId = `syserr:${event.id}`;
         rows.set(rowId, {
           kind: "system",
@@ -265,8 +222,8 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
           sourceSeqEnd: event.seq,
           startedAt: event.createdAt,
           createdAt: event.createdAt,
-          title: parsed.success ? (parsed.data.category ?? "error") : "error",
-          detail: parsed.success ? (parsed.data.message ?? null) : null,
+          title: parsed.success ? parsed.data.category : "error",
+          detail: parsed.success ? parsed.data.message : null,
           status: null,
           __order: event.seq,
         });
