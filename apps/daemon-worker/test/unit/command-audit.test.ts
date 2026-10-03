@@ -39,6 +39,33 @@ const turnStart = (clientRequestId: string): AdapterCommand => ({
   options: fakeExecutionContext(fakeExecutionOptions()),
 });
 
+/**
+ * Bounded condition wait: miniflare delivers alarms in real time, so the
+ * journal's timeout path races the test clock. The lease-timeout tests must
+ * pin ordering — attempt row exists (alarm armed) before forcing the sweep,
+ * and the expiry has landed — or the released settle wins and settles the
+ * still-active attempt as ok (observed once on CI).
+ *
+ * Real-timer exception: workerd schedules DO alarms on its own clock; vitest
+ * fake timers cannot reach into the runtime, so ordering can only be awaited
+ * against the platform clock (same exception as server-worker's lease suite).
+ */
+async function waitUntil(
+  condition: () => Promise<boolean>,
+  label: string,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!(await condition())) {
+    if (Date.now() > deadline) {
+      throw new Error(`condition not met in time: ${label}`);
+    }
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setTimeout(resolve, 5);
+    await promise;
+  }
+}
+
+
 describe("command lifecycle and audit rows", () => {
   it("walks pending → fetched → completed with one ok attempt and a monotonic cursor", async () => {
     const orch = orchestrator();
@@ -129,7 +156,18 @@ describe("attempt lease timeout (bb command timeout semantics)", () => {
     // A hanging provider means the dispatch promise never resolves in-request;
     // queue it and let the alarm expire the attempt.
     const inFlight = orch.dispatchCommand({ commandId, timeoutMs: 0 });
+    // The attempt row (and its now-deadline alarm) must exist before the
+    // forced sweep, and the expiry must have landed before the late settle —
+    // otherwise the settle wins the race on a loaded runner.
+    await waitUntil(async () => {
+      const attempts = await orch.listAttempts({ commandId });
+      return attempts.length > 0;
+    }, "active attempt row");
     await runDurableObjectAlarm(alarmStubFor());
+    await waitUntil(async () => {
+      const row = await orch.getCommand({ commandId });
+      return row?.state === "failed";
+    }, "command failed by lease expiry");
 
     const row = await orch.getCommand({ commandId });
     expect(row).toMatchObject({ state: "failed" });
@@ -184,7 +222,15 @@ describe("attempt lease timeout (bb command timeout semantics)", () => {
       threadId: "thr_audit",
     });
     const inFlight = orch.dispatchCommand({ commandId, timeoutMs: 0 });
+    await waitUntil(async () => {
+      const attempts = await orch.listAttempts({ commandId });
+      return attempts.length > 0;
+    }, "active attempt row");
     await runDurableObjectAlarm(alarmStubFor());
+    await waitUntil(async () => {
+      const row = await orch.getCommand({ commandId });
+      return row?.state === "failed";
+    }, "command failed by lease expiry");
     // The hung dispatch only resolves once released — awaiting it before
     // release would wedge this DO's dispatch chain (and the test clock).
     fakes.provider.releaseHangs();
