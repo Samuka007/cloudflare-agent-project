@@ -43,6 +43,37 @@ importers:
         specifier: ^4.147.0
         version: 4.147.0(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)
 
+  apps/provider-app:
+    dependencies:
+      '@cap/agent-do':
+        specifier: workspace:*
+        version: link:../../packages/agent-do
+      '@cap/daemon-worker':
+        specifier: workspace:*
+        version: link:../daemon-worker
+      '@cap/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+    devDependencies:
+      '@cloudflare/vitest-plugin':
+        specifier: ^1.3.6
+        version: 1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@22.20.5)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))
+      '@cloudflare/workers-types':
+        specifier: ^5.20261001.1
+        version: 5.20261003.1
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.5
+      typescript:
+        specifier: ~5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.11(@types/node@22.20.5)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+      wrangler:
+        specifier: ^4.147.0
+        version: 4.147.0(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)
+
   apps/server-worker:
     dependencies:
       hono:
