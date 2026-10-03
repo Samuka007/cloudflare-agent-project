@@ -195,7 +195,12 @@ describe("disconnect grace (bb §4.3)", () => {
     if (opened.kind !== "opened") throw new Error("open failed");
     await orch.attachSocket({ sessionId: opened.session.id, hostId: "host-A" });
 
-    const detached = await orch.detachSocket({ sessionId: opened.session.id, graceMs: 60 });
+    // A long window: miniflare delivers alarms in real time, so a short
+    // grace would race the background sweep this assertion forbids.
+    const detached = await orch.detachSocket({
+      sessionId: opened.session.id,
+      graceMs: 60_000,
+    });
     expect(detached.closed).toBe(true);
     expect(detached.graceDeadlineAt).toBeGreaterThan(Date.now());
 
