@@ -409,7 +409,9 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     for (;;) {
       const { events } = await agentDoFor(ctx.env, row.id).getEvents({
         sinceSeq: afterSeq,
-        limit: 1,
+        // Scan the window since the cursor: the target type may sit many
+        // rows deep (limit:1 only ever saw the log head).
+        limit: 100,
         project: "ux",
       });
       const match = events.find((event) => event.type === type);
@@ -429,7 +431,10 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       if (remaining <= 0) {
         return ctx.body(null, 204);
       }
-      await hub(ctx).waitThreadEvent({ threadId: row.id, waitMs: remaining });
+      // The per-thread DO appends turn events without pinging the hub, so a
+      // single long hub nap can sleep straight past the target event; poll in
+      // bounded slices instead (bb's 10s in-process sweep analogue).
+      await hub(ctx).waitThreadEvent({ threadId: row.id, waitMs: Math.min(remaining, 500) });
     }
   });
 
