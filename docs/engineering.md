@@ -27,6 +27,7 @@
 
 ## 横切实践（十条）
 
+0. 跨 lane 依赖（事故规则，2026-10-03 夜）：**禁止 import 不在 origin/main 上的包**——兄弟 lane 工作树里的未提交产物是隐形耦合（案例：server-worker 消费未提交的 agent-do 导致 main CI 红 40 分钟）。需要跨包消费时：要么等目标包先落地，要么本地声明接口类型隔离，push 前确认 `pnpm -r typecheck` 在干净 checkout 等价面上可通过
 1. 契约单一源：wire/事件形状只出自 packages/protocol；形状争议 bb 源码裁决
 2. 错误在接缝归一：原生错误出边界前翻译进协议错误分类；裸错误字符串不过接缝
 3. 失败语义显式标注：跨组件调用声明 at-least-once / at-most-once / 幂等键位置（#23 §4）
