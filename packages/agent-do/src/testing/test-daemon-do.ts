@@ -8,6 +8,7 @@ import type {
   ToolResultPayload,
 } from "../daemon.js";
 import { FakeDaemonClient, FakeDaemonService, FakeHostOS } from "./fake-daemon.js";
+import type { FakeJournalOp } from "./fake-daemon.js";
 
 /**
  * The reference fake daemon service as a REAL Durable Object.
@@ -39,7 +40,34 @@ export class TestDaemonServiceDO extends DurableObject<TestDaemonEnv> {
   constructor(ctx: DurableObjectState, env: TestDaemonEnv) {
     super(ctx, env);
     this.service.useOs(this.os);
+    this.service.useJournalSink((op) => this.persistJournalOp(op));
+    this.restoreJournalFromStorage();
     this.clientInstance = new FakeDaemonClient(this.os, this.service);
+  }
+
+  /**
+   * The execution journal is durable (§1.2): ops mirror into DO SQLite
+   * synchronously inside the record path, so a hard-aborted DO revives with
+   * its dedup state intact — what the I16/I19 drills assert.
+   */
+  private persistJournalOp(op: FakeJournalOp): void {
+    this.ctx.storage.sql.exec(
+      "INSERT INTO service_journal (op_json) VALUES (?)",
+      JSON.stringify(op),
+    );
+  }
+
+  private restoreJournalFromStorage(): void {
+    this.ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS service_journal (
+      op_json TEXT NOT NULL
+    )`);
+    const rows = this.ctx.storage.sql
+      .exec<{ op_json: string }>("SELECT op_json FROM service_journal ORDER BY rowid")
+      .toArray();
+    if (rows.length === 0) return;
+    this.service.restoreJournal(
+      rows.map((row) => JSON.parse(row.op_json) as FakeJournalOp),
+    );
   }
 
   private client(): FakeDaemonClient {
@@ -68,11 +96,11 @@ export class TestDaemonServiceDO extends DurableObject<TestDaemonEnv> {
   }
 
   async kill(executionId: string): Promise<void> {
-    this.service.kill(executionId);
+    await this.service.kill(executionId);
   }
 
   async ackExecution(executionId: string, resultSeq: number): Promise<void> {
-    this.service.ackExecution(executionId, resultSeq);
+    await this.service.ackExecution(executionId, resultSeq);
   }
 
   async queryUnacked(
@@ -103,6 +131,14 @@ export class TestDaemonServiceDO extends DurableObject<TestDaemonEnv> {
     await this.client().restartNewBoot();
   }
 
+  async clientResendFrom(executionId: string, offset: number, text: string): Promise<void> {
+    this.client().resendFrom(executionId, offset, text);
+  }
+
+  async clientReportGap(executionId: string, from: number, to: number): Promise<void> {
+    this.client().reportGap(executionId, from, to);
+  }
+
   async clientAddForeignProcess(): Promise<{ pid: number; pidStartedAt: number }> {
     return this.os.addForeignProcess();
   }
@@ -127,12 +163,15 @@ export class TestDaemonServiceDO extends DurableObject<TestDaemonEnv> {
   }
 
   async dial(hostId: string): Promise<{ sessionId: string; replaced: boolean }> {
-    this.ensureAgentWired(hostId);
     return this.service.dial(hostId, this.client().bootId);
   }
 
   async lapseLease(hostId: string): Promise<string[]> {
     return this.service.lapseLease(hostId);
+  }
+
+  async clientMessage(hostId: string, sessionId: string): Promise<{ accepted: boolean }> {
+    return this.service.clientMessage(hostId, sessionId);
   }
 
   // -- observability ----------------------------------------------------------
@@ -203,6 +242,8 @@ export type TestDaemonServiceStub = DurableObjectStub<TestDaemonServiceDO> &
     clientDisconnect(): Promise<void>;
     clientReconnectSameBoot(): Promise<void>;
     clientRestartNewBoot(): Promise<void>;
+    clientResendFrom(executionId: string, offset: number, text: string): Promise<void>;
+    clientReportGap(executionId: string, from: number, to: number): Promise<void>;
     clientAddForeignProcess(): Promise<{ pid: number; pidStartedAt: number }>;
     clientReusePid(pid: number): Promise<{ pid: number; pidStartedAt: number }>;
     setHostOnline(online: boolean): Promise<void>;
@@ -210,6 +251,7 @@ export type TestDaemonServiceStub = DurableObjectStub<TestDaemonServiceDO> &
     setFailNextAcks(count: number): Promise<void>;
     dial(hostId: string): Promise<{ sessionId: string; replaced: boolean }>;
     lapseLease(hostId: string): Promise<string[]>;
+    clientMessage(hostId: string, sessionId: string): Promise<{ accepted: boolean }>;
     journal(): Promise<unknown[]>;
     spawnAckCount(executionId: string): Promise<number>;
     tombstoned(executionId: string): Promise<boolean>;

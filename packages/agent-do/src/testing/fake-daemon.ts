@@ -142,6 +142,18 @@ export class FakeDaemonClient {
     }
   }
 
+  /** Explicit-offset resend (§8.3 `exec.resume`); tests drive I20 dedup. */
+  resendFrom(executionId: string, offset: number, text: string): void {
+    if (this.disconnected) return;
+    this.service.upstreamOutput(executionId, offset, text);
+  }
+
+  /** Explicit gap marker (§8.3 `output_gap`): lost mid-stream bytes. */
+  reportGap(executionId: string, from: number, to: number): void {
+    if (this.disconnected) return;
+    this.service.upstreamOutputGap(executionId, from, to);
+  }
+
   /**
    * Client restart (§5.2.3): process table and buffers die with the process;
    * the kill-list comes back from the service and is verified against the OS.
@@ -161,6 +173,9 @@ export class FakeDaemonClient {
 
 export class FakeDaemonService implements DaemonServiceClient {
   readonly journal: FakeJournalOp[] = [];
+  /** Durable-journal mirror hook (TestDaemonServiceDO persists op JSON). */
+  private sink: ((op: FakeJournalOp) => void) | null = null;
+  private replaying = false;
   private derived = new Map<string, DerivedExecution>();
   private client: FakeDaemonClient | null = null;
   private agent: AgentUpdateSink | null = null;
@@ -180,6 +195,29 @@ export class FakeDaemonService implements DaemonServiceClient {
   /** Wire the agent DO stub results flow into. */
   attachAgent(agent: AgentUpdateSink): void {
     this.agent = agent;
+  }
+
+  /** Wire the durable mirror; called with a synchronous DO-SQLite writer. */
+  useJournalSink(sink: (op: FakeJournalOp) => void): void {
+    this.sink = sink;
+  }
+
+  /** Cold start: rebuild journal contents + derived state from durable ops. */
+  restoreJournal(ops: readonly FakeJournalOp[]): void {
+    this.replaying = true;
+    try {
+      this.journal.length = 0;
+      for (const op of ops) this.record(op);
+      this.replayFromJournal();
+    } finally {
+      this.replaying = false;
+    }
+  }
+
+  /** The single journal-append path: memory first, then the durable mirror. */
+  private record(op: FakeJournalOp): void {
+    this.journal.push(op);
+    if (!this.replaying) this.sink?.(op);
   }
 
   private derivedOf(executionId: string): DerivedExecution {
@@ -215,30 +253,32 @@ export class FakeDaemonService implements DaemonServiceClient {
 
   upstreamStarted(executionId: string, pid: number, pidStartedAt: number): void {
     if (this.silentExecutionIds.has(executionId)) return;
-    this.journal.push({ op: "spawn_ack", executionId, pid, pidStartedAt });
+    this.record({ op: "spawn_ack", executionId, pid, pidStartedAt });
     void this.agent?.onExecutionUpdate({ kind: "started", executionId, pid, pidStartedAt });
   }
 
   upstreamOutput(executionId: string, offset: number, chunk: string): void {
     const record = this.derivedOf(executionId);
     if (offset < record.lastOffset) {
-      this.journal.push({ op: "output_dup_dropped", executionId, offset });
+      this.record({ op: "output_dup_dropped", executionId, offset });
       return;
     }
-    this.journal.push({ op: "output", executionId, offset, bytes: chunk.length });
+    this.record({ op: "output", executionId, offset, bytes: chunk.length });
     record.lastOffset = offset + chunk.length;
     void this.agent?.onExecutionUpdate({ kind: "output", executionId, offset, chunk });
   }
 
   upstreamOutputGap(executionId: string, from: number, to: number): void {
-    this.journal.push({ op: "output_gap", executionId, from, to });
+    this.record({ op: "output_gap", executionId, from, to });
   }
 
   upstreamExited(executionId: string, result: ToolResultPayload): void {
     const record = this.derivedOf(executionId);
-    this.journal.push({ op: "exited", executionId, status: result.status });
+    this.record({ op: "exited", executionId, status: result.status });
     record.state = "COMPLETED";
     record.result = result;
+    // Fire-and-forget is the production delivery shape (at-least-once,
+    // lossy); the agent side dedups, acks and tombstones asynchronously.
     void this.agent?.onExecutionUpdate({ kind: "exited", executionId, result });
   }
 
@@ -253,7 +293,7 @@ export class FakeDaemonService implements DaemonServiceClient {
       };
     }
     if (!this.hostOnline) return { kind: "host_offline" };
-    this.journal.push({
+    this.record({
       op: "dispatch",
       executionId: request.executionId,
       bootId: this.client?.bootId ?? "?",
@@ -269,7 +309,7 @@ export class FakeDaemonService implements DaemonServiceClient {
     }
     this.client.spawnCalls.push(request.executionId);
     const { pid, pidStartedAt } = this.osRef.spawn(request.executionId);
-    this.journal.push({ op: "spawn_ack", executionId: request.executionId, pid, pidStartedAt });
+    this.record({ op: "spawn_ack", executionId: request.executionId, pid, pidStartedAt });
     if (this.silentExecutionIds.has(request.executionId)) return { kind: "accepted" };
     void this.agent?.onExecutionUpdate({
       kind: "started",
@@ -288,7 +328,7 @@ export class FakeDaemonService implements DaemonServiceClient {
   }
 
   async kill(executionId: string): Promise<void> {
-    this.journal.push({ op: "cancel_requested", executionId });
+    this.record({ op: "cancel_requested", executionId });
     if (this.client === null || this.client.disconnected) return;
     const record = this.derivedOf(executionId);
     if (record.state !== "RUNNING") return;
@@ -304,10 +344,10 @@ export class FakeDaemonService implements DaemonServiceClient {
       this.failNextAcks -= 1;
       throw new Error("injected ack failure");
     }
-    this.journal.push({ op: "ack", executionId, resultSeq });
+    this.record({ op: "ack", executionId, resultSeq });
     const record = this.derivedOf(executionId);
     if (record.state === "COMPLETED") {
-      this.journal.push({ op: "tombstone", executionId });
+      this.record({ op: "tombstone", executionId });
       record.state = "TOMBSTONE";
     }
   }
@@ -380,7 +420,7 @@ export class FakeDaemonService implements DaemonServiceClient {
     const existing = this.sessions.get(hostId);
     let replaced = false;
     if (existing !== undefined) {
-      this.journal.push({ op: "session_replaced", hostId, oldSessionId: existing.sessionId });
+      this.record({ op: "session_replaced", hostId, oldSessionId: existing.sessionId });
       replaced = true;
     }
     this.sessionSeq += 1;
@@ -393,7 +433,7 @@ export class FakeDaemonService implements DaemonServiceClient {
   clientMessage(hostId: string, sessionId: string): { accepted: boolean } {
     const active = this.sessions.get(hostId);
     if (active === undefined || active.sessionId !== sessionId) {
-      this.journal.push({ op: "stale_session_rejected", hostId });
+      this.record({ op: "stale_session_rejected", hostId });
       return { accepted: false };
     }
     return { accepted: true };
@@ -405,7 +445,7 @@ export class FakeDaemonService implements DaemonServiceClient {
     if (session === undefined) return [];
     const suspects = this.runningOfBoot(session.bootId);
     for (const executionId of suspects) {
-      this.journal.push({ op: "orphan_suspect", executionId });
+      this.record({ op: "orphan_suspect", executionId });
       this.derivedOf(executionId).orphanSuspect = true;
     }
     return suspects;
@@ -447,7 +487,7 @@ export class FakeDaemonService implements DaemonServiceClient {
     killList: Array<{ executionId: string; pid: number; pidStartedAt: number }>,
   ): Promise<void> {
     for (const entry of killList) {
-      this.journal.push({ op: "outcome_unknown", executionId: entry.executionId });
+      this.record({ op: "outcome_unknown", executionId: entry.executionId });
       const record = this.derivedOf(entry.executionId);
       record.state = "UNKNOWN";
       await this.agent?.onExecutionUpdate({
