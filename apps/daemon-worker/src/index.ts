@@ -1,4 +1,5 @@
 import { HostOrchestratorDO } from "./host-orchestrator-do.js";
+import { setProviderAdapter } from "./injection.js";
 
 /**
  * The daemon worker hosts only Durable Objects in M0 — every orchestration
@@ -11,4 +12,9 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-export { HostOrchestratorDO };
+export { HostOrchestratorDO, setProviderAdapter };
+export type {
+  AdapterCommand,
+  AdapterCommandOutcome,
+  ProviderExecutionContext,
+} from "./provider-adapter.js";
