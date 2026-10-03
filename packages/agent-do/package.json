@@ -9,7 +9,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "smoke:poc": "vitest run smoke-real-model"
   },
   "dependencies": {
     "@cap/protocol": "workspace:*",
