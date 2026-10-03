@@ -1,0 +1,81 @@
+/**
+ * Watchdog / batching policy for the agent DO (unified-turn-state.md §5.1).
+ *
+ * All values are soft deadlines: the alarm is a backstop with ~1 minute of
+ * scheduling jitter, never the real-time path. The config is persisted per DO
+ * (`storage.kv`) so it survives eviction and replays deterministically.
+ */
+
+import { z } from "zod";
+
+export const WATCHDOG_CONFIG_KV_KEY = "watchdog-config";
+
+export interface WatchdogConfig {
+  /** Model-call cap: single outbound op platform limit (§5.1). */
+  modelCallCapMs: number;
+  /** Default per-tool-call execution timeout, overridable per tool.call. */
+  execTimeoutMs: number;
+  /** Transport grace added on top of the exec timeout before re-asking. */
+  execGraceMs: number;
+  /** Total turn backstop: stuck turns get explicit failure past this. */
+  turnWatchdogMs: number;
+  /** Pre-first-byte provider failures retried with backoff, at most N (§4.2). */
+  maxPreFirstByteRetries: number;
+  /** Retry backoff base (exponential: base * 2^(attempt-1)). */
+  retryBackoffBaseMs: number;
+  /** model.delta merge batching: flush after this many bytes… */
+  deltaFlushBytes: number;
+  /** …or this much wall time, whichever first (§1.1 "合并批量"). */
+  deltaFlushMs: number;
+  /** Payloads above this size bypass the log into R2 (§1.1). */
+  r2BypassBytes: number;
+  /** Per-execution re-ask cap before the turn watchdog owns the decision. */
+  maxDispatchAttempts: number;
+}
+
+export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
+  modelCallCapMs: 15 * 60_000,
+  execTimeoutMs: 10 * 60_000,
+  execGraceMs: 5 * 60_000,
+  turnWatchdogMs: 30 * 60_000,
+  maxPreFirstByteRetries: 2,
+  retryBackoffBaseMs: 500,
+  deltaFlushBytes: 2048,
+  deltaFlushMs: 100,
+  r2BypassBytes: 100 * 1024,
+  maxDispatchAttempts: 5,
+};
+
+const configPatchSchema = z.object({
+  modelCallCapMs: z.number().int().positive().optional(),
+  execTimeoutMs: z.number().int().positive().optional(),
+  execGraceMs: z.number().int().nonnegative().optional(),
+  turnWatchdogMs: z.number().int().positive().optional(),
+  maxPreFirstByteRetries: z.number().int().nonnegative().optional(),
+  retryBackoffBaseMs: z.number().int().nonnegative().optional(),
+  deltaFlushBytes: z.number().int().positive().optional(),
+  deltaFlushMs: z.number().int().positive().optional(),
+  r2BypassBytes: z.number().int().positive().optional(),
+  maxDispatchAttempts: z.number().int().positive().optional(),
+});
+
+export type WatchdogConfigPatch = z.infer<typeof configPatchSchema>;
+
+export function mergeWatchdogConfig(
+  base: WatchdogConfig,
+  patch: WatchdogConfigPatch,
+): WatchdogConfig {
+  return { ...base, ...patch };
+}
+
+export function parseWatchdogConfigPatch(input: unknown): WatchdogConfigPatch {
+  return configPatchSchema.parse(input);
+}
+
+export function decodeWatchdogConfig(
+  raw: string | undefined,
+  base: WatchdogConfig,
+): WatchdogConfig {
+  if (raw === undefined || raw === "") return base;
+  return mergeWatchdogConfig(base, parseWatchdogConfigPatch(JSON.parse(raw)));
+}
