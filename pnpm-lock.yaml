@@ -15,6 +15,34 @@ importers:
         specifier: ^8.71.0
         version: 8.71.0(eslint@9.39.5)(typescript@5.9.3)
 
+  apps/daemon-worker:
+    dependencies:
+      '@cap/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      zod:
+        specifier: ^4.6.0
+        version: 4.6.5
+    devDependencies:
+      '@cloudflare/vitest-plugin':
+        specifier: ^1.3.6
+        version: 1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@22.20.5)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))
+      '@cloudflare/workers-types':
+        specifier: ^5.20261003.1
+        version: 5.20261003.1
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.5
+      typescript:
+        specifier: ~5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.11(@types/node@22.20.5)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+      wrangler:
+        specifier: ^4.147.0
+        version: 4.147.0(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)
+
   apps/server-worker:
     dependencies:
       hono:
@@ -54,6 +82,37 @@ importers:
       effect:
         specifier: 4.0.0
         version: 4.0.0
+      zod:
+        specifier: ^4.6.0
+        version: 4.6.5
+    devDependencies:
+      '@cloudflare/vitest-plugin':
+        specifier: ^1.3.6
+        version: 1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@22.20.5)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))
+      '@cloudflare/workers-types':
+        specifier: ^5.20261001.1
+        version: 5.20261003.1
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.5
+      typescript:
+        specifier: ~5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.11(@types/node@22.20.5)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+      wrangler:
+        specifier: ^4.147.0
+        version: 4.147.0(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)
+
+  packages/daemon-service:
+    dependencies:
+      '@cap/agent-do':
+        specifier: workspace:*
+        version: link:../agent-do
+      '@cap/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       zod:
         specifier: ^4.6.0
         version: 4.6.5
