@@ -259,6 +259,11 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       }
       call.status = event.type === "model.call_sealed" ? "sealed" : "failed";
       call.aborted = event.type === "model.call_failed" && event.data.aborted === true;
+      // §2.1 retry row: a retryable call_failed rewinds the turn to QUEUED so
+      // the backoff's next `model.call_started` is a legal transition.
+      if (event.type === "model.call_failed" && event.data.retryable === true) {
+        runtime.status = "queued";
+      }
       return;
     }
     case "model.call_retry": {

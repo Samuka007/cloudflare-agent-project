@@ -569,6 +569,24 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           yield* Effect.promise(() => self.finalizeCancel(turnId));
           return;
         }
+        // Resumed-driver continuation (cold start, §3.0): executions handed
+        // out before eviction are drained first — a model call is only
+        // issued from a clean tools/idle boundary, never over live ones.
+        const pendingExecutionIds = turn.executionIds.filter((executionId) => {
+          const execution = self.state.executions.get(executionId);
+          return execution === undefined || !executionTerminal(execution);
+        });
+        if (pendingExecutionIds.length > 0) {
+          const waitOutcome: "done" | "cancelled" | "turn_failed" = yield* Effect.promise(() =>
+            self.waitForExecutions(turnId, pendingExecutionIds, signal),
+          );
+          if (waitOutcome === "cancelled") {
+            yield* Effect.promise(() => self.finalizeCancel(turnId));
+            return;
+          }
+          if (waitOutcome === "turn_failed") return;
+          continue;
+        }
         const pendingSteers = turn.steerSeqs.filter(
           (seq) => !turn.consumedSteerSeqs.includes(seq),
         );
@@ -704,11 +722,11 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           })[Symbol.asyncIterator]();
           const pull: Effect.Effect<IteratorResult<ModelStreamChunk>, ProviderPullFailure> =
             Effect.callback((resume) => {
-              void iterator.next().then(
-                (result) => resume(Effect.succeed(result)),
+            void iterator.next().then(
+              (result) => resume(Effect.succeed(result)),
                 (error: unknown) => resume(Effect.fail(new ProviderPullFailure(error))),
-              );
-            });
+            );
+          });
         for (;;) {
             const next = yield* pull;
             if (next.done === true) break;
@@ -829,7 +847,12 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       retryable: failure.retryable,
     });
     if (failure.retryable) {
-      return { kind: "failed_pre_first_byte", modelCallId, attempt: 1 };
+      // Retry index = failed attempts so far (the just-failed call included);
+      // the driver compares against maxPreFirstByteRetries.
+      const failedAttempts = [...this.state.modelCalls.values()].filter(
+        (call) => call.turnId === turnId && call.status === "failed",
+      ).length;
+      return { kind: "failed_pre_first_byte", modelCallId, attempt: failedAttempts };
     }
     return { kind: "failed", modelCallId };
   }
