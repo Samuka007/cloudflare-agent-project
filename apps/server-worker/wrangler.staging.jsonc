@@ -1,0 +1,60 @@
+{
+  // $schema: ../node_modules/wrangler/config-schema.json
+  // Staging deployment (#31): same composed entry as wrangler.jsonc, with the
+  // real staging D1 and the composition vars baked. Relay stays in harness
+  // mock mode here (no MODEL_RELAY_* secret): live glm-5.3 calls from the CF
+  // edge to open.bigmodel.cn hang with no first byte (reproduced 3×, #34) —
+  // the live-model full-chain proof runs under local wrangler dev until the
+  // owner picks the endpoint fix (api.z.ai or VPS relay).
+  "name": "cap-server-staging",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    "not_found_handling": "none",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cap-control-plane",
+      "database_id": "4e823d64-cc93-4922-b576-ec1a455c02aa"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "HUB", "class_name": "NotificationHubDO" },
+      { "name": "LEASES", "class_name": "LeaseStoreDO" },
+      { "name": "AGENT_DO", "class_name": "ComposedAgentDO" },
+      { "name": "ORCHESTRATOR", "class_name": "ComposedHostOrchestratorDO" },
+      { "name": "MANAGER", "class_name": "ManagerDo" },
+      { "name": "DAEMON_SERVICE", "class_name": "DaemonServiceDO" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "NotificationHubDO",
+        "LeaseStoreDO",
+        "ComposedAgentDO",
+        "ComposedHostOrchestratorDO",
+        "ManagerDo",
+        "DaemonServiceDO"
+      ]
+    }
+  ],
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+  "vars": {
+    "ACCESS_CHECK_ENABLED": "false",
+    "DATA_DIR": "/data",
+    "ORCHESTRATOR_HOST_ID": "local",
+    "DAEMON_HOST_ID": "local",
+    "DAEMON_MACHINE_ID": "local",
+    "SERVER_VERSION": "staging-#31"
+  }
+}
