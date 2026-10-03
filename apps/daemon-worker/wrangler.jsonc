@@ -1,0 +1,20 @@
+{
+  // $schema: node_modules/wrangler/config-schema.json
+  "name": "cap-daemon-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      // One orchestrator per hostId (idFromName(hostId)): session mirror +
+      // command journal + watch-set aggregation (#27).
+      { "name": "ORCHESTRATOR", "class_name": "HostOrchestratorDO" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["HostOrchestratorDO"]
+    }
+  ]
+}
