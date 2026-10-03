@@ -39,6 +39,8 @@ export default defineConfig({
     __RELAY_ENV__: JSON.stringify(relayEnvFromDevVars()),
   },
   test: {
+    include: ["test/**/*.test.ts"],
+    exclude: ["test/smoke-hookup.test.ts"],
     maxWorkers: 1,
     minWorkers: 1,
     isolate: false,

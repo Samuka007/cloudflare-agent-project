@@ -75,6 +75,12 @@ export interface AgentDoBindings {
   /** R2 bucket for oversize payloads; required only when payloads exceed
    * `r2BypassBytes`. */
   BLOBS?: R2Bucket;
+  /**
+   * This DO's own namespace, bound only in the composed deployment: the
+   * daemon-service DO's `forwardToAgent` targets it by threadId (§3.6 ack
+   * path). Unbound in the pure-fake test rig.
+   */
+  AGENT_DO?: DurableObjectNamespace;
 }
 
 export class AgentRpcError extends Error {
@@ -918,8 +924,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   private daemon(): DaemonServiceClient {
     const namespace = this.env.DAEMON_SERVICE;
     if (namespace !== undefined && this.threadId !== null) {
-      // Binding-shaped stub; the interface is the seam contract (#30).
-      return namespace.get(namespace.idFromName(this.threadId)) as unknown as DaemonServiceClient;
+      // Binding-shaped stub; the interface is the seam contract (#30). The
+      // service DO is per-machine (§1.2, model two): named by the thread's
+      // machineId — the same name the daemon client opens its session under.
+      // (#30 wrangler: "env.DAEMON_SERVICE.idFromName(machineId)").
+      return namespace.get(
+        namespace.idFromName(this.state.machineId ?? "local"),
+      ) as unknown as DaemonServiceClient;
     }
     const registered = getAgentRuntime(this.threadId as string).daemon;
     if (registered === undefined) {

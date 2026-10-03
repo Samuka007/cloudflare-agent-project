@@ -11,7 +11,7 @@ describe("smoke: worker wiring", () => {
     const rig = await createRig();
     const events = await rig.events();
     expect(typeList(events)).toEqual(["thread.created"]);
-    expect(events[0]?.data).toMatchObject({ title: "rig", machineId: "local" });
+    expect(events[0]?.data).toMatchObject({ title: "rig", machineId: rig.threadId });
   });
 
   test("a full turn with no tool calls completes", async () => {

@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agent-do-hookup",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "AGENT_DO", "class_name": "AgentDO" },
+      // The composed hookup: the REAL per-machine service DO (#30) — the
+      // production binding shape — instead of the in-package fake.
+      { "name": "DAEMON_SERVICE", "class_name": "DaemonServiceDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["AgentDO", "DaemonServiceDO"] }
+  ],
+  "vars": {
+    "ENROLL_KEY": "poc-dev-enroll-key",
+    "DAEMON_HOST_KEY": "poc-dev-host-key",
+    "DAEMON_HOST_ID": "local",
+    "DAEMON_MACHINE_ID": "local"
+  }
+}

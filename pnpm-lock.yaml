@@ -76,6 +76,9 @@ importers:
 
   packages/agent-do:
     dependencies:
+      '@cap/daemon-service':
+        specifier: workspace:*
+        version: link:../daemon-service
       '@cap/protocol':
         specifier: workspace:*
         version: link:../protocol
