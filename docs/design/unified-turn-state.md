@@ -30,7 +30,7 @@
 执行状态（「正在跑什么工具调用、输出到哪了、结果是什么」）的 source of truth 有两个候选位置：
 
 - **模型一（host 所有）**：执行状态归 daemon client 的本地 journal（宿主盘 SQLite），边缘只路由。孤儿收尸在 host，重连 resume 靠 client 自己的进程表与 journal。
-- **模型二（边缘所有，用户新图）**：执行状态归 daemon service DO（DO SQLite 执行 journal），daemon client 是无状态哑执行器（收指令、spawn、回字节流、随时可断可换）。孤儿收尸 = service DO 发现租约失效后向 client 发 kill/forget；client 重连即重置；result 送达以 service DO 为准。
+- **模型二（边缘所有，用户新图）**：执行状态归 daemon service DO（DO SQLite 执行 journal），daemon client **非权威、可替换**——本地状态是物理现实的观察窗与性能缓存（可弃不必无，清单见 §8.1），逻辑真相全在 service DO。孤儿收尸 = service DO 发现租约失效后向 client 发 kill/forget；client 重连即重置；result 送达以 service DO 为准。
 
 **本文主线裁定：断点 C/D/E/F 全部推荐模型二**（逐格理由见 §3）。核心理由一句话：模型一把 claim 权威放在全系统最不耐久、最不可信的节点（dev LXC 上一张可被用户随手 wipe 的 host journal），模型二把它放进有平台确认屏障与重放语义的 DO SQLite，client→edge 这一段只剩「字节流按 offset 重发+去重」这一种故障形态，而这正是 DO 平台的强项。代价是输出在边缘持久化两次（service DO journal + agent DO 事件日志）与新增 kill-list/offset 协议面——有聊但无聊，见 §3 逐格对照。
 
@@ -56,11 +56,11 @@
 - **随进程死**：client WS（hibernation API 接入，休眠时连接由边缘保持、内存清空）、requestId 映射、租约计时。
 - **权属**：「执行是否发生、跑到哪了、结果是什么」的唯一权威（claim 侧）；结果保留到 agent DO ack 为止，ack 后转 tombstone（§5）。
 
-### 1.3 daemon client（每台机器一个，无状态哑执行器）
+### 1.3 daemon client（每台机器一个，非权威、可替换执行器）
 
-- **持久（宿主盘，仅身份）**：`{hostId, hostKey}`。**没有执行 journal，没有 bootId 落盘**——bootId 每进程启动内存生成。
-- **随进程死**：进程表（executionId→pid/管道，纯内存）、WS 连接与退避状态、输出环形缓冲（每执行 ≤1MB，溢出置 `output_truncated`，执行继续）。
-- **行为契约**：收 `exec.spawn` 就 spawn 并回报 `{pid, pidStartedAt}`；收字节流就按 offset 上行；收 `exec.kill` 就核验 pid+启动时间后杀进程组；收 kill-list 就逐条核验执行；重连即重置（新 session/open，bootId 说明一切）。断连期间不自主做任何生命周期决定（不自杀在跑进程，理由见断点 D 模型二裁定）。
+- **持久（宿主盘，仅身份）**：`{hostId, hostKey}`。**没有执行逻辑 journal，没有 bootId 落盘**——bootId 每进程启动内存生成。client 的本地状态是物理现实的观察窗与性能缓存（可弃不必无），完整清单与各自崩溃下场见 §8.1。
+- **随进程死**：进程表（executionId→pid/管道，纯内存——OS 物理现实的观察窗）、WS 连接与退避状态、输出环形缓冲（每执行 ≤1MB，溢出置 `output_truncated`，执行继续）。
+- **行为契约**：收 `exec.spawn` 就 spawn（注入 marker 环境变量 + 独立进程组，§8.1）并回报 `{pid, pidStartedAt}`；收字节流就按 offset 上行；收 `exec.kill` 就核验 pid+启动时间后杀进程组；收 kill-list 就逐条核验执行；重连即重置（新 session/open + 全量 boot.announce，bootId 说明一切，§8.2）。断连期间不自主做任何生命周期决定（不自杀在跑进程，理由见断点 D 模型二裁定）。
 
 ### 1.4 子进程（bash/PTY）
 
@@ -203,14 +203,14 @@ stateDiagram-v2
 | | 模型一（host 所有） | 模型二（边缘所有） |
 |---|---|---|
 | 断连期间 | client 继续执行、输出入缓冲、journal 落盘进度 | 同左（缓冲行为相同）；**断连期间不自杀在跑进程**——瞬时网络抖动不该杀工作 |
-| 重连 resume | 靠 client 自己的 journal + bootId 对账：RUNNING 重挂、COMPLETED 重发结果 | client 无 journal：session/open 报 bootId；**同 bootId** = 进程没死只是断连 → service DO 告知每条 RUNNING 的 lastOffset，client 从缓冲续发（offset 去重）；**新 bootId** = client 重启过 → 收 kill-list |
-| client 重启 | journal 对账：旧 RUNNING 判 outcome_unknown，按 pgid+启动时间核验后杀孤儿；**执行状态要持久（host journal 是必需品）** | **执行状态不持久**（哑执行器）：service DO 发 kill-list `{executionId, pid, pidStartedAt}`，client 逐条核验杀进程组；旧执行全部判 outcome_unknown |
+| 重连 resume | 靠 client 自己的 journal + bootId 对账：RUNNING 重挂、COMPLETED 重发结果 | client 无逻辑 journal：session/open 报 bootId + 全量 announce（§8.2）；**同 bootId** = 进程没死只是断连 → service DO 告知每条 RUNNING 的 ackedOffset，client 从缓冲续发（offset 去重）；**新 bootId** = client 重启过 → 收 kill-list |
+| client 重启 | journal 对账：旧 RUNNING 判 outcome_unknown，按 pgid+启动时间核验后杀孤儿；**执行状态要持久（host journal 是必需品）** | **执行逻辑状态不持久**（client 非权威）：service DO 发 kill-list `{executionId, pid, pidStartedAt}`，client 对照 /proc marker 扫描（§8.2）逐条核验杀进程组；旧执行全部判 outcome_unknown |
 | 孤儿收尸人 | host 自己（重启时对账） | service DO（租约失效发现 + kill-list 下发），client 只是杀手 |
 | result 找主人 | host 保留结果到 agent DO ack | service DO 保留结果到 agent DO ack；executionId 自路由 |
 | 已上行输出的命运 | client 死 → 未上报的输出随缓冲丢失 | 已上行到 service DO 的输出**已落 journal，client 死不丢** |
 | 保证 | 结果投递 at-least-once；落盘 at-most-once | 同左 |
 
-**推荐：模型二。** 理由：① 「执行状态要不要持久」这个问题在模型二下直接消失——host 上一个字节都不用存，client 随时可断可换可重装，正合项目 thesis（大脑在边缘，机器是耗材）与 M1 fleet；② 已上行输出在边缘落盘，client 死亡的损失窗口从「整段结果」缩到「缓冲区尾部」；③ 收尸决策者唯一（租约权威），模型一的 host 自收尸在「client 永不回来」时一样失效，两者对「机器永远消失」等价，但模型二对「client 重装/换新机器」免费。
+**推荐：模型二。** 理由：① 「执行逻辑状态要不要持久」这个问题在模型二下直接消失——host 上只需持久身份，client 可随时断、换、重装（可替换 ≠ 无状态：它仍持有物理现实观察窗与重传缓冲，§8.1），正合项目 thesis（大脑在边缘，机器是耗材）与 M1 fleet；② 已上行输出在边缘落盘，client 死亡的损失窗口从「整段结果」缩到「缓冲区尾部」；③ 收尸决策者唯一（租约权威），模型一的 host 自收尸在「client 永不回来」时一样失效，两者对「机器永远消失」等价，但模型二对「client 重装/换新机器」免费。
 **对不变量的影响**：I18 改写（重启诚实 = kill-list 恰好覆盖旧 bootId 的 RUNNING 集合，断言对象从 host journal 变为 service DO 下发的 kill-list）；新增 I20（offset 续传去重）；模型一的「host journal 先于上报落盘」断言删除（host 无 journal）。
 
 ### 3.5 断点 E（输出流中途 agent DO 被驱逐，二次下发同一 tool_call）——双模型对照
@@ -247,7 +247,7 @@ stateDiagram-v2
 - **去重分工**：
   - daemon service DO 去重**执行**：journal 查 executionId——COMPLETED → 回缓存结果；RUNNING → 重挂回报通道；UNKNOWN → 下发 client。
   - agent DO 去重**结果与输入**：重放派生的内存集合（executionId、inputId）；重复 result 丢弃并补 ack，重复 input 直接回已有 turn。
-  - daemon client **不去重**（哑执行器）：它只对当前内存里的 executionId→pid 映射负责；重复 spawn 的防止完全由 service DO 完成（§3.5）。
+  - daemon client **不去重**（非权威执行器）：它只对当前内存里的 executionId→pid 映射负责；重复 spawn 的防止完全由 service DO 完成（§3.5）。
   - service DO 对**输出字节**按 (executionId, offset 区间) 去重：重发重叠区间丢弃，保证断连续传安全（断点 D/J）。
 
 ### 4.2 模型调用双计费政策
@@ -424,10 +424,119 @@ sequenceDiagram
 - **I21（claim/ack 边缘内闭环）**：service DO 仅在收到 agent DO ack 后才将结果转 tombstone；注入「agent DO 落盘后、ack 发出前驱逐」故障，恢复后 service DO 重发结果、agent DO 丢弃重复并补 ack——两侧终态一致且 result 唯一。
 - **I22（kill 核验）**：fake client 只对 kill-list 中 pid+pidStartedAt 核验通过的进程组发 SIGKILL；对列表外进程零动作（防 pid 复用误杀可断言）。
 
+## 8. daemon service DO ↔ daemon client 同步协议（registry↔client sync）
+
+用户裁定修正：§3 模型二的「client 哑化零持久」是过度表述。client 必然持有三类本地状态：OS 进程现实（pid/PTY/exit code 只在 host 上存在）、输出缓冲与读偏移（重传源）、身份缓存（hostKey/bootId/会话句柄）。模型二的真实主张收窄为：**逻辑真相（执行状态机、offset、result、授权清单）归 service DO；client 非权威、可替换——本地状态是物理现实的观察窗与性能缓存，可弃不必无**。本节给出两者之间的同步协议，全部形状先考古 bb 再裁定。
+
+bb as-built 依据：`docs/research/bb-daemon-protocol.md`（session/open 三步握手 §2.1、心跳 5s/租约 30s、断连宽限 5s、顶替 close 1000 replaced、host-rpc.request/response + requestId、daemon 事件批量上报 + 逐事件回执、terminal attach 的 sinceSeq 断点重放）与 `docs/research/bb-server-port-inventory.md` §1.5（`watch-set.replace` 全量替换 + generation/fingerprint 去重、`host_daemon_sessions` 表为会话真相、`host_daemon_commands`/`host_daemon_command_attempts` 命令持久化、pendingDaemonDisconnects 宽限 timer、terminal 发送队列 32MiB 上限）。
+
+### 8.1 client 本地状态最小清单（什么写盘、什么纯内存、崩溃下场）
+
+| 状态 | 存哪 | 角色 | 崩溃下场 |
+|---|---|---|---|
+| `hostId` / `hostKey` | dataDir 磁盘（0600） | 身份 | **唯一必须持久的**；丢了重 enroll（bb 同形：`host-id` + `auth.json`） |
+| `bootId` | 纯内存，进程启动时生成 | incarnation 标识 | 崩溃即新 bootId——这是判定树的输入，**故意不落盘**（落盘反而制造「假同 bootId」） |
+| 进程表 `executionId→{pid, pgid, 管道句柄}` | 纯内存 | OS 物理现实的观察窗 | 丢失；由 §8.2 的 /proc marker 扫描近似重建（只够核验杀，不够续管道） |
+| 输出环形缓冲（每执行 ≤1MB）+ 每条执行的 `ackedOffset` 读偏移 | 纯内存 | 重传源 + 缓冲裁剪依据 | 丢失 ≤1MB 未 ack 尾部；缺口以 `output_truncated` 显式标记（§8.3），不静默 |
+| sessionId / 心跳租约参数 | 纯内存 | 会话句柄 | 断即作废，下次 session/open 换新 |
+| capabilities（PTY 支持、平台、shell 路径、协议版本） | 启动探测，纯内存 | announce 载荷 | 每次重报，无状态 |
+
+裁定：**client 写盘只限身份**。输出缓冲不写盘——写盘等于局部回退模型一的 host journal，换来的只是崩溃瞬间 ≤1MB 的未 ack 尾部；缺口诚实标记即可。这是本节唯一留给用户的真实分叉（见 §8.8）。
+
+
+### 8.2 boot announce（client 上线声明）
+
+形状平移 bb 三步握手：HTTP `session/open`（Bearer hostKey，报 protocolVersion）→ 拿 `{sessionId, heartbeatIntervalMs, leaseTimeoutMs}` → WS `?sessionId=` 附着 → WS 首帧 `boot.announce`：
+
+```
+boot.announce {
+  bootId, protocolVersion, capabilities,
+  generation,                 // 每 session 单调递增，从 1 起
+  observed: [                 // 全量快照，见下方裁定
+    { executionId, pid, pidStartedAt, state: running|ended,
+      bufferedFromOffset, finalOffset?, exitCode? }
+  ]
+}
+```
+
+- **全量 vs 增量裁定：announce 永远全量**（bb `watch-set.replace` 同形：generation 全量替换 + fingerprint 去重）。理由：单 client 在跑执行数 ≤ 数十，全量消歧、无缺口检测问题；增量需要双边序号与缺口恢复，复杂度不值。运行期变化走增量消息（`exec.started`/`exec.output`/`exec.exited`），但每次重连以全量 announce 重置基准，service DO 丢弃旧 observed 视图。
+- **fingerprint**：observed 清单的规范化 hash；service DO 存 `lastFingerprint`，同 generation 同 fingerprint 的重复 announce 直接短路（bb `watch-interests.ts:205-214` 同形去重）。
+- **observed 含 ended 条目**：同 bootId 断连期间跑完的执行，client 缓冲里还有结果（exitCode + finalOffset + 字节），在 announce 里以 `state: ended` 重报——这是断连窗口结果的补报通道，不需要额外协议。
+- service DO 收到 announce 后进入 reconcile（§8.5 判定树），reconcile 完成前该会话标记 `syncing`，不下发新 spawn（避免在未知现场上叠加副作用）。
+
+### 8.3 output 续传（offset 协商、字节流 ack、背压）
+
+- **帧**：`exec.output {executionId, offset, bytesBase64}`。单一合并字节流（stdout/stderr 合并为一个逻辑流，PTY 天然单流），offset 为该流的绝对字节偏移。合并单流是 M0 裁定：agent 工具的输出按时间序呈现，双流分开 offset 只会引入两路对齐问题而无消费方收益。
+- **offset 协商**：重挂时 service DO 下发 `exec.resume {executionId, ackedOffset}`；client 从 `max(ackedOffset, bufferedFromOffset)` 续发；若 `ackedOffset < bufferedFromOffset`（尾部已被环形缓冲挤出），client 先发 `exec.output_gap {executionId, from, to: bufferedFromOffset}`，service DO 落 journal 显式 `output_truncated` 事件再续发——缺口永远显式，绝不静默（对接 §3.4 的 truncated 裁定）。
+- **字节流 ack**：`exec.output_ack {executionId, ackedOffset}`，service DO 在字节落 journal **之后**发出（先落盘后 ack），合并粒度 ~200ms；`ackedOffset` 单调不减。ack 是 client 裁剪环形缓冲的唯一信号——未 ack 字节永不丢弃。bb 先例：terminal attach 的 `sinceSeq` 断点重放 + daemon 事件批量上报的逐事件回执，本节把两形合一。
+- **背压与流控**：
+  - 上行（client→service DO）：client 合并发送（100ms / 64KB 粒度），盯 WS `bufferedAmount`；超阈值（4MB）→ **暂停 `read()` 子进程管道**——内核管道缓冲写满后自然阻塞子进程写端，Unix 标准反压，不丢字节。恢复后先续发缓冲再恢复读。
+  - 下行（service DO→client 命令）：client 对每条 execution 串行处理命令（bb envLane 同形纪律），命令队列有界（256）；队列满 → 显式回 `busy` 错误（不静默丢、不崩 socket——bb 同形：错误一律转结构化响应），service DO 对 `busy` 指数退避重试。
+  - 总原则：**宁慢不丢，显式错误优于静默丢弃**；环形缓冲 1MB/执行是最后防线，溢出必有 `output_truncated` 标记。
+
+### 8.4 result 送达（at-least-once + 幂等去重对接 §4）
+
+链路：`exec.exited {executionId, exitCode, signal, finalOffset}` → service DO **先落 journal** → 转发 agent DO → agent DO 落 `tool.result` → ack 回流 → service DO 转 tombstone → 下发 `exec.forget {executionId}` → client 删缓冲与进程表项。
+
+- 与 §4 的对接：executionId 仍是三层去重的共用键，本节不新增键。增量只有一个：`exec.forget` 闭环 client 侧 GC——**client 在收到 forget 前永不丢弃缓冲**（缓冲是重传源）。
+- forget 丢失（发后断连）：client 缓冲保留，下次 announce 以 `state: ended` 重报，service DO 查 journal 发现已 ack → 补发 forget。重报 ended 条目是幂等的（service DO 按 executionId 去重）。
+- at-least-once 的三处保留点：client 缓冲（至 forget）→ service DO journal（至 agent DO ack）→ agent DO 事件日志（永久）。每一棒的保留期都盖住下一棒的确认，没有裸奔窗口。
+
+### 8.5 租约失效 reconcile（判定树）
+
+**发现顺序**：双侧独立发现，互不依赖。client 侧心跳超时即知（进入退避重连 1s→30s 封顶，bb 形状，稳定连接 >10s 重置 attempt）；service DO 侧租约 30s 到期 + 5s 宽限（bb 常量）后把该 bootId 名下 RUNNING 标 `orphan_suspect`（落 journal）。**裁决点唯一**：下一次 session/open 的 service DO。宽限一轮、不叠加（bb pendingDaemonDisconnects 同形）。断连期间 client 不自杀在跑进程（§3.4 已定，瞬时抖动不该杀工作）。
+
+判定树（session/open + boot.announce 到达 service DO 后逐格判定）：
+
+```
+1. Bearer / hostId 校验失败        → close 1008（bb）
+2. protocolVersion 不等            → 400 protocol_version_mismatch（bb 形状；M0 scheme A 不触发）
+3. 同 hostId 已有活会话            → 顶替：旧 socket close 1000 replaced（bb），其在途 requestId 作废；
+                                     旧会话名下的 orphan_suspect 标记保留待新会话裁决
+4. announce.bootId == journal RUNNING 的 clientBootId？
+   ├─ 同（断连未重启）：
+   │   ├─ observed=running 且 journal=RUNNING  → exec.resume{ackedOffset} 续传（§8.3）
+   │   ├─ observed=ended 且 journal=RUNNING     → 补报结果闭环（§8.4）；finalOffset 与已落盘部分
+   │   │                                          之间有缺口且缓冲不覆盖 → output_truncated
+   │   └─ journal=RUNNING 但 observed 缺失       → 进程在断连期间死亡但 client 未给出 ended
+   │                                              （同 bootId 下进程表在内存，wait 回收必产生 ended；
+   │                                              仍缺失则按 outcome_unknown，宁错杀不错认）
+   └─ 新（重启过）：
+       ├─ journal 旧 bootId RUNNING ∩ observed（/proc marker 扫描命中）
+       │      → kill-list 下发 {executionId, pid, pidStartedAt} → client 核验后 SIGKILL 进程组 → 回执
+       ├─ journal 有、observed 无   → 进程已随重启死透 → 直接判 outcome_unknown
+       ├─ observed 有、journal 无   → 未授权进程（spawn ack 丢失竞态）→ 一并进 kill-list 杀掉：
+       │                              service DO journal 是唯一授权清单，不在清单上的 marker 进程即非法
+       └─ 全部旧执行判 OUTCOME_UNKNOWN → 上报 agent DO（§5.2 步骤 3 不变）
+5. 无在跑执行                      → 干净会话，直接服役
+```
+
+### 8.6 与 §4/§5 已裁定内容的调和（标注，不改裁定）
+
+- §3.4/§5 说「client 无 journal」——§8.1 细化为「无**逻辑** journal；有物理观察窗（进程表 + /proc marker）与重传缓冲」。这是对表述的精确化，不是裁定变更：逻辑真相的权属一字未动。
+- §3.4 的 kill-list 是 service DO 单向推；§8.2/§8.5 增加 announce.observed 形成双向对账——增强而非冲突：kill-list 取自 journal ∩ observed 的交集，observed-only 的未授权进程也被杀掉，判定树更完备。
+- §5.2 步骤 3「机器永远不回来 → orphan_suspect 永久挂账」不变；§8.5 判定树只覆盖「client 回来了」的分支。
+- §4.1「client 不去重」不变；§8.3 的 output_ack 是缓冲裁剪信号，不是去重职责的转移。
+
+### 8.7 不变量追加（续 §7 编号，可直接断言）
+
+- **I23（announce 全量重置）**：每次 session/open 后的首个 announce 全量替换 service DO 对该 client 的 observed 视图；generation 单调递增，旧 generation 的消息被拒；同 generation 同 fingerprint 的重复 announce 零副作用。
+- **I24（授权清单唯一）**：client 上任何携带 marker 的在跑进程必 ∈ service DO journal；注入「journal 不知的 marker 孤儿」后，下一次 reconcile 的 kill-list 必含它，且 journal 中无其 RUNNING 记录。
+- **I25（ack 单调与裁剪守恒）**：`exec.output_ack` 的 ackedOffset 单调不减；client 缓冲裁剪点永远 ≤ 已收 ackedOffset；fake client 断言从未裁掉未 ack 字节。
+- **I26（缺口显式）**：续传完成后 journal 中每条执行的 offset 序列连续，或每个缺口处恰有一个 `output_truncated` 事件覆盖该缺口区间——无静默空洞。
+- **I27（forget 闭环）**：client 仅在收到 `exec.forget` 后丢弃对应缓冲；注入「forget 丢失」故障后，下次 announce 必以 ended 重报该执行，且 service DO 补发 forget（重报幂等，journal 零增量）。
+- **I28（判定树完备）**：构造四种重连组合（同/新 bootId × 进程在/亡），service DO 的动作恰为 {resume、ended 补报闭环、kill-list+outcome_unknown、干净会话} 之一，不存在无动作或双动作分支。
+- **I29（背压诚实）**：fake client 缓冲水位超阈值时暂停读管道且不发部分帧；恢复后 offset 序列满足 I26。
+- **I30（syncing 闸门）**：reconcile 完成（syncing 解除）之前，service DO 不向该 client 下发任何新 `exec.spawn`；注入「syncing 期间 agent DO 新 dispatch」→ 其 spawn 延迟到 reconcile 之后或显式 host_offline，绝不提前落地。
+
+### 8.8 留给用户的分叉（本节唯一）
+
+输出环形缓冲崩溃丢失 ≤1MB 未 ack 尾部（§8.1 裁定不写盘）。若要求零尾部丢失，client 需要把缓冲写宿主盘 journal——那是局部回退模型一，成本是 host 持久化与崩溃一致性代码，收益是崩溃瞬间最多 1MB 的输出尾部。本文取「不写盘 + 显式 truncated 标记」。
+
 ## 附：M1 fleet 不留死胡同
 
 - executionId 自路由（threadId 前缀）+ thread 绑定 machineId（spec #17 用户故事 #10）：多机 = 每机一只 daemon service DO，agent DO 按 machineId 选 stub 下发，协议与幂等设计零改动。
-- client 哑化使 fleet 扩缩、机器更换、LXC 重建全部变成「新 bootId 重连」一种形态——模型二对 M1 的友好度是选择它的重要理由。
+- client 非权威化使 fleet 扩缩、机器更换、LXC 重建全部变成「新 bootId 重连」一种形态——模型二对 M1 的友好度是选择它的重要理由。
 - 对账协议天然按机器维度（bootId/session）独立运行；全部恢复语义基于单写者 + 幂等键，不引入任何跨机原子性假设；M1 无需推翻本文任何裁定。
 
 > AGENT GENERATED: by zhipu-coding-plan/glm-5.3-flash (oracle draft)
