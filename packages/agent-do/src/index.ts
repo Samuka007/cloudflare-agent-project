@@ -70,3 +70,4 @@ export type {
 } from "./turn-state.js";
 export { projectToUxEvents } from "./ux-projection.js";
 export { ProjectionError, modelRequestFromEvents } from "./translate.js";
+export { AnthropicRelayProvider, type RelayConfig } from "./relay/index.js";
