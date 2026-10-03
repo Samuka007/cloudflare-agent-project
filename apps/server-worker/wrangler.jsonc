@@ -14,8 +14,8 @@
     {
       "binding": "DB",
       "database_name": "cap-control-plane",
-      // Undeployed in M0 (ticket #26: no CF credentials assumed); replaced at
-      // staging provisioning time.
+      // Undeployed placeholder in M0 (ticket #26: no CF credentials assumed);
+      // staging provisioning substitutes the real database id (#31).
       "database_id": "00000000-0000-0000-0000-000000000000"
     }
   ],
@@ -23,14 +23,29 @@
     "bindings": [
       { "name": "HUB", "class_name": "NotificationHubDO" },
       { "name": "LEASES", "class_name": "LeaseStoreDO" },
-      // Per-thread event log + turn state, owned by ticket #29.
-      { "name": "AGENT_DO", "class_name": "AgentDO" }
+      // Per-thread event log + turn state (#29), composed wrapper for
+      // per-isolate relay registration (#31).
+      { "name": "AGENT_DO", "class_name": "ComposedAgentDO" },
+      // Per-host command journal + session mirror (#27), composed wrapper
+      // for in-isolate adapter installation (#31).
+      { "name": "ORCHESTRATOR", "class_name": "ComposedHostOrchestratorDO" },
+      // Provider session registry + harness (#28).
+      { "name": "MANAGER", "class_name": "ManagerDo" },
+      // Per-machine daemon service DO (#30) — client WS face + exec journal.
+      { "name": "DAEMON_SERVICE", "class_name": "DaemonServiceDO" }
     ]
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["NotificationHubDO", "LeaseStoreDO", "AgentDO"]
+      "new_sqlite_classes": [
+        "NotificationHubDO",
+        "LeaseStoreDO",
+        "ComposedAgentDO",
+        "ComposedHostOrchestratorDO",
+        "ManagerDo",
+        "DaemonServiceDO"
+      ]
     }
   ],
   "triggers": {
@@ -42,6 +57,12 @@
     // Staging flag: flip to "true" (with ACCESS_TEAM_DOMAIN + ACCESS_AUD
     // secrets set) once the Worker fronts real Cloudflare Access.
     "ACCESS_CHECK_ENABLED": "false",
-    "DATA_DIR": "/data"
+    "DATA_DIR": "/data",
+    // Composition identity (#31): journal host / machine name — must match
+    // the daemon client's enrolled hostId and the harness machineId so the
+    // client WS and the agent seam meet on the same per-machine DO.
+    "ORCHESTRATOR_HOST_ID": "local",
+    "DAEMON_HOST_ID": "local",
+    "DAEMON_MACHINE_ID": "local"
   }
 }

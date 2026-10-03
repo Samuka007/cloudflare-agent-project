@@ -76,6 +76,18 @@ importers:
 
   apps/server-worker:
     dependencies:
+      '@cap/agent-do':
+        specifier: workspace:*
+        version: link:../../packages/agent-do
+      '@cap/daemon-service':
+        specifier: workspace:*
+        version: link:../../packages/daemon-service
+      '@cap/daemon-worker':
+        specifier: workspace:*
+        version: link:../daemon-worker
+      '@cap/provider-app':
+        specifier: workspace:*
+        version: link:../provider-app
       hono:
         specifier: ^4.7.0
         version: 4.13.12
@@ -83,9 +95,6 @@ importers:
         specifier: ^4.6.0
         version: 4.6.5
     devDependencies:
-      '@cap/agent-do':
-        specifier: workspace:*
-        version: link:../../packages/agent-do
       '@cap/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol

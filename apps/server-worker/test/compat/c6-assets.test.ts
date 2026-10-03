@@ -32,8 +32,15 @@ describe("criterion 6: SPA fallback + assets 404", () => {
   });
 
   it("serves present /assets/* files as immutable", async () => {
-    const response = await SELF.fetch("https://example.com/assets/app.js");
+    // The real SPA bundle is content-hashed; discover one entry from the
+    // served index.html instead of pinning a filename.
+    const index = await SELF.fetch("https://example.com/");
+    const html = await index.text();
+    const asset = /<script[^>]+src="(\/assets\/[^"]+)"/.exec(html)?.[1];
+    expect(asset).toBeTruthy();
+    const response = await SELF.fetch(`https://example.com${asset}`);
     expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("javascript");
     expect(response.headers.get("cache-control")).toContain("immutable");
   });
 });

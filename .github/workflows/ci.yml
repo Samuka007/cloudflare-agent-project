@@ -10,6 +10,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -18,6 +20,16 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The composed unit serves the real bb SPA (#31): build the pinned
+      # submodule into apps/server-worker/public before the L1 suites run.
+      # --ignore-scripts: the SPA build needs no native desktop deps (the
+      # node-pty node-gyp build is desktop-only and fails on the runner).
+      - name: Build bb SPA (pinned submodule)
+        run: |
+          pnpm --dir bb install --frozen-lockfile --ignore-scripts
+          pnpm --dir bb --filter @bb/app build
+          mkdir -p apps/server-worker/public
+          (cd bb/apps/app/dist && tar cf - --exclude='*.gz' --exclude='*.br' .) | (cd apps/server-worker/public && tar xf -)
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test

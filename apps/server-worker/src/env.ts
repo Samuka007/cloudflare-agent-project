@@ -12,6 +12,17 @@ export interface Env {
   LEASES: DurableObjectNamespace;
   /** Per-thread event log + turn state (ticket #29). */
   AGENT_DO: DurableObjectNamespace;
+  /**
+   * Per-host command journal + session mirror (#27). Bound in the composed
+   * deployment (#31): when present, the control plane's WRITE verbs
+   * (create/send/stop) route through the journal's provider lane instead of
+   * touching the agent DO directly.
+   */
+  ORCHESTRATOR?: DurableObjectNamespace;
+  /** Provider session registry (#28); pairs with ORCHESTRATOR above. */
+  MANAGER?: DurableObjectNamespace;
+  /** Per-machine daemon service DO (#30) — the agent DO's execution seam. */
+  DAEMON_SERVICE?: DurableObjectNamespace;
   /** Static SPA bundle (bb apps/app dist). */
   ASSETS: Fetcher;
 
@@ -35,4 +46,28 @@ export interface Env {
   readonly DATA_DIR?: string;
   /** bb config.hostDaemonPort analogue; null when unset. */
   readonly HOST_DAEMON_PORT?: string;
+
+  // --- composition vars (#31) -------------------------------------------------
+
+  /** Orchestrator DO name / journal host identity (default "local"). */
+  readonly ORCHESTRATOR_HOST_ID?: string;
+  /**
+   * Daemon-service front credentials (daemon client enroll/hostKey). Set as
+   * staging secrets; the hookup literals are the local-dev fallback.
+   */
+  readonly ENROLL_KEY?: string;
+  readonly DAEMON_HOST_KEY?: string;
+  readonly DAEMON_HOST_ID?: string;
+  readonly DAEMON_MACHINE_ID?: string;
+  /**
+   * Relay harness (#28 three keys): read by the manager and the composed
+   * agent DO's per-isolate runtime registration.
+   */
+  readonly MODEL_RELAY_BASE_URL_ANTHROPIC?: string;
+  readonly MODEL_RELAY_API_KEY?: string;
+  readonly MODEL_RELAY_MODEL?: string;
+  readonly MODEL_RELAY_MAX_TOKENS?: string;
+  readonly MODEL_RELAY_THINKING_BUDGET_TOKENS?: string;
+  /** `accept-edits` | `auto` | `full` (default `full`). */
+  readonly HARNESS_PERMISSION_MODE?: string;
 }

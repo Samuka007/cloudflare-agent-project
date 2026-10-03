@@ -1,12 +1,111 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="bb-app-shell-root">
   <head>
-    <meta charset="utf-8" />
-    <title>bb app (test fixture)</title>
-    <link rel="stylesheet" href="/assets/app.css" />
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#ffffff" id="theme-color" />
+    <!-- iOS ignores the manifest's display mode, so these opt the home-screen
+         app into standalone (chrome-less) launch. The translucent status bar
+         and viewport-fit=cover let app surfaces paint edge-to-edge; layout
+         chrome and overlays apply safe-area padding to their content. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="apple-mobile-web-app-title" content="bb" />
+    <title>bb</title>
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="32x32"
+      href="/favicon-32x32.png"
+      id="favicon-32"
+    />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="16x16"
+      href="/favicon-16x16.png"
+      id="favicon-16"
+    />
+    <link
+      rel="apple-touch-icon"
+      sizes="180x180"
+      href="/apple-touch-icon.png"
+      id="apple-touch-icon"
+    />
+    <link
+      rel="manifest"
+      href="/manifest.webmanifest"
+      id="app-manifest"
+      crossorigin="use-credentials"
+    />
+    <script>
+      (function () {
+        var dev = "production" === "development";
+        function setFavicon(dark) {
+          var s = dev ? "-dev" : dark ? "-dark" : "";
+          document.getElementById("favicon-32").href =
+            "/favicon-32x32" + s + ".png";
+          document.getElementById("favicon-16").href =
+            "/favicon-16x16" + s + ".png";
+        }
+        var mq = window.matchMedia("(prefers-color-scheme: dark)");
+        setFavicon(mq.matches);
+        if (!dev)
+          mq.addEventListener("change", function (e) {
+            setFavicon(e.matches);
+          });
+        function getFaviconColorSuffix() {
+          try {
+            var color = localStorage.getItem("bb.faviconColor");
+            return /^(red|orange|yellow|green|teal|blue|purple|pink)$/.test(
+              color,
+            )
+              ? "-" + color
+              : "";
+          } catch {
+            return "";
+          }
+        }
+        var faviconColorSuffix = getFaviconColorSuffix();
+        document.getElementById("app-manifest").href =
+          "/manifest" + faviconColorSuffix + ".webmanifest";
+        document.getElementById("apple-touch-icon").href =
+          "/apple-touch-icon" + faviconColorSuffix + ".png";
+        // Pre-paint browser-chrome color so PWA/status-bar chrome doesn't
+        // flash the wrong shade before the app boots; useTheme.ts owns the
+        // meta tag afterwards. Mirrors the bb.theme preference resolution and
+        // the --canvas values in theme.css (#151515 = oklch(0.195 0 0)).
+        var theme = localStorage.getItem("bb.theme");
+        var darkTheme = theme === "dark" || (theme !== "light" && mq.matches);
+        document.getElementById("theme-color").content = darkTheme
+          ? "#151515"
+          : "#ffffff";
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BFmqO9op.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/chunk-jRWAZmH_.js">
+    <link rel="modulepreload" crossorigin href="/assets/preload-helper-DzyYoeor.js">
+    <link rel="modulepreload" crossorigin href="/assets/atomFamily-QrmC0BQD.js">
+    <link rel="modulepreload" crossorigin href="/assets/pill-BX7hbGlK.js">
+    <link rel="modulepreload" crossorigin href="/assets/useTheme-DaVj02_F.js">
+    <link rel="modulepreload" crossorigin href="/assets/host-update-status-B2J8GGnC.js">
+    <link rel="modulepreload" crossorigin href="/assets/provider-cli-install-Cqh3hZzR.js">
+    <link rel="modulepreload" crossorigin href="/assets/project-mutations-BNaBuG8j.js">
+    <link rel="modulepreload" crossorigin href="/assets/host-path-queries-BXFmpplb.js">
+    <link rel="modulepreload" crossorigin href="/assets/useAppTheme-DzCZBolS.js">
+    <link rel="modulepreload" crossorigin href="/assets/plugin-settings-queries-CD-RjMIB.js">
+    <link rel="modulepreload" crossorigin href="/assets/foreign-dom-mutation-guard-sx-kYheJ.js">
+    <link rel="modulepreload" crossorigin href="/assets/useQueries-CPe1kGoS.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-5xcGJAMC.css">
   </head>
-  <body>
+  <body class="bb-app-shell">
     <div id="root"></div>
-    <script type="module" src="/assets/app.js"></script>
   </body>
 </html>

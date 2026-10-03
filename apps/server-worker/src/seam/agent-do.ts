@@ -1,4 +1,10 @@
 import type { Env } from "../env.js";
+import type {
+  AdapterCommand,
+  AdapterCommandOutcome,
+  ProviderExecutionContext,
+} from "@cap/daemon-worker";
+import { resolveHarness } from "@cap/provider-app";
 
 /**
  * The #26 ⇄ #29 seam. Event storage and turn state live in the per-thread
@@ -23,7 +29,7 @@ export interface AgentDoRpc {
     /** Log-bootstrap title; empty string when the thread is created untitled
      * (control-plane D1 keeps `title: null` for SPA titleFallback display). */
     title: string;
-  }): Promise<{ threadId: string; seq: number }>;
+  }): Promise<{ threadId: string; duplicated: boolean }>;
   sendMessage(args: {
     clientRequestId: string;
     content: Array<{ type: "text"; text: string }>;
@@ -53,8 +59,212 @@ export interface UxThreadEvent {
 }
 
 export function agentDoFor(env: Env, threadId: string): AgentDoRpc {
+  if (env.ORCHESTRATOR !== undefined && env.MANAGER !== undefined) {
+    return orchestratorBackedRpc(env, threadId);
+  }
   const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId));
   return stub as unknown as AgentDoRpc;
+}
+
+// ---------------------------------------------------------------------------
+// Orchestrator-backed composition (#31): writes route
+// server → daemon-worker (command journal, provider route) → provider-app
+// (edge-agent adapter → manager registry → agent DO). Reads stay direct on
+// the agent DO — bb's control plane reads the event log locally too.
+// ---------------------------------------------------------------------------
+
+/** Structural view of the HostOrchestratorDO journal RPC the bridge uses. */
+export interface OrchestratorJournalRpc {
+  ensureHost(args: {
+    hostId: string;
+  }): Promise<{ kind: "bound"; hostId: string } | { kind: "host_mismatch"; boundHostId: string }>;
+  enqueueCommand(args: {
+    type: string;
+    command: AdapterCommand;
+    threadId?: string;
+  }): Promise<{ commandId: string; cursor: number }>;
+  dispatchCommand(args: {
+    commandId: string;
+    route?: "provider" | "machine";
+  }): Promise<
+    | { kind: "settled"; outcome: AdapterCommandOutcome; attemptId: string }
+    | { kind: "stale_settlement"; attemptId: string }
+    | { kind: "accepted_async"; attemptId: string }
+    | { kind: "not_dispatchable"; state: string }
+    | { kind: "unknown_command" }
+  >;
+}
+
+/** Structural view of the ManagerDo registry read the bridge uses. */
+export interface ManagerRegistryRpc {
+  providerSessionFor(threadId: string): Promise<{
+    providerThreadId: string;
+    activeTurnId: string | null;
+    poisoned: boolean;
+  } | null>;
+}
+
+/**
+ * bb fills claudeCodeMockCliTraffic from app settings before dispatch
+ * (execution-options.ts:180); the M0 fill is the disabled default (same fill
+ * the daemon-worker fake uses).
+ */
+function bridgeContext(env: Env): ProviderExecutionContext {
+  return {
+    ...resolveHarness(env).execution,
+    claudeCodeMockCliTraffic: { enabled: false, endpoint: "https://api.anthropic.com" },
+  };
+}
+
+function bridgeFailure(
+  where: string,
+  outcome: Extract<AdapterCommandOutcome, { ok: false }>,
+): never {
+  throw new Error(
+    `${where} failed: ${outcome.errorCode}: ${outcome.errorMessage}`,
+  );
+}
+
+function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
+  const hostId = env.ORCHESTRATOR_HOST_ID ?? "local";
+  const orchestratorNs = env.ORCHESTRATOR;
+  const managerNs = env.MANAGER;
+  if (orchestratorNs === undefined || managerNs === undefined) {
+    throw new Error("composition requires the ORCHESTRATOR and MANAGER bindings");
+  }
+  const orchestrator = orchestratorNs.get(
+    orchestratorNs.idFromName(hostId),
+  ) as unknown as OrchestratorJournalRpc;
+  const manager = managerNs.get(
+    managerNs.idFromName("manager"),
+  ) as unknown as ManagerRegistryRpc;
+  // Reads stay direct: the event log projection lives on the per-thread DO.
+  const reader = env.AGENT_DO.get(
+    env.AGENT_DO.idFromName(threadId),
+  ) as unknown as Pick<AgentDoRpc, "getEvents">;
+
+  async function dispatch(command: AdapterCommand): Promise<AdapterCommandOutcome> {
+    const ensured = await orchestrator.ensureHost({ hostId });
+    if (ensured.kind === "host_mismatch") {
+      throw new Error(`orchestrator host mismatch: bound ${ensured.boundHostId}, got ${hostId}`);
+    }
+    const { commandId } = await orchestrator.enqueueCommand({
+      type: command.type,
+      command,
+      threadId,
+    });
+    const outcome = await orchestrator.dispatchCommand({ commandId, route: "provider" });
+    if (outcome.kind !== "settled") {
+      const state = outcome.kind === "not_dispatchable" ? ` (${outcome.state})` : "";
+      throw new Error(`orchestrator dispatch ${outcome.kind}${state}`);
+    }
+    return outcome.outcome;
+  }
+
+  return {
+    async createThread(args) {
+      const command: AdapterCommand = {
+        type: "thread/start",
+        threadId,
+        cwd: env.DATA_DIR ?? "/data",
+        ...(args.title
+          ? { input: [{ type: "text", text: args.title, mentions: [] }] }
+          : {}),
+        options: bridgeContext(env),
+        instructionMode: "append",
+      };
+      const outcome = await dispatch(command);
+      if (!outcome.ok) bridgeFailure("thread/start", outcome);
+      return { threadId, duplicated: false };
+    },
+
+    async sendMessage(args) {
+      const session = await manager.providerSessionFor(threadId);
+      if (session === null) {
+        throw new Error(`sendMessage failed: no provider session for thread ${threadId}`);
+      }
+      const input: Extract<AdapterCommand, { type: "turn/start" }>["input"] = args.content.map(
+        (part) => ({ type: "text", text: part.text, mentions: [] }),
+      );
+
+      const steerTurn = async (): Promise<AdapterCommandOutcome | null> => {
+        // bb turn/steer addresses the provider's active turn; the registry's
+        // advisory mirror supplies the id. A stale mirror (turn already
+        // terminal in the DO) answers not-ok — the caller falls back to start.
+        if (session.activeTurnId === null) return null;
+        return dispatch({
+          type: "turn/steer",
+          threadId,
+          providerThreadId: session.providerThreadId,
+          expectedTurnId: session.activeTurnId,
+          input,
+          clientRequestId: args.clientRequestId,
+          options: bridgeContext(env),
+        });
+      };
+
+      if (args.mode === "steer") {
+        const outcome = await steerTurn();
+        if (outcome === null) {
+          throw new Error(
+            `sendMessage failed: steer requested with no active provider turn`,
+          );
+        }
+        if (!outcome.ok) bridgeFailure("turn/steer", outcome);
+        const result = outcome.result as { turnId?: string };
+        return { turnId: result.turnId ?? "", steer: true, duplicated: false };
+      }
+      if (args.mode === "auto") {
+        const steered = await steerTurn();
+        if (steered !== null && steered.ok) {
+          const result = steered.result as { turnId?: string };
+          return { turnId: result.turnId ?? "", steer: true, duplicated: false };
+        }
+      }
+      const outcome = await dispatch({
+        type: "turn/start",
+        threadId,
+        providerThreadId: session.providerThreadId,
+        input,
+        clientRequestId: args.clientRequestId,
+        options: bridgeContext(env),
+      });
+      if (!outcome.ok) bridgeFailure("turn/start", outcome);
+      const result = outcome.result as { turnId?: string; duplicated?: boolean };
+      return { turnId: result.turnId ?? "", steer: false, duplicated: result.duplicated ?? false };
+    },
+
+    async getEvents(args) {
+      return reader.getEvents(args);
+    },
+
+    async cancelTurn(args) {
+      const session = await manager.providerSessionFor(threadId);
+      // The registry mirror must agree with the caller's turn; a mismatch
+      // means the turn already settled — nothing to stop.
+      if (session === null || session.activeTurnId !== args.turnId) {
+        return { accepted: false };
+      }
+      const outcome = await dispatch({
+        type: "thread/stop",
+        threadId,
+        providerThreadId: session.providerThreadId,
+        activeTurnId: args.turnId,
+      });
+      if (!outcome.ok) bridgeFailure("thread/stop", outcome);
+      const result = outcome.result as { interrupted?: boolean };
+      return { accepted: result.interrupted ?? false };
+    },
+
+    // The daemon-service DO delivers execution updates itself (#30 forward
+    // path); the control plane never originates them.
+    async onExecutionUpdate(u) {
+      const stub = env.AGENT_DO.get(
+        env.AGENT_DO.idFromName(threadId),
+      ) as unknown as Pick<AgentDoRpc, "onExecutionUpdate">;
+      return stub.onExecutionUpdate(u);
+    },
+  };
 }
 
 /**
