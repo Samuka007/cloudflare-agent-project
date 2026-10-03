@@ -1,0 +1,17 @@
+{
+  "name": "cloudflare-agent-project",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test"
+  },
+  "devDependencies": {
+    "eslint": "^9.37.0",
+    "typescript-eslint": "^8.71.0"
+  }
+}
