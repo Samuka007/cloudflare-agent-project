@@ -62,13 +62,21 @@ export async function send(threadId: string): Promise<void> {
 }
 
 export async function openWebSocket(path: string): Promise<WebSocket> {
-  const response = (await SELF.fetch(`${BASE}${path}`, {
+  await ensureMigrations();
+  // Direct namespace fetch: the vitest pool's SELF WebSocket transport does
+  // not deliver server→client frames reliably; talking to the hub DO through
+  // its namespace exercises the identical DO fetch() handler.
+  if (path !== "/ws") {
+    throw new Error(`unsupported websocket path: ${path}`);
+  }
+  const stub = env.HUB.get(env.HUB.idFromName("hub"));
+  const response = (await stub.fetch("https://hub/ws", {
     headers: { upgrade: "websocket" },
   })) as unknown as Response;
-  if (response.status !== 101 || response.webSocket === undefined) {
+  if (response.status !== 101) {
     throw new Error(`websocket upgrade failed: ${response.status}`);
   }
-  if (response.webSocket === null) {
+  if (response.webSocket === null || response.webSocket === undefined) {
     throw new Error("upgrade produced no websocket");
   }
   const socket: WebSocket = response.webSocket;

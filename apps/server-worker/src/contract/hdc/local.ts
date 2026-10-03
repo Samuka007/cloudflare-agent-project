@@ -326,6 +326,9 @@ export type HostDaemonLocalSchema = {
   };
 };
 
+// Verbatim bb type: Hono's blank env for the daemon-local app. The `{}` is
+// Hono's own API shape here, not a loose object type.
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export type HostDaemonLocalRoutes = Hono<{}, HostDaemonLocalSchema, "/">;
 
 // ---------------------------------------------------------------------------

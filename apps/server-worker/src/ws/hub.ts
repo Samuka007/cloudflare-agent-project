@@ -25,17 +25,9 @@ import {
  *   (hub.ts:957-961 "Skipping invalid realtime broadcast").
  */
 export class NotificationHubDO extends DurableObject {
-  private clients: HubClient[] = [];
   private threadEventWaiters: Array<ThreadEventWaiter> = [];
   private daemonDisconnects: DaemonDisconnect[] = [];
 
-  // this.ctx / this.env come from the DurableObject base (cloudflare:workers).
-  declare readonly ctx: DurableObjectState;
-  declare readonly env: Env;
-
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env);
-  }
 
   // --- public /ws endpoint ---------------------------------------------------
 
@@ -46,9 +38,12 @@ export class NotificationHubDO extends DurableObject {
     }
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
-    // bb onClientSocketOpen: register only — no greeting frame.
+    // bb onClientSocketOpen: register only — no greeting frame. Subscription
+    // state rides the hibernation attachment; the runtime may hand
+    // webSocketMessage a different socket object than this fetch saw, so
+    // identity maps are not reliable here.
     this.ctx.acceptWebSocket(server);
-    this.clients.push({ socket: server, keys: new Set() });
+    server.serializeAttachment({ keys: [] as string[] });
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -68,24 +63,21 @@ export class NotificationHubDO extends DurableObject {
       ws.close(1008, "invalid-message");
       return;
     }
-    const client = this.clients.find((candidate) => candidate.socket === ws);
-    if (!client) {
-      return;
-    }
+    const keys = new Set<string>(readAttachment(ws).keys);
     const key = realtimeSubscriptionTargetKey(
       message.data.target as RealtimeSubscriptionTarget,
     );
     if (message.data.type === "subscribe") {
-      client.keys.add(key);
+      keys.add(key);
     } else {
-      client.keys.delete(key);
+      keys.delete(key);
     }
+    ws.serializeAttachment({ keys: [...keys] });
   }
 
-  webSocketClose(ws: WebSocket): void {
+  webSocketClose(_ws: WebSocket): void {
     // Event waiters are request-scoped in bb, not socket-scoped; closing a
-    // browser socket only drops its subscriptions.
-    this.clients = this.clients.filter((client) => client.socket !== ws);
+    // browser socket only drops its subscriptions (attachment dies with it).
   }
 
   // --- fan-out (RPC surface used by the control plane) ------------------------
@@ -165,14 +157,15 @@ export class NotificationHubDO extends DurableObject {
     frame: Record<string, unknown>,
   ): Promise<{ delivered: number }> {
     const payload = JSON.stringify(frame);
-    for (const client of [...this.clients]) {
+    const sockets = this.ctx.getWebSockets();
+    for (const socket of sockets) {
       try {
-        client.socket.send(payload);
+        socket.send(payload);
       } catch {
-        this.dropClient(client);
+        // dead socket; hibernation runtime reaps it
       }
     }
-    return { delivered: this.clients.length };
+    return { delivered: sockets.length };
   }
 
   // --- event waiters (bb hub.ts registerThreadEventWaiter + /events/wait) -----
@@ -284,36 +277,40 @@ export class NotificationHubDO extends DurableObject {
       console.error("Skipping invalid realtime broadcast");
       return 0;
     }
-    const key = subscriptionKeyForMessage(validated.data);
+    // bb subscriptionKeysForMessage (hub.ts:53-89): an id-bearing message
+    // fans out to BOTH the detail key and the list key.
+    const messageKeys = subscriptionKeysForMessage(validated.data);
     const payload = JSON.stringify(validated.data);
     let delivered = 0;
-    for (const client of [...this.clients]) {
-      if (!client.keys.has(key)) {
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!messageKeys.some((key) => attachment.keys.includes(key))) {
         continue;
       }
       try {
-        client.socket.send(payload);
+        socket.send(payload);
         delivered += 1;
       } catch {
-        this.dropClient(client);
+        try {
+          socket.close(1001, "server-shutdown");
+        } catch {
+          // already closed
+        }
       }
     }
     return delivered;
   }
-
-  private dropClient(client: HubClient): void {
-    this.clients = this.clients.filter((candidate) => candidate !== client);
-    try {
-      client.socket.close(1001, "server-shutdown");
-    } catch {
-      // already closed
-    }
-  }
 }
 
-interface HubClient {
-  socket: WebSocket;
-  keys: Set<string>;
+interface SocketAttachment {
+  keys: string[];
+}
+
+function readAttachment(socket: WebSocket): SocketAttachment {
+  const attachment = socket.deserializeAttachment() as
+    | SocketAttachment
+    | null;
+  return attachment ?? { keys: [] };
 }
 
 interface ThreadEventWaiter {
@@ -329,15 +326,15 @@ interface DaemonDisconnect {
 /** bb resolveThreadRuntimeStateFromLatestSession grace window. */
 export const DAEMON_ACTIVE_WORK_DISCONNECT_GRACE_MS = 5_000;
 
-function subscriptionKeyForMessage(
+function subscriptionKeysForMessage(
   message:
     | { entity: "thread" | "project" | "environment" | "host"; id?: string }
     | { entity: "system" },
-): string {
+): string[] {
   if (message.entity === "system") {
-    return "system";
+    return ["system"];
   }
   return message.id === undefined
-    ? `${message.entity}-list`
-    : `${message.entity}-detail:${message.id}`;
+    ? [`${message.entity}-list`]
+    : [`${message.entity}-detail:${message.id}`, `${message.entity}-list`];
 }

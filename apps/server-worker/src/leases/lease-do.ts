@@ -16,13 +16,6 @@ interface LeaseRecord {
 }
 
 export class LeaseStoreDO extends DurableObject {
-  // this.ctx / this.env come from the DurableObject base (cloudflare:workers).
-  declare readonly ctx: DurableObjectState;
-  declare readonly env: Env;
-
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env);
-  }
 
   async createLease(args: {
     leaseId: string;
