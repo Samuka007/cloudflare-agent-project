@@ -39,6 +39,7 @@ export type { WatchdogConfig, WatchdogConfigPatch } from "./config.js";
 export { ModelProviderError } from "./provider.js";
 export type {
   ModelProvider,
+  PriorModelCall,
   ModelRequest,
   ModelStreamChunk,
   ModelToolCall,
@@ -68,3 +69,4 @@ export type {
   TurnRuntime,
 } from "./turn-state.js";
 export { projectToUxEvents } from "./ux-projection.js";
+export { ProjectionError, modelRequestFromEvents } from "./translate.js";

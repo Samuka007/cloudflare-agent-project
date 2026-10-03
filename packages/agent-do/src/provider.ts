@@ -18,6 +18,25 @@ export interface SteerContribution {
   text: string;
 }
 
+/** One completed model call of the turn — its slice of the replayed history. */
+export interface PriorModelCall {
+  /** The call's `model.call_started` seq. */
+  modelCallId: number;
+  /** Steers consumed at this call's boundary (§2.3), in steer seq order. */
+  steers: SteerContribution[];
+  /** Terminal assistant text (`model.call_completed.text`). */
+  text: string;
+  /** Complete tool calls of this call, in call order. */
+  toolCalls: ModelToolCall[];
+  /**
+   * Terminal results of this call's executions, in `tool.call` seq order.
+   * Pairing invariant (§2.2, #28 ruling ③): `toolResults.length` must equal
+   * `toolCalls.length` once the call is prior history — no tool_use without
+   * its tool_result ever reaches the wire.
+   */
+  toolResults: ToolResultContribution[];
+}
+
 export interface ToolResultContribution {
   executionId: string;
   tool: string;
@@ -32,12 +51,19 @@ export interface ModelRequest {
   modelCallId: number;
   /** User input text of the turn. */
   input: string;
-  /** Unconsumed steers routed into this call (already persisted). */
+  /**
+   * Steers this call's boundary consumes (the `consumedSteerSeqs` of this
+   * call's `model.call_started`, already persisted) — they enter the context
+   * now and stay in every later call's history via the prior-call slices.
+   */
   steers: SteerContribution[];
-  /** Prior assistant text in this turn (recovered prefix included). */
-  priorAssistantText: string;
-  /** Terminal tool results since the previous model call. */
-  toolResults: ToolResultContribution[];
+  /**
+   * Completed calls of this turn before this one, in call order — the
+   * append-only history (omp §1.5). A full rebuild from the log per call is
+   * the structural replay-consistency guarantee: the same log always
+   * projects the same request.
+   */
+  priorCalls: PriorModelCall[];
 }
 
 export type ModelStreamChunk =
