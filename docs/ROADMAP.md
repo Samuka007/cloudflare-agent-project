@@ -10,7 +10,7 @@
 
 | 里程碑 | 内容 | 验收 | 状态 |
 |---|---|---|---|
-| M0 骨架 | S0 裸脑（curl 驱动 loop+日志+relay）→ S1 第一只手（PVE NixOS LXC daemon + GatewayDO + bash）→ S2 脸（bb SPA + Cloudflare Access + 最小合同面）→ S3 换设备验收 | 双设备演示：电脑开 thread 干活 → 关机 → 手机续上并驱动机器执行 | 未开工 |
+| M0 骨架 | 契约先行双线并进（spec #17）：契约与假件（#18）→ UX 线（#19）∥ 功能线 loop（#20）/ 机器执行（#21）→ 合龙换设备验收（#22） | 双设备演示：电脑开 thread 干活 → 关机 → 手机续上并驱动机器执行 | 进行中 |
 | M1 可用性硬化 (#14) | 多 daemon、fleet、skills 加载、compaction 基础、崩溃恢复 | 全部用模拟对象验收（对照演练 / 故障注入 / 一周舱内 soak），不碰真实工作 | 计划中 |
 | M2 存量迁移 (#15) | 19G 会话 + skills 语料（副本操作，源数据不动） | 抽样比对条数/条目/序列号 | 计划中 |
 | M3 生态扩展 (#16) | browser（CF Rendering/camofox）、分享/ACL、自动化面 | 随做随定 | 计划中 |
