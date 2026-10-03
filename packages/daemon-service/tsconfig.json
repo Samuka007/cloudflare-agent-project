@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "types": ["@cloudflare/workers-types"]
+  },
+  // The daemon client (src/client) is a plain Bun/Node process and is
+  // typechecked against Node types separately (tsconfig.client.json) — the
+  // Workers and Node ambient type sets overlap-and-conflict.
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["src/client/**"]
+}
