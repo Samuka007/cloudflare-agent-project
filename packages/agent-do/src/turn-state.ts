@@ -152,6 +152,15 @@ function requireCall(state: ReplayState, turnId: string, modelCallId: number): M
   return call;
 }
 
+/** Call lookup by id alone — for events whose turn may already be terminal. */
+function requireCallOf(state: ReplayState, modelCallId: number): ModelCallRuntime {
+  const call = state.modelCalls.get(modelCallId);
+  if (call === undefined) {
+    throw new FsmViolationError(`unknown modelCallId ${modelCallId} at seq ${state.latestSeq}`);
+  }
+  return call;
+}
+
 /** Mutate `state` by one event, enforcing every FSM transition guard. */
 export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
   state.latestSeq = event.seq;
@@ -252,16 +261,28 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
     }
     case "model.call_sealed":
     case "model.call_failed": {
-      const runtime = requireActive(state);
-      const call = requireCall(state, runtime.turnId, event.data.modelCallId);
+      // Watchdog expiry appends turn.failed BEFORE aborting the in-flight
+      // call, so the cancellation echo (model.call_failed{aborted}, or a
+      // racing alarm seal) legitimately lands after the terminal row. The
+      // call row must still exist and be running; only the active-turn
+      // demand is relaxed — and a late echo never rewinds a terminal turn.
+      const call = requireCallOf(state, event.data.modelCallId);
       if (call.status !== "running") {
         throw new FsmViolationError(`${event.type} on ${call.status} call`);
+      }
+      const runtime = state.turns.get(call.turnId);
+      if (runtime === undefined) {
+        throw new FsmViolationError(`unknown turn ${call.turnId} for ${event.data.modelCallId}`);
       }
       call.status = event.type === "model.call_sealed" ? "sealed" : "failed";
       call.aborted = event.type === "model.call_failed" && event.data.aborted === true;
       // §2.1 retry row: a retryable call_failed rewinds the turn to QUEUED so
       // the backoff's next `model.call_started` is a legal transition.
-      if (event.type === "model.call_failed" && event.data.retryable === true) {
+      if (
+        event.type === "model.call_failed" &&
+        event.data.retryable === true &&
+        !TERMINAL_TURN_STATUSES.includes(runtime.status)
+      ) {
         runtime.status = "queued";
       }
       return;

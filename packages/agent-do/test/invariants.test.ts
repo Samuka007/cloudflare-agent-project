@@ -394,6 +394,42 @@ describe("§7 invariants — turn lifecycle", () => {
   });
 });
 
+describe("§7 invariants — watchdog terminal ordering", () => {
+  /** Minimal synthetic log rows for the reducer (shapes = fsm-events zod). */
+  function row(seq: number, type: AgentEventType, data: Record<string, unknown>): AnyAgentEvent {
+    return { seq, id: `evt_${seq}`, threadId: "thr_watchdog", type, data, createdAt: seq * 1000 } as AnyAgentEvent;
+  }
+
+  test("watchdog order: turn.failed precedes the abort echo; replay must survive it", () => {
+    // expireTurnWatchdog appends turn.failed, THEN aborts the driver — the
+    // in-flight call's model.call_failed{aborted} lands after the terminal
+    // row. A cold replay that demanded an active turn here would brick the
+    // DO (found by the #34 full-chain drill: FsmViolationError in the
+    // constructor after eviction).
+    const turnId = "turn_watchdog_replay";
+    const state = replayEvents([
+      row(1, "thread.created", { title: "watchdog order", machineId: "local" }),
+      row(2, "turn.input", { turnId, inputId: "in-w", content: [{ type: "text", text: TEXT }] }),
+      row(3, "model.call_started", { turnId, consumedSteerSeqs: [] }),
+      row(4, "turn.failed", { turnId, reason: "turn_watchdog_expired" }),
+      row(5, "model.call_failed", { turnId, modelCallId: 3, error: "cancelled", retryable: false, aborted: true }),
+    ]);
+    expect(state.turns.get(turnId)?.status).toBe("failed");
+    expect(state.modelCalls.get(3)?.status).toBe("failed");
+    expect(state.modelCalls.get(3)?.aborted).toBe(true);
+
+    // Same tolerance for the alarm-driven seal racing the watchdog.
+    const sealedState = replayEvents([
+      row(1, "thread.created", { title: "watchdog order", machineId: "local" }),
+      row(2, "turn.input", { turnId, inputId: "in-w", content: [{ type: "text", text: TEXT }] }),
+      row(3, "model.call_started", { turnId, consumedSteerSeqs: [] }),
+      row(4, "turn.failed", { turnId, reason: "turn_watchdog_expired" }),
+      row(5, "model.call_sealed", { turnId, modelCallId: 3, prefixChars: 12 }),
+    ]);
+    expect(sealedState.modelCalls.get(3)?.status).toBe("sealed");
+  });
+});
+
 describe("§7 invariants — model-call accounting", () => {
   test("I11: provider calls ≡ model.call_started; eviction mid-stream never re-calls", async () => {
     // Warm path: one call attempt per started event.
