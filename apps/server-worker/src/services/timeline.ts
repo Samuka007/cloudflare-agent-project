@@ -1,5 +1,6 @@
 import { timelineRowSchema, type TimelineRow } from "../contract/thread-timeline.js";
 import { threadEventDataSchemas } from "@cap/protocol";
+import type { JsonValue } from "../contract/domain/json-value.js";
 import type { UxThreadEvent } from "../seam/agent-do.js";
 
 /**
@@ -51,6 +52,46 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
       turnPendingRowIds.set(turnId, ids);
     }
     ids.add(rowId);
+  };
+
+  /**
+   * Agent-message items have no item/started event: they materialize from
+   * the first delta or the completion (bb assembles the assistant row the
+   * same way from the stream). Registered in `assistantByItemId` so later
+   * deltas/completions find it.
+   */
+  const ensureAssistantRow = (
+    rawItemId: string,
+    turnId: string | null,
+    threadId: string,
+    seq: number,
+    createdAt: number,
+  ): string | undefined => {
+    const existing = assistantByItemId.get(rawItemId);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const rowId = `assistant:${rawItemId}`;
+    rows.set(rowId, {
+      kind: "conversation",
+      role: "assistant",
+      id: rowId,
+      threadId,
+      turnId,
+      sourceSeqStart: seq,
+      sourceSeqEnd: seq,
+      startedAt: createdAt,
+      createdAt,
+      text: "",
+      attachments: null,
+      turnRequest: null,
+      __order: seq,
+    });
+    assistantByItemId.set(rawItemId, rowId);
+    if (turnId) {
+      registerTurnRow(turnId, rowId);
+    }
+    return rowId;
   };
 
   for (const event of events) {
@@ -126,7 +167,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
             status: "pending",
             callId: item.id,
             toolName: item.tool,
-            toolArgs: (item.arguments ?? null) as RowDraft["toolArgs"],
+            toolArgs: (item.arguments ?? null) as Record<string, JsonValue> | null,
             output: item.output,
             completedAt: item.completedAt,
             approvalStatus: null,
@@ -144,7 +185,13 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
         if (!parsed.success) {
           break;
         }
-        const rowId = assistantByItemId.get(parsed.data.itemId);
+        const rowId = ensureAssistantRow(
+          parsed.data.itemId,
+          pickTurnId(raw),
+          event.threadId,
+          event.seq,
+          event.createdAt,
+        );
         const row = rowId ? rows.get(rowId) : undefined;
         if (row && row.kind === "conversation" && row.role === "assistant") {
           row.text += parsed.data.delta;
@@ -158,7 +205,10 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
           break;
         }
         const item = parsed.data.item;
-        const assistantRowId = assistantByItemId.get(item.id);
+        const assistantRowId =
+          item.type === "agentMessage"
+            ? ensureAssistantRow(item.id, pickTurnId(raw), event.threadId, event.seq, event.createdAt)
+            : assistantByItemId.get(item.id);
         const assistantRow = assistantRowId ? rows.get(assistantRowId) : undefined;
         if (assistantRow && assistantRow.kind === "conversation") {
           if (item.type === "agentMessage" && item.text.length > 0) {
