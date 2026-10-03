@@ -10,7 +10,7 @@
 
 | 里程碑 | 内容 | 验收 | 状态 |
 |---|---|---|---|
-| M0 骨架 | bb 全栈移植（spec #17 v2）：server 控制面（#26）→ daemon worker（#27）→ provider 应用（#28）∥ agent DO（#29）∥ daemon service+client（#30）→ 合龙换设备验收（#31） | 原版 bb SPA 不改一行跑通全流程 + 双设备演示 | 进行中 |
+| M0 骨架 | bb 全栈移植（spec #17 v2）：#26–#30 全交付；#31 合龙完成——staging 上线（cap-server-staging.dai-samuel.workers.dev）、真 SPA 不改一行过七判据、L3 三演练全过、真模型全链（本地腿）跑通；剩：用户换设备演示 + kill criteria 签收 + Access 配置 + 边缘模型端点裁定 | 原版 bb SPA 不改一行跑通全流程 + 双设备演示 | 验收中（等用户演示） |
 | M1 可用性硬化 (#14) | 多 daemon、fleet、skills 加载、compaction 基础、崩溃恢复 | 全部用模拟对象验收（对照演练 / 故障注入 / 一周舱内 soak），不碰真实工作 | 计划中 |
 | M2 存量迁移 (#15) | 19G 会话 + skills 语料（副本操作，源数据不动） | 抽样比对条数/条目/序列号 | 计划中 |
 | M3 生态扩展 (#16) | browser（CF Rendering/camofox）、分享/ACL、自动化面 | 随做随定 | 计划中 |
