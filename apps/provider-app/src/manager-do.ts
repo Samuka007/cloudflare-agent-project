@@ -26,10 +26,16 @@ import { flattenPromptInputGroups } from "./flatten-input.js";
  * §2.3):
  *
  * - session registry (durable truth, bb's `host_daemon_sessions` +
- *   runtime-memory Map collapsed into one SQLite table): threadId ↔ agent DO
- *   instance name, lifecycle, and the ompRecovery-equivalent descriptor;
- * - per-thread agent DO spawn/reuse: `AGENT_DO.idFromName(providerThreadId)`
- *   gives process-key reuse by construction (bb `processKey` per thread);
+ *   runtime-memory Map collapsed into one SQLite table): threadId ↔
+ *   providerThreadId (the edge-agent session identity, `pthr_<threadId>`),
+ *   lifecycle, and the ompRecovery-equivalent descriptor;
+ * - per-thread agent DO spawn/reuse: `AGENT_DO.idFromName(threadId)` — the
+ *   fleet-wide DO name is the LOGICAL thread id (#31 composition): the
+ *   daemon-service DO self-routes execution updates by
+ *   `threadIdFromExecutionId`, and the server control plane reads events by
+ *   threadId, so every caller must land on the same DO. The providerThreadId
+ *   stays the provider-session registry key (bb `processKey` analogue) without
+ *   being the DO name;
  * - harness config application: the resolved three keys are snapshotted per
  *   thread, drift is classified (live vs session) at each turn, and the
  *   relay client is (re)registered into the agent DO injection registry
@@ -277,7 +283,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
     if (existing !== undefined) {
       // Reuse: one agent DO per thread — re-issue createThread so an evicted
       // DO replays from its own log while the row identity stays untouched.
-      await this.agentStub(existing.providerThreadId).createThread({
+      await this.agentStub(existing.threadId).createThread({
         threadId: existing.threadId,
         title: existing.title,
         machineId: existing.machineId,
@@ -301,7 +307,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
     }
     const title = firstTextOf(command)?.slice(0, 120) || `thread ${command.threadId}`;
     const machineId = resolveHarness(this.env).hostBinding.machineId;
-    const created = await this.agentStub(providerThreadId).createThread({
+    const created = await this.agentStub(command.threadId).createThread({
       threadId: command.threadId,
       title,
       machineId,
@@ -353,7 +359,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       // and answers duplicated=true; a wiped DO is re-created under the row's
       // frozen identity (the registry stays the mapping truth).
       try {
-        await this.agentStub(row.providerThreadId).createThread({
+        await this.agentStub(row.threadId).createThread({
           threadId: row.threadId,
           title: row.title,
           machineId: row.machineId,
@@ -387,7 +393,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       }
       const now = Date.now();
       const title = `thread ${command.threadId}`;
-      const created = await this.agentStub(providerThreadId).createThread({
+      const created = await this.agentStub(command.threadId).createThread({
         threadId: command.threadId,
         title,
         machineId: resolveHarness(this.env).hostBinding.machineId,
@@ -456,7 +462,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
     }
     let sent: SendMessageResult;
     try {
-      sent = await this.agentStub(row.providerThreadId).sendMessage({
+      sent = await this.agentStub(command.threadId).sendMessage({
         clientRequestId: command.clientRequestId,
         content,
         mode: "start",
@@ -472,7 +478,10 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
         ? { harness_json: snapshotHarness(resolveHarness(this.env)) }
         : {}),
     });
-    return { ok: true, result: { turnId: sent.turnId, agentInvoked: true } };
+    return {
+      ok: true,
+      result: { turnId: sent.turnId, agentInvoked: true, duplicated: sent.duplicated },
+    };
   }
 
   private async steerTurn(
@@ -498,12 +507,12 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       return errorOutcome("invalid_input", "turn/steer carries no text input");
     }
     try {
-      await this.agentStub(row.providerThreadId).sendMessage({
+      const sent = await this.agentStub(command.threadId).sendMessage({
         clientRequestId: command.clientRequestId,
         content,
         mode: "steer",
       });
-      return { ok: true, result: { steered: true } };
+      return { ok: true, result: { steered: true, turnId: sent.turnId } };
     } catch (error) {
       return mapAgentError(error);
     }
@@ -523,7 +532,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
     if (command.activeTurnId !== null) {
       interrupted = true;
       try {
-        await this.agentStub(row.providerThreadId).cancelTurn({
+        await this.agentStub(command.threadId).cancelTurn({
           turnId: command.activeTurnId,
         });
       } catch {
@@ -606,10 +615,33 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
   // Storage + agent DO access
   // -------------------------------------------------------------------------
 
-  private agentStub(providerThreadId: string): DurableObjectStub<AgentDO> {
+  /**
+   * The per-thread agent DO, named by the logical thread id (#31): see the
+   * class doc for why the fleet-wide DO name must be the threadId.
+   */
+  private agentStub(threadId: string): DurableObjectStub<AgentDO> {
     return this.env.AGENT_DO.get(
-      this.env.AGENT_DO.idFromName(providerThreadId),
+      this.env.AGENT_DO.idFromName(threadId),
     ) as unknown as DurableObjectStub<AgentDO>;
+  }
+
+  /**
+   * Registry read for the composition seam (#31): the server-side bridge
+   * builds turn commands against the bb AdapterCommand vocabulary, which
+   * addresses the provider session by its id — this is the one lookup.
+   */
+  async providerSessionFor(threadId: string): Promise<{
+    providerThreadId: string;
+    activeTurnId: string | null;
+    poisoned: boolean;
+  } | null> {
+    const row = this.rowByThreadId(threadId);
+    if (row === undefined) return null;
+    return {
+      providerThreadId: row.providerThreadId,
+      activeTurnId: row.activeTurnId,
+      poisoned: row.poisoned,
+    };
   }
 
   private rowByThreadId(threadId: string): SessionRow | undefined {

@@ -100,7 +100,7 @@ test("thread/start spawns one agent DO per thread and reuses it on restart", asy
   expect(other.providerThreadId).not.toBe(first.providerThreadId);
 
   // The agent DO holds exactly one thread.created — reuse did not double-spawn.
-  const events = await eventsOf(first.providerThreadId as string);
+  const events = await eventsOf(first.threadId as string);
   expect(events.filter((event) => event.type === "thread.created")).toHaveLength(1);
 });
 
@@ -126,7 +126,7 @@ test("registry survives manager DO eviction and stays consistent with the agent 
   expect(descriptorAfter.providerThreadId).toBe(providerThreadId);
 
   // Agent DO consistency: same DO name still owns the same thread and log.
-  const events = await afterAbort(() => eventsOf(providerThreadId));
+  const events = await afterAbort(() => eventsOf(threadId));
   expect(events[0]?.type).toBe("thread.created");
   expect(events[0]?.data).toMatchObject({ machineId: "local" });
 
@@ -136,8 +136,8 @@ test("registry survives manager DO eviction and stays consistent with the agent 
       call(managerName, turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`)),
     ),
   );
-  await afterAbort(() => waitTurnComplete(providerThreadId, stringField(sent, "turnId")));
-  const finalEvents = await eventsOf(providerThreadId);
+  await afterAbort(() => waitTurnComplete(threadId, stringField(sent, "turnId")));
+  const finalEvents = await eventsOf(threadId);
   expect(finalEvents.some((event) => event.type === "turn.completed")).toBe(true);
 });
 
