@@ -1181,31 +1181,32 @@ export class HostOrchestratorDO extends DurableObject {
   private async scheduleAlarm(): Promise<void> {
     const now = Date.now();
     const deadlines: number[] = [];
-    // A deadline at exactly `now` still needs its sweep (zero-length leases
-    // and grace windows must not silently miss their alarm).
+    // Any outstanding deadline needs its sweep — including ones already
+    // overdue (this runs after the row inserts, so a zero-length lease can
+    // be in the past by the time we look): arm at max(deadline, now).
     const sessionDeadline = this.sql
       .exec<{ d: number }>(
         "SELECT MIN(lease_expires_at) AS d FROM host_daemon_sessions WHERE status = 'active'",
       )
       .toArray()[0];
-    if (sessionDeadline?.d !== undefined && Number(sessionDeadline.d) >= now) {
-      deadlines.push(Number(sessionDeadline.d));
+    if (sessionDeadline?.d !== undefined) {
+      deadlines.push(Math.max(Number(sessionDeadline.d), now));
     }
     const attemptDeadline = this.sql
       .exec<{ d: number }>(
         "SELECT MIN(lease_expires_at) AS d FROM host_daemon_command_attempts WHERE status = 'active'",
       )
       .toArray()[0];
-    if (attemptDeadline?.d !== undefined && Number(attemptDeadline.d) >= now) {
-      deadlines.push(Number(attemptDeadline.d));
+    if (attemptDeadline?.d !== undefined) {
+      deadlines.push(Math.max(Number(attemptDeadline.d), now));
     }
     const graceDeadline = this.sql
       .exec<{ d: number }>(
         "SELECT MIN(deadline_at) AS d FROM pending_disconnect_grace WHERE completed_at IS NULL",
       )
       .toArray()[0];
-    if (graceDeadline?.d !== undefined && Number(graceDeadline.d) >= now) {
-      deadlines.push(Number(graceDeadline.d));
+    if (graceDeadline?.d !== undefined) {
+      deadlines.push(Math.max(Number(graceDeadline.d), now));
     }
     if (deadlines.length === 0) {
       await this.ctx.storage.deleteAlarm();
