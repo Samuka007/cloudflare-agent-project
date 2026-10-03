@@ -37,3 +37,7 @@ Canonical five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`,
 ### Domain docs
 
 Single-context: `CONTEXT.md` + `docs/adr/` (created lazily). See [docs/agents/domain.md](docs/agents/domain.md).
+
+### Process routing (ask-matt)
+
+Consult `skill://ask-matt` at every stage before choosing how to proceed. It is the router over the engineering flows: the main flow (idea → ship: `/grill-with-docs` → `/to-spec` → `/to-tickets` → `/implement`), the on-ramps (`/wayfinder` for huge foggy efforts, `/triage`, `/diagnosing-bugs`), and phase-boundary rules (`/clear`, `/handoff`, `/compact`, subagents). Do not improvise process; ask the router.
