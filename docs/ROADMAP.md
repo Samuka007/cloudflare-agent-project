@@ -10,7 +10,7 @@
 
 | 里程碑 | 内容 | 验收 | 状态 |
 |---|---|---|---|
-| M0 骨架 | 契约先行双线并进（spec #17）：契约与假件（#18）→ UX 线（#19）∥ 功能线 loop（#20）/ 机器执行（#21）→ 合龙换设备验收（#22） | 双设备演示：电脑开 thread 干活 → 关机 → 手机续上并驱动机器执行 | 进行中 |
+| M0 骨架 | bb 全栈移植（spec #17 v2）：server 控制面（#26）→ daemon worker（#27）→ provider 应用（#28）∥ agent DO（#29）∥ daemon service+client（#30）→ 合龙换设备验收（#31） | 原版 bb SPA 不改一行跑通全流程 + 双设备演示 | 进行中 |
 | M1 可用性硬化 (#14) | 多 daemon、fleet、skills 加载、compaction 基础、崩溃恢复 | 全部用模拟对象验收（对照演练 / 故障注入 / 一周舱内 soak），不碰真实工作 | 计划中 |
 | M2 存量迁移 (#15) | 19G 会话 + skills 语料（副本操作，源数据不动） | 抽样比对条数/条目/序列号 | 计划中 |
 | M3 生态扩展 (#16) | browser（CF Rendering/camofox）、分享/ACL、自动化面 | 随做随定 | 计划中 |
@@ -22,7 +22,7 @@
 | 立项 | 建边缘个人 agent；kill criteria 见下 | #8 |
 | MVP | 上述 S0–S3；明确不做 fleet/skills/browser/多机路由/迁移/ACL | #9 |
 | trajectory 锚点 | 每 thread 一个 DO；只存 append-only 事件日志（bb 形 `(threadId, seq)` 唯一索引）；无快照表；冷启动重放重建（业界五家同构，见 #7） | #5 |
-| bb 底座 | 薄自建 edge-core + bb 组件复用（provider-bridge 进程、connect TunnelDO 参考、SPA 同源部署）；daemon 协议仅 bb 兼容、无降级 | #2 |
+| bb 底座 | bb 全栈移植进 Workers（server 控制面、daemon 编排、provider 应用、agent DO），2026-10-03 由「薄自建+组件复用」升级（#17 grill）；host 侧仅薄 daemon client；协议版本纪律 scheme A 冻结 | #2 |
 | 阶梯 | M0–M3 切分；M1 验收全用模拟对象 | #10 |
 
 ## 拓扑不变式
