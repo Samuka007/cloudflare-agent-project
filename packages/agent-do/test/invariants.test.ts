@@ -405,7 +405,7 @@ describe("§7 invariants — model-call accounting", () => {
     });
     await warm.waitTurnComplete(warmSent.turnId);
     const warmEvents = await warm.events();
-    expect(warm.provider.callCount()).toBe(
+    expect(warm.mock().callCount()).toBe(
       warmEvents.filter((event) => event.type === "model.call_started").length,
     );
 
@@ -417,7 +417,7 @@ describe("§7 invariants — model-call accounting", () => {
       mode: "auto",
     });
     await hung.waitFor((all) => all.some((event) => event.type === "model.call_started"));
-    expect(hung.provider.callCount()).toBe(1);
+    expect(hung.mock().callCount()).toBe(1);
 
     await abortAllDurableObjects();
     await hung.afterAbort(() => hung.events());
@@ -430,7 +430,7 @@ describe("§7 invariants — model-call accounting", () => {
       ),
     ).toBe(true);
     expect(revived.filter((event) => event.type === "model.call_started")).toHaveLength(1);
-    expect(hung.provider.callCount()).toBe(1);
+    expect(hung.mock().callCount()).toBe(1);
   });
 
   test("I12: every modelCallId has exactly one terminal event", async () => {

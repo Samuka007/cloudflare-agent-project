@@ -15,14 +15,12 @@ import {
   turnTerminal,
   type ExecutionRuntime,
   type ReplayState,
-  type TurnRuntime,
 } from "./turn-state.js";
 import type {
   AgentEventDataByType,
   AgentEventRecord,
   AgentEventType,
 } from "./fsm-events.js";
-import type { ToolResultStatus } from "./fsm-events.js";
 import { parseAgentEvent, type AnyAgentEvent } from "./fsm-events.js";
 import { executionIdFor, threadIdFromExecutionId } from "./ids.js";
 import {
@@ -46,6 +44,7 @@ import {
 } from "./provider.js";
 import { projectToUxEvents } from "./ux-projection.js";
 import { getAgentRuntime } from "./injection.js";
+import { modelRequestFromEvents } from "./translate.js";
 
 /**
  * Per-thread bare Durable Object (no Agents SDK — docs/research/cf-agents-sdk.md):
@@ -716,7 +715,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       const guarded: Effect.Effect<ModelCallOutcome, ProviderPullFailure> = Effect.gen(
         function* () {
         const provider = getAgentRuntime(self.threadId as string).provider;
-        const request = self.buildModelRequest(turnId, modelCallId);
+        const request = yield* Effect.promise(() => self.buildModelRequest(turnId, modelCallId));
           const iterator = provider.streamTurn(request, {
             signal: combined,
           })[Symbol.asyncIterator]();
@@ -875,51 +874,20 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     };
   }
 
-  private buildModelRequest(turnId: string, modelCallId: number): ModelRequest {
+  private async buildModelRequest(turnId: string, modelCallId: number): Promise<ModelRequest> {
     const turn = this.state.turns.get(turnId);
     if (turn === undefined) throw new AgentRpcError("not_found", `unknown turn ${turnId}`);
-    const inputText = this.inputTextOf(turn);
-    const steers = turn.steerSeqs
-      .filter((seq) => !turn.consumedSteerSeqs.includes(seq))
-      .map((seq) => ({ seq, text: this.steerTextOf(turn.turnId, seq) }));
-    const priorAssistantText = this.assistantTextOf(turn);
-    const toolResults: Array<{
-      executionId: string;
-      tool: string;
-      status: "ok" | "error" | "timeout" | "cancelled" | "outcome_unknown";
-      output: string;
-    }> = [];
-    for (const executionId of turn.executionIds) {
-      const execution = this.state.executions.get(executionId);
-      if (execution === undefined || !executionTerminal(execution)) continue;
-      const status: ToolResultStatus =
-        execution.status === "ok"
-          ? "ok"
-          : execution.status === "error"
-            ? "error"
-            : execution.status === "timeout"
-              ? "timeout"
-              : execution.status === "cancelled"
-                ? "cancelled"
-                : "outcome_unknown";
-      toolResults.push({
-        executionId,
-        tool: this.toolNameOf(execution.callSeq),
-        status,
-        output: this.toolOutputOf(execution),
-      });
-    }
-    return {
-      threadId: this.threadId as string,
-      turnId,
-      modelCallId,
-      input: inputText,
-      steers,
-      priorAssistantText,
-      toolResults,
-    };
+    // Full rebuild from the log per call (omp §1.5) — the structural
+    // replay-consistency guarantee; the projection is shared with the
+    // replay tests (src/translate.ts).
+    const { events } = await this.readAllEvents();
+    return modelRequestFromEvents(events, turnId, modelCallId);
   }
 
+  private async readAllEvents(): Promise<{ events: AnyAgentEvent[] }> {
+    if (this.threadId === null) return { events: [] };
+    return this.log.read(this.threadId, 0, this.log.maxSeq(this.threadId));
+  }
   private eventData(seq: number): AnyAgentEvent | null {
     if (this.threadId === null) return null;
     const row = this.ctx.storage.sql
@@ -941,51 +909,6 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       .exec<{ type: string }>("SELECT type FROM events WHERE thread_id = ? AND seq = ?", this.threadId, seq)
       .one();
     return row?.type ?? "";
-  }
-
-  private inputTextOf(turn: { inputSeq: number }): string {
-    const data = this.eventData(turn.inputSeq);
-    if (data === null || data.type !== "turn.input") return "";
-    const content = data.data.content;
-    return content.map((part) => part.text ?? "").join("\n");
-  }
-
-  private steerTextOf(_turnId: string, seq: number): string {
-    const data = this.eventData(seq);
-    if (data === null || data.type !== "turn.steer") return "";
-    const content = data.data.content;
-    return content.map((part) => part.text ?? "").join("\n");
-  }
-
-  private assistantTextOf(turn: TurnRuntime): string {
-    const rows = this.ctx.storage.sql
-      .exec<{ data: string }>(
-        "SELECT data FROM events WHERE thread_id = ? AND seq > ? AND type = 'model.delta'",
-        this.threadId,
-        turn.inputSeq,
-      )
-      .toArray();
-    let text = "";
-    for (const row of rows) {
-      const parsed = JSON.parse(row.data) as { modelCallId: unknown; text: unknown };
-      if (typeof parsed.modelCallId !== "number") continue;
-      if (!turn.modelCallIds.includes(parsed.modelCallId)) continue;
-      if (typeof parsed.text === "string") text += parsed.text;
-    }
-    return text;
-  }
-
-  private toolNameOf(callSeq: number): string {
-    const data = this.eventData(callSeq);
-    if (data === null || data.type !== "tool.call") return "unknown";
-    return data.data.tool;
-  }
-
-  private toolOutputOf(execution: ExecutionRuntime): string {
-    if (execution.resultSeq === null) return "";
-    const data = this.eventData(execution.resultSeq);
-    if (data === null || data.type !== "tool.result") return "";
-    return typeof data.data.output === "string" ? data.data.output : "";
   }
 
   // -------------------------------------------------------------------------

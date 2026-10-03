@@ -7,6 +7,7 @@ import type {
   AnyAgentEvent,
 } from "../src/fsm-events.js";
 import { clearAgentRuntimes, setAgentRuntime } from "../src/injection.js";
+import type { ModelProvider } from "../src/provider.js";
 import { MockModelProvider, type MockTurn } from "../src/testing/mock-provider.js";
 import type { TestDaemonServiceStub } from "../src/testing/test-daemon-do.js";
 
@@ -18,6 +19,8 @@ import type { TestDaemonServiceStub } from "../src/testing/test-daemon-do.js";
 
 export interface RigOptions {
   turns?: MockTurn[];
+  /** Overrides the mock (real-model smoke registers its relay client). */
+  provider?: ModelProvider;
   threadId?: string;
   watchdog?: Record<string, number>;
 }
@@ -25,7 +28,12 @@ export interface RigOptions {
 export interface Rig {
   threadId: string;
   stub: DurableObjectStub<AgentDO>;
-  provider: MockModelProvider;
+  provider: ModelProvider;
+  /**
+   * Mock-specific surface (billing probes); only valid when the rig runs
+   * the default mock — a real-provider rig throws here by construction.
+   */
+  mock(): MockModelProvider;
   service: DurableObjectStub<TestDaemonServiceStub>;
   events(): Promise<AnyAgentEvent[]>;
   of(type: AgentEventType): Promise<AnyAgentEvent[]>;
@@ -40,7 +48,7 @@ const serviceNamespace = (env as { DAEMON_SERVICE: DurableObjectNamespace }).DAE
 
 export async function createRig(options: RigOptions = {}): Promise<Rig> {
   const threadId = options.threadId ?? newThreadId();
-  const provider = new MockModelProvider(options.turns ?? [{ deltas: ["ok"] }]);
+  const provider = options.provider ?? new MockModelProvider(options.turns ?? [{ deltas: ["ok"] }]);
   setAgentRuntime(threadId, { provider });
   /**
    * Stub factories, re-resolved on every access: `abortAllDurableObjects()`
@@ -81,6 +89,12 @@ export async function createRig(options: RigOptions = {}): Promise<Rig> {
       return stubFor();
     },
     provider,
+    mock: () => {
+      if (!(provider instanceof MockModelProvider)) {
+        throw new Error("this rig was created with a non-mock provider");
+      }
+      return provider;
+    },
     get service() {
       return serviceFor();
     },
