@@ -10,9 +10,11 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:hookup": "vitest run --config vitest.hookup.config.ts",
     "smoke:poc": "vitest run smoke-real-model"
   },
   "dependencies": {
+    "@cap/daemon-service": "workspace:*",
     "@cap/protocol": "workspace:*",
     "effect": "4.0.0",
     "zod": "^4.6.0"

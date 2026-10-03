@@ -61,7 +61,10 @@ export async function createRig(options: RigOptions = {}): Promise<Rig> {
     serviceNamespace.get(
       serviceNamespace.idFromName(threadId),
     ) as unknown as DurableObjectStub<TestDaemonServiceStub>;
-  const created = await stubFor().createThread({ threadId, title: "rig" });
+  // machineId = threadId: the fake service DO stays per-thread-named (the
+  // rig's service stubs resolve by threadId), matching the per-machine real
+  // seam's naming rule — the DO name is the machineId either way.
+  const created = await stubFor().createThread({ threadId, title: "rig", machineId: threadId });
   expect(created.duplicated).toBe(false);
   if (options.watchdog !== undefined) {
     await stubFor().configureWatchdog(options.watchdog);
