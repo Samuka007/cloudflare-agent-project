@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "provider-app",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "MANAGER", "class_name": "ManagerDo" },
+      { "name": "AGENT_DO", "class_name": "AgentDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ManagerDo", "AgentDO"] }
+  ],
+  "r2_buckets": [
+    { "binding": "BLOBS", "bucket_name": "provider-app-blobs" }
+  ]
+}
