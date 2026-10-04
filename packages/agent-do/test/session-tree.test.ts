@@ -653,12 +653,12 @@ describe("M1.5 T3 — registry rows (control-plane §1.1, classification §2.2)"
   test("the session-tree trio is registered class edge with do-local routing and omp intent modes", () => {
     // omp builtin-names.ts order restricted to the registered set: bash,
     // the T5' vendored-runtime host five, ask (T4, builtin #6), find (T11),
-    // checkpoint, rewind, context_notes, task, wait, todo,
+    // checkpoint, rewind, context_notes, security_scan (T15), task, wait, todo,
     // web_search (T12, between todo and the hidden tail), think, write,
-    // eval, manage_skill, yield (T16 adds task between new_context and
-    // wait; T6 manage_skill is the last builtin #30, the T10' eval row
-    // rides after the T5' write row, and the T16 hidden yield closes the
-    // wire).
+    // eval, manage_skill, yield (T15 adds security_scan between
+    // new_context and task; T16 adds task between security_scan and wait;
+    // T6 manage_skill is the last builtin #30, the T10' eval row rides
+    // after the T5' write row, and the T16 hidden yield closes the wire).
     expect(TOOL_REGISTRY.map((row) => row.name)).toEqual([
       "bash",
       "read",
@@ -671,6 +671,7 @@ describe("M1.5 T3 — registry rows (control-plane §1.1, classification §2.2)"
       "rewind",
       "context_notes",
       "new_context",
+      "security_scan",
       "task",
       "wait",
       "todo",

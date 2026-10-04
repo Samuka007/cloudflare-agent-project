@@ -21,6 +21,12 @@ import { z } from "zod";
  * - `judgeRole` — pins `modelRoles.judge` in the host settings overrides
  *   (omp settings `modelRoles.judge`), pointing the judge role chain at a
  *   concrete `provider/model`.
+ * - `securityModel` — pins the host session's active model for security_scan
+ *   (M1.5/T15): omp preflight freezes `provider/model` into the plan
+ *   fingerprint together with the exact OAuth credential, and the embedded
+ *   host has no chat session to derive one from, so the deployment names it
+ *   (judgeRole twin). Unset → the tool fails closed with omp's own
+ *   "Security scan preflight requires an active model" error.
  */
 
 const providerModelSchema = z.object({
@@ -77,6 +83,8 @@ export interface AgentAuthConfig {
   runtimeKeys: Record<string, string>;
   /** Pins `modelRoles.judge` (e.g. "myrelay/judge-mock"). */
   judgeRole: string | undefined;
+  /** Pins the security_scan host model (e.g. "myrelay/sec-model"). */
+  securityModel: string | undefined;
 }
 
 /** Neutral defaults — an unset env means "whatever the agentDir carries". */
@@ -84,12 +92,14 @@ export const DEFAULT_AGENT_AUTH_CONFIG: AgentAuthConfig = {
   providers: {},
   runtimeKeys: {},
   judgeRole: undefined,
+  securityModel: undefined,
 };
 
 const agentAuthPatchSchema = z.object({
   providers: z.record(z.string().min(1), providerSchema).optional(),
   runtimeKeys: z.record(z.string().min(1), z.string().min(1)).optional(),
   judgeRole: z.string().min(1).optional(),
+  securityModel: z.string().min(1).optional(),
 });
 
 /**
@@ -106,6 +116,7 @@ export function decodeAgentAuthConfig(
     providers: patch.providers ?? base.providers,
     runtimeKeys: patch.runtimeKeys ?? base.runtimeKeys,
     judgeRole: patch.judgeRole ?? base.judgeRole,
+    securityModel: patch.securityModel ?? base.securityModel,
   };
 }
 
