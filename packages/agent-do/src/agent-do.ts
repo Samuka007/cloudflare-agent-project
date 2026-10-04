@@ -87,8 +87,12 @@ import {
   renderYieldDelivery,
   renderAgentHistory,
   renderJournalJsonl,
+  budgetNoticeText,
+  budgetHardLimit,
   type ChildRunState,
+  type ChildBudgetPolicy,
 } from "./tools/task/child-run.js";
+import { SpawnSemaphore } from "./tools/task/semaphore.js";
 import { checkpointRewindState, todoJournalState } from "./tools/session-tree.js";
 import {
   DEFAULT_WEB_SEARCH_CONFIG,
@@ -624,7 +628,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     });
     return this.sendMessage({
       clientRequestId: request.spawnId,
-      content: [{ type: "text", text: childAssignment(request.task) }],
+      content: [{ type: "text", text: childAssignment(request.task, request.context) }],
       mode: "start",
     });
   }
@@ -757,6 +761,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     return {
       recordSpawnSettlement: async (settlement) => {
         await this.appendEvent("task.spawn_settled", settlement);
+        // T18 permit lifecycle: same dispatch→settlement release as the
+        // executor-facing sink (this path serves completeSubagent).
+        this.releaseSpawnPermit(settlement.spawnId);
       },
       registry: {
         register: (input: JobRegistration) => this.registerJob(input),
@@ -774,6 +781,44 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       maxOutputLines: this.cfg.taskMaxOutputLines,
       inlineSummaryCapChars: this.cfg.taskInlineSummaryCapChars,
       isolationOpTimeoutMs: this.cfg.execTimeoutMs,
+      maxConcurrency: this.cfg.taskMaxConcurrency,
+      softRequestBudget: this.cfg.taskSoftRequestBudget,
+      maxRuntimeMs: this.cfg.taskMaxRuntimeMs,
+    };
+  }
+
+  /**
+   * T18 session-level spawn semaphore (task semantics §4.1): DO-singleton,
+   * first use reads the current config; `configureWatchdog` resizes the live
+   * instance in place so queued spawns re-evaluate against the new cap.
+   */
+  private spawnSemaphoreInstance: SpawnSemaphore | undefined;
+
+  private spawnSemaphore(): SpawnSemaphore {
+    return (this.spawnSemaphoreInstance ??= new SpawnSemaphore(this.cfg.taskMaxConcurrency));
+  }
+
+  /**
+   * Permits held by dispatched-but-unsettled spawns (spawnId → releaser).
+   * The settlement sink releases — dispatch→settlement span, see
+   * TaskToolContext.trackSpawnRelease.
+   */
+  private spawnReleases = new Map<string, () => void>();
+
+  private releaseSpawnPermit(spawnId: string): void {
+    const release = this.spawnReleases.get(spawnId);
+    if (release === undefined) return;
+    this.spawnReleases.delete(spawnId);
+    release();
+  }
+
+  /** Child budget policy for the T18 gate (undefined = request tiers off). */
+  private childBudgetPolicy(): ChildBudgetPolicy | undefined {
+    if (this.cfg.taskSoftRequestBudget <= 0 && this.cfg.taskMaxRuntimeMs <= 0) return undefined;
+    return {
+      softRequestBudget: this.cfg.taskSoftRequestBudget,
+      maxRuntimeMs: this.cfg.taskMaxRuntimeMs,
+      now: Date.now(),
     };
   }
 
@@ -1227,6 +1272,20 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           }
           if (waitOutcome === "turn_failed") return;
           continue;
+        }
+        // T18 budget gates (task semantics §4.1), evaluated from the run's
+        // request tally before every model call: crossing the soft cap
+        // steers ONE wind-down notice into the live turn; the hard stop
+        // (1.5× soft / wall clock) arms the single forced terminal-yield
+        // attempt and, once that attempt has executed a yield call, ends
+        // the turn — the child-run gate then settles (usable yield →
+        // deliver; else partial findings as the formal report).
+        const budgetVerdict = yield* Effect.promise(() =>
+          self.checkRunBudget(turnId, turn.inputId),
+        );
+        if (budgetVerdict === "stop") {
+          yield* Effect.promise(() => self.appendEvent("turn.completed", { turnId }));
+          return;
         }
         const pendingSteers = turn.steerSeqs.filter((seq) => !turn.consumedSteerSeqs.includes(seq));
         const started = yield* Effect.promise(() =>
@@ -2488,6 +2547,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           jobId: plan.jobId,
           task: plan.task,
           solutionSpace: plan.solutionSpace,
+          ...(plan.context === undefined ? {} : { context: plan.context }),
           ...(plan.model === undefined ? {} : { model: plan.model }),
           ...((plan.outputSchema === undefined
             ? {}
@@ -2504,6 +2564,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       },
       recordSpawnSettlement: async (settlement) => {
         await this.appendEvent("task.spawn_settled", settlement);
+        // T18 permit lifecycle: the dispatch→settlement span ends here —
+        // release the run's slot (no-op when the spawn was never permitted,
+        // e.g. journal-replayed rows).
+        this.releaseSpawnPermit(settlement.spawnId);
       },
       registry: {
         register: (input: JobRegistration) => this.registerJob(input),
@@ -2529,6 +2593,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         this.edgeWaiters.set(execution.executionId, { resolve });
         return promise.then((wake) => wake.kind);
       },
+      semaphore: this.spawnSemaphore(),
+      trackSpawnRelease: (spawnId, release) => {
+        this.spawnReleases.set(spawnId, release);
+      },
       config: this.taskConfig(),
     };
   }
@@ -2548,6 +2616,67 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    */
   private childRunChain: Promise<void> = Promise.resolve();
 
+  /**
+   * Pre-call budget check for a live subagent turn (task semantics §4.1).
+   * Cheap path first — the run's request tally from replay state; journal
+   * I/O only on a threshold crossing. "stop" means the hard stop is armed
+   * AND its single forced attempt already executed a yield call: the turn
+   * ends and the child-run gate settles (usable yield → deliver; else
+   * partial findings as the formal report).
+   */
+  private async checkRunBudget(turnId: string, turnInputId: string): Promise<"continue" | "stop"> {
+    if (this.state.subagentIdentity === null) return "continue";
+    const policy = this.childBudgetPolicy();
+    if (policy === undefined) return "continue";
+    const requests = this.state.modelCalls.size;
+    const soft = policy.softRequestBudget;
+    const hardExceeded = soft > 0 && requests >= budgetHardLimit(soft);
+    const runtimeExceeded =
+      policy.maxRuntimeMs > 0 &&
+      this.state.identityCreatedAt !== null &&
+      Date.now() - this.state.identityCreatedAt >= policy.maxRuntimeMs;
+
+    const { events } = await this.readAllEvents();
+
+    if (hardExceeded || runtimeExceeded) {
+      // The ladder compresses into ONE forced terminal-yield attempt for
+      // THIS turn: the reminder marker bound to the turn's inputId makes
+      // translate pin tool_choice for the remaining calls of the turn.
+      const armed = events.find(
+        (event): event is Extract<AnyAgentEvent, { type: "task.yield_reminder" }> =>
+          event.type === "task.yield_reminder" && event.data.reason === "budget",
+      );
+      if (armed === undefined) {
+        await this.appendEvent("task.yield_reminder", {
+          inputId: turnInputId,
+          forced: true,
+          reason: "budget",
+        });
+        return "continue";
+      }
+      const yieldedAfterArm = events.some(
+        (event) => event.type === "tool.call" && event.data.tool === "yield" && event.seq > armed.seq,
+      );
+      return yieldedAfterArm ? "stop" : "continue";
+    }
+
+    if (soft > 0 && requests >= soft) {
+      const noticed = events.some((event) => event.type === "task.budget_notice");
+      if (!noticed) {
+        // Journal-first idempotency marker, then steer the wind-down notice
+        // into the live turn (consumed at this iteration's call boundary).
+        const inputId = `budget-notice-${crypto.randomUUID()}`;
+        await this.appendEvent("task.budget_notice", { inputId });
+        await this.appendEvent("turn.steer", {
+          turnId,
+          inputId,
+          content: [{ type: "text", text: budgetNoticeText(soft, budgetHardLimit(soft)) }],
+        });
+      }
+    }
+    return "continue";
+  }
+
   private advanceChildRun(): Promise<void> {
     const next = this.childRunChain.catch(() => undefined).then(() => this.advanceChildRunOnce());
     this.childRunChain = next;
@@ -2559,14 +2688,31 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     const active = this.activeTurn();
     if (active !== undefined && !turnTerminal(active)) return;
     const { events } = await this.readAllEvents();
-    const verdict = childRunVerdict(projectChildRun(events));
+    const verdict = childRunVerdict(projectChildRun(events), this.childBudgetPolicy());
     if (verdict.kind === "noop") return;
     if (verdict.kind === "remind") {
       // Reuse the interrupted marker's inputId (crash between marker append
       // and turn drive): sendMessage's I2 dedup makes the re-send a no-op if
       // the turn somehow did land.
       const inputId = verdict.reuseInputId ?? `yield-reminder-${crypto.randomUUID()}`;
-      await this.appendEvent("task.yield_reminder", { inputId, forced: verdict.forced });
+      await this.appendEvent("task.yield_reminder", {
+        inputId,
+        forced: verdict.forced,
+        reason: verdict.reason,
+      });
+      await this.sendMessage({
+        clientRequestId: inputId,
+        content: [{ type: "text", text: verdict.text }],
+        mode: "start",
+      });
+      return;
+    }
+    if (verdict.kind === "notice") {
+      // T18 soft-budget wind-down notice (task semantics §4.1): journaled
+      // first (the fold's idempotency key), then its own turn — the gate
+      // only runs with no live turn, so "start" is always the right mode.
+      const inputId = `budget-notice-${crypto.randomUUID()}`;
+      await this.appendEvent("task.budget_notice", { inputId });
       await this.sendMessage({
         clientRequestId: inputId,
         content: [{ type: "text", text: verdict.text }],
@@ -2682,6 +2828,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     await this.ready();
     const merged = mergeWatchdogConfig(this.cfg, parseWatchdogConfigPatch(patch));
     this.cfg = merged;
+    // T18 in-place semaphore resize (task/index.ts:639-643): applies to
+    // already-queued spawns; unset instance defers to first-use config read.
+    this.spawnSemaphoreInstance?.resize(merged.taskMaxConcurrency);
     this.ctx.storage.kv.put(WATCHDOG_CONFIG_KV_KEY, JSON.stringify(patch));
     this.armWatchdog();
     return { config: merged as unknown as Record<string, number> };

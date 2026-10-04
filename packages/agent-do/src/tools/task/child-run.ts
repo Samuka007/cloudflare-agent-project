@@ -51,6 +51,27 @@ const REMINDER_BODIES = [
   "Final reminder (3/3): this attempt is forced — `yield` is the only permitted next call.",
 ];
 
+/** T18 soft-budget wind-down notice (task semantics §4.1: 收尾 notice). */
+export function budgetNoticeText(softRequestBudget: number, hardLimit: number): string {
+  return `SYSTEM NOTICE: request budget reached (${softRequestBudget} of the ${hardLimit} hard stop) — wrap up now and submit your terminal result with the \`yield\` tool. ${YIELD_FORMAT_HINT}`;
+}
+
+/**
+ * T18 hard stop (task semantics §4.1: 1.5× 强制停逼一次终局 yield): the
+ * reminder ladder compresses to this single forced attempt; whatever the
+ * run has produced by then delivers as the formal report.
+ */
+export const BUDGET_FORCED_YIELD_TEXT =
+  "SYSTEM NOTICE: budget hard stop — the run is force-stopped. This attempt is forced: submit your terminal yield now; partial findings are accepted as the final report.";
+
+/** omp hard-stop multiplier over the soft request budget (settings.ts:337-346). */
+export const BUDGET_HARD_LIMIT_MULTIPLIER = 1.5;
+
+/** The hard-stop request count: ceil(1.5 × soft), soft > 0 only. */
+export function budgetHardLimit(softRequestBudget: number): number {
+  return Math.ceil(softRequestBudget * BUDGET_HARD_LIMIT_MULTIPLIER);
+}
+
 /** omp MAX_YIELD_RETRIES (executor.ts:2210). */
 export const MAX_YIELD_RETRIES = 3;
 
@@ -86,8 +107,23 @@ export interface TerminalYield {
 interface ReminderMarker {
   seq: number;
   inputId: string;
+  /** T18: "budget" marks the hard-stop's single forced terminal-yield attempt. */
+  reason: "ladder" | "budget";
   turnId?: string;
   terminal?: "completed" | "failed" | "cancelled";
+}
+
+/**
+ * T18 child-run budget policy (task semantics §4.1): soft request budget
+ * (default 200 — wind-down notice), hard stop at 1.5× (single forced terminal
+ * yield, ladder compressed), wall clock (maxRuntimeMs, 0 = off). undefined /
+ * non-positive soft disables the request tiers; runtimeMs ≤ 0 disables the
+ * wall clock. `now` is injected so the fold stays deterministic per call.
+ */
+export interface ChildBudgetPolicy {
+  softRequestBudget: number;
+  maxRuntimeMs: number;
+  now: number;
 }
 
 export interface ChildRunState {
@@ -99,6 +135,12 @@ export interface ChildRunState {
   terminal: TerminalYield | undefined;
   reminders: ReminderMarker[];
   warning: string | undefined;
+  /** model.call_started count — the run's billable request tally (§4.1). */
+  modelCalls: number;
+  /** The journaled soft-budget notice (undefined = not yet injected). */
+  budgetNotice: { seq: number } | undefined;
+  /** The identity row's createdAt — the wall-clock origin (§4.1 runtimeMs). */
+  runStartedAt: number | undefined;
   completed: { status: "ok" | "error"; output: string } | undefined;
   /** A `task.async_result` landed after the terminal yield → it is void. */
   stale: boolean;
@@ -130,6 +172,9 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
     terminal: undefined,
     reminders: [],
     warning: undefined,
+    modelCalls: 0,
+    budgetNotice: undefined,
+    runStartedAt: identityRecord === undefined ? undefined : identityRecord.createdAt,
     completed: undefined,
     stale: false,
     pendingSpawns: [],
@@ -206,10 +251,6 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
         asyncSeqs.push(event.seq);
         break;
       }
-      case "task.yield_reminder": {
-        state.reminders.push({ seq: event.seq, inputId: event.data.inputId });
-        break;
-      }
       case "task.yield_warning": {
         state.warning = event.data.text;
         break;
@@ -218,8 +259,22 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
         state.completed = { status: event.data.status, output: event.data.output };
         break;
       }
-      // Context-invisible rows for the fold (state events, foreign journal
-      // families, transport bookkeeping) — enumerated for exhaustiveness.
+      case "model.call_started": {
+        state.modelCalls += 1;
+        break;
+      }
+      case "task.budget_notice": {
+        state.budgetNotice = { seq: event.seq };
+        break;
+      }
+      case "task.yield_reminder": {
+        state.reminders.push({
+          seq: event.seq,
+          inputId: event.data.inputId,
+          reason: event.data.reason ?? "ladder",
+        });
+        break;
+      }
       case "experimental_context_notes":
       case "job.delivered":
       case "job.registered":
@@ -227,7 +282,6 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
       case "model.call_failed":
       case "model.call_retry":
       case "model.call_sealed":
-      case "model.call_started":
       case "model.delta":
       case "interaction.interrupted":
       case "interaction.registered":
@@ -254,6 +308,7 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
     }
   }
   state.pendingSpawns = [...plannedSpawns].filter((spawnId) => !settledSpawns.has(spawnId));
+  state.lastAssistantText = lastAssistantText;
   const terminalCallSeq = state.terminal?.callSeq;
   state.stale =
     terminalCallSeq !== undefined && asyncSeqs.some((asyncSeq) => asyncSeq > terminalCallSeq);
@@ -384,15 +439,27 @@ function recordSection(
 
 export type ChildRunVerdict =
   | { kind: "noop"; reason: string }
-  | { kind: "remind"; text: string; forced: boolean; reuseInputId?: string }
+  | {
+      kind: "remind";
+      text: string;
+      forced: boolean;
+      reason: "ladder" | "budget";
+      reuseInputId?: string;
+    }
+  /** T18 soft-budget wind-down notice — one injected turn, not a reminder. */
+  | { kind: "notice"; text: string }
   | { kind: "settle"; status: "ok" | "error"; output: string };
 
 /**
  * The run-end decision, derived purely from the fold. Order matters:
  * settled-marker → live turn → failed/cancelled turn → quality gates
- * (empty abort, strict schema) → settle-or-ladder on the active/stale yield.
+ * (empty abort, strict schema) → settle-or-ladder on the active/stale yield,
+ * with the T18 budget tiers between the gates and the ladder: the hard stop
+ * (1.5× soft requests / wall clock) compresses the ladder into ONE forced
+ * terminal-yield attempt whose failure settles partial findings (task
+ * semantics §3.1/§4.1); the soft cap injects a single wind-down notice.
  */
-export function childRunVerdict(state: ChildRunState): ChildRunVerdict {
+export function childRunVerdict(state: ChildRunState, budget?: ChildBudgetPolicy): ChildRunVerdict {
   if (state.identity === undefined) return { kind: "noop", reason: "not a subagent" };
   if (state.completed !== undefined) return { kind: "noop", reason: "run already settled" };
   if (state.liveTurn) return { kind: "noop", reason: "reminder/assignment turn still live" };
@@ -426,6 +493,59 @@ export function childRunVerdict(state: ChildRunState): ChildRunVerdict {
     };
   }
 
+  // T18 budget tiers — only when the run is still open (no usable yield):
+  // a delivered yield wins the race against the budget, an owned-work park
+  // stands until the grandchildren settle.
+  if (budget !== undefined && (budget.softRequestBudget > 0 || budget.maxRuntimeMs > 0)) {
+    // The two gates are independent knobs: maxRuntimeMs (default 0 = off)
+    // works even when the request tiers are disabled, and vice versa.
+    const hardLimit =
+      budget.softRequestBudget > 0 ? budgetHardLimit(budget.softRequestBudget) : Number.POSITIVE_INFINITY;
+    const requestsExceeded =
+      budget.softRequestBudget > 0 && state.modelCalls >= hardLimit;
+    const runtimeExceeded =
+      budget.maxRuntimeMs > 0 &&
+      state.runStartedAt !== undefined &&
+      budget.now - state.runStartedAt >= budget.maxRuntimeMs;
+    const cycleBase = state.terminal?.callSeq ?? Number.NEGATIVE_INFINITY;
+    if (requestsExceeded || runtimeExceeded) {
+      const budgetCycle = state.reminders.filter(
+        (reminder) => reminder.reason === "budget" && reminder.seq > cycleBase,
+      );
+      const armed = budgetCycle[budgetCycle.length - 1];
+      if (armed === undefined) {
+        return {
+          kind: "remind",
+          text: BUDGET_FORCED_YIELD_TEXT,
+          forced: true,
+          reason: "budget",
+        };
+      }
+      if (armed.turnId === undefined) {
+        // Armed marker, crash before the turn drove: re-send the SAME
+        // forced attempt (inputId dedup makes the re-send a no-op).
+        return {
+          kind: "remind",
+          text: BUDGET_FORCED_YIELD_TEXT,
+          forced: true,
+          reason: "budget",
+          reuseInputId: armed.inputId,
+        };
+      }
+      if (armed.terminal === undefined) return { kind: "noop", reason: "budget forced turn still live" };
+      // The single forced attempt ended without a usable yield: the ladder
+      // is compressed — partial findings deliver as the formal report.
+      return { kind: "settle", status: "ok", output: renderPartialFindings(state) };
+    }
+    if (
+      budget.softRequestBudget > 0 &&
+      state.modelCalls >= budget.softRequestBudget &&
+      state.budgetNotice === undefined
+    ) {
+      return { kind: "notice", text: budgetNoticeText(budget.softRequestBudget, hardLimit) };
+    }
+  }
+
   // No usable yield (none yet, or a stale one voided by a late async-result):
   // omp re-runs the reminder ladder demanding a yield that accounts for the
   // background results (executor.ts:1673-1676, :2420-2424).
@@ -446,6 +566,7 @@ export function childRunVerdict(state: ChildRunState): ChildRunVerdict {
           kind: "remind",
           text: reminderText(attempt, stale),
           forced: attempt >= MAX_YIELD_RETRIES,
+          reason: "ladder",
           reuseInputId: last.inputId,
         };
       }
@@ -460,6 +581,7 @@ export function childRunVerdict(state: ChildRunState): ChildRunVerdict {
     kind: "remind",
     text: reminderText(attempt, stale),
     forced: attempt >= MAX_YIELD_RETRIES,
+    reason: "ladder",
   };
 }
 
@@ -502,6 +624,26 @@ export function renderYieldDelivery(state: {
     output += `\n\n[WARNING] ${SCHEMA_OVERRIDE_MARKER}: payload failed outputSchema validation ${MAX_YIELD_RETRIES} times and was accepted under schemaMode permissive.`;
   }
   return { status: "ok", output };
+}
+
+/**
+ * T18 hard-stop report (task semantics §3.1: 部分发现仍作为正式报告回收):
+ * what the run managed to produce — accumulated incremental sections first,
+ * then the last assistant text — under an explicit budget-stop marker. The
+ * report stays interrogable via agent:// even though no terminal yield came.
+ */
+export function renderPartialFindings(state: {
+  sections: ChildSection[];
+  lastAssistantText: { text: string; seq: number } | undefined;
+}): string {
+  const parts = state.sections.map((section) => {
+    const heading = `## ${section.labels.join(" / ")}`;
+    if (section.data === undefined) return heading;
+    const body = typeof section.data === "string" ? section.data : JSON.stringify(section.data, null, 2);
+    return `${heading}\n\n${body}`;
+  });
+  parts.push(state.lastAssistantText?.text ?? "(no assistant text — nothing to recover)");
+  return `[budget stop] The run hit its request/runtime budget before a terminal yield; partial findings follow.\n\n${parts.join("\n\n")}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -562,6 +704,9 @@ export function renderAgentHistory(events: readonly AnyAgentEvent[], agentId: st
         break;
       case "task.yield_reminder":
         lines.push(`[${event.seq}] yield-reminder (inputId ${event.data.inputId})`);
+        break;
+      case "task.budget_notice":
+        lines.push(`[${event.seq}] budget notice (inputId ${event.data.inputId})`);
         break;
       case "task.yield_warning":
         lines.push(`[${event.seq}] ${event.data.text}`);

@@ -70,11 +70,15 @@ export function nestAgentId(parentAgentId: string | undefined, allocated: string
 
 /**
  * omp prompts/system/subagent-user-prompt.md verbatim: the child's initial
- * prompt wraps the assignment with the opener line. `context` (batch) and
- * agent system prompts are not part of the T16 flat slice.
+ * prompt wraps the assignment with the opener line. T18 batch `context`
+ * renders as the shared-context section the omp prompt layer mounts under
+ * CONTEXT (omp renders it into the child system prompt; M1.5 has no per-agent
+ * system-prompt seam, so the section rides the assignment — same content,
+ * same position: before the task text, clearly delimited).
  */
-export function childAssignment(task: string): string {
-  return `Complete assignment thoroughly:\n\n${task}`;
+export function childAssignment(task: string, context?: string): string {
+  if (context === undefined) return `Complete assignment thoroughly:\n\n${task}`;
+  return `Complete assignment thoroughly:\n\n# Shared context\n\n${context}\n\n---\n\n${task}`;
 }
 
 /**

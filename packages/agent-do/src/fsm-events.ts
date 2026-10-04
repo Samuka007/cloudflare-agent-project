@@ -291,6 +291,13 @@ export const agentEventDataSchemas = {
     /** Ordered model preference; explicit selectors never fall back to the parent model (omp task.md §model). */
     model: z.string().optional(),
     /**
+     * T18 batch shared context (`{context, tasks[]}` container): rendered
+     * into every child's assignment CONTEXT section. Journaled per plan row
+     * so a recovery re-dispatch re-renders the identical assignment.
+     * Optional: flat spawns and pre-T18 journals omit it.
+     */
+    context: z.string().min(1).optional(),
+    /**
      * Accepted-but-T17-activated structured contract (recorded, not yet
      * validated). JSON-encoded on the journal: event data must stay
      * RPC-serializable (no top-level `unknown`), and the raw caller value
@@ -384,6 +391,27 @@ export const agentEventDataSchemas = {
   "task.yield_reminder": z.object({
     inputId: z.string().min(1),
     forced: z.boolean(),
+    /**
+     * T18 budget ladder: the hard stop (1.5× soft requests / wall clock)
+     * compresses the reminder ladder into ONE forced terminal-yield attempt
+     * (task semantics §4.1) — that attempt is a reminder row with
+     * reason="budget", which the gate settles from partial findings when the
+     * forced turn ends without a usable yield. Optional: pre-T18 rows are
+     * ladder reminders (fold default).
+     */
+    reason: z.enum(["ladder", "budget"]).optional(),
+  }),
+
+  /**
+   * T18 soft-budget marker (task semantics §4.1: softRequestBudget default
+   * 200 — "超限注入收尾 notice"): appended ONCE per run before the wind-down
+   * notice is steered into the live turn (or sent as its own turn). The fold
+   * reads the row's existence for idempotency — a crash between the row and
+   * the steer re-derives "notice already given" and never re-injects.
+   */
+  "task.budget_notice": z.object({
+    /** The steer/message inputId that carried the notice (dedup key). */
+    inputId: z.string().min(1),
   }),
 
   /**

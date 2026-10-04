@@ -206,8 +206,11 @@ const manageSkillSchema = type({
 });
 
 // omp task/types.ts:81-90 (`taskSchemaNoIsolation`, the T16 flat slice:
-// batch/isolation/effort/eval-tools flags all off) plus the ticket §3 T16
-// `model` ordered-preference field (docs/tools/task.md:47). `outputSchema`/
+// isolation/effort/eval-tools flags off) plus the ticket §3 T16 `model`
+// ordered-preference field (docs/tools/task.md:47). The T18 batch container
+// `{context, tasks[]}` is NOT in the row schema — the edge routes task
+// leniently (omp lenientArgValidation, task/index.ts:619-629) so the batch
+// form reaches the executor's resolveSpawnItems self-check. `outputSchema`/
 // `schemaMode` are accepted and journaled; their validation machinery is
 // T17 (yield full semantics) — recorded, not yet enforced.
 const taskSchema = type({
@@ -480,6 +483,9 @@ Children start blank; large payloads via \`local://<path>\`, NEVER inline.
 
 # Format
 \`task\`: self-contained (\`# Target\` files/non-goals, \`# Change\` steps/APIs, \`# Acceptance\` observable result).
+
+# Parallel
+\`tasks[]\`: one call → N spawns, each item a full spawn (\`task\`, \`solutionSpace\` required; \`name\`/\`agent\`/\`model\`/\`outputSchema\`/\`schemaMode\` per item). \`context\` (required) renders into every child's CONTEXT section. The batch container takes no \`model\` — put it on each tasks[] item. The flat single-spawn form stays accepted.
 
 # Available Agents
 - \`task\`: General-purpose subagent with full capabilities for delegated multi-step tasks.`;

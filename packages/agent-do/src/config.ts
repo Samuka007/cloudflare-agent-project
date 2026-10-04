@@ -54,6 +54,20 @@ export interface WatchdogConfig {
   /** omp result-summary.ts:16 inline summary threshold. */
   taskInlineSummaryCapChars: number;
   /**
+   * T18 batch/concurrency/budget knobs (omp task/settings.ts anchors).
+   * maxConcurrency mirrors omp task.maxConcurrency (default 32, 0 = no
+   * cap) — session-level, resized in place, unified across calls.
+   */
+  taskMaxConcurrency: number;
+  /**
+   * omp task.softRequestBudget (default 200): the session notice lands at
+   * the budget; 1.5× hard-stops the run forcing a terminal yield that still
+   * delivers partial findings.
+   */
+  taskSoftRequestBudget: number;
+  /** omp task.maxRuntimeMs (default 0 = off): wall-clock hard stop. */
+  taskMaxRuntimeMs: number;
+  /**
    * Ask cap (M1.5 T4; omp settings `ask.timeout`, docs/tools/ask.md §Limits:
    * "defaults to 0 seconds (disabled)"). 0 = no cap — a pending interaction
    * suspends the turn watchdog until resolved or interrupted; a non-zero
@@ -81,6 +95,9 @@ export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
   taskMaxOutputBytes: 500_000,
   taskMaxOutputLines: 5000,
   taskInlineSummaryCapChars: 5000,
+  taskMaxConcurrency: 32,
+  taskSoftRequestBudget: 200,
+  taskMaxRuntimeMs: 0,
   askTimeoutMs: 0,
 };
 
@@ -103,6 +120,9 @@ const configPatchSchema = z.object({
   taskMaxOutputBytes: z.number().int().positive().optional(),
   taskMaxOutputLines: z.number().int().positive().optional(),
   taskInlineSummaryCapChars: z.number().int().positive().optional(),
+  taskMaxConcurrency: z.number().int().nonnegative().optional(),
+  taskSoftRequestBudget: z.number().int().positive().optional(),
+  taskMaxRuntimeMs: z.number().int().nonnegative().optional(),
   askTimeoutMs: z.number().int().nonnegative().optional(),
 });
 
