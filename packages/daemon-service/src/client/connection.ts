@@ -12,6 +12,7 @@ import { serviceFrameSchema, type ObservedExecution, type ServiceFrame } from ".
 import { loadIdentity, type ClientConfig, type ClientIdentity } from "./identity.js";
 import { Executor, scanMarkerProcesses } from "./executor.js";
 import { ExecutionBuffer } from "./buffers.js";
+import { watchSocketClose, WSSession } from "./ws-session.js";
 
 /**
  * Client connection lifecycle (§8.2/§8.5): open → attach → announce → serve;
@@ -32,7 +33,11 @@ interface ClientRuntime {
   readonly buffers: Map<string, ExecutionBuffer>;
   /** announce generation, per session, from 1 (§8.2). */
   generation: number;
+  /** Per-attempt end-latch (issue #38): a WS close rejects it. */
+  session: WSSession | null;
   heartbeatTimer: NodeJS.Timeout | null;
+  /** Coalesced uplink flush; a per-session timer like the heartbeat (#38). */
+  flushTimer: NodeJS.Timeout | null;
   connectedAt: number;
   /** Command queue bound (§8.3): serial per-client processing. */
   readonly queue: Array<() => Promise<void>>;
@@ -45,7 +50,9 @@ export async function runClient(config: ClientConfig): Promise<void> {
     executor: new Executor(config.sandboxRoot),
     buffers: new Map(),
     generation: 0,
+    session: null,
     heartbeatTimer: null,
+    flushTimer: null,
     connectedAt: 0,
     queue: [],
     queueBusy: false,
@@ -59,7 +66,7 @@ export async function runClient(config: ClientConfig): Promise<void> {
     ensureIdentity: async () => (identity ??= await loadIdentity(config)),
     establishSession: (identity_) => establishSession(config, identity_, runtime),
     sessionLifetime: () => sessionLifetime(runtime),
-    teardownSession: () => teardownSession(runtime),
+    teardownSession: () => clearSessionTimers(runtime),
   });
 }
 
@@ -122,12 +129,19 @@ async function establishSession(
   });
   await attach.promise;
 
+  // The session latch (issue #38) exists from the moment the socket is
+  // live: a server-initiated close (deploy restart, DO eviction, edge
+  // drop) must end the lifetime actively — clear the per-session timers
+  // and reject the latch so the unified chain (issue #35) consumes the
+  // rung — instead of waiting on a heartbeat flag only teardown (which
+  // runs after sessionLifetime returns) could clear.
+  const session = runtime.session = new WSSession();
   socket.addEventListener("message", (event) => {
     void handleServiceFrame(runtime, config, socket, String(event.data));
   });
-  socket.addEventListener("close", () => {
-    log("ws closed");
-  });
+  watchSocketClose(socket, session, () => runtime.session === session, () =>
+    clearSessionTimers(runtime),
+  );
 
   // First frame after attach: the full boot announce (§8.2) — it resets the
   // service's observed view and drives its judgment tree.
@@ -155,16 +169,19 @@ async function establishSession(
   );
 
   // Coalesced output uplink; backpressure-aware whole-frame flushes (I29).
-  const flushTimer = setInterval(() => flushBuffers(runtime, socket), 100);
-  flushTimer.unref();
+  runtime.flushTimer = setInterval(() => flushBuffers(runtime, socket), 100);
+  runtime.flushTimer.unref();
   // The loop consumes the ws-open time for the stable-session reset.
   return runtime.connectedAt;
 }
 
 async function sessionLifetime(runtime: ClientRuntime): Promise<void> {
-  while (runtime.heartbeatTimer !== null) {
-    await sleep(1_000);
-  }
+  // Blocks on the session's ended latch (issue #38). A server-initiated
+  // close rejects it; the loop treats it as a failed session and rides the
+  // backoff chain. (The old heartbeat-flag poll could strand forever: only
+  // teardownSession nulled the flag, and teardown runs after this returns.)
+  const session = runtime.session;
+  if (session !== null) await session.ended.promise;
 }
 
 // ---------------------------------------------------------------------------
@@ -452,10 +469,15 @@ function observedSnapshot(runtime: ClientRuntime): ObservedExecution[] {
   return [...observed.values()];
 }
 
-function teardownSession(runtime: ClientRuntime): void {
+/** Clears every per-session timer (close path and teardown; idempotent). */
+function clearSessionTimers(runtime: ClientRuntime): void {
   if (runtime.heartbeatTimer !== null) {
     clearInterval(runtime.heartbeatTimer);
     runtime.heartbeatTimer = null;
+  }
+  if (runtime.flushTimer !== null) {
+    clearInterval(runtime.flushTimer);
+    runtime.flushTimer = null;
   }
 }
 
@@ -468,8 +490,3 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function sleep(ms: number): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
-  setTimeout(resolve, ms);
-  return promise;
-}
