@@ -39,6 +39,7 @@ export default tseslint.config(
       "packages/daemon-service/test/l1-glob-grep-semantics.test.ts",
       "packages/daemon-service/test/l1-edit-semantics.test.ts",
       "packages/daemon-service/test/l1-find-semantics.test.ts",
+      "packages/daemon-service/test/l1-task-isolation.test.ts",
       // Node-ambient client test (moved to tsconfig.client.json — the
       // workers-side program's ambient set conflicts): outside the project
       // service's default tsconfig discovery, prettier-formatted only.

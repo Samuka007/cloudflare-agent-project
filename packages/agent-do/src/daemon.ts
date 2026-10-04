@@ -69,4 +69,23 @@ export interface DaemonServiceClient {
    * re-acks each — this is how a lost ack closes without a second spawn.
    */
   queryUnacked(threadId: string): Promise<{ executionId: string; result: ToolResultPayload }[]>;
+  /**
+   * T20 #110 task-isolation op (synchronous host-op RPC): prepare or release
+   * an isolated workspace for a child spawn. Unlike `dispatch` the result
+   * resolves THIS call — there is no agent-side execution state and no
+   * onExecutionUpdate round trip (the service DO owns a dedicated waiter).
+   */
+  isolationOp(request: {
+    machineId: string;
+    threadId: string;
+    op: "prepare" | "release";
+    arguments: Record<string, unknown>;
+    timeoutMs: number;
+  }): Promise<IsolationOpOutcome>;
 }
+
+/** Mirror of DaemonServiceDO's IsolationOpOutcome (structural seam). */
+export type IsolationOpOutcome =
+  | { kind: "ok"; result: ToolResultPayload }
+  | { kind: "error"; error: string }
+  | { kind: "host_offline" };

@@ -90,7 +90,22 @@ export interface SpawnPlanRecord {
   /** Raw caller value in memory; the journal row carries it JSON-encoded. */
   outputSchema?: unknown;
   schemaMode?: "permissive" | "strict";
+  /** T20 #110: the spawn requested a daemon-side isolated workspace. */
+  isolated?: boolean;
+  /** Prepare outcome (JSON-encoded on the journal row) — workspace path,
+   * resolved backend, merge mode, apply gate. Present iff isolated. */
+  isolation?: SpawnIsolationInfo;
   depth: number;
+}
+
+/** The prepare payload the daemon returns (task-isolation.ts JSON shape). */
+export interface SpawnIsolationInfo {
+  workspaceDir: string;
+  backend: string;
+  fellBack: boolean;
+  fallbackReason: string | null;
+  mergeMode: "patch" | "branch";
+  applyGate: boolean;
 }
 
 /** Typed view of one `task.spawn_settled` journal row. */
@@ -146,6 +161,9 @@ export function projectSpawnPlans(events: readonly AnyAgentEvent[]): SpawnPlanRe
         ? {}
         : { outputSchema: JSON.parse(data.outputSchemaJson) as unknown }),
       ...(data.schemaMode === undefined ? {} : { schemaMode: data.schemaMode }),
+      ...(data.isolationJson === undefined
+        ? {}
+        : { isolated: true, isolation: JSON.parse(data.isolationJson) as SpawnIsolationInfo }),
       depth: data.depth,
     });
   }

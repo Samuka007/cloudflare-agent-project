@@ -4,6 +4,7 @@ import type {
   DaemonServiceClient,
   DispatchOutcome,
   ExecutionUpdate,
+  IsolationOpOutcome,
   ToolDispatchRequest,
   ToolResultPayload,
 } from "../daemon.js";
@@ -107,6 +108,12 @@ export class TestDaemonServiceDO extends DurableObject<TestDaemonEnv> {
     threadId: string,
   ): Promise<{ executionId: string; result: ToolResultPayload }[]> {
     return this.service.queryUnacked(threadId);
+  }
+
+  async isolationOp(
+    request: Parameters<DaemonServiceClient["isolationOp"]>[0],
+  ): Promise<IsolationOpOutcome> {
+    return this.service.isolationOp(request);
   }
 
   // -- client simulation (tests drive the machine side through here) --------

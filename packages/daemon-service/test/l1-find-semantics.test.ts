@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FindTool } from "@oh-my-pi/pi-coding-agent/tools/jfind";
@@ -13,6 +13,7 @@ import {
   type ToolDispatchFrame,
   type ToolHost,
 } from "../src/client/tool-runtime.js";
+import { decodeAgentAuthConfig } from "../src/client/agent-auth.js";
 
 /**
  * L1 per-tool semantics for find (M1.5/T11 #101) — the vendored omp jfind
@@ -82,14 +83,20 @@ afterAll(() => {
 });
 
 describe("find wiring (T11 #101)", () => {
-  test("the host carries find; dispatch without a provider channel degrades with the precise ToolError", async () => {
+  test("the host carries find and a ModelRegistry; zero credentials degrade at the chain, not the registry", async () => {
     expect(host.tools.find?.name).toBe("find");
     const result = await executeDispatch(
       host,
       frameOf("find", "fd-1", { query: "login flow", grep_keywords: ["login"] }),
     );
-    expect(result.status).toBe("error");
-    expect(result.output).toContain("find has no model registry to resolve a judge from");
+    // #145: createToolHost always wires the ModelRegistry — with no
+    // credential configured the judge ROLE chain resolves to zero candidates
+    // and the failure surfaces from the chain inside the cascade, never as
+    // the old registry ToolError. The box's ambient provider channels
+    // (env-tier keys / local servers) may legitimately resolve candidates —
+    // so only the SEAM is pinned here, never the cascade outcome.
+    expect("modelRegistry" in host.session && host.session.modelRegistry !== undefined).toBe(true);
+    expect(result.output).not.toContain("find has no model registry");
   });
 });
 
@@ -203,4 +210,136 @@ describe("budget timeout propagation (T11 #101)", () => {
     expect(caught).toBeInstanceOf(Error);
     expect(budget.aborted).toBe(true);
   });
+});
+
+describe("real judged cascade through the provider channel (#145)", () => {
+  /**
+   * Acceptance: ONE REAL judged cascade with a non-zero cost line. A local
+   * mock OpenAI-compatible endpoint stands in for the upstream — the channel
+   * itself is real end to end: models.yml materialized in the daemon-private
+   * agentDir → ModelRegistry → judge role chain → credentialed HTTP requests
+   * (the mock verifies the bearer) → billed usage → cascade cost.
+   */
+  const JUDGE_KEY = "test-judge-key";
+  let mockServer: Bun.Server;
+  let judgedRequests = 0;
+  let authedRequests = 0;
+  let authedHost: ToolHost;
+
+  beforeAll(async () => {
+    mockServer = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        if (request.headers.get("authorization") !== `Bearer ${JUDGE_KEY}`) {
+          return new Response("unauthorized", { status: 401 });
+        }
+        authedRequests += 1;
+        const body = (await request.json()) as {
+          messages: { role: string; content: string }[];
+          stream?: boolean;
+        };
+        const prompt = body.messages.map((message) => message.content).join("\n");
+        // Batch shape: yes/no judgments keyed e000/p00 (text-judge.md noul
+        // template — "Answer one word: YES if so; NO otherwise"); the
+        // one-hot YES parses to p=1.0, above the cascade's τ cut.
+        const keys = [...new Set(prompt.match(/\b(?:e\d{3}|p\d{2})\b/g) ?? [])];
+        const content = keys.length > 0 ? keys.map((key) => `${key}: yes`).join("\n") : "yes";
+        judgedRequests += 1;
+        if (body.stream === true) {
+          // The openai-completions transport streams by default (compat
+          // supportsUsageInStreaming): answer SSE chunks — one content delta,
+          // a terminal stop chunk carrying the billed usage, then [DONE].
+          const stream = new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder();
+              const frame = (payload: unknown) =>
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+              frame({
+                id: "mock-judged",
+                object: "chat.completion.chunk",
+                created: 1,
+                model: "judge-mock",
+                choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }],
+              });
+              frame({
+                id: "mock-judged",
+                object: "chat.completion.chunk",
+                created: 1,
+                model: "judge-mock",
+                choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                usage: { prompt_tokens: 220, completion_tokens: 30, total_tokens: 250 },
+              });
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          });
+          return new Response(stream, {
+            headers: { "content-type": "text/event-stream" },
+          });
+        }
+        return Response.json({
+          id: "mock-judged",
+          object: "chat.completion",
+          created: 1,
+          model: "judge-mock",
+          choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 220, completion_tokens: 30, total_tokens: 250 },
+        });
+      },
+    });
+    const authConfig = decodeAgentAuthConfig(
+      JSON.stringify({
+        providers: {
+          mockrelay: {
+            baseUrl: `http://127.0.0.1:${mockServer.port}/v1`,
+            api: "openai-completions",
+            apiKey: JUDGE_KEY,
+            models: [
+              {
+                id: "judge-mock",
+                name: "Judge Mock",
+                reasoning: false,
+                input: ["text"],
+                contextWindow: 32_768,
+                maxTokens: 4_096,
+                cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 },
+              },
+            ],
+          },
+        },
+        judgeRole: "mockrelay/judge-mock",
+      }),
+    );
+    // A dedicated agentDir: models.yml lands there; the registry loads it.
+    authedHost = await createToolHost(fixture, join(root, "omp-agent-auth"), MACHINE, authConfig);
+  });
+
+  afterAll(() => {
+    mockServer.stop(true);
+  });
+
+  test(
+    "one real judged cascade: credentialed requests, judged hits, non-zero cost line",
+    { timeout: 120_000 },
+    async () => {
+      expect(existsSync(join(root, "omp-agent-auth", "models.yml"))).toBe(true);
+      const result = await executeDispatch(
+        authedHost,
+        frameOf("find", "fd-auth-1", { query: "login flow", grep_keywords: ["login"] }),
+      );
+      expect(result.status).toBe("ok");
+      // Real HTTP through the channel: bearer-verified requests reached the
+      // upstream and every question came back judged YES (one-hot p=1.0, the
+      // τ cut sits at 0.20).
+      expect(authedRequests).toBeGreaterThan(0);
+      expect(judgedRequests).toBe(authedRequests);
+      expect(result.output).toContain("login.ts");
+      expect(result.output).toContain("1.00");
+      // The acceptance line: `· N requests · T tokens · $X.XXXX · …` — a real
+      // billed cascade prices non-zero.
+      const cost = /\$((?!0\.0000\b)\d+\.\d{4}) /.exec(result.output);
+      expect(cost).not.toBeNull();
+      expect(result.output).not.toContain("requests failed");
+    },
+  );
 });

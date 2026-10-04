@@ -83,6 +83,12 @@ interface SpawnAckWaiter {
   timer: TimerHandle;
 }
 
+/** In-flight T20 isolation-op waiters (never persisted; timeout self-resolves). */
+interface IsolationOpWaiter {
+  resolve: (result: ToolResultPayload) => void;
+  timer: TimerHandle;
+}
+
 interface SyncGateWaiter {
   resolve: (released: boolean) => void;
   timer: TimerHandle;
@@ -107,6 +113,12 @@ export type OpenSessionResult =
   | { ok: true; sessionId: string; heartbeatIntervalMs: number; leaseTimeoutMs: number }
   | { ok: false; error: "protocol_version_mismatch" };
 
+/** T20 #110: isolationOp RPC outcome (agent-do/src/daemon.ts mirror). */
+export type IsolationOpOutcome =
+  | { kind: "ok"; result: ToolResultPayload }
+  | { kind: "error"; error: string }
+  | { kind: "host_offline" };
+
 interface HostKeyMirrorEntry {
   keyHash: string;
   hostId: string;
@@ -118,6 +130,8 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
   private readyPromise: Promise<void> | null = null;
   /** In-flight spawn Q&A waiters (bb host-rpc requestId shape; §1.2: never persisted). */
   private readonly spawnWaiters = new Map<string, SpawnAckWaiter>();
+  /** T20 isolation-op waiters by executionId; voided on session replace. */
+  private readonly isolationWaiters = new Map<string, IsolationOpWaiter>();
   /** requestId → executionId; in-flight only, voided on session replace. */
   private readonly inflightRequests = new Map<string, string>();
   /** Dispatches parked by the syncing gate (I30). */
@@ -303,6 +317,78 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     }
   }
 
+  /**
+   * T20 #110 task-isolation op: a synchronous host-op RPC for the task
+   * executor's isolation seam. Unlike `dispatch`, there is NO agent-side
+   * execution state — the result resolves this call's promise directly
+   * (one DO request per op, the ticket's dispatch/ack budget), the audit
+   * rides the dedicated isolation journal rows, and the timeout is this
+   * RPC's own timer, not the execution watchdog (an isolation op must
+   * never be re-forwarded: prepare/release are stateful host mutations).
+   */
+  async isolationOp(request: {
+    machineId: string;
+    threadId: string;
+    op: "prepare" | "release";
+    arguments: Record<string, unknown>;
+    timeoutMs: number;
+  }): Promise<IsolationOpOutcome> {
+    await this.ready();
+    const session = this.state.session;
+    if (session === null || this.liveSocket() === null || request.machineId !== session.hostId) {
+      return { kind: "host_offline" };
+    }
+    const socket = this.liveSocket();
+    if (socket === null) return { kind: "host_offline" };
+    const executionId = `${request.threadId}:iso-${crypto.randomUUID()}`;
+    const timeoutMs = request.timeoutMs > 0 ? request.timeoutMs : DEFAULT_EXEC_TIMEOUT_MS;
+    this.journal({
+      kind: "isolation_op",
+      at: Date.now(),
+      executionId,
+      threadId: request.threadId,
+      op: request.op,
+      argumentsJson: JSON.stringify(request.arguments),
+    });
+    const { promise, resolve } = Promise.withResolvers<ToolResultPayload>();
+    const timer = setTimeout(() => {
+      if (this.isolationWaiters.delete(executionId)) {
+        resolve({
+          status: "timeout",
+          exitCode: null,
+          output: `isolation ${request.op} timed out after ${timeoutMs}ms`,
+        });
+      }
+    }, timeoutMs);
+    this.isolationWaiters.set(executionId, { resolve, timer });
+    this.send(socket, {
+      type: "tool.exec",
+      requestId: crypto.randomUUID(),
+      threadId: request.threadId,
+      executionId,
+      tool: `task.isolation.${request.op}`,
+      arguments: request.arguments,
+      timeoutMs,
+    });
+    try {
+      const result = await promise;
+      this.journal({
+        kind: "isolation_result",
+        at: Date.now(),
+        executionId,
+        op: request.op,
+        status: result.status,
+        output: clampInlineOutput(result.output),
+      });
+      return result.status === "ok"
+        ? { kind: "ok", result }
+        : { kind: "error", error: result.output };
+    } finally {
+      clearTimeout(timer);
+      this.isolationWaiters.delete(executionId);
+    }
+  }
+
   async queryUnacked(
     threadId: string,
   ): Promise<{ executionId: string; result: ToolResultPayload }[]> {
@@ -345,6 +431,15 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
         oldSessionId: previous.sessionId,
       });
       this.inflightRequests.clear();
+      for (const waiter of this.isolationWaiters.values()) {
+        clearTimeout(waiter.timer);
+        waiter.resolve({
+          status: "error",
+          exitCode: null,
+          output: "isolation op aborted: daemon session replaced mid-op",
+        });
+      }
+      this.isolationWaiters.clear();
       for (const waiter of this.spawnWaiters.values()) {
         clearTimeout(waiter.timer);
         waiter.resolve({ ok: false, error: "session_replaced" });
@@ -938,6 +1033,15 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
    * persistence).
    */
   private async handleToolExited(frame: ToolExitedFrame): Promise<void> {
+    // T20 isolation ops own their executionId (no execution record, no
+    // agent forwarding): the pending RPC resolves here and stops.
+    const isolationWaiter = this.isolationWaiters.get(frame.executionId);
+    if (isolationWaiter !== undefined) {
+      this.isolationWaiters.delete(frame.executionId);
+      clearTimeout(isolationWaiter.timer);
+      isolationWaiter.resolve(frame.result);
+      return;
+    }
     const record = this.state.executions.get(frame.executionId);
     if (record?.state !== "RUNNING") return;
     this.journal({
