@@ -188,4 +188,6 @@ export interface PendingInteractionRow {
   turnId: string;
   origin: PendingInteractionProviderOrigin;
   payload: PendingInteractionPayload;
+  /** The ruling once resolved; null while pending/interrupted (bb row shape). */
+  resolution: PendingInteractionResolution | null;
 }
