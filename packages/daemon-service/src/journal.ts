@@ -50,23 +50,32 @@ export type JournalOp =
   | { kind: "output_dup_dropped"; at: number; executionId: string; offset: number }
   | { kind: "output_gap"; at: number; executionId: string; from: number; to: number }
   | { kind: "output_ack"; at: number; executionId: string; ackedOffset: number }
-  | { kind: "exited"; at: number; executionId: string; status: ToolResultPayload["status"]; exitCode: number | null; finalOffset: number }
+  | {
+      kind: "exited";
+      at: number;
+      executionId: string;
+      status: ToolResultPayload["status"];
+      exitCode: number | null;
+      finalOffset: number;
+    }
   | { kind: "cancel_requested"; at: number; executionId: string }
   | { kind: "kill_forwarded"; at: number; executionId: string; requestId: string }
   | { kind: "kill_receipt"; at: number; executionId: string; verified: boolean }
   | { kind: "orphan_suspect"; at: number; executionId: string }
   | { kind: "orphan_suspect_cleared"; at: number; executionId: string }
   | { kind: "outcome_unknown"; at: number; executionId: string }
-  | { kind: "reconcile_action"; at: number; executionId: string; hostId: string; action: ReconcileAction }
+  | {
+      kind: "reconcile_action";
+      at: number;
+      executionId: string;
+      hostId: string;
+      action: ReconcileAction;
+    }
   | { kind: "ack"; at: number; executionId: string; resultSeq: number }
   | { kind: "tombstone"; at: number; executionId: string };
 
 export type ReconcileAction =
-  | "resume"
-  | "backfill"
-  | "kill_list"
-  | "outcome_unknown_direct"
-  | "clean";
+  "resume" | "backfill" | "kill_list" | "outcome_unknown_direct" | "clean";
 
 // ---------------------------------------------------------------------------
 // Derived state (replay product).
@@ -129,7 +138,10 @@ export function emptyServiceState(): ServiceStateData {
   return { executions: new Map(), session: null };
 }
 
-function recordOf(state: ServiceStateData, op: JournalOp & { executionId: string }): ExecutionRecord {
+function recordOf(
+  state: ServiceStateData,
+  op: JournalOp & { executionId: string },
+): ExecutionRecord {
   let record = state.executions.get(op.executionId);
   if (record === undefined) {
     record = {
@@ -272,4 +284,3 @@ export function foldOp(state: ServiceStateData, op: JournalOp): void {
     }
   }
 }
-

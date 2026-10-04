@@ -63,9 +63,9 @@ export class ExecutionBuffer {
    * never produced — a requested range below the ring base is the caller's
    * output_gap obligation (§8.3).
    */
-  sliceFrames(fromOffset: number): Array<{ offset: number; base64: string; byteLength: number }> {
+  sliceFrames(fromOffset: number): { offset: number; base64: string; byteLength: number }[] {
     const start = Math.max(fromOffset, this.baseOffset);
-    const frames: Array<{ offset: number; base64: string; byteLength: number }> = [];
+    const frames: { offset: number; base64: string; byteLength: number }[] = [];
     let cursor = start;
     while (cursor < this.endOffset && frames.length < 4096) {
       const take = Math.min(OUTPUT_CHUNK_BYTES, this.endOffset - cursor);

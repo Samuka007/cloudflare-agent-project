@@ -37,7 +37,11 @@ export async function loadIdentity(config: ClientConfig): Promise<ClientIdentity
   return enroll(config, hostIdPath, authPath);
 }
 
-async function enroll(config: ClientConfig, hostIdPath: string, authPath: string): Promise<ClientIdentity> {
+async function enroll(
+  config: ClientConfig,
+  hostIdPath: string,
+  authPath: string,
+): Promise<ClientIdentity> {
   const response = await fetch(`${config.baseUrl}/enroll`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -45,7 +49,13 @@ async function enroll(config: ClientConfig, hostIdPath: string, authPath: string
   });
   const text = await response.text();
   if (response.status !== 201) {
-    throw negotiationFailure("enroll", response.status, response.headers.get("retry-after"), Date.now(), text);
+    throw negotiationFailure(
+      "enroll",
+      response.status,
+      response.headers.get("retry-after"),
+      Date.now(),
+      text,
+    );
   }
   const issued = JSON.parse(text) as { hostId: string; hostKey: string };
   writeFileSync(hostIdPath, `${issued.hostId}\n`);

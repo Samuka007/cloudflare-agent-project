@@ -29,7 +29,12 @@ describe("L1 I24 journal is the sole authorization list", () => {
     await client.dial();
     const ack = await client.acknowledgeSpawnFor(
       authorizedId,
-      dispatchViaSeam(hostId, { threadId, executionId: authorizedId, machineId: hostId, command: "sleep 60" }),
+      dispatchViaSeam(hostId, {
+        threadId,
+        executionId: authorizedId,
+        machineId: hostId,
+        command: "sleep 60",
+      }),
     );
     await client.close();
 
@@ -77,10 +82,13 @@ describe("L1 I24 journal is the sole authorization list", () => {
     const view = await executionViewOf(hostId, authorizedId);
     expect(view.state).toBe("UNKNOWN");
     await expect
-      .poll(async () => (await sinkStub(threadId).updates()).some((update) => update.kind === "exited"), {
-        timeout: 5000,
-        interval: 50,
-      })
+      .poll(
+        async () => (await sinkStub(threadId).updates()).some((update) => update.kind === "exited"),
+        {
+          timeout: 5000,
+          interval: 50,
+        },
+      )
       .toBe(true);
     await client2.close();
   });

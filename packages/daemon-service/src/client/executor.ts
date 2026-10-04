@@ -42,7 +42,12 @@ export class Executor {
     return target;
   }
 
-  spawn(executionId: string, command: string, cwd: string, onOutput: (text: string) => void): ExecutedProcess {
+  spawn(
+    executionId: string,
+    command: string,
+    cwd: string,
+    onOutput: (text: string) => void,
+  ): ExecutedProcess {
     const resolved = this.resolveCwd(cwd);
     mkdirSync(resolved, { recursive: true });
     const child = spawn("bash", ["-c", command], {
@@ -75,8 +80,12 @@ export class Executor {
     this.processes.set(executionId, entry);
     // Merged single logical stream (§8.3 M0 ruling): both pipes feed one
     // consumer in arrival order; interleaving across pipes is best-effort.
-    child.stdout?.on("data", (chunk: Buffer) => onOutput(chunk.toString("utf8")));
-    child.stderr?.on("data", (chunk: Buffer) => onOutput(chunk.toString("utf8")));
+    child.stdout.on("data", (chunk: Buffer) => {
+      onOutput(chunk.toString("utf8"));
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      onOutput(chunk.toString("utf8"));
+    });
     child.on("error", (error) => {
       log(`exec ${executionId} spawn error: ${String(error)}`);
       onOutput(`\n[daemon-client spawn error] ${String(error)}`);
@@ -104,7 +113,9 @@ export class Executor {
   verifyAndKill(executionId: string, pid: number, pidStartedAt: number): boolean {
     const current = procStartTime(pid);
     if (current === null || current !== pidStartedAt) {
-      log(`kill-list ${executionId}: pid ${pid} verification failed (start ${current} ≠ ${pidStartedAt}) — spared`);
+      log(
+        `kill-list ${executionId}: pid ${pid} verification failed (start ${current} ≠ ${pidStartedAt}) — spared`,
+      );
       return false;
     }
     try {
@@ -167,12 +178,12 @@ function procStartTime(pid: number): number | null {
  * snapshot is rebuilt by scanning /proc for our marker env — enough to
  * verify-and-kill, not enough to re-attach pipes.
  */
-export function scanMarkerProcesses(): Array<{
+export function scanMarkerProcesses(): {
   executionId: string;
   pid: number;
   pidStartedAt: number;
-}> {
-  const found: Array<{ executionId: string; pid: number; pidStartedAt: number }> = [];
+}[] {
+  const found: { executionId: string; pid: number; pidStartedAt: number }[] = [];
   const self = process.pid;
   for (const entry of readdirSync("/proc")) {
     const pid = Number(entry);

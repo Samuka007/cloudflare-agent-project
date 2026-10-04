@@ -78,7 +78,10 @@ interface SyncGateWaiter {
   timer: TimerHandle;
 }
 
-type SpawnAck = { ok: boolean; error?: string };
+interface SpawnAck {
+  ok: boolean;
+  error?: string;
+}
 
 /** Handle returned by the ambient `setTimeout`: a bare `number` under the
  * Workers lib, `NodeJS.Timeout` under Node-types composed graphs — derived,
@@ -132,9 +135,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
   // -------------------------------------------------------------------------
 
   private async ready(): Promise<void> {
-    if (this.readyPromise === null) {
-      this.readyPromise = this.replay();
-    }
+    this.readyPromise ??= this.replay();
     await this.readyPromise;
   }
 
@@ -179,9 +180,15 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     const existing = this.state.executions.get(request.executionId);
     // Execution dedup point (§3.5/E): COMPLETED or acked tombstone is
     // answered from the journal — the client never spawns twice (I16).
-    if (existing !== undefined && (existing.state === "COMPLETED" || existing.state === "TOMBSTONE")) {
-      const result =
-        existing.result ?? { status: "error", exitCode: null, output: existing.outputText };
+    if (
+      existing !== undefined &&
+      (existing.state === "COMPLETED" || existing.state === "TOMBSTONE")
+    ) {
+      const result = existing.result ?? {
+        status: "error",
+        exitCode: null,
+        output: existing.outputText,
+      };
       return { kind: "completed_cached", result };
     }
     const session = this.state.session;
@@ -210,7 +217,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
       return { kind: "host_offline" };
     }
     const current = this.state.executions.get(request.executionId);
-    if (current !== undefined && current.state === "RUNNING" && current.spawnAcked) {
+    if (current?.state === "RUNNING" && current.spawnAcked) {
       // Re-attach (§3.5): the same boot already holds the process; its
       // stream continues. Zero additional spawn.
       return { kind: "accepted" };
@@ -245,7 +252,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     await this.ready();
     const record = this.state.executions.get(executionId);
     // Unknown executionId → no-op ack; terminal → no-op (§2.4).
-    if (record === undefined || record.state !== "RUNNING") return;
+    if (record?.state !== "RUNNING") return;
     this.journal({ kind: "cancel_requested", at: Date.now(), executionId });
     const socket = this.liveSocket();
     if (socket === null) return;
@@ -262,7 +269,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
   async ackExecution(executionId: string, resultSeq: number): Promise<void> {
     await this.ready();
     const record = this.state.executions.get(executionId);
-    if (record === undefined || record.state !== "COMPLETED") return;
+    if (record?.state !== "COMPLETED") return;
     // Claim/ack closure (§3.6/F): tombstone only after the agent DO has
     // durably appended the result — this call IS that promise (I21).
     this.journal({ kind: "ack", at: Date.now(), executionId, resultSeq });
@@ -279,9 +286,11 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     }
   }
 
-  async queryUnacked(threadId: string): Promise<Array<{ executionId: string; result: ToolResultPayload }>> {
+  async queryUnacked(
+    threadId: string,
+  ): Promise<{ executionId: string; result: ToolResultPayload }[]> {
     await this.ready();
-    const unacked: Array<{ executionId: string; result: ToolResultPayload }> = [];
+    const unacked: { executionId: string; result: ToolResultPayload }[] = [];
     for (const record of this.state.executions.values()) {
       if (record.threadId !== threadId) continue;
       if (record.state !== "COMPLETED" || record.result === null) continue;
@@ -368,7 +377,11 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
   // authCheck fallback, which backfills the cache on the next request.
   // -------------------------------------------------------------------------
 
-  async mirrorHostKey(args: { keyHash: string; hostId: string; ttlMs: number }): Promise<{ ok: true }> {
+  async mirrorHostKey(args: {
+    keyHash: string;
+    hostId: string;
+    ttlMs: number;
+  }): Promise<{ ok: true }> {
     const entry: HostKeyMirrorEntry = {
       keyHash: args.keyHash,
       hostId: args.hostId,
@@ -386,8 +399,8 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
   }
 
   /** DO-touch observability for the #36 request-budget tests. */
-  async edgeStats(): Promise<{ openSessionCalls: number }> {
-    return { openSessionCalls: this.edgeOpenSessionCalls };
+  edgeStats(): Promise<{ openSessionCalls: number }> {
+    return Promise.resolve({ openSessionCalls: this.edgeOpenSessionCalls });
   }
 
   // -------------------------------------------------------------------------
@@ -406,15 +419,18 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     const hostId = url.searchParams.get("hostId") ?? "";
     const sessionId = url.searchParams.get("sessionId") ?? "";
     const session = this.state.session;
-    const valid =
-      session !== null && session.hostId === hostId && session.sessionId === sessionId;
+    const valid = session !== null && session.hostId === hostId && session.sessionId === sessionId;
     if (!valid) {
       // Attach-time validation failure (§8.5 step 1 shape): reject the
       // upgrade outright — bb closes 1008 post-upgrade, but a post-upgrade
       // close does not reliably reach the client on this platform, so the
       // gate degrades to an explicit 401 before any socket exists.
       return Response.json(
-        { code: "invalid_session", message: "attach rejected: unknown or stale sessionId", retryable: false },
+        {
+          code: "invalid_session",
+          message: "attach rejected: unknown or stale sessionId",
+          retryable: false,
+        },
         { status: 401 },
       );
     }
@@ -557,7 +573,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
   }
 
   /** §8.5 same-boot branch: mere disconnection — resume or backfill, no kills. */
-  private async reconcileSameBoot(
+  private reconcileSameBoot(
     ws: WebSocket,
     announce: BootAnnounceReceived,
     session: NonNullable<ServiceStateData["session"]>,
@@ -566,7 +582,11 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     for (const record of this.runningOfBoot(session.bootId)) {
       if (record.orphanSuspect) {
         // §6.2: same-boot reconnect clears the orphan suspicion.
-        this.journal({ kind: "orphan_suspect_cleared", at: Date.now(), executionId: record.executionId });
+        this.journal({
+          kind: "orphan_suspect_cleared",
+          at: Date.now(),
+          executionId: record.executionId,
+        });
       }
       const observed = announce.observed.find((entry) => entry.executionId === record.executionId);
       if (observed === undefined) {
@@ -600,10 +620,11 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
         executionId: record.executionId,
       });
     }
+    return Promise.resolve();
   }
 
   /** §8.5 new-boot branch: client restarted — kill-list and/or direct UNKNOWN. */
-  private async reconcileNewBoot(
+  private reconcileNewBoot(
     ws: WebSocket,
     announce: BootAnnounceReceived,
     session: NonNullable<ServiceStateData["session"]>,
@@ -613,7 +634,8 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     const oldRunning = [...this.state.executions.values()].filter(
       // The judgment baseline is the replaced session's boot (§8.5 tree):
       // RUNNING records owned by any boot other than the announcing one.
-      (record) => record.state === "RUNNING" && record.bootId !== null && record.bootId !== announce.bootId,
+      (record) =>
+        record.state === "RUNNING" && record.bootId !== null && record.bootId !== announce.bootId,
     );
     const oldRunningIds = new Set(oldRunning.map((record) => record.executionId));
     const killEntries: KillListServiceFrame["entries"] = [];
@@ -657,6 +679,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     if (killEntries.length > 0) {
       this.send(ws, { type: "kill.list", requestId: crypto.randomUUID(), entries: killEntries });
     }
+    return Promise.resolve();
   }
 
   /**
@@ -666,7 +689,8 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
    * exec.exited close the record.
    */
   private backfillEnded(record: ExecutionRecord, observed: ObservedEntry): void {
-    const hasFullStream = observed.finalOffset !== undefined && observed.finalOffset <= record.lastOffset;
+    const hasFullStream =
+      observed.finalOffset !== undefined && observed.finalOffset <= record.lastOffset;
     const hasExit = observed.exitCode !== undefined && observed.exitCode !== null;
     if (!hasFullStream || !hasExit) {
       const socket = this.liveSocket();
@@ -701,7 +725,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     if (waiter !== undefined) {
       this.spawnWaiters.delete(frame.requestId);
       clearTimeout(waiter.timer);
-      if (frame.type === "exec.spawn_ack" && frame.ok === false) {
+      if (frame.type === "exec.spawn_ack" && !frame.ok) {
         waiter.resolve({ ok: false, error: frame.error });
       } else {
         waiter.resolve({ ok: true });
@@ -709,7 +733,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     }
     this.inflightRequests.delete(frame.requestId);
     const record = this.state.executions.get(frame.executionId);
-    if (record === undefined || record.state !== "RUNNING" || record.spawnAcked) return;
+    if (record?.state !== "RUNNING" || record.spawnAcked) return;
     if (frame.pid === undefined || frame.pidStartedAt === undefined) return;
     this.journal({
       kind: "spawn_ack",
@@ -728,7 +752,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
 
   private handleOutput(ws: WebSocket, frame: ExecOutputFrame): void {
     const record = this.state.executions.get(frame.executionId);
-    if (record === undefined || record.state !== "RUNNING") return;
+    if (record?.state !== "RUNNING") return;
     const text = base64ToText(frame.bytesBase64);
     if (frame.offset < record.lastOffset) {
       // Overlap retransmit → dropped + journaled (I20).
@@ -752,7 +776,13 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
         to: frame.offset,
       });
     }
-    this.journal({ kind: "output", at: Date.now(), executionId: frame.executionId, offset: frame.offset, text });
+    this.journal({
+      kind: "output",
+      at: Date.now(),
+      executionId: frame.executionId,
+      offset: frame.offset,
+      text,
+    });
     // The ack frontier is state (I25 monotonicity, I19 replay) — journal it
     // like every other fact before the frame leaves.
     this.journal({
@@ -780,7 +810,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
 
   private handleOutputGap(frame: ExecOutputGapFrame): void {
     const record = this.state.executions.get(frame.executionId);
-    if (record === undefined || record.state !== "RUNNING") return;
+    if (record?.state !== "RUNNING") return;
     // Client-declared ring eviction: explicit truncated marker over the gap
     // interval (§8.3, I26 — gaps are never silent).
     this.journal({
@@ -794,7 +824,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
 
   private async handleExited(frame: ExecExitedFrame): Promise<void> {
     const record = this.state.executions.get(frame.executionId);
-    if (record === undefined || record.state !== "RUNNING") return;
+    if (record?.state !== "RUNNING") return;
     if (frame.finalOffset > record.lastOffset) {
       // Exit ahead of the byte frontier → honest truncated marker.
       this.journal({
@@ -869,7 +899,12 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
         // the same executionId — idempotent against the client process table.
         if (socket !== null && !record.orphanSuspect) {
           const requestId = crypto.randomUUID();
-          this.journal({ kind: "spawn_forwarded", at: now, executionId: record.executionId, requestId });
+          this.journal({
+            kind: "spawn_forwarded",
+            at: now,
+            executionId: record.executionId,
+            requestId,
+          });
           this.send(socket, {
             type: "exec.spawn",
             requestId,
@@ -890,7 +925,12 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
         record.timeoutKillForwarded = true;
         if (socket !== null) {
           const requestId = crypto.randomUUID();
-          this.journal({ kind: "kill_forwarded", at: now, executionId: record.executionId, requestId });
+          this.journal({
+            kind: "kill_forwarded",
+            at: now,
+            executionId: record.executionId,
+            requestId,
+          });
           this.send(socket, {
             type: "exec.kill",
             requestId,
@@ -990,7 +1030,10 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
    * UNKNOWN is a terminal, persisted outcome (§0 rule 4) — journaled once and
    * reported to the agent DO; the kill receipt never re-opens it.
    */
-  private journalOutcome(executionId: string, action: Extract<ReconcileAction, "outcome_unknown_direct" | "kill_list">): void {
+  private journalOutcome(
+    executionId: string,
+    action: Extract<ReconcileAction, "outcome_unknown_direct" | "kill_list">,
+  ): void {
     this.journal({ kind: "outcome_unknown", at: Date.now(), executionId });
     this.journalReconcileAction(executionId, action);
     void this.forwardResultToAgent(executionId);
@@ -1013,11 +1056,9 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
   }
 
   private countReconcileActions(): number {
-    return Number(
-      this.ctx.storage.sql
-        .exec<{ n: number }>("SELECT COUNT(*) AS n FROM journal_ops WHERE kind = 'reconcile_action'")
-        .one().n,
-    );
+    return this.ctx.storage.sql
+      .exec<{ n: number }>("SELECT COUNT(*) AS n FROM journal_ops WHERE kind = 'reconcile_action'")
+      .one().n;
   }
 
   private async forwardResultToAgent(executionId: string): Promise<void> {
@@ -1049,7 +1090,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
   // Observability RPCs (L1 tests + smoke).
   // -------------------------------------------------------------------------
 
-  async journalOps(executionId?: string): Promise<Array<JournalOp & { opSeq: number }>> {
+  async journalOps(executionId?: string): Promise<(JournalOp & { opSeq: number })[]> {
     await this.ready();
     const rows =
       executionId === undefined
@@ -1066,7 +1107,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
             .toArray();
     return rows.map((row) => ({
       ...(JSON.parse(row.payload) as JournalOp),
-      opSeq: Number(row.op_seq),
+      opSeq: row.op_seq,
     }));
   }
 
@@ -1139,8 +1180,9 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
   }
 
   /** L1 (#36): arm/disarm the quota/overload fault the edge classifiers key on. */
-  async debugSetOverload(on: boolean): Promise<void> {
+  debugSetOverload(on: boolean): Promise<void> {
     this.debugOverload = on;
+    return Promise.resolve();
   }
 }
 
@@ -1182,11 +1224,11 @@ function resultStatusFor(
 }
 
 function sandboxCwdOf(args: Record<string, unknown>): string {
-  const cwd = args["cwd"];
+  const cwd = args.cwd;
   return typeof cwd === "string" ? cwd : ".";
 }
 
 function bashCommandOf(args: Record<string, unknown>): string | null {
-  const command = args["command"];
+  const command = args.command;
   return typeof command === "string" && command.length > 0 ? command : null;
 }

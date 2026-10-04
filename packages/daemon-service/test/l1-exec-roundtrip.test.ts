@@ -46,10 +46,13 @@ describe("L1 exec roundtrip", () => {
 
     const sink = sinkStub(threadId);
     await expect
-      .poll(async () => (await sink.updates()).filter((update) => update.kind === "exited").length, {
-        timeout: 5000,
-        interval: 50,
-      })
+      .poll(
+        async () => (await sink.updates()).filter((update) => update.kind === "exited").length,
+        {
+          timeout: 5000,
+          interval: 50,
+        },
+      )
       .toBe(1);
     const exited = (await sink.updates()).find((update) => update.kind === "exited");
     expect(exited).toMatchObject({

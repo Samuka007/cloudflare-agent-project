@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { SimulatedClient, uniqueHostId, journalOf, opsOfKind, dispatchViaSeam, executionViewOf } from "./helpers.js";
+import {
+  SimulatedClient,
+  uniqueHostId,
+  journalOf,
+  opsOfKind,
+  dispatchViaSeam,
+  executionViewOf,
+} from "./helpers.js";
 
 /**
  * I25 — ack monotonicity + trim conservation (§8.3): output_ack's
@@ -39,10 +46,13 @@ describe("L1 I25 ack monotonic + trim conservation", () => {
     // A retransmitted overlap is dropped and does NOT move the frontier.
     client.sendOutput(executionId, 0, "aaaa\n");
     await expect
-      .poll(async () => opsOfKind(await journalOf(hostId, executionId), "output_dup_dropped").length, {
-        timeout: 5000,
-        interval: 50,
-      })
+      .poll(
+        async () => opsOfKind(await journalOf(hostId, executionId), "output_dup_dropped").length,
+        {
+          timeout: 5000,
+          interval: 50,
+        },
+      )
       .toBe(1);
     const view = await executionViewOf(hostId, executionId);
     expect(view.ackedOffset).toBe(15);

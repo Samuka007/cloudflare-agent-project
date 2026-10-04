@@ -109,7 +109,8 @@ async function handleEnroll(request: Request, env: WorkerEnv): Promise<Response>
   if (typeof parsed?.enrollKey !== "string" || parsed.enrollKey !== env.ENROLL_KEY) {
     return unauthorized();
   }
-  const hostId = typeof parsed.hostId === "string" ? parsed.hostId : (env.DAEMON_HOST_ID ?? "poc-local");
+  const hostId =
+    typeof parsed.hostId === "string" ? parsed.hostId : (env.DAEMON_HOST_ID ?? "poc-local");
   // Auth-ladder order (#36): DO mirror first (the authority), KV cache
   // second. The mirror lands in the deployment-identity DO — the one the
   // ladder's KV-miss fallback consults (at fallback time the host is not
@@ -137,7 +138,11 @@ async function handleEnroll(request: Request, env: WorkerEnv): Promise<Response>
 // session/open + WS attach (bb §2.1 handshake steps 1–2).
 // ---------------------------------------------------------------------------
 
-async function handleSessionOpen(request: Request, env: WorkerEnv, hostIdHint: string | null): Promise<Response> {
+async function handleSessionOpen(
+  request: Request,
+  env: WorkerEnv,
+  hostIdHint: string | null,
+): Promise<Response> {
   let body: unknown;
   try {
     body = await request.json();
@@ -147,7 +152,8 @@ async function handleSessionOpen(request: Request, env: WorkerEnv, hostIdHint: s
   const parsed = body as { hostId?: unknown; protocolVersion?: unknown; bootId?: unknown } | null;
   const hostId = typeof parsed?.hostId === "string" ? parsed.hostId : hostIdHint;
   const bootId = typeof parsed?.bootId === "string" ? parsed.bootId : null;
-  const protocolVersion = typeof parsed?.protocolVersion === "number" ? parsed.protocolVersion : null;
+  const protocolVersion =
+    typeof parsed?.protocolVersion === "number" ? parsed.protocolVersion : null;
   if (hostId === null || bootId === null || protocolVersion === null) {
     return errorResponse("validation_failed", "hostId, bootId and protocolVersion are required");
   }
@@ -231,13 +237,14 @@ async function handleAgentRoute(path: string, request: Request, env: WorkerEnv):
   if (path === "/agent/dispatch" && request.method === "POST") {
     const parsed = await jsonBody(request);
     if (parsed === null) return errorResponse("bad_request", "invalid json body");
-    const body = parsed as Record<string, unknown>;
+    const body = parsed;
     const executionId = readString(body, "executionId");
     const threadId = readString(body, "threadId");
     // The bash tool shape carries the command inside `arguments` (the same
     // place the real agent DO's ToolDispatchRequest puts it).
-    const arguments_ = (body["arguments"] as Record<string, unknown> | undefined) ?? {};
-    const command = typeof arguments_["command"] === "string" ? arguments_["command"] : readString(body, "command");
+    const arguments_ = (body.arguments as Record<string, unknown> | undefined) ?? {};
+    const command =
+      typeof arguments_.command === "string" ? arguments_.command : readString(body, "command");
     if (executionId === null || threadId === null || command === null) {
       return errorResponse("validation_failed", "executionId, threadId, command required");
     }
@@ -248,7 +255,7 @@ async function handleAgentRoute(path: string, request: Request, env: WorkerEnv):
       machineId,
       tool: readString(body, "tool") ?? "bash",
       arguments: arguments_,
-      timeoutMs: typeof body["timeoutMs"] === "number" ? (body["timeoutMs"] as number) : 0,
+      timeoutMs: typeof body.timeoutMs === "number" ? body.timeoutMs : 0,
     });
     return Response.json(outcome);
   }
@@ -256,7 +263,7 @@ async function handleAgentRoute(path: string, request: Request, env: WorkerEnv):
   if (path === "/agent/kill" && request.method === "POST") {
     const parsed = await jsonBody(request);
     if (parsed === null) return errorResponse("bad_request", "invalid json body");
-    const executionId = readString(parsed as Record<string, unknown>, "executionId");
+    const executionId = readString(parsed, "executionId");
     if (executionId === null) return errorResponse("validation_failed", "executionId required");
     await stub.kill(executionId);
     return Response.json({ ok: true });
@@ -265,9 +272,9 @@ async function handleAgentRoute(path: string, request: Request, env: WorkerEnv):
   if (path === "/agent/ack" && request.method === "POST") {
     const parsed = await jsonBody(request);
     if (parsed === null) return errorResponse("bad_request", "invalid json body");
-    const body = parsed as Record<string, unknown>;
+    const body = parsed;
     const executionId = readString(body, "executionId");
-    const resultSeq = body["resultSeq"];
+    const resultSeq = body.resultSeq;
     if (executionId === null || typeof resultSeq !== "number") {
       return errorResponse("validation_failed", "executionId and numeric resultSeq required");
     }
@@ -277,7 +284,8 @@ async function handleAgentRoute(path: string, request: Request, env: WorkerEnv):
 
   if (path === "/agent/unacked") {
     const threadId = new URL(request.url).searchParams.get("threadId");
-    if (threadId === null) return errorResponse("validation_failed", "threadId query param required");
+    if (threadId === null)
+      return errorResponse("validation_failed", "threadId query param required");
     return Response.json({ unacked: await stub.queryUnacked(threadId) });
   }
 
@@ -293,7 +301,8 @@ async function handleAgentRoute(path: string, request: Request, env: WorkerEnv):
   // Agent-sink inspection (smoke assertions on forwarded updates).
   if (path === "/agent-sink/updates") {
     const threadId = new URL(request.url).searchParams.get("threadId") ?? machineId;
-    const sink = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId)) as DurableObjectStub & TestAgentSinkDO;
+    const sink = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId)) as DurableObjectStub &
+      TestAgentSinkDO;
     return Response.json({ updates: await sink.updates() });
   }
 
@@ -306,7 +315,8 @@ async function handleAgentRoute(path: string, request: Request, env: WorkerEnv):
 
 function stubForHost(env: WorkerEnv, hostId: string): DurableObjectStub & DaemonServiceDO {
   const name = hostId === "" ? (env.DAEMON_MACHINE_ID ?? "poc-local") : hostId;
-  return env.DAEMON_SERVICE.get(env.DAEMON_SERVICE.idFromName(name)) as DurableObjectStub & DaemonServiceDO;
+  return env.DAEMON_SERVICE.get(env.DAEMON_SERVICE.idFromName(name)) as DurableObjectStub &
+    DaemonServiceDO;
 }
 
 /** Auth ladder (#36): env compare (staging single-host / L1 rig; zero edge

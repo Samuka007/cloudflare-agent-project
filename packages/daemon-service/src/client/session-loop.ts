@@ -44,7 +44,7 @@ export async function runSessionLoop<TIdentity>(
   const backoff = new NegotiationBackoff(clock);
   let identity: TIdentity | null = null;
   let connectedAtMs = 0;
-  while (true) {
+  for (;;) {
     let failure: unknown;
     try {
       identity ??= await steps.ensureIdentity();
@@ -64,10 +64,16 @@ export async function runSessionLoop<TIdentity>(
     }
     const retryAfterMs = failure instanceof NegotiationError ? failure.retryAfterMs : null;
     const delayMs = backoff.nextDelayMs(retryAfterMs);
+    // Error-first: the `failure === undefined` guard would narrow the
+    // remaining type to `{}` before a String() render, so the check follows
+    // the instanceof branch instead. Non-Error throwables render as JSON —
+    // reconnect decisions never read this string.
     const outcome =
-      failure === undefined
-        ? "session closed"
-        : `session lost: ${failure instanceof Error ? failure.message : String(failure)}`;
+      failure instanceof Error
+        ? `session lost: ${failure.message}`
+        : failure === undefined
+          ? "session closed"
+          : `session lost: ${JSON.stringify(failure)}`;
     log(`${outcome} — reconnecting in ${Math.round(delayMs)}ms`);
     await clock.sleep(delayMs);
   }

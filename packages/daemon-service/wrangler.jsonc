@@ -12,19 +12,17 @@
       // POC agent-update sink standing in for packages/agent-do's AgentDO
       // during this package's L1 tests and the local smoke. The integration
       // worker binds AGENT_DO to the real AgentDO instead.
-      { "name": "AGENT_DO", "class_name": "TestAgentSinkDO" }
-    ]
+      { "name": "AGENT_DO", "class_name": "TestAgentSinkDO" },
+    ],
   },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["DaemonServiceDO", "TestAgentSinkDO"] }
-  ],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DaemonServiceDO", "TestAgentSinkDO"] }],
   "kv_namespaces": [
     {
       // Edge shield (#36): hostKey-hash auth cache. The DO mirror is the
       // authority; this namespace is a pure cache and may be empty/absent.
       "binding": "DAEMON_EDGE_KV",
-      "id": "5b39e87d559b424a8f6432e6a2bc9ff7"
-    }
+      "id": "5b39e87d559b424a8f6432e6a2bc9ff7",
+    },
   ],
   "vars": {
     // POC dev defaults. Production would inject these as secrets; the enroll
@@ -37,6 +35,6 @@
     // L1-rig negative-cache window (#36): real-clock short window so the
     // expiry test polls a ~1.5s window. Production deploys leave this
     // UNSET — the named-constant default is 30s (NEGATIVE_CACHE_TTL_MS).
-    "DAEMON_NEGATIVE_CACHE_MS": "1500"
-  }
+    "DAEMON_NEGATIVE_CACHE_MS": "1500",
+  },
 }
