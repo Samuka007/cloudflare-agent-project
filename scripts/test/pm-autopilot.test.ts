@@ -19,7 +19,6 @@ import {
   resolveJeapiKey,
   slugify,
   snapshot,
-  type FileReport,
   type GqlFn,
   type JudgeAnswer,
   type JudgeReply,
