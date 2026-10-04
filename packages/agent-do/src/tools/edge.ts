@@ -3,7 +3,7 @@ import type { AnyAgentEvent } from "../fsm-events.js";
 import { executionIdFor } from "../ids.js";
 import type { ToolRegistryRow } from "./registry.js";
 import { runWaitTool, type WaitToolContext } from "./wait.js";
-import { runTaskTool, type TaskToolContext, type ValidatedSpawnParams } from "./task/executor.js";
+import { runTaskTool, type TaskToolContext } from "./task/executor.js";
 import { runYieldTool, type YieldToolArgs } from "./yield.js";
 import { runAskTool, type AskToolContext } from "./ask.js";
 import { type CheckpointRewindState, type TodoJournalState } from "./session-tree.js";
@@ -215,10 +215,15 @@ export async function runEdgeTool(
     // omp task/index.ts execute (edge half, M1.5 T16): journal-first spawn
     // plan → child AgentDO bring-up → per-item mode (blocking inline park /
     // background T2 registration). Bound only with the DO context.
+    // Lenient routing (omp lenientArgValidation, task/index.ts:619-629): a
+    // schema failure (e.g. the T18 batch container `{context, tasks[]}`,
+    // which the flat T16 row schema does not describe) passes the RAW args
+    // through — the executor's resolveSpawnItems self-check speaks with the
+    // omp-verbatim rejection text instead of an arktype summary.
     if (ctx.task === undefined) {
       return { status: "error", output: "task requires the DO-bound spawn context." };
     }
-    return runTaskTool(validated as ValidatedSpawnParams, ctx.task);
+    return runTaskTool(validated instanceof type.errors ? args : (validated as Record<string, unknown>), ctx.task);
   }
 
   if (row.name === "yield") {

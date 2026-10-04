@@ -86,6 +86,8 @@ export interface SpawnPlanRecord {
   jobId: string | null;
   task: string;
   solutionSpace: string;
+  /** T18 batch shared context — rendered into the child's CONTEXT section. */
+  context?: string;
   model?: string;
   /** Raw caller value in memory; the journal row carries it JSON-encoded. */
   outputSchema?: unknown;
@@ -122,6 +124,8 @@ export interface SpawnSettledRecord {
 
 /** Typed view of the child-journal `task.subagent_identity` row. */
 export interface SubagentIdentityRecord {
+  /** Journal timestamp — the T18 wall-clock budget origin (maxRuntimeMs). */
+  createdAt: number;
   spawnId: string;
   agentId: string;
   parentThreadId: string;
@@ -156,6 +160,7 @@ export function projectSpawnPlans(events: readonly AnyAgentEvent[]): SpawnPlanRe
       jobId: data.jobId,
       task: data.task,
       solutionSpace: data.solutionSpace,
+      ...(data.context === undefined ? {} : { context: data.context }),
       ...(data.model === undefined ? {} : { model: data.model }),
       ...(data.outputSchemaJson === undefined
         ? {}
@@ -217,6 +222,7 @@ export function subagentIdentityOf(
   );
   if (row === undefined) return undefined;
   return {
+    createdAt: row.createdAt,
     spawnId: row.data.spawnId,
     agentId: row.data.agentId,
     parentThreadId: row.data.parentThreadId,

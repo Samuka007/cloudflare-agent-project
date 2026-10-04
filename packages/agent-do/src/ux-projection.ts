@@ -44,6 +44,7 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       case "task.yield_reminder":
       case "task.yield_warning":
       case "task.yield_completed":
+      case "task.budget_notice":
       case "todo_phases":
       // M1.5 T4 interaction journal family: the SPA renders the pending
       // interaction from the raw journal rows + the /ws pending-interaction

@@ -564,6 +564,7 @@ function withReminders(state: ChildRunState, count: number): ChildRunState {
   const reminders = Array.from({ length: count }, (_unused, index) => ({
     seq: baseSeq + 100 + index,
     inputId: `reminder-${index + 1}`,
+    reason: "ladder" as const,
     turnId: `t-reminder-${index + 1}`,
     terminal: "completed" as const,
   }));

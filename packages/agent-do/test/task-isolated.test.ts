@@ -7,7 +7,8 @@ import { setAgentRuntime } from "../src/injection.js";
 import { MockModelProvider } from "../src/testing/mock-provider.js";
 import { setAgentDefinitions, BUNDLED_AGENT_DEFINITIONS } from "../src/tools/task/types.js";
 import type { IsolationOpOutcome } from "../src/daemon.js";
-import type { TaskToolContext, ValidatedSpawnParams } from "../src/tools/task/executor.js";
+import type { TaskToolContext } from "../src/tools/task/executor.js";
+import { SpawnSemaphore } from "../src/tools/task/semaphore.js";
 import {
   DEFAULT_TASK_TOOL_CONFIG,
   isolationRetainedNote,
@@ -271,12 +272,15 @@ function fakeContext(events: AnyAgentEvent[], seam: FakeSeam): FakeHarness {
     subagentHost: { createThread, runSubagent },
     isolationOp: isolationOpFor(seam),
     wake: () => Promise.resolve("cancelled" as const),
+    semaphore: new SpawnSemaphore(DEFAULT_TASK_TOOL_CONFIG.maxConcurrency),
+    trackSpawnRelease: () => undefined,
     config: DEFAULT_TASK_TOOL_CONFIG,
   };
   return { context, createThread, runSubagent };
 }
 
-const BASE_PARAMS: ValidatedSpawnParams = {
+// Raw wire args (T18: the executor self-checks via resolveSpawnItems).
+const BASE_PARAMS = {
   task: "Work isolated",
   solutionSpace: "one fix",
   isolated: true,
