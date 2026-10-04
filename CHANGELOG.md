@@ -3,10 +3,11 @@
 本仓以 GitHub milestone + 票面验收为里程碑权威记录；本文件是人类可读摘要。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [Unreleased] M0 — bb 云端重建（边缘个人 agent）
+## [m0] — 2026-10-04 · bb 云端重建（边缘个人 agent）
 
-Milestone: GitHub `M0`。收官状态见 #31 报告；kill criteria：M0 是 bb 的云端重建，
-不是 omp 的替代。
+Milestone `M0` 已关账（#31 用户签收：演示跑通，kill criteria 成立——M0 是 bb 的
+云端重建，不是 omp 的替代）。staging 遗产：cap-server-staging@ece470f，
+SERVER_VERSION=commit SHA 注入。
 
 ### 架构落地（#18–#30）
 
