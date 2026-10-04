@@ -6,16 +6,20 @@ import {
   defaultJudge,
   dispatchable,
   dispatchPackets,
+  FILE_CONFIDENCE_FLOOR,
+  file,
   gateOf,
   intake,
   INTAKE_QUESTIONS,
   JEV_MODEL,
   JEV_URL,
   planCascade,
+  planFile,
   planDiff,
   resolveJeapiKey,
   slugify,
   snapshot,
+  type FileReport,
   type GqlFn,
   type JudgeAnswer,
   type JudgeReply,
@@ -187,6 +191,27 @@ class MockBoard {
   private dispatch(query: string, variables: Record<string, unknown>): Record<string, unknown> {
     if (query.includes("mutation")) {
       this.mutations.push({ query, variables });
+      if (query.includes("createIssue")) {
+        const number = Math.max(0, ...this.issues.map((i) => i.number)) + 1;
+        const row: IssueRow = {
+          id: `I${number}`,
+          number,
+          title: String(variables.title),
+          state: "OPEN",
+          bodyText: typeof variables.body === "string" ? variables.body : "",
+          milestone: null,
+          labels: { nodes: [] },
+          blockedBy: { nodes: [] },
+        };
+        if (typeof variables.milestoneId === "string") {
+          const title = Object.entries(this.milestones).find(
+            ([, id]) => id === variables.milestoneId,
+          )?.[0];
+          if (title !== undefined) row.milestone = { title };
+        }
+        this.issues.push(row);
+        return { createIssue: { issue: { id: row.id, number, url: `https://example.invalid/${number}` } } };
+      }
       if (query.includes("addProjectV2ItemById")) {
         const n = Number(String(variables.contentId).slice(1));
         if (this.itemByNumber(n) === undefined) this.boardIssue(n, null, null);
@@ -287,6 +312,26 @@ class MockBoard {
       const name = variables.name;
       const id = typeof name === "string" ? LABEL_IDS[name] : undefined;
       return { repository: { label: id === undefined ? null : { id, name } } };
+    }
+    if (query.includes("labels(first: 100")) {
+      return {
+        repository: {
+          id: "R_repo",
+          labels: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: Object.entries(LABEL_IDS).map(([name, id]) => ({ id, name })),
+          },
+          // number = ordinal position — the mock's own truth; tests assert
+          // AP.file read THIS number, proving runtime resolution (M1.5≠7).
+          milestones: {
+            nodes: Object.entries(this.milestones).map(([title, id], i) => ({
+              id,
+              number: i + 1,
+              title,
+            })),
+          },
+        },
+      };
     }
     if (query.includes("milestones(first: 50")) {
       return {
@@ -950,5 +995,228 @@ describe("classifyIntake / gateOf (pure)", () => {
     }
     expect(INTAKE_QUESTIONS.needs_probe).toMatchObject({ type: "noul" });
     expect(INTAKE_QUESTIONS.needs_human).toMatchObject({ type: "noul" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AP.file (#151): intake → create → closed-vocab labels → fields → edges → status
+// ---------------------------------------------------------------------------
+
+describe("planFile (pure)", () => {
+  it("floor demotes sub-0.8 dims to pmReview; status follows the APPLIED plan", () => {
+    const cls = classifyIntake(
+      replyAll(0.95, {
+        milestone: choiceAnswer("M2", 0.6), // demoted
+        priority: choiceAnswer("P0", 0.7), // demoted
+        needs_human: { type: "noul", noul: 0.85 }, // applied: true @0.85
+      }),
+    );
+    const { plan, pmReview } = planFile({ blockedBy: [9, 9, 3] }, cls);
+    expect(plan.labels).toEqual([
+      "block:agent-harness",
+      "type:implementation",
+      "ready-for-human",
+    ]);
+    expect(plan.milestone).toBeNull(); // demoted → nothing written
+    expect(plan.priority).toBeNull();
+    expect(plan.status).toBe("Wait for user"); // needs_human applied
+    expect(plan.blockedBy).toEqual([3, 9]); // deduped + sorted
+    expect(pmReview).toEqual([
+      { dimension: "milestone", suggested: "M2", confidence: 0.6 },
+      { dimension: "priority", suggested: "P0", confidence: 0.7 },
+    ]);
+  });
+
+  it("floor constant matches the intake gate's auto-apply threshold", () => {
+    expect(FILE_CONFIDENCE_FLOOR).toBe(0.8);
+  });
+});
+
+describe("AP.file (mocked transport + judge)", () => {
+  let board: MockBoard;
+  let judgeCalls: { state: unknown; questions: Record<string, unknown> }[];
+
+  beforeEach(() => {
+    board = new MockBoard();
+    judgeCalls = [];
+  });
+  afterEach(() => {
+    _inject(null);
+  });
+
+  function injectJudge(reply: JudgeReply): void {
+    _inject({
+      gql: board.gql,
+      judge: (state, questions) => {
+        judgeCalls.push({ state, questions });
+        return Promise.resolve(reply);
+      },
+    });
+  }
+
+  function filedIssue(): IssueRow | undefined {
+    return board.issues.find((i) => i.number === Math.max(...board.issues.map((x) => x.number)));
+  }
+
+  it("dry-run default: complete preview (labels/milestone number/priority/status), zero writes", async () => {
+    board.addIssue({ number: 7, title: "existing", bodyText: "" });
+    injectJudge(replyAll(0.95));
+    const rep = await file({ title: "[infra] new ticket", body: TICKET_BODY });
+    expect(rep.ok).toBe(true);
+    expect(rep.dryRun).toBe(true);
+    expect(rep.created).toBeUndefined();
+    expect(rep.plan).toEqual({
+      labels: ["block:agent-harness", "type:implementation"],
+      milestone: "M1",
+      milestoneNumber: 1, // resolved from the mock's live milestone map
+      priority: "P1",
+      status: "Todo", // scheduled wave
+      blockedBy: [],
+    });
+    expect(rep.pmReview).toEqual([]);
+    expect(board.mutations).toEqual([]); // zero writes
+    expect(board.issues).toHaveLength(1);
+    expect(board.items).toHaveLength(0);
+    // intake wiring: the judge saw the body once, with the seven questions
+    expect(judgeCalls).toHaveLength(1);
+    expect(String(judgeCalls[0]?.state)).toContain(TICKET_BODY);
+    expect(Object.keys(judgeCalls[0]?.questions ?? {}).sort()).toEqual([...ATOMIC_QUESTIONS].sort());
+  });
+
+  it("confirm: one-shot filing — issue created, fields/labels/edges complete, zero unregistered labels", async () => {
+    board.addIssue({ number: 7, title: "blocker", state: "CLOSED", bodyText: "" });
+    injectJudge(replyAll(0.95));
+    const rep = await file(
+      { title: "[infra] new ticket", body: TICKET_BODY, blockedBy: [7] },
+      { confirm: true },
+    );
+    expect(rep.ok).toBe(true);
+    expect(rep.dryRun).toBe(false);
+    expect(rep.created?.number).toBe(8);
+    expect(rep.created?.id).toBe("I8");
+
+    const issue = filedIssue();
+    expect(issue?.title).toBe("[infra] new ticket");
+    expect(issue?.bodyText).toBe(TICKET_BODY);
+    expect(issue?.milestone).toEqual({ title: "M1" });
+    const labelNames = (issue?.labels.nodes ?? []).map((l) => l.name);
+    expect(labelNames).toEqual(["block:agent-harness", "type:implementation"]);
+    for (const l of labelNames) {
+      expect(Object.keys(LABEL_IDS)).toContain(l); // zero unregistered labels
+    }
+    expect(issue?.blockedBy.nodes.map((b) => b.number)).toEqual([7]);
+
+    const item = board.items.find((it) => it.issueNumber === 8);
+    expect(item?.status).toBe("Todo");
+    expect(item?.priority).toBe("P1");
+
+    // write order: create → labels → board-add → fields → edge
+    const kinds = board.mutations.map((m) => m.query);
+    const indexOf = (needle: string): number =>
+      kinds.findIndex((q) => q.includes(needle));
+    expect(indexOf("createIssue")).toBe(0);
+    expect(indexOf("createIssue")).toBeLessThan(indexOf("addLabelsToLabelable"));
+    expect(indexOf("addLabelsToLabelable")).toBeLessThan(indexOf("addProjectV2ItemById"));
+    expect(indexOf("addProjectV2ItemById")).toBeLessThan(indexOf("updateProjectV2ItemFieldValue"));
+    expect(indexOf("updateProjectV2ItemFieldValue")).toBeLessThan(indexOf("addBlockedBy"));
+
+    // field writes carry runtime-resolved ids; creation carries the milestone
+    // id and NO labels array (invariant 5: REST path is never used)
+    const create = board.mutations.find((m) => m.query.includes("createIssue"));
+    expect(create?.variables).toMatchObject({ repositoryId: "R_repo", milestoneId: "M_m1" });
+    expect(create?.variables).not.toHaveProperty("labels");
+    const fieldWrites = board.mutations.filter((m) =>
+      m.query.includes("updateProjectV2ItemFieldValue"),
+    );
+    expect(fieldWrites.map((m) => m.variables.optionId)).toEqual(["opt_P1", "opt_Todo"]);
+    expect(fieldWrites.map((m) => m.variables.fieldId)).toEqual([
+      PRIORITY_FIELD_ID,
+      STATUS_FIELD_ID,
+    ]);
+  });
+
+  it("closed-vocabulary guard: unregistered label hard-fails with zero writes even on confirm", async () => {
+    board.addIssue({ number: 7, title: "existing", bodyText: "" });
+    // block:agent-content is in the intake vocabulary but NOT registered on
+    // this mock repository — the exact invariant-5 revival trap
+    injectJudge(replyAll(0.95, { block: choiceAnswer("block:agent-content", 0.95) }));
+    const rep = await file(
+      { title: "[infra] trap ticket", body: TICKET_BODY, blockedBy: [7] },
+      { confirm: true },
+    );
+    expect(rep.ok).toBe(false);
+    expect(rep.created).toBeUndefined();
+    expect(board.mutations).toEqual([]); // creation itself never issued
+    expect(board.issues).toHaveLength(1);
+    expect(board.items).toHaveLength(0);
+    expect(rep.errors.join(" ")).toContain("block:agent-content");
+    expect(rep.errors.join(" ")).toContain("invariant 5");
+  });
+
+  it("confidence <0.8 dims demote to pmReview and are never applied", async () => {
+    injectJudge(
+      replyAll(0.95, {
+        milestone: choiceAnswer("M2", 0.6),
+        priority: choiceAnswer("P0", 0.7),
+      }),
+    );
+    const rep = await file({ title: "demoted dims", body: TICKET_BODY }, { confirm: true });
+    expect(rep.ok).toBe(true);
+    expect(rep.pmReview).toEqual([
+      { dimension: "milestone", suggested: "M2", confidence: 0.6 },
+      { dimension: "priority", suggested: "P0", confidence: 0.7 },
+    ]);
+    const issue = filedIssue();
+    expect(issue?.milestone).toBeNull(); // nothing written for demoted dims
+    expect(board.items.find((it) => it.issueNumber === issue?.number)?.priority).toBeNull();
+    expect(board.items.find((it) => it.issueNumber === issue?.number)?.status).toBe("Backlog");
+    const create = board.mutations.find((m) => m.query.includes("createIssue"));
+    expect(create?.variables.milestoneId).toBeNull();
+  });
+
+  it("confident needs_human → ready-for-human label + Wait for user", async () => {
+    injectJudge(replyAll(0.95, { needs_human: { type: "noul", noul: 0.9 } }));
+    const rep = await file({ title: "user queue", body: TICKET_BODY }, { confirm: true });
+    expect(rep.ok).toBe(true);
+    expect(rep.plan.status).toBe("Wait for user");
+    const issue = filedIssue();
+    expect((issue?.labels.nodes ?? []).map((l) => l.name)).toContain("ready-for-human");
+    expect(board.items.find((it) => it.issueNumber === issue?.number)?.status).toBe(
+      "Wait for user",
+    );
+  });
+
+  it("milestone 'none' → unscheduled Backlog filing without a milestone write", async () => {
+    injectJudge(replyAll(0.95, { milestone: choiceAnswer("none", 0.95) }));
+    const rep = await file({ title: "unscheduled", body: TICKET_BODY }, { confirm: true });
+    expect(rep.ok).toBe(true);
+    expect(rep.plan.milestone).toBeNull();
+    expect(rep.plan.milestoneNumber).toBeNull();
+    expect(rep.plan.status).toBe("Backlog");
+    const issue = filedIssue();
+    expect(issue?.milestone).toBeNull();
+  });
+
+  it("milestone title → number map is resolved at runtime, never hardcoded", async () => {
+    // non-ordinal layout: the mock reports M1 at number 3 — any hardcoded
+    // title→number table (the M0=1..M1.5=7 incident) would fail here
+    board.milestones = { M2: "M_m2", M0: "M_m0", M1: "M_m1" };
+    injectJudge(replyAll(0.95));
+    const rep = await file({ title: "wave filing", body: TICKET_BODY });
+    expect(rep.plan.milestone).toBe("M1");
+    expect(rep.plan.milestoneNumber).toBe(3);
+    expect(rep.plan.status).toBe("Todo");
+  });
+
+  it("unknown blocker number fails preflight without creating anything", async () => {
+    injectJudge(replyAll(0.95));
+    const rep = await file(
+      { title: "dangling edge", body: TICKET_BODY, blockedBy: [404] },
+      { confirm: true },
+    );
+    expect(rep.ok).toBe(false);
+    expect(rep.created).toBeUndefined();
+    expect(board.mutations).toEqual([]);
+    expect(rep.errors.join(" ")).toContain("#404");
   });
 });
