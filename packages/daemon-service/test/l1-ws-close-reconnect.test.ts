@@ -43,10 +43,11 @@ function virtualClock(horizonMs: number, random: () => number): VirtualClock {
     clock: {
       now: () => now,
       random,
-      sleep: async (ms: number) => {
+      sleep: (ms: number): Promise<void> => {
         sleeps.push(ms);
         now += ms;
-        if (now > horizonMs) throw new HourElapsed(now, sleeps);
+        if (now > horizonMs) return Promise.reject(new HourElapsed(now, sleeps));
+        return Promise.resolve();
       },
     },
     sleeps,
@@ -58,7 +59,7 @@ function virtualClock(horizonMs: number, random: () => number): VirtualClock {
 class FakeSocket extends EventTarget {
   readonly OPEN = 1;
   readyState = 0;
-  readonly sent: Array<Record<string, unknown>> = [];
+  readonly sent: Record<string, unknown>[] = [];
 
   open(): void {
     this.readyState = 1;
@@ -106,12 +107,12 @@ async function runCloseScenario(options: CloseScenarioOptions): Promise<CloseSce
   const records: SessionRecord[] = [];
   let openCalls = 0;
   let current: WSSession | null = null;
-  const lifetimeEntered = Promise.withResolvers<void>();
+  const lifetimeEntered = Promise.withResolvers<undefined>();
 
-  const establishSession = async (): Promise<number> => {
+  const establishSession = (): Promise<number> => {
     openCalls += 1;
     const socket = new FakeSocket();
-    const session = current = new WSSession();
+    const session = (current = new WSSession());
     const timerState: SessionRecord["timerState"] = { heartbeatTimer: null, flushTimer: null };
     records.push({ session, socket, timerState });
     // The exact production wiring (connection.ts): the close event clears
@@ -133,10 +134,15 @@ async function runCloseScenario(options: CloseScenarioOptions): Promise<CloseSce
     timerState.heartbeatTimer = setInterval(() => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: "heartbeat" }));
     }, options.heartbeatIntervalMs);
-    timerState.flushTimer = setInterval(() => {}, 100);
+    // The timer's existence is the point: the close handler must clear it.
+    timerState.flushTimer = setInterval(() => {
+      /* no-op flush tick */
+    }, 100);
     if (options.closeDelayMs === 0) {
       // Immediate close: queued behind attach, before any heartbeat tick.
-      queueMicrotask(() => socket.serverClose());
+      queueMicrotask(() => {
+        socket.serverClose();
+      });
     } else {
       // Once the loop is provably pending in sessionLifetime, fire the
       // beats across closeDelayMs of simulated time, then hang up before
@@ -146,20 +152,23 @@ async function runCloseScenario(options: CloseScenarioOptions): Promise<CloseSce
         socket.serverClose();
       });
     }
-    return virtual.now();
+    return Promise.resolve(virtual.now());
   };
 
   try {
     await runSessionLoop(
       {
-        ensureIdentity: async () => ({ hostId: "host_test", hostKey: "key_test" }),
+        ensureIdentity: () => Promise.resolve({ hostId: "host_test", hostKey: "key_test" }),
         establishSession,
         sessionLifetime: async () => {
           if (current === null) throw new Error("lifetime before establish");
-          lifetimeEntered.resolve();
+          lifetimeEntered.resolve(undefined);
           await current.ended.promise;
         },
-        teardownSession: () => {},
+        // The fake holds no per-session state to clear.
+        teardownSession: () => {
+          /* no-op */
+        },
       },
       virtual.clock,
     );

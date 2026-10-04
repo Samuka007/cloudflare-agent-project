@@ -19,31 +19,34 @@ export class TestAgentSinkDO extends DurableObject<Record<string, unknown>> {
       )`);
   }
 
-  async onExecutionUpdate(update: ExecutionUpdate): Promise<ExecutionUpdateResult> {
+  onExecutionUpdate(update: ExecutionUpdate): Promise<ExecutionUpdateResult> {
     this.ctx.storage.sql.exec(
       "INSERT INTO updates (kind, execution_id, payload) VALUES (?, ?, ?)",
       update.kind,
       update.executionId,
       JSON.stringify(update),
     );
-    return { duplicate: false, acked: true };
+    return Promise.resolve({ duplicate: false, acked: true });
   }
 
-  async updates(): Promise<Array<ExecutionUpdate & { seq: number }>> {
+  updates(): Promise<(ExecutionUpdate & { seq: number })[]> {
     const rows = this.ctx.storage.sql
       .exec<{ seq: number; payload: string }>("SELECT seq, payload FROM updates ORDER BY seq")
       .toArray();
-    return rows.map((row) => ({
-      ...(JSON.parse(row.payload) as ExecutionUpdate),
-      seq: Number(row.seq),
-    }));
+    return Promise.resolve(
+      rows.map((row) => ({
+        ...(JSON.parse(row.payload) as ExecutionUpdate),
+        seq: row.seq,
+      })),
+    );
   }
 
-  async clear(): Promise<void> {
+  clear(): Promise<void> {
     this.ctx.storage.sql.exec("DELETE FROM updates");
+    return Promise.resolve();
   }
 
-  override async fetch(): Promise<Response> {
-    return new Response("TestAgentSinkDO: RPC only", { status: 404 });
+  override fetch(): Promise<Response> {
+    return Promise.resolve(new Response("TestAgentSinkDO: RPC only", { status: 404 }));
   }
 }

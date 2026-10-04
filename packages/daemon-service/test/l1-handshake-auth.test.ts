@@ -22,7 +22,11 @@ describe("L1 handshake + auth", () => {
       new Request("https://daemon-service.test/session/open", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: "Bearer wrong-key" },
-        body: JSON.stringify({ hostId, protocolVersion: DAEMON_PROTOCOL_VERSION, bootId: "boot_x" }),
+        body: JSON.stringify({
+          hostId,
+          protocolVersion: DAEMON_PROTOCOL_VERSION,
+          bootId: "boot_x",
+        }),
       }),
     );
     expect(response.status).toBe(401);
@@ -33,7 +37,11 @@ describe("L1 handshake + auth", () => {
       new Request("https://daemon-service.test/session/open", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ hostId: "h", protocolVersion: DAEMON_PROTOCOL_VERSION, bootId: "boot_x" }),
+        body: JSON.stringify({
+          hostId: "h",
+          protocolVersion: DAEMON_PROTOCOL_VERSION,
+          bootId: "boot_x",
+        }),
       }),
     );
     expect(response.status).toBe(401);
@@ -59,7 +67,7 @@ describe("L1 handshake + auth", () => {
       }),
     );
     expect(response.status).toBe(400);
-    const body = (await response.json()) as { error?: { code?: string }; code?: string };
+    const body = await response.json<{ error?: { code?: string }; code?: string }>();
     expect(body.code ?? body.error?.code).toBe("protocol_version_mismatch");
   });
 
@@ -80,7 +88,7 @@ describe("L1 handshake + auth", () => {
     // the DO rejects the upgrade before any socket exists.
     expect(response.status).toBe(401);
     expect(response.webSocket).toBeNull();
-    const body = (await response.json()) as { code?: string };
+    const body = await response.json<{ code?: string }>();
     expect(body.code).toBe("invalid_session");
   });
 
@@ -93,10 +101,10 @@ describe("L1 handshake + auth", () => {
 
     // 顶替: the DO closes the old socket with 1000 "replaced" (§5.2.5).
     await expect
-      .poll(
-        () => first.closeEvents.find((event) => event.code === 1000)?.reason ?? "",
-        { timeout: 5000, interval: 50 },
-      )
+      .poll(() => first.closeEvents.find((event) => event.code === 1000)?.reason ?? "", {
+        timeout: 5000,
+        interval: 50,
+      })
       .toBe("replaced");
     expect(first.closeEvents.find((event) => event.code === 1000)?.code).toBe(1000);
 

@@ -70,9 +70,11 @@ describe("L1 I23 announce full reset", () => {
     });
     await client2.waitFor((frame) => frame.type === "error");
     expect((await journalOf(hostId)).length).toBe(opsBefore);
-    expect(opsOfKind(await journalOf(hostId), "reconcile_action").filter(
-      (op) => op.executionId === "phantom:99" && op.action === "resume",
-    )).toHaveLength(0);
+    expect(
+      opsOfKind(await journalOf(hostId), "reconcile_action").filter(
+        (op) => op.executionId === "phantom:99" && op.action === "resume",
+      ),
+    ).toHaveLength(0);
     await client2.close();
   });
 
@@ -129,10 +131,13 @@ describe("L1 I23 announce full reset", () => {
     await client2.waitForResume(executionId);
     client2.sendExited(executionId, 0, 0);
     await expect
-      .poll(async () => (await sinkStub(threadId).updates()).some((update) => update.kind === "exited"), {
-        timeout: 5000,
-        interval: 50,
-      })
+      .poll(
+        async () => (await sinkStub(threadId).updates()).some((update) => update.kind === "exited"),
+        {
+          timeout: 5000,
+          interval: 50,
+        },
+      )
       .toBe(true);
     await client2.close();
   });

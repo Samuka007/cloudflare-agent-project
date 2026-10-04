@@ -8,8 +8,6 @@ import tseslint from "typescript-eslint";
  *   these presets contain no formatting rules, so nothing duplicates prettier.
  * - Type information comes from each workspace's own tsconfig via
  *   projectService; repo-level scripts (scripts/) have the root tsconfig.json.
- * - daemon-service is intentionally skipped this round: sibling lanes #35/#36
- *   own that package. TODO(#37 remainder): drop this ignore when they land.
  */
 export default tseslint.config(
   {
@@ -19,7 +17,6 @@ export default tseslint.config(
       "**/.wrangler/**",
       "**/worker-configuration.d.ts",
       "bb/**",
-      "packages/daemon-service/**",
       // Tool configs, not product source: adding vitest.config.ts to a
       // package tsconfig program merges @cloudflare/vitest-plugin's bundled
       // workers-types with the package's own and breaks typecheck of real
@@ -63,6 +60,24 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
+    },
+  },
+  {
+    // daemon-service's Bun/Node client and its scripts are typechecked
+    // against Node types via the named tsconfig.client.json (the Workers and
+    // Node ambient type sets overlap-and-conflict; see that package's
+    // tsconfig.json). The project service only auto-discovers files named
+    // tsconfig.json, so point these files at the client program explicitly.
+    files: [
+      "packages/daemon-service/src/client/**/*.ts",
+      "packages/daemon-service/scripts/**/*.ts",
+    ],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: ["packages/daemon-service/tsconfig.client.json"],
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
   },
   {

@@ -29,10 +29,13 @@ describe("L1 I27 forget closure", () => {
     client.sendExited(executionId, 0, 9);
     // Round 1 never acks, so no forget is owed yet — the buffer holds.
     await expect
-      .poll(async () => (await sinkStub(threadId).updates()).some((update) => update.kind === "exited"), {
-        timeout: 5000,
-        interval: 50,
-      })
+      .poll(
+        async () => (await sinkStub(threadId).updates()).some((update) => update.kind === "exited"),
+        {
+          timeout: 5000,
+          interval: 50,
+        },
+      )
       .toBe(true);
 
     // Simulate "forget lost": the socket dies BEFORE the agent's ack lands —
@@ -45,7 +48,11 @@ describe("L1 I27 forget closure", () => {
     // connectivity to the client is irrelevant to the claim/ack closure).
     await serviceStub(hostId).ackExecution(executionId, 42);
     const opsAfterAck = await journalOf(hostId, executionId);
-    expect(opsAfterAck.map((op) => op.kind)).toEqual([...stubOps.map((op) => op.kind), "ack", "tombstone"]);
+    expect(opsAfterAck.map((op) => op.kind)).toEqual([
+      ...stubOps.map((op) => op.kind),
+      "ack",
+      "tombstone",
+    ]);
 
     // Client reconnects (same boot) and re-reports the buffer as ended — the
     // §8.2 disconnect-window backfill channel. The service must re-send the

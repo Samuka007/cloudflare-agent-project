@@ -85,4 +85,3 @@ describe("L1 lease lapse and orphan_suspect", () => {
     await client2.close();
   });
 });
-

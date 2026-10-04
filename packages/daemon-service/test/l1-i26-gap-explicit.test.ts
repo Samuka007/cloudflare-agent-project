@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { SimulatedClient, uniqueHostId, journalOf, opsOfKind, dispatchViaSeam, executionViewOf } from "./helpers.js";
+import {
+  SimulatedClient,
+  uniqueHostId,
+  journalOf,
+  opsOfKind,
+  dispatchViaSeam,
+  executionViewOf,
+} from "./helpers.js";
 
 /**
  * I26 — gaps are explicit (§8.3): after a resume with an evicted ring tail,
@@ -16,7 +23,12 @@ describe("L1 I26 explicit gaps on resume", () => {
     await client.dial();
     await client.acknowledgeSpawnFor(
       executionId,
-      dispatchViaSeam(hostId, { threadId, executionId, machineId: hostId, command: "head -c 1000 /dev/zero" }),
+      dispatchViaSeam(hostId, {
+        threadId,
+        executionId,
+        machineId: hostId,
+        command: "head -c 1000 /dev/zero",
+      }),
     );
 
     // Client produced 0..10, service journaled it.
@@ -75,7 +87,12 @@ describe("L1 I26 explicit gaps on resume", () => {
     await client.dial();
     await client.acknowledgeSpawnFor(
       executionId,
-      dispatchViaSeam(hostId, { threadId, executionId, machineId: hostId, command: "echo exit-gap" }),
+      dispatchViaSeam(hostId, {
+        threadId,
+        executionId,
+        machineId: hostId,
+        command: "echo exit-gap",
+      }),
     );
 
     // Exit claims finalOffset 50 but only 4 bytes ever landed.

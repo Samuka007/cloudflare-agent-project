@@ -26,11 +26,10 @@ function argValue(flag: string): string | undefined {
 }
 
 const config: ClientConfig = {
-  baseUrl: argValue("--url") ?? process.env["POC_SERVICE_URL"] ?? "http://127.0.0.1:8790",
-  dataDir: argValue("--dataDir") ?? process.env["POC_DAEMON_DATA"] ?? "/tmp/poc-daemon-data",
-  sandboxRoot:
-    argValue("--sandbox") ?? process.env["POC_SANDBOX_ROOT"] ?? "/tmp/poc-sandbox",
-  enrollKey: process.env["POC_ENROLL_KEY"] ?? "poc-dev-enroll-key",
+  baseUrl: argValue("--url") ?? process.env.POC_SERVICE_URL ?? "http://127.0.0.1:8790",
+  dataDir: argValue("--dataDir") ?? process.env.POC_DAEMON_DATA ?? "/tmp/poc-daemon-data",
+  sandboxRoot: argValue("--sandbox") ?? process.env.POC_SANDBOX_ROOT ?? "/tmp/poc-sandbox",
+  enrollKey: process.env.POC_ENROLL_KEY ?? "poc-dev-enroll-key",
 };
 
 await runClient(config);
