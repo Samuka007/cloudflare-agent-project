@@ -11,6 +11,7 @@ import {
   threadListQuerySchema,
   threadTimelineQuerySchema,
   updateThreadRequestSchema,
+  resolvePendingInteractionRequestSchema,
   type ThreadResponse,
 } from "../contract/api/threads.js";
 import { promptHistoryResponseSchema } from "../contract/api/projects.js";
@@ -61,6 +62,7 @@ import {
 } from "../db/control-plane.js";
 import type { ThreadDbRow } from "../db/rows.js";
 import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs.js";
+import { mirrorPendingInteraction } from "../db/pending-interactions.js";
 import { getAppSettingsRow, toAppSettings } from "../db/settings.js";
 import { toThreadListEntry, toThreadResponseWithSpawnCheck } from "../services/runtime-display.js";
 import {
@@ -70,6 +72,11 @@ import {
   countNonWhitespaceChars,
 } from "../services/thread-search.js";
 import { deriveTitleFallback } from "../services/title-generation.js";
+import {
+  requirePublicInteractionRow,
+  toPublicPendingInteraction,
+  toPublicPendingInteractions,
+} from "../services/pending-interactions.js";
 import { settleThreadTurnStatus } from "../services/thread-run-settlement.js";
 import {
   buildConversationOutline,
@@ -808,13 +815,75 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     return ctx.json(result.stored);
   });
 
-  // --- interactions (pending list; resolution is a #29/#30 face) --------------------------
+  // --- interactions (bb routes/threads/interactions.ts; source = the agent
+  // DO journal fold, #225 — bb's D1 row source is the per-thread journal
+  // here, and the mirror only feeds the list-query EXISTS probe) ------------
 
   routes.get("/threads/:id/interactions", async (ctx) => {
-    await requirePublicThread(ctx);
-    // bb listPendingInteractionsByThread with statuses pending|resolving —
-    // no pending-interaction producer exists in the M0 control plane.
-    return ctx.json([]);
+    const row = await requirePublicThread(ctx);
+    const { interactions } = await agentDoFor(ctx.env, row.id).listInteractions();
+    const pending = toPublicPendingInteractions(interactions);
+    for (const interaction of interactions) {
+      await mirrorPendingInteraction(ctx.env, interaction);
+    }
+    return ctx.json(pending);
+  });
+
+  routes.get("/threads/:id/interactions/:interactionId", async (ctx) => {
+    const row = await requirePublicThread(ctx);
+    const interactionId = ctx.req.param("interactionId");
+    const { interactions } = await agentDoFor(ctx.env, row.id).listInteractions();
+    const found = requirePublicInteractionRow(interactions, row.id, interactionId);
+    await mirrorPendingInteraction(ctx.env, found);
+    return ctx.json(toPublicPendingInteraction(found));
+  });
+
+  routes.post("/threads/:id/interactions/:interactionId/resolve", async (ctx) => {
+    const row = await requirePublicThread(ctx);
+    const interactionId = ctx.req.param("interactionId");
+    const resolution = await requireJsonBody(ctx, resolvePendingInteractionRequestSchema);
+    const agent = agentDoFor(ctx.env, row.id);
+    const existing = requirePublicInteractionRow(
+      (await agent.listInteractions()).interactions,
+      row.id,
+      interactionId,
+    );
+    if (existing.status !== "pending") {
+      // bb buildResolveConflictError (interactions.ts:184-189).
+      throw new ApiError({
+        status: 409,
+        code: "invalid_request",
+        message: `Pending interaction ${interactionId} is already ${existing.status}`,
+      });
+    }
+    try {
+      const outcome = await agent.resolveInteraction({ interactionId, resolution });
+      if (outcome.duplicated) {
+        throw new ApiError({
+          status: 409,
+          code: "invalid_request",
+          message: `Pending interaction ${interactionId} is already resolved`,
+        });
+      }
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      // The DO-side ruling validation is authoritative; the RPC boundary
+      // drops the error class, so every remaining failure here is the
+      // invalid-ruling face (bb answers validation → 400 invalid_request).
+      throw new ApiError({
+        status: 400,
+        code: "invalid_request",
+        message: error instanceof Error ? error.message : "Invalid resolution",
+      });
+    }
+    // Re-fold: the journal append is authoritative for the updated row.
+    const updated = requirePublicInteractionRow(
+      (await agent.listInteractions()).interactions,
+      row.id,
+      interactionId,
+    );
+    await mirrorPendingInteraction(ctx.env, updated);
+    return ctx.json(toPublicPendingInteraction(updated));
   });
 
   // --- prompt history (bb routes/threads/data.ts:462-478) -----------------------------

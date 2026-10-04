@@ -33,6 +33,7 @@ async function startAskTurn(rig: Rig, clientRequestId: string): Promise<string> 
   const sent = await rig.stub.sendMessage({
     clientRequestId,
     content: [{ type: "text", text: "ask the user" }],
+    mode: "auto",
   });
   return sent.turnId;
 }
@@ -90,6 +91,7 @@ test("#225 register → interactions-changed(true); resolve → (false); listInt
   const pending = await rig.stub.listInteractions();
   expect(pending.interactions).toHaveLength(1);
   const row = pending.interactions[0];
+  if (row === undefined) throw new Error("no folded row");
   expect(row.id).toBe(registered.data.interactionId);
   expect(row.threadId).toBe(rig.threadId);
   expect(row.turnId).toBe(registered.data.turnId);
@@ -121,7 +123,9 @@ test("#225 register → interactions-changed(true); resolve → (false); listInt
 
   const settled = await rig.stub.listInteractions();
   expect(settled.interactions).toHaveLength(1);
-  expect(settled.interactions[0].status).toBe("resolved");
-  expect(settled.interactions[0].resolution).toEqual({ kind: "user_answer", answers: answer });
-  expect(settled.interactions[0].resolvedAt).not.toBeNull();
+  const settledRow = settled.interactions[0];
+  if (settledRow === undefined) throw new Error("fold lost the row");
+  expect(settledRow.status).toBe("resolved");
+  expect(settledRow.resolution).toEqual({ kind: "user_answer", answers: answer });
+  expect(settledRow.resolvedAt).not.toBeNull();
 });
