@@ -39,6 +39,11 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       case "task.spawn_settled":
       case "task.async_result":
       case "task.subagent_identity":
+      // M1.5 T17 yield-gate journal family: folded by tools/task/child-run,
+      // not part of the UX envelope (same rule as the task family above).
+      case "task.yield_reminder":
+      case "task.yield_warning":
+      case "task.yield_completed":
       case "todo_phases":
       // M1.5 T4 interaction journal family: the SPA renders the pending
       // interaction from the raw journal rows + the /ws pending-interaction

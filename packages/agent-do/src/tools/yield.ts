@@ -1,23 +1,29 @@
 import type { EdgeToolResult } from "./edge.js";
+import type { AnyAgentEvent } from "../fsm-events.js";
+import {
+  projectChildRun,
+  SCHEMA_VIOLATION_PREFIX,
+  SCHEMA_OVERRIDE_MARKER,
+  MAX_YIELD_RETRIES,
+  YIELD_FORMAT_HINT,
+} from "./task/child-run.js";
+import { validateAgainstJsonSchema } from "./task/schema-validate.js";
 
 /**
- * M1.5 T16 minimal yield gate (proposal §3 T16): the child's only terminal
+ * M1.5 T17 full yield semantics (proposal §3 T17): the child's only terminal
  * channel. omp anchor `T:yield.ts` — wire shape {type?, data?, error?}
- * (yield.ts:262-269, `required: []`), the format hint (:28) and the mutual
- * exclusivity of data/error (:166-175 "never a usable failure reason" rule).
- *
- * Deliberately NOT here (T17, proposal §3 T17): the reminder ladder
- * (≤3 + forced toolChoice), yield-supersession, `type: string[]` incremental
- * accumulation, schema validation/outputSchema, and the `agent://` artifact
- * sidecars. T16 requires exactly one terminal yield per child run; the
- * child-completion projection (agent-do.ts completeSpawnToParent) takes the
- * LAST terminal yield call as THE result and settles the run failed when
- * there is none.
+ * (yield.ts:262-269, `required: []`), the format hint (:28), mutual
+ * exclusivity of data/error (:166-175), incremental `type: string[]` section
+ * accumulation, the string-`type` finalize form, the outputSchema quality
+ * gate (:272-278 — permissive accepts an invalid payload with
+ * `schemaOverridden` after 3 consecutive failures, strict fails) and the
+ * empty-result abort (:281-285). The reminder ladder and supersession are
+ * the DO's driver decision (tools/task/child-run.ts childRunVerdict); this
+ * tool is the per-call verdict surface.
  */
 
 /** omp yield.ts:28 verbatim. */
-export const YIELD_FORMAT_HINT =
-  'Submit success as {"data":<your output>} or failure as {"error":"message"}.';
+export { YIELD_FORMAT_HINT };
 
 export interface YieldToolArgs {
   /** Incremental section labels (string[]) vs a terminal type string. */
@@ -25,6 +31,12 @@ export interface YieldToolArgs {
   data?: unknown;
   /** Failure reason; mutually exclusive with data (omp yield.ts:266). */
   error?: string;
+}
+
+/** The DO-bound fold source — the yield verdict reads the child journal. */
+export interface YieldToolContext {
+  /** Sync in tests (the fold source is an in-memory array), async in the DO. */
+  events(): AnyAgentEvent[] | Promise<AnyAgentEvent[]>;
 }
 
 /** omp yield.ts:134-147 — a string, or a non-empty all-string array. */
@@ -35,14 +47,10 @@ function isYieldType(value: unknown): value is string | string[] {
   );
 }
 
-/**
- * Minimal-gate execute: omp-verbatim shape validation, journal is the only
- * side effect (the tool.call/tool.result rows ARE the yield record — the
- * completion projection folds them; there is no separate yield journal
- * family in T16). Incremental (`type: string[]`) calls acknowledge without
- * accumulating — accumulation semantics land with T17.
- */
-export function runYieldTool(args: YieldToolArgs): EdgeToolResult {
+export async function runYieldTool(
+  args: YieldToolArgs,
+  ctx: YieldToolContext | undefined,
+): Promise<EdgeToolResult> {
   if (args.type !== undefined && !isYieldType(args.type)) {
     return { status: "error", output: "type must be a string or non-empty array of strings" };
   }
@@ -54,26 +62,75 @@ export function runYieldTool(args: YieldToolArgs): EdgeToolResult {
       output: `${YIELD_FORMAT_HINT} data and error are mutually exclusive.`,
     };
   }
-  if (!hasData && !hasError) {
-    return { status: "error", output: YIELD_FORMAT_HINT };
-  }
   if (args.error !== undefined && !hasError) {
     return { status: "error", output: "error must be a non-empty string when present." };
   }
-  return { status: "ok", output: "Result submitted." };
-}
 
-/**
- * Child-completion projection: render the terminal yield payload into the
- * settlement text. `data` stringifies; a bare string passes through; an
- * `error` yield IS the failure text (omp error field semantics). Callers
- * apply the delivery caps afterwards (settleSpawn).
- */
-export function renderYieldOutput(yielded: { data?: unknown; error?: string }): {
-  status: "ok" | "error";
-  output: string;
-} {
-  if (yielded.error !== undefined) return { status: "error", output: yielded.error };
-  if (typeof yielded.data === "string") return { status: "ok", output: yielded.data };
-  return { status: "ok", output: JSON.stringify(yielded.data, null, 2) };
+  // Incremental sections: `type: string[]` labels accumulate (data optional
+  // as the section body). Never terminal; the ladder keeps running until a
+  // terminal form lands.
+  if (Array.isArray(args.type)) {
+    if (hasError) {
+      return {
+        status: "error",
+        output: `${YIELD_FORMAT_HINT} incremental section calls (type: string[]) cannot carry an error.`,
+      };
+    }
+    return { status: "ok", output: "Section recorded." };
+  }
+
+  // No payload at all: an empty submission. Not a usable yield — the fold
+  // counts consecutive empties and aborts the run at the third.
+  if (!hasData && !hasError && typeof args.type !== "string") {
+    return { status: "error", output: YIELD_FORMAT_HINT };
+  }
+
+  // error-form / finalize-form: terminal without a structured payload.
+  if (!hasData) {
+    if (typeof args.type === "string" && ctx !== undefined) {
+      const gate = projectChildRun(await ctx.events());
+      if (gate.lastAssistantText === undefined) {
+        return {
+          status: "error",
+          output: `${YIELD_FORMAT_HINT} finalize form (type string without data) needs a prior assistant turn to deliver; include data instead.`,
+        };
+      }
+    }
+    return { status: "ok", output: "Result submitted." };
+  }
+
+  // data-form: enforce the outputSchema contract when the spawn declared one
+  // (task semantics §1.2: permissive retries exhausted → invalid payload
+  // accepted with schemaOverridden; strict fails).
+  if (ctx === undefined) return { status: "ok", output: "Result submitted." };
+  const gate = projectChildRun(await ctx.events());
+  if (gate.outputSchema === undefined) return { status: "ok", output: "Result submitted." };
+  const violations = validateAgainstJsonSchema(args.data, gate.outputSchema);
+  if (violations.length === 0) return { status: "ok", output: "Result submitted." };
+
+  const priorFailures = gate.schemaFailStreak;
+  const violationText = `${SCHEMA_VIOLATION_PREFIX} ${violations.join("; ")}`;
+  if (priorFailures >= MAX_YIELD_RETRIES) {
+    if (gate.schemaMode === "strict") {
+      return {
+        status: "error",
+        output: `${violationText} — schemaMode strict: the run fails after ${MAX_YIELD_RETRIES} consecutive validation failures; no override.`,
+      };
+    }
+    return {
+      status: "ok",
+      output: `Result submitted. (${SCHEMA_OVERRIDE_MARKER}: payload failed outputSchema validation ${MAX_YIELD_RETRIES} consecutive times and is accepted under schemaMode permissive)`,
+    };
+  }
+  const nextRejection = priorFailures + 1;
+  const overrideNote =
+    gate.schemaMode === "permissive" && nextRejection === MAX_YIELD_RETRIES
+      ? ` The next invalid submission will be accepted with ${SCHEMA_OVERRIDE_MARKER} (schemaMode permissive).`
+      : gate.schemaMode === "strict"
+        ? ` schemaMode strict: ${MAX_YIELD_RETRIES} consecutive failures fail the run.`
+        : "";
+  return {
+    status: "error",
+    output: `${violationText} Fix the payload and re-yield (rejection ${nextRejection}/${MAX_YIELD_RETRIES}).${overrideNote}`,
+  };
 }

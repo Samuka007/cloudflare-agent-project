@@ -352,6 +352,54 @@ export const agentEventDataSchemas = {
     sourceThreadId: z.string().min(1).nullable(),
     originKind: z.string().min(1).nullable(),
     depth: z.number().int().nonnegative(),
+    /**
+     * T17 structured contract (M1.5): the spawn plan's `outputSchema`/
+     * `schemaMode`, mirrored onto the child identity so the child DO
+     * enforces the yield schema verdict replay-pure (no parent contact).
+     * JSON-encoded like `task.spawn_planned.outputSchemaJson` (event data
+     * must stay RPC-serializable). Optional: pre-T17 journals omit both.
+     */
+    outputSchemaJson: z.string().min(1).optional(),
+    schemaMode: z.enum(["permissive", "strict"]).optional(),
+  }),
+
+  /**
+   * T17 reminder-ladder marker (proposal §3 T17): appended immediately
+   * before the reminder turn's `turn.input`, binding the ladder intent to
+   * that turn by `inputId` (deterministic join — the marker and the turn
+   * input are separate appends and a completion callback may interleave).
+   * `forced` records the verdict that appended it (attempt 3 of the cycle,
+   * tools/task/child-run.ts childRunVerdict): every reminder turn has a
+   * marker, so the attempt number alone cannot distinguish the forced tier
+   * at projection time — translate reads THIS field to pin tool_choice.
+   * Stale supersession derives from the journal fold (async-result after
+   * the terminal yield), not from the row.
+   */
+  "task.yield_reminder": z.object({
+    inputId: z.string().min(1),
+    forced: z.boolean(),
+  }),
+
+  /**
+   * T17 terminal SYSTEM WARNING injection (omp docs/tools/task.md:186):
+   * the run exhausted the ladder (3 reminders, the last forced) without a
+   * usable yield. Carries the injected text — the one ladder artifact that
+   * is content, not derivable state. Thread-scoped like the identity row.
+   */
+  "task.yield_warning": z.object({
+    text: z.string().min(1),
+  }),
+
+  /**
+   * T17 settlement receipt on the child journal: appended AFTER the parent
+   * accepted the completion (delivery-first — a transient RPC failure must
+   * stay retryable). Guards the re-ladder: once this row exists the run is
+   * closed, and late async-results are history material for the T19
+   * idle-follow-up surface instead of supersession fodder.
+   */
+  "task.yield_completed": z.object({
+    status: z.enum(["ok", "error"]),
+    output: z.string(),
   }),
 
   /**

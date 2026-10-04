@@ -113,23 +113,9 @@ export interface SubagentIdentityRecord {
   sourceThreadId: string | null;
   originKind: string | null;
   depth: number;
-}
-
-/**
- * Last terminal `yield` of the child session (minimal yield gate): the last
- * `yield` `tool.call` whose execution reached a terminal `tool.result`. The
- * payload lives in the call arguments — journal is the only authority, so the
- * projection is replay-pure. Incremental accumulation (`type: string[]`) and
- * the reminder ladder are T17; T16 takes the last terminal call as THE result
- * and requires at least one.
- */
-export interface YieldResultRecord {
-  callSeq: number;
-  executionId: string;
-  resultStatus: "ok" | "error" | "timeout" | "cancelled" | "outcome_unknown";
-  data?: unknown;
-  error?: string;
-  type?: string | string[];
+  /** T17 structured contract mirrored from the spawn plan (optional). */
+  outputSchema?: unknown;
+  schemaMode?: "permissive" | "strict";
 }
 
 // ---------------------------------------------------------------------------
@@ -219,34 +205,9 @@ export function subagentIdentityOf(
     sourceThreadId: row.data.sourceThreadId,
     originKind: row.data.originKind,
     depth: row.data.depth,
+    ...(row.data.outputSchemaJson === undefined
+      ? {}
+      : { outputSchema: JSON.parse(row.data.outputSchemaJson) as unknown }),
+    ...(row.data.schemaMode === undefined ? {} : { schemaMode: row.data.schemaMode }),
   };
-}
-
-export function lastYieldResult(events: readonly AnyAgentEvent[]): YieldResultRecord | undefined {
-  // Last yield tool.call with a terminal result; journal order is seq order.
-  let found: YieldResultRecord | undefined;
-  const resultByExecutionId = new Map<string, Extract<AnyAgentEvent, { type: "tool.result" }>>();
-  for (const event of events) {
-    if (event.type === "tool.result") resultByExecutionId.set(event.data.executionId, event);
-  }
-  for (const event of events) {
-    if (event.type !== "tool.call" || event.data.tool !== "yield") continue;
-    const executionId = `${event.threadId}:${event.seq}`;
-    const result = resultByExecutionId.get(executionId);
-    if (result === undefined) continue;
-    const args = event.data.arguments as {
-      data?: unknown;
-      error?: string;
-      type?: string | string[];
-    };
-    found = {
-      callSeq: event.seq,
-      executionId,
-      resultStatus: result.data.status,
-      ...(args.data === undefined ? {} : { data: args.data }),
-      ...(args.error === undefined ? {} : { error: args.error }),
-      ...(args.type === undefined ? {} : { type: args.type }),
-    };
-  }
-  return found;
 }

@@ -62,6 +62,11 @@ export interface EdgeToolContext {
    * decoded config, the owning call's cancel signal, and the DO's fetch. */
   webSearch?: WebSearchToolContext;
   /**
+   * Yield-gate fold source — bound only for `yield` (M1.5 T17): the child
+   * journal accessor the schema/empty streaks and the identity schema read.
+   */
+  yieldJournal?: () => Promise<AnyAgentEvent[]>;
+  /**
    * Fold the todo journal: latest canonical snapshot plus any snapshot this
    * execution already committed (crash window recovery — session-tree.ts).
    */
@@ -217,10 +222,13 @@ export async function runEdgeTool(
   }
 
   if (row.name === "yield") {
-    // omp YieldTool.execute (M1.5 T16 minimal gate): pure shape validation —
-    // the tool.call/tool.result rows ARE the yield record; the child's
-    // completion hook projects the last terminal call from the journal.
-    return runYieldTool(validated as YieldToolArgs);
+    // omp YieldTool.execute (M1.5 T17 full semantics): shape validation +
+    // outputSchema quality gate (3-strike override/fail) over the child
+    // journal fold; ladder/supersession live in the DO driver verdict.
+    return runYieldTool(
+      validated as YieldToolArgs,
+      ctx.yieldJournal === undefined ? undefined : { events: ctx.yieldJournal },
+    );
   }
 
   if (row.name === "ask") {
