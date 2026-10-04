@@ -1,0 +1,63 @@
+name: deploy-staging
+
+# Staging CD (#175): every merge to main builds the pinned-submodule SPA and
+# deploys the composed worker to cap-server-staging with SERVER_VERSION=<short
+# sha>. The build/stage/deploy flow is scripts/deploy-staging.sh — the same
+# script `nix run .#staging-deploy` runs, so CI, CD and local deploys cannot
+# drift on the served SPA set.
+#
+# HITL: the deploy step needs the CLOUDFLARE_API_TOKEN and
+# CLOUDFLARE_ACCOUNT_ID repo secrets (owner creates the CF API token in the
+# Cloudflare panel, then `gh secret set CLOUDFLARE_API_TOKEN`). Until then the
+# credentials guard below fails closed with that instruction.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify deploy credentials exist (HITL gate)
+        env:
+          CF_TOKEN_SET: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+          CF_ACCOUNT_SET: ${{ secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+        run: |
+          if [[ "$CF_TOKEN_SET" != "true" || "$CF_ACCOUNT_SET" != "true" ]]; then
+            echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID repo secrets missing (ticket #175 HITL: create the CF API token in the Cloudflare panel, then gh secret set). Deploy blocked."
+            exit 1
+          fi
+      - name: Deploy cap-server-staging (stage SPA + SERVER_VERSION stamp)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: ./scripts/deploy-staging.sh
+      # Informative post-deploy smoke, not a gate: app-plane requests from GH
+      # runners are acceptable while staging sits on workers.dev with Access
+      # off, but must move to local/self-hosted once the Access front lands
+      # (docs/research/cf-access-agent-compat.md:130-131).
+      - name: Post-deploy version smoke (informative)
+        continue-on-error: true
+        run: |
+          sleep 5
+          curl -fsS https://cap-server-staging.dai-samuel.workers.dev/api/v1/system/version
