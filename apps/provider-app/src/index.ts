@@ -16,12 +16,7 @@ export {
   resolveHarness,
   snapshotHarness,
 } from "./harness.js";
-export type {
-  HarnessEnv,
-  HarnessProjection,
-  ResolvedHarness,
-  ThinkingConfig,
-} from "./harness.js";
+export type { HarnessEnv, HarnessProjection, ResolvedHarness, ThinkingConfig } from "./harness.js";
 export { flattenPromptInputGroups } from "./flatten-input.js";
 
 import type { ManagerDoBindings } from "./manager-do.js";

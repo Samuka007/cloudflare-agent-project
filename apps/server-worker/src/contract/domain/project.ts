@@ -37,16 +37,12 @@ export const localPathProjectSourceSchema = baseProjectSourceSchema.extend({
   hostId: z.string(),
   path: z.string(),
 });
-export type LocalPathProjectSource = z.infer<
-  typeof localPathProjectSourceSchema
->;
+export type LocalPathProjectSource = z.infer<typeof localPathProjectSourceSchema>;
 
 export const projectSourceSchema = localPathProjectSourceSchema;
 export type ProjectSource = z.infer<typeof projectSourceSchema>;
 
-export function isLocalPathProjectSource(
-  source: ProjectSource,
-): source is LocalPathProjectSource {
+export function isLocalPathProjectSource(source: ProjectSource): source is LocalPathProjectSource {
   return source.type === "local_path";
 }
 

@@ -2,10 +2,7 @@ import { env } from "cloudflare:test";
 import { expect } from "vitest";
 import { newThreadId } from "@cap/protocol";
 import type { AgentDO } from "../src/agent-do.js";
-import type {
-  AgentEventType,
-  AnyAgentEvent,
-} from "../src/fsm-events.js";
+import type { AgentEventType, AnyAgentEvent } from "../src/fsm-events.js";
 import { clearAgentRuntimes, setAgentRuntime } from "../src/injection.js";
 import type { ModelProvider } from "../src/provider.js";
 import { MockModelProvider, type MockTurn } from "../src/testing/mock-provider.js";
@@ -73,7 +70,9 @@ export async function createRig(options: RigOptions = {}): Promise<Rig> {
     const response = await stubFor().getEvents({});
     return response.events;
   };
-  const waitFor = async (predicate: (snapshot: AnyAgentEvent[]) => boolean): Promise<AnyAgentEvent[]> => {
+  const waitFor = async (
+    predicate: (snapshot: AnyAgentEvent[]) => boolean,
+  ): Promise<AnyAgentEvent[]> => {
     let snapshot = await events();
     await expect
       .poll(

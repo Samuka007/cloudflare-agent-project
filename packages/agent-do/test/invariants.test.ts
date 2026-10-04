@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import {
-  abortAllDurableObjects,
-  runDurableObjectAlarm,
-  runInDurableObject,
-} from "cloudflare:test";
+import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import type { Rig } from "./helpers.js";
 import { createRig, resetRuntime } from "./helpers.js";
 import { executionIdFor, callSeqFromExecutionId, threadIdFromExecutionId } from "../src/ids.js";
@@ -33,14 +29,17 @@ const TEXT = "run it";
 
 async function journal(rig: Rig): Promise<FakeJournalOp[]> {
   // The DO RPC returns an unknown[]; the journal is this package's own type.
-  return (await rig.service.journal()) as FakeJournalOp[];
+  return rig.service.journal();
 }
 
 /**
  * Drive one full tool-calling turn against the fake daemon: send → wait for
  * the tool.call → emit output + exit from the fake client → wait completion.
  */
-async function completeToolTurn(rig: Rig, clientRequestId: string): Promise<{
+async function completeToolTurn(
+  rig: Rig,
+  clientRequestId: string,
+): Promise<{
   turnId: string;
   executionId: string;
   callSeq: number;
@@ -62,7 +61,9 @@ async function completeToolTurn(rig: Rig, clientRequestId: string): Promise<{
 
 /** Locate the single execution spawned by a one-tool turn. */
 async function pendingExecutionId(rig: Rig): Promise<string> {
-  const events = await rig.waitFor((all) => all.some((event) => event.type === "tool.exec_started"));
+  const events = await rig.waitFor((all) =>
+    all.some((event) => event.type === "tool.exec_started"),
+  );
   const call = events.find((event) => event.type === "tool.call");
   if (call === undefined) throw new Error("tool.call never persisted");
   return executionIdFor(rig.threadId, call.seq);
@@ -397,7 +398,14 @@ describe("§7 invariants — turn lifecycle", () => {
 describe("§7 invariants — watchdog terminal ordering", () => {
   /** Minimal synthetic log rows for the reducer (shapes = fsm-events zod). */
   function row(seq: number, type: AgentEventType, data: Record<string, unknown>): AnyAgentEvent {
-    return { seq, id: `evt_${seq}`, threadId: "thr_watchdog", type, data, createdAt: seq * 1000 } as AnyAgentEvent;
+    return {
+      seq,
+      id: `evt_${seq}`,
+      threadId: "thr_watchdog",
+      type,
+      data,
+      createdAt: seq * 1000,
+    } as AnyAgentEvent;
   }
 
   test("watchdog order: turn.failed precedes the abort echo; replay must survive it", () => {
@@ -412,7 +420,13 @@ describe("§7 invariants — watchdog terminal ordering", () => {
       row(2, "turn.input", { turnId, inputId: "in-w", content: [{ type: "text", text: TEXT }] }),
       row(3, "model.call_started", { turnId, consumedSteerSeqs: [] }),
       row(4, "turn.failed", { turnId, reason: "turn_watchdog_expired" }),
-      row(5, "model.call_failed", { turnId, modelCallId: 3, error: "cancelled", retryable: false, aborted: true }),
+      row(5, "model.call_failed", {
+        turnId,
+        modelCallId: 3,
+        error: "cancelled",
+        retryable: false,
+        aborted: true,
+      }),
     ]);
     expect(state.turns.get(turnId)?.status).toBe("failed");
     expect(state.modelCalls.get(3)?.status).toBe("failed");
@@ -461,8 +475,7 @@ describe("§7 invariants — model-call accounting", () => {
     expect(revived.some((event) => event.type === "model.call_sealed")).toBe(true);
     expect(
       revived.some(
-        (event) =>
-          event.type === "turn.failed" && event.data.reason === "interrupted_mid_stream",
+        (event) => event.type === "turn.failed" && event.data.reason === "interrupted_mid_stream",
       ),
     ).toBe(true);
     expect(revived.filter((event) => event.type === "model.call_started")).toHaveLength(1);
@@ -552,8 +565,7 @@ describe("§7 invariants — model-call accounting", () => {
     // Meaningfulness: at least one delta was persisted before the seal.
     expect(
       events.some(
-        (event) =>
-          event.type === "model.delta" && event.data.modelCallId === seal.data.modelCallId,
+        (event) => event.type === "model.delta" && event.data.modelCallId === seal.data.modelCallId,
       ),
     ).toBe(true);
   });
@@ -618,8 +630,7 @@ describe("§7 invariants — recovery", () => {
     const after = await rig.waitFor(
       (all) =>
         all.filter(
-          (event) =>
-            event.type === "tool.dispatch" && event.data.executionId === executionId,
+          (event) => event.type === "tool.dispatch" && event.data.executionId === executionId,
         ).length >= 2,
     );
     const dispatches = after.filter(

@@ -56,9 +56,7 @@ export class EdgeAgentProviderAdapter implements ProviderAdapter {
    * relay has no service-tier concept and ignores provider-only flags, so
    * they normalize away instead of registering as classification drift.
    */
-  normalizeExecutionOptions(
-    options: RuntimeThreadExecutionOptions,
-  ): RuntimeThreadExecutionOptions {
+  normalizeExecutionOptions(options: RuntimeThreadExecutionOptions): RuntimeThreadExecutionOptions {
     const {
       claudeCodePermissionMode: _permissionMode,
       claudeCodeMockCliTraffic: _mockTraffic,
@@ -68,9 +66,7 @@ export class EdgeAgentProviderAdapter implements ProviderAdapter {
     } = options;
     return {
       ...effective,
-      serviceTier: this.capabilities.supportsServiceTier
-        ? options.serviceTier
-        : "default",
+      serviceTier: this.capabilities.supportsServiceTier ? options.serviceTier : "default",
     };
   }
 
@@ -146,7 +142,10 @@ export class EdgeAgentProviderAdapter implements ProviderAdapter {
           isDefault: true,
         },
       ];
-      return { ok: true, result: { models, selectedOnlyModels: [] } satisfies AdapterModelListResult };
+      return {
+        ok: true,
+        result: { models, selectedOnlyModels: [] } satisfies AdapterModelListResult,
+      };
     }
     return this.withBudget(this.manager.handleAdapterCommand(command), options.timeoutMs);
   }

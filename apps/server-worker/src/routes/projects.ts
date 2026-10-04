@@ -47,9 +47,7 @@ export function registerProjectRoutes(app: Hono<{ Bindings: HonoBindings }>): vo
     const query = parseOr422(projectListQuerySchema, ctx.req.query());
     const rows = await listPublicProjects(ctx.env);
     const filtered =
-      query.includePersonal === "true"
-        ? rows
-        : rows.filter((row) => row.kind !== "personal");
+      query.includePersonal === "true" ? rows : rows.filter((row) => row.kind !== "personal");
     const includeThreads = (query.include ?? "").split(",").includes("threads");
     if (!includeThreads) {
       return ctx.json(
@@ -241,9 +239,7 @@ async function toProjectWithThreads(env: Env, row: ProjectRow) {
   return {
     ...toPublicProject(row),
     sources: await listProjectSources(env, row.id),
-    threads: threads.map((thread) =>
-      threadListEntrySchema.parse(toThreadListEntry(thread as ThreadDbRow & { hasPendingInteraction: boolean })),
-    ),
+    threads: threads.map((thread) => threadListEntrySchema.parse(toThreadListEntry(thread))),
     defaultExecutionOptions: null,
   };
 }

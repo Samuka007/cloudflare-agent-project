@@ -16,16 +16,10 @@ import type {
   SessionOpenOutcome,
   SocketAttachOutcome,
 } from "../src/host-orchestrator-do.js";
-import type {
-  DaemonServerMessage,
-  HostDaemonSessionOpenRequest,
-} from "../src/session-contract.js";
+import type { DaemonServerMessage, HostDaemonSessionOpenRequest } from "../src/session-contract.js";
 import type { DaemonWatchSet, WatchSetApplyArgs } from "../src/watch-set.js";
 import { setMachineDispatcher, setProviderAdapter } from "../src/injection.js";
-import {
-  FakeMachineDispatcher,
-  FakeProviderAdapter,
-} from "../src/testing/fake-provider.js";
+import { FakeMachineDispatcher, FakeProviderAdapter } from "../src/testing/fake-provider.js";
 import { DAEMON_PROTOCOL_VERSION } from "../src/constants.js";
 
 /**
@@ -56,13 +50,9 @@ export interface OrchestratorStub {
     sessionId: string;
     graceMs?: number;
   }): Promise<{ closed: boolean; graceDeadlineAt: number | null }>;
-  recordDaemonMessage(args: {
-    sessionId: string;
-  }): Promise<DaemonMessageReceipt>;
+  recordDaemonMessage(args: { sessionId: string }): Promise<DaemonMessageReceipt>;
   heartbeat(args: { sessionId: string }): Promise<DaemonMessageReceipt>;
-  getSession(args: {
-    sessionId: string;
-  }): Promise<HostDaemonSessionRow | null>;
+  getSession(args: { sessionId: string }): Promise<HostDaemonSessionRow | null>;
   getLatestSessionForHost(): Promise<HostDaemonSessionRow | null>;
   listSessions(): Promise<HostDaemonSessionRow[]>;
   listDisconnectDispositions(): Promise<DisconnectDisposition[]>;
@@ -81,29 +71,23 @@ export interface OrchestratorStub {
     attemptId: string;
     outcome: AdapterCommandOutcome;
   }): Promise<CommandSettleOutcome>;
-  retryCommand(args: {
-    commandId: string;
-  }): Promise<{
+  retryCommand(args: { commandId: string }): Promise<{
     queued: boolean;
     state: HostDaemonCommandRow["state"] | null;
     retryCount: number | null;
   }>;
   getCommand(args: { commandId: string }): Promise<HostDaemonCommandRow | null>;
   listCommands(): Promise<HostDaemonCommandRow[]>;
-  listAttempts(args: {
-    commandId: string;
-  }): Promise<HostDaemonCommandAttemptRow[]>;
-  applyWatchInterests(
-    args: WatchSetApplyArgs,
-  ): Promise<{ emitted: boolean; generation: number }>;
+  listAttempts(args: { commandId: string }): Promise<HostDaemonCommandAttemptRow[]>;
+  applyWatchInterests(args: WatchSetApplyArgs): Promise<{ emitted: boolean; generation: number }>;
   reconcileWatchSet(): Promise<DaemonWatchSet>;
   drainDaemonOutbox(): Promise<DaemonServerMessage[]>;
 }
 
-export type InstalledFakes = {
+export interface InstalledFakes {
   provider: FakeProviderAdapter;
   machine: FakeMachineDispatcher;
-};
+}
 
 /**
  * DO storage persists for the whole test file, so two tests sharing one DO
@@ -116,21 +100,15 @@ function testScopedName(name?: string): string {
 }
 
 export function orchestratorFor(name?: string): OrchestratorStub {
-  return env.ORCHESTRATOR.get(
-    env.ORCHESTRATOR.idFromName(testScopedName(name)),
-  ) as unknown as OrchestratorStub;
+  return env.ORCHESTRATOR.get(env.ORCHESTRATOR.idFromName(testScopedName(name)));
 }
 
 /**
  * The raw RPC stub, typed for `runDurableObjectAlarm` — the structural stub
  * above deliberately cannot name workers-types' branded envelope.
  */
-export function alarmStubFor(
-  name?: string,
-): Parameters<typeof runDurableObjectAlarm>[0] {
-  return env.ORCHESTRATOR.get(
-    env.ORCHESTRATOR.idFromName(testScopedName(name)),
-  ) as unknown as Parameters<typeof runDurableObjectAlarm>[0];
+export function alarmStubFor(name?: string): Parameters<typeof runDurableObjectAlarm>[0] {
+  return env.ORCHESTRATOR.get(env.ORCHESTRATOR.idFromName(testScopedName(name)));
 }
 
 export function installFakes(): InstalledFakes {

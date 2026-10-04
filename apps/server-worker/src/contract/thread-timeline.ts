@@ -20,25 +20,13 @@ import {
   type WorkflowProgressSnapshot,
 } from "./domain/index.js";
 
-export const timelineRowStatusValues = [
-  "pending",
-  "completed",
-  "error",
-  "interrupted",
-] as const;
+export const timelineRowStatusValues = ["pending", "completed", "error", "interrupted"] as const;
 export const timelineRowStatusSchema = z.enum(timelineRowStatusValues);
 export type TimelineRowStatus = z.infer<typeof timelineRowStatusSchema>;
 
-export const timelineApprovalStatusValues = [
-  "waiting_for_approval",
-  "denied",
-] as const;
-export const timelineApprovalStatusSchema = z
-  .enum(timelineApprovalStatusValues)
-  .nullable();
-export type TimelineApprovalStatus = z.infer<
-  typeof timelineApprovalStatusSchema
->;
+export const timelineApprovalStatusValues = ["waiting_for_approval", "denied"] as const;
+export const timelineApprovalStatusSchema = z.enum(timelineApprovalStatusValues).nullable();
+export type TimelineApprovalStatus = z.infer<typeof timelineApprovalStatusSchema>;
 
 export const timelineActivityIntentSchema = z.discriminatedUnion("type", [
   z.object({
@@ -63,9 +51,7 @@ export const timelineActivityIntentSchema = z.discriminatedUnion("type", [
     command: z.string(),
   }),
 ]);
-export type TimelineActivityIntent = z.infer<
-  typeof timelineActivityIntentSchema
->;
+export type TimelineActivityIntent = z.infer<typeof timelineActivityIntentSchema>;
 
 export const timelineRowBaseSchema = z.object({
   id: z.string(),
@@ -86,14 +72,9 @@ export const timelineConversationAttachmentsSchema = z.object({
   localImagePaths: z.array(z.string()),
   localFilePaths: z.array(z.string()),
 });
-export type TimelineConversationAttachments = z.infer<
-  typeof timelineConversationAttachmentsSchema
->;
+export type TimelineConversationAttachments = z.infer<typeof timelineConversationAttachmentsSchema>;
 
-export const timelineConversationTurnRequestKindValues = [
-  "message",
-  "steer",
-] as const;
+export const timelineConversationTurnRequestKindValues = ["message", "steer"] as const;
 export const timelineConversationTurnRequestStatusValues = [
   "pending",
   "accepted",
@@ -104,9 +85,7 @@ export const timelineConversationTurnRequestSchema = z.object({
   kind: z.enum(timelineConversationTurnRequestKindValues),
   status: z.enum(timelineConversationTurnRequestStatusValues),
 });
-export type TimelineConversationTurnRequest = z.infer<
-  typeof timelineConversationTurnRequestSchema
->;
+export type TimelineConversationTurnRequest = z.infer<typeof timelineConversationTurnRequestSchema>;
 
 const timelineConversationRowBaseSchema = timelineRowBaseSchema.extend({
   kind: z.literal("conversation"),
@@ -114,36 +93,30 @@ const timelineConversationRowBaseSchema = timelineRowBaseSchema.extend({
   attachments: timelineConversationAttachmentsSchema.nullable(),
 });
 
-export const timelineUserConversationRowSchema =
-  timelineConversationRowBaseSchema.extend({
-    role: z.literal("user"),
-    initiator: threadTurnInitiatorSchema,
-    senderThreadId: z.string().nullable(),
-    // Family-B taxonomy fields, required on the read model. `systemMessageKind`
-    // is non-nullable (legacy rows project to `unlabeled`); `systemMessageSubject`
-    // is nullable (null = no thread subject, e.g. an `unlabeled` legacy row).
-    systemMessageKind: systemMessageKindSchema,
-    systemMessageSubject: systemMessageSubjectSchema.nullable(),
-    turnRequest: timelineConversationTurnRequestSchema,
-    mentions: z.array(promptTextMentionSchema),
-  });
-export type TimelineUserConversationRow = z.infer<
-  typeof timelineUserConversationRowSchema
->;
+export const timelineUserConversationRowSchema = timelineConversationRowBaseSchema.extend({
+  role: z.literal("user"),
+  initiator: threadTurnInitiatorSchema,
+  senderThreadId: z.string().nullable(),
+  // Family-B taxonomy fields, required on the read model. `systemMessageKind`
+  // is non-nullable (legacy rows project to `unlabeled`); `systemMessageSubject`
+  // is nullable (null = no thread subject, e.g. an `unlabeled` legacy row).
+  systemMessageKind: systemMessageKindSchema,
+  systemMessageSubject: systemMessageSubjectSchema.nullable(),
+  turnRequest: timelineConversationTurnRequestSchema,
+  mentions: z.array(promptTextMentionSchema),
+});
+export type TimelineUserConversationRow = z.infer<typeof timelineUserConversationRowSchema>;
 
-export const timelineAssistantConversationRowSchema =
-  timelineConversationRowBaseSchema.extend({
-    role: z.literal("assistant"),
-    turnRequest: z.null(),
-  });
+export const timelineAssistantConversationRowSchema = timelineConversationRowBaseSchema.extend({
+  role: z.literal("assistant"),
+  turnRequest: z.null(),
+});
 
 export const timelineConversationRowSchema = z.discriminatedUnion("role", [
   timelineUserConversationRowSchema,
   timelineAssistantConversationRowSchema,
 ]);
-export type TimelineConversationRow = z.infer<
-  typeof timelineConversationRowSchema
->;
+export type TimelineConversationRow = z.infer<typeof timelineConversationRowSchema>;
 
 export const timelineSystemOperationKindValues = [
   "generic",
@@ -156,12 +129,8 @@ export const timelineSystemOperationKindValues = [
   "warning",
   "deprecation",
 ] as const;
-export const timelineSystemOperationKindSchema = z.enum(
-  timelineSystemOperationKindValues,
-);
-export type TimelineSystemOperationKind = z.infer<
-  typeof timelineSystemOperationKindSchema
->;
+export const timelineSystemOperationKindSchema = z.enum(timelineSystemOperationKindValues);
+export type TimelineSystemOperationKind = z.infer<typeof timelineSystemOperationKindSchema>;
 const timelineGenericSystemOperationKindSchema = z.enum([
   "generic",
   "compaction",
@@ -173,14 +142,8 @@ const timelineGenericSystemOperationKindSchema = z.enum([
   "deprecation",
 ] as const);
 
-export const timelineParentChangeActionValues = [
-  "assign",
-  "release",
-  "transfer",
-] as const;
-export const timelineParentChangeActionSchema = z.enum(
-  timelineParentChangeActionValues,
-);
+export const timelineParentChangeActionValues = ["assign", "release", "transfer"] as const;
+export const timelineParentChangeActionSchema = z.enum(timelineParentChangeActionValues);
 
 export const timelineParentChangeSchema = z.object({
   action: timelineParentChangeActionSchema,
@@ -198,40 +161,30 @@ const timelineSystemRowBaseSchema = timelineRowBaseSchema.extend({
   status: timelineRowStatusSchema.nullable(),
 });
 
-export const timelineNonOperationSystemRowSchema =
-  timelineSystemRowBaseSchema.extend({
-    systemKind: z.enum(["debug", "error", "reconnect"]),
-  });
-export type TimelineNonOperationSystemRow = z.infer<
-  typeof timelineNonOperationSystemRowSchema
->;
+export const timelineNonOperationSystemRowSchema = timelineSystemRowBaseSchema.extend({
+  systemKind: z.enum(["debug", "error", "reconnect"]),
+});
+export type TimelineNonOperationSystemRow = z.infer<typeof timelineNonOperationSystemRowSchema>;
 
-export const timelineGenericOperationSystemRowSchema =
-  timelineSystemRowBaseSchema.extend({
-    systemKind: z.literal("operation"),
-    operationKind: timelineGenericSystemOperationKindSchema,
-    completedAt: z.number().nullable(),
-  });
+export const timelineGenericOperationSystemRowSchema = timelineSystemRowBaseSchema.extend({
+  systemKind: z.literal("operation"),
+  operationKind: timelineGenericSystemOperationKindSchema,
+  completedAt: z.number().nullable(),
+});
 
-export const timelineParentChangeSystemRowSchema =
-  timelineSystemRowBaseSchema.extend({
-    systemKind: z.literal("operation"),
-    operationKind: z.literal("parent-change"),
-    status: timelineRowStatusSchema,
-    parentChange: timelineParentChangeSchema,
-    completedAt: z.number().nullable(),
-  });
-export type TimelineParentChangeSystemRow = z.infer<
-  typeof timelineParentChangeSystemRowSchema
->;
+export const timelineParentChangeSystemRowSchema = timelineSystemRowBaseSchema.extend({
+  systemKind: z.literal("operation"),
+  operationKind: z.literal("parent-change"),
+  status: timelineRowStatusSchema,
+  parentChange: timelineParentChangeSchema,
+  completedAt: z.number().nullable(),
+});
+export type TimelineParentChangeSystemRow = z.infer<typeof timelineParentChangeSystemRowSchema>;
 
-export const timelineOperationSystemRowSchema = z.discriminatedUnion(
-  "operationKind",
-  [
-    timelineGenericOperationSystemRowSchema,
-    timelineParentChangeSystemRowSchema,
-  ],
-);
+export const timelineOperationSystemRowSchema = z.discriminatedUnion("operationKind", [
+  timelineGenericOperationSystemRowSchema,
+  timelineParentChangeSystemRowSchema,
+]);
 
 export const timelineSystemRowSchema = z.union([
   timelineNonOperationSystemRowSchema,
@@ -276,9 +229,7 @@ export const timelineCommandWorkRowSchema = timelineWorkRowBaseSchema.extend({
   approvalStatus: timelineApprovalStatusSchema,
   activityIntents: z.array(timelineActivityIntentSchema),
 });
-export type TimelineCommandWorkRow = z.infer<
-  typeof timelineCommandWorkRowSchema
->;
+export type TimelineCommandWorkRow = z.infer<typeof timelineCommandWorkRowSchema>;
 
 export const timelineToolWorkRowSchema = timelineWorkRowBaseSchema.extend({
   workKind: z.literal("tool"),
@@ -286,9 +237,7 @@ export const timelineToolWorkRowSchema = timelineWorkRowBaseSchema.extend({
   toolName: z.string(),
   toolArgs: z.record(z.string(), jsonValueSchema).nullable(),
   /** Optional plugin-supplied labels for the native pending/completed title. */
-  statusLabels: z
-    .object({ pending: z.string(), completed: z.string() })
-    .optional(),
+  statusLabels: z.object({ pending: z.string(), completed: z.string() }).optional(),
   output: z.string(),
   completedAt: z.number().nullable(),
   approvalStatus: timelineApprovalStatusSchema,
@@ -296,19 +245,15 @@ export const timelineToolWorkRowSchema = timelineWorkRowBaseSchema.extend({
 });
 export type TimelineToolWorkRow = z.infer<typeof timelineToolWorkRowSchema>;
 
-export const timelineFileChangeWorkRowSchema = timelineWorkRowBaseSchema.extend(
-  {
-    workKind: z.literal("file-change"),
-    callId: z.string(),
-    change: timelineFileChangeSchema,
-    stdout: z.string().nullable(),
-    stderr: z.string().nullable(),
-    approvalStatus: timelineApprovalStatusSchema,
-  },
-);
-export type TimelineFileChangeWorkRow = z.infer<
-  typeof timelineFileChangeWorkRowSchema
->;
+export const timelineFileChangeWorkRowSchema = timelineWorkRowBaseSchema.extend({
+  workKind: z.literal("file-change"),
+  callId: z.string(),
+  change: timelineFileChangeSchema,
+  stdout: z.string().nullable(),
+  stderr: z.string().nullable(),
+  approvalStatus: timelineApprovalStatusSchema,
+});
+export type TimelineFileChangeWorkRow = z.infer<typeof timelineFileChangeWorkRowSchema>;
 
 export const timelineWebSearchWorkRowSchema = timelineWorkRowBaseSchema.extend({
   workKind: z.literal("web-search"),
@@ -316,9 +261,7 @@ export const timelineWebSearchWorkRowSchema = timelineWorkRowBaseSchema.extend({
   queries: z.array(z.string()),
   completedAt: z.number().nullable(),
 });
-export type TimelineWebSearchWorkRow = z.infer<
-  typeof timelineWebSearchWorkRowSchema
->;
+export type TimelineWebSearchWorkRow = z.infer<typeof timelineWebSearchWorkRowSchema>;
 
 export const timelineWebFetchWorkRowSchema = timelineWorkRowBaseSchema.extend({
   workKind: z.literal("web-fetch"),
@@ -328,9 +271,7 @@ export const timelineWebFetchWorkRowSchema = timelineWorkRowBaseSchema.extend({
   pattern: z.string().nullable(),
   completedAt: z.number().nullable(),
 });
-export type TimelineWebFetchWorkRow = z.infer<
-  typeof timelineWebFetchWorkRowSchema
->;
+export type TimelineWebFetchWorkRow = z.infer<typeof timelineWebFetchWorkRowSchema>;
 
 export const timelineImageViewWorkRowSchema = timelineWorkRowBaseSchema.extend({
   workKind: z.literal("image-view"),
@@ -338,14 +279,9 @@ export const timelineImageViewWorkRowSchema = timelineWorkRowBaseSchema.extend({
   path: z.string(),
   completedAt: z.number().nullable(),
 });
-export type TimelineImageViewWorkRow = z.infer<
-  typeof timelineImageViewWorkRowSchema
->;
+export type TimelineImageViewWorkRow = z.infer<typeof timelineImageViewWorkRowSchema>;
 
-export const timelineFileEditApprovalLifecycleValues = [
-  "waiting",
-  "denied",
-] as const;
+export const timelineFileEditApprovalLifecycleValues = ["waiting", "denied"] as const;
 export const timelinePermissionGrantApprovalLifecycleValues = [
   "pending",
   "resolving",
@@ -359,10 +295,7 @@ export const timelineQuestionLifecycleValues = [
   "answered",
   "interrupted",
 ] as const;
-export const timelinePermissionGrantApprovalGrantScopeValues = [
-  "turn",
-  "session",
-] as const;
+export const timelinePermissionGrantApprovalGrantScopeValues = ["turn", "session"] as const;
 export const timelinePermissionGrantApprovalGrantScopeSchema = z.enum(
   timelinePermissionGrantApprovalGrantScopeValues,
 );
@@ -381,11 +314,10 @@ const timelineApprovalWorkRowBaseSchema = timelineWorkRowBaseSchema.extend({
   target: timelineApprovalTargetSchema,
 });
 
-export const timelineFileEditApprovalWorkRowSchema =
-  timelineApprovalWorkRowBaseSchema.extend({
-    approvalKind: z.literal("file-edit"),
-    lifecycle: z.enum(timelineFileEditApprovalLifecycleValues),
-  });
+export const timelineFileEditApprovalWorkRowSchema = timelineApprovalWorkRowBaseSchema.extend({
+  approvalKind: z.literal("file-edit"),
+  lifecycle: z.enum(timelineFileEditApprovalLifecycleValues),
+});
 
 export const timelinePermissionGrantApprovalWorkRowSchema =
   timelineApprovalWorkRowBaseSchema.extend({
@@ -395,16 +327,11 @@ export const timelinePermissionGrantApprovalWorkRowSchema =
     statusReason: z.string().nullable(),
   });
 
-export const timelineApprovalWorkRowSchema = z.discriminatedUnion(
-  "approvalKind",
-  [
-    timelineFileEditApprovalWorkRowSchema,
-    timelinePermissionGrantApprovalWorkRowSchema,
-  ],
-);
-export type TimelineApprovalWorkRow = z.infer<
-  typeof timelineApprovalWorkRowSchema
->;
+export const timelineApprovalWorkRowSchema = z.discriminatedUnion("approvalKind", [
+  timelineFileEditApprovalWorkRowSchema,
+  timelinePermissionGrantApprovalWorkRowSchema,
+]);
+export type TimelineApprovalWorkRow = z.infer<typeof timelineApprovalWorkRowSchema>;
 
 export const timelineQuestionWorkRowSchema = timelineWorkRowBaseSchema.extend({
   workKind: z.literal("question"),
@@ -414,9 +341,7 @@ export const timelineQuestionWorkRowSchema = timelineWorkRowBaseSchema.extend({
   answers: z.record(z.string(), pendingInteractionUserAnswerSchema).nullable(),
   statusReason: z.string().nullable(),
 });
-export type TimelineQuestionWorkRow = z.infer<
-  typeof timelineQuestionWorkRowSchema
->;
+export type TimelineQuestionWorkRow = z.infer<typeof timelineQuestionWorkRowSchema>;
 
 export interface TimelineDelegationWorkRow extends TimelineWorkRowBase {
   workKind: "delegation";
@@ -527,10 +452,7 @@ export const timelineTurnRowSchema: z.ZodType<TimelineTurnRow> = z.lazy(() =>
   }),
 );
 
-export type TimelineSourceRow =
-  | TimelineConversationRow
-  | TimelineWorkRow
-  | TimelineSystemRow;
+export type TimelineSourceRow = TimelineConversationRow | TimelineWorkRow | TimelineSystemRow;
 
 export type TimelineRow = TimelineSourceRow | TimelineTurnRow;
 

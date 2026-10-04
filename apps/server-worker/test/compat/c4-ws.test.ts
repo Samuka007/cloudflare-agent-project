@@ -41,9 +41,7 @@ describe("criterion 4: realtime /ws", () => {
   it.skip("accepts subscriptions to all nine bb targets without ack frames", async () => {
     const socket = await openWebSocket("/ws");
     for (const target of NINE_TARGETS) {
-      expect(() =>
-        realtimeSubscriptionTargetSchema.parse(target),
-      ).not.toThrow();
+      expect(() => realtimeSubscriptionTargetSchema.parse(target)).not.toThrow();
       socket.send(JSON.stringify({ type: "subscribe", target }));
     }
     // No subscribed/unsubscribed acks and no greeting frame: the first frame
@@ -76,13 +74,17 @@ describe("criterion 4: realtime /ws", () => {
     await nextFrame(detailSocket);
     await nextFrame(listSocket);
     detailSocket.send(
-      JSON.stringify({ type: "subscribe", target: { kind: "thread-detail", threadId: created.id } }),
+      JSON.stringify({
+        type: "subscribe",
+        target: { kind: "thread-detail", threadId: created.id },
+      }),
     );
-    listSocket.send(
-      JSON.stringify({ type: "subscribe", target: { kind: "thread-list" } }),
-    );
+    listSocket.send(JSON.stringify({ type: "subscribe", target: { kind: "thread-list" } }));
     await send(created.id);
-    const detailFrame = (await nextFrame(detailSocket)) as { changes: string[]; metadata?: { eventTypes?: string[] } };
+    const detailFrame = (await nextFrame(detailSocket)) as {
+      changes: string[];
+      metadata?: { eventTypes?: string[] };
+    };
     const listFrame = (await nextFrame(listSocket)) as { changes: string[] };
     expect(detailFrame.changes).toContain("events-appended");
     expect(listFrame.changes).toContain("events-appended");
@@ -97,8 +99,8 @@ describe("criterion 4: realtime /ws", () => {
     const closed = new Promise<{ code: number; reason: string }>((resolve) => {
       socket.addEventListener("close", (event) => {
         resolve({
-          code: (event as CloseEvent).code,
-          reason: (event as CloseEvent).reason,
+          code: event.code,
+          reason: event.reason,
         });
       });
     });
@@ -112,7 +114,7 @@ describe("criterion 4: realtime /ws", () => {
     const socket = await openWebSocket("/ws");
     const closed = new Promise<{ code: number }>((resolve) => {
       socket.addEventListener("close", (event) => {
-        resolve({ code: (event as CloseEvent).code });
+        resolve({ code: event.code });
       });
     });
     socket.send(JSON.stringify({ type: "subscribe", target: { kind: "nope" } }));

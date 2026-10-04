@@ -75,14 +75,14 @@ describe("criterion 5: Access gate", () => {
       .replaceAll("+", "-")
       .replaceAll("/", "_")
       .replaceAll("=", "")}`;
-    const jwks = [{ kid, kty: "RSA", n: jwk.n as string, e: jwk.e as string }];
+    const jwks = [{ kid, kty: "RSA", n: jwk.n!, e: jwk.e! }];
 
     const verified = await verifyAccessToken(token, { jwks, audience: "test-aud" });
     expect(verified.aud).toBe("test-aud");
 
-    await expect(
-      verifyAccessToken(token, { jwks, audience: "other-aud" }),
-    ).rejects.toMatchObject({ status: 401 });
+    await expect(verifyAccessToken(token, { jwks, audience: "other-aud" })).rejects.toMatchObject({
+      status: 401,
+    });
 
     const expired = await verifyAccessToken(
       `${encode({ alg: "RS256", kid })}.${encode({ aud: "test-aud", exp: 1 })}.x`,
@@ -121,7 +121,7 @@ describe("criterion 5: Access gate", () => {
       .replaceAll("+", "-")
       .replaceAll("/", "_")
       .replaceAll("=", "")}`;
-    const jwks = [{ kid, kty: "RSA", n: jwk.n as string, e: jwk.e as string }];
+    const jwks = [{ kid, kty: "RSA", n: jwk.n!, e: jwk.e! }];
     const verified = await verifyAccessToken(token, { jwks, audience: "aud-cookie" });
     expect(verified.aud).toBe("aud-cookie");
   });

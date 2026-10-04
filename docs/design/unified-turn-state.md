@@ -16,14 +16,14 @@
 
 命名约定（全文一致）：
 
-| 名字 | 形状 | 作用域 | 用途 |
-|---|---|---|---|
-| `executionId` | `${threadId}:${callSeq}`（callSeq = 对应 `tool.call` 事件的 seq） | 全局，跨会话、跨重启 | 端到端幂等键；自路由（threadId 前缀即归属） |
-| `modelCallId` | 其 `model.call_started` 事件的 seq | turn 内唯一 | 计费对账；每次调用尝试一个 |
-| `requestId` | uuid | 单次下发尝试、单个 daemon service DO 会话内 | 传输层相关（host-rpc.request/response 配对，bb 形状），**不作幂等键** |
-| `inputId` | 客户端生成的 uuid | thread 内 | 输入去重（WS 消息无重投保证，客户端重发必须安全） |
-| `bootId` | uuid，daemon client 每进程启动时在内存生成，不落盘 | 机器一次 incarnation | service DO 区分 client「断连」与「重启」的唯一凭据（§5） |
-| `offset` | 单次执行内输出字节偏移 | executionId 内 | 输出流断点续传与去重 |
+| 名字          | 形状                                                              | 作用域                                      | 用途                                                                  |
+| ------------- | ----------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------- |
+| `executionId` | `${threadId}:${callSeq}`（callSeq = 对应 `tool.call` 事件的 seq） | 全局，跨会话、跨重启                        | 端到端幂等键；自路由（threadId 前缀即归属）                           |
+| `modelCallId` | 其 `model.call_started` 事件的 seq                                | turn 内唯一                                 | 计费对账；每次调用尝试一个                                            |
+| `requestId`   | uuid                                                              | 单次下发尝试、单个 daemon service DO 会话内 | 传输层相关（host-rpc.request/response 配对，bb 形状），**不作幂等键** |
+| `inputId`     | 客户端生成的 uuid                                                 | thread 内                                   | 输入去重（WS 消息无重投保证，客户端重发必须安全）                     |
+| `bootId`      | uuid，daemon client 每进程启动时在内存生成，不落盘                | 机器一次 incarnation                        | service DO 区分 client「断连」与「重启」的唯一凭据（§5）              |
+| `offset`      | 单次执行内输出字节偏移                                            | executionId 内                              | 输出流断点续传与去重                                                  |
 
 ## 0.1 所有权裁定摘要
 
@@ -106,24 +106,24 @@ stateDiagram-v2
 
 迁移表（副作用永远发生在事件落盘之后）：
 
-| 事件 | 前置状态 | 后置状态 | 落盘后的副作用 |
-|---|---|---|---|
-| `turn.input` | IDLE（无活跃 turn） | QUEUED | 设 turn watchdog alarm；发起首次模型调用 |
-| `turn.input`（活跃 turn 中） | 任意非终态 | 不变 | 改写为 `turn.steer` 落盘（M0 单活跃 turn；`inputId` 照常去重） |
-| `model.call_started` | QUEUED / TOOLS_RUNNING（全终态） | MODEL_CALL | 调 relay（一次计费尝试，记 modelCallId） |
-| `model.delta`（合并批量，~100ms/2KB 粒度） | MODEL_CALL | 不变 | 推客户端 |
-| `model.call_completed` | MODEL_CALL | TOOLS_RUNNING 或 COMPLETED | 逐个 `tool.call` 落盘并下发 / 落 `turn.completed` |
-| `model.call_failed` | MODEL_CALL | FAILED 或重试 | 可重试错误且重试次数 <2 → 退避后新 `model.call_started`；否则 `turn.failed` |
-| `model.call_sealed` | 恢复路径发现未终态调用 | FAILED | `turn.failed{reason: interrupted_mid_stream, sealed: true}` |
-| `tool.call` | MODEL_CALL 完成后 | TOOLS_RUNNING | 下发 daemon service DO（携带 executionId、machineId、超时策略） |
-| `tool.dispatch` | TOOLS_RUNNING | 不变 | 观察性事件（attempt#、requestId；host_offline 也如实落盘） |
-| `tool.exec_started` | TOOLS_RUNNING | 不变 | 推客户端（含 client 回报的 pid） |
-| `tool.output`（合并批量，offset 去重） | TOOLS_RUNNING | 不变 | 推客户端 |
-| `tool.result` | TOOLS_RUNNING | 不变或回 MODEL_CALL | ack service DO；全部终态则发起下一次模型调用 |
-| `turn.steer` | 任意非终态 | 不变 | 下一次模型调用时注入上下文（§2.3） |
-| `turn.cancel_requested` | 任意非终态 | CANCELLING | 中止 relay 流（落 `model.call_aborted` 语义并入 failed）/ 对每个非终态 executionId 经 service DO 发 `exec.kill`（§2.4） |
-| `turn.cancelled` | CANCELLING 且全部执行终态 | CANCELLED | 推客户端 |
-| `turn.failed` | 任意非终态 | FAILED | 推客户端 |
+| 事件                                       | 前置状态                         | 后置状态                   | 落盘后的副作用                                                                                                          |
+| ------------------------------------------ | -------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `turn.input`                               | IDLE（无活跃 turn）              | QUEUED                     | 设 turn watchdog alarm；发起首次模型调用                                                                                |
+| `turn.input`（活跃 turn 中）               | 任意非终态                       | 不变                       | 改写为 `turn.steer` 落盘（M0 单活跃 turn；`inputId` 照常去重）                                                          |
+| `model.call_started`                       | QUEUED / TOOLS_RUNNING（全终态） | MODEL_CALL                 | 调 relay（一次计费尝试，记 modelCallId）                                                                                |
+| `model.delta`（合并批量，~100ms/2KB 粒度） | MODEL_CALL                       | 不变                       | 推客户端                                                                                                                |
+| `model.call_completed`                     | MODEL_CALL                       | TOOLS_RUNNING 或 COMPLETED | 逐个 `tool.call` 落盘并下发 / 落 `turn.completed`                                                                       |
+| `model.call_failed`                        | MODEL_CALL                       | FAILED 或重试              | 可重试错误且重试次数 <2 → 退避后新 `model.call_started`；否则 `turn.failed`                                             |
+| `model.call_sealed`                        | 恢复路径发现未终态调用           | FAILED                     | `turn.failed{reason: interrupted_mid_stream, sealed: true}`                                                             |
+| `tool.call`                                | MODEL_CALL 完成后                | TOOLS_RUNNING              | 下发 daemon service DO（携带 executionId、machineId、超时策略）                                                         |
+| `tool.dispatch`                            | TOOLS_RUNNING                    | 不变                       | 观察性事件（attempt#、requestId；host_offline 也如实落盘）                                                              |
+| `tool.exec_started`                        | TOOLS_RUNNING                    | 不变                       | 推客户端（含 client 回报的 pid）                                                                                        |
+| `tool.output`（合并批量，offset 去重）     | TOOLS_RUNNING                    | 不变                       | 推客户端                                                                                                                |
+| `tool.result`                              | TOOLS_RUNNING                    | 不变或回 MODEL_CALL        | ack service DO；全部终态则发起下一次模型调用                                                                            |
+| `turn.steer`                               | 任意非终态                       | 不变                       | 下一次模型调用时注入上下文（§2.3）                                                                                      |
+| `turn.cancel_requested`                    | 任意非终态                       | CANCELLING                 | 中止 relay 流（落 `model.call_aborted` 语义并入 failed）/ 对每个非终态 executionId 经 service DO 发 `exec.kill`（§2.4） |
+| `turn.cancelled`                           | CANCELLING 且全部执行终态        | CANCELLED                  | 推客户端                                                                                                                |
+| `turn.failed`                              | 任意非终态                       | FAILED                     | 推客户端                                                                                                                |
 
 工具调用的执行子状态机 `DISPATCHED → RUNNING → 终态 ∈ {OK, ERROR, TIMEOUT, CANCELLED, OUTCOME_UNKNOWN}` 存在**双重视图**：service DO 的 journal 是 claim 真相（实时），agent DO 的事件日志是 ack 真相（被 trajectory 承认的部分）。两者通过对账与 ack 收敛（§4、§5）。
 
@@ -160,18 +160,18 @@ stateDiagram-v2
 
 ### 3.0 裁定总表
 
-| 断点 | 场景 | 裁定（恢复动作 → 执行者） | 结果保证 |
-|---|---|---|---|
-| **A** | 模型流中途 agent DO 被驱逐 | partial 输出全部落盘（delta 合并批量、先写后推）；恢复**不重调模型**——重放发现 `model.call_started` 无终态 → 以已落盘前缀封口（`model.call_sealed`），turn FAILED（`interrupted_mid_stream`）→ agent DO watchdog / 冷启动重放 | 模型调用 **at-most-once**（双计费为零）；已推送内容 **at-least-once** 持久 |
-| **B** | tool_call 落盘前驱逐 | 「先落盘」粒度**包含** tool_call：参数完整的 tool_call 才落盘并获准下发；流中碎片只是 delta。未落盘的 tool_call 按从未存在处理，随 A 封口 → agent DO（下发纪律） | 已落盘的下发 **at-least-once**；未落盘的 **at-most-once**（=零次） |
-| **C** | daemon service DO 驱逐 / 租约过期 | 会话重建后 in-flight requestId 一律作废不续传；恢复靠 service DO 重放自己的执行 journal + client 重连对账（**模型二**，详见 §3.3） | 执行效果 **at-most-once**；下发 **at-least-once** |
-| **D** | WS 断但 bash 还在机器上跑 | client 继续执行、缓冲输出；重连按 bootId 分岔：同 bootId 重挂+offset 续传，新 bootId 收 kill-list（**模型二**，详见 §3.4） | 结果投递 **at-least-once**；落盘 **at-most-once** |
-| **E** | 输出流中途 agent DO 被驱逐（二次下发同一 tool_call） | 幂等键在 executionId；**去重点在 service DO journal**（模型二）：重放二次下发 → service DO 回缓存结果或重挂，client 绝不二次 spawn → service DO（去重）+ agent DO（结果去重） | 执行 **at-most-once**；结果落盘 **at-most-once**；投递 **at-least-once** |
-| **F** | result 落盘前丢失（claim/ack 在哪侧） | **claim 权威 = daemon service DO journal，ack 权威 = agent DO 事件日志**（模型二）；结果保留至 ack，ack 只在 agent DO 落盘后发出（详见 §3.6） | at-least-once 投递 × at-most-once 记录 = 恰好一次被承认 |
-| **G（新增断点）** | steer 与驱逐叠加 | steer 先落盘 ⇒ 不丢；重放必携带未消费 steer（§2.3） | 生效 **at-least-once**（重复消费由「记录所消费 steer seq」防） |
-| **H（新增断点）** | 并行调用部分完成 | 每调用独立 executionId；已终态不重发，未终态同键重问（§2.2） | 每调用执行 **at-most-once**；整批收敛 **at-least-once** |
-| **I（新增断点）** | 取消与驱逐竞态 | cancel_requested 落盘即承诺收敛；恢复重发 kill（双侧 executionId 幂等）（§2.4） | cancel 投递 **at-least-once**；turn 收敛唯一终态 |
-| **J（新增断点，模型二特有）** | daemon service DO 驱逐于执行输出流中途 | hibernation API 下普通驱逐不断连、journal 重放即恢复；硬重启/部署断 WS → client 走 D 的重连路径：同 bootId 重挂，从 service DO 告知的 lastOffset 续发，offset 去重兜底（§3.4/§3.5） | 输出字节 **at-least-once** 上行 × **at-most-once** 落盘 |
+| 断点                          | 场景                                                 | 裁定（恢复动作 → 执行者）                                                                                                                                                                                                     | 结果保证                                                                   |
+| ----------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| **A**                         | 模型流中途 agent DO 被驱逐                           | partial 输出全部落盘（delta 合并批量、先写后推）；恢复**不重调模型**——重放发现 `model.call_started` 无终态 → 以已落盘前缀封口（`model.call_sealed`），turn FAILED（`interrupted_mid_stream`）→ agent DO watchdog / 冷启动重放 | 模型调用 **at-most-once**（双计费为零）；已推送内容 **at-least-once** 持久 |
+| **B**                         | tool_call 落盘前驱逐                                 | 「先落盘」粒度**包含** tool_call：参数完整的 tool_call 才落盘并获准下发；流中碎片只是 delta。未落盘的 tool_call 按从未存在处理，随 A 封口 → agent DO（下发纪律）                                                              | 已落盘的下发 **at-least-once**；未落盘的 **at-most-once**（=零次）         |
+| **C**                         | daemon service DO 驱逐 / 租约过期                    | 会话重建后 in-flight requestId 一律作废不续传；恢复靠 service DO 重放自己的执行 journal + client 重连对账（**模型二**，详见 §3.3）                                                                                            | 执行效果 **at-most-once**；下发 **at-least-once**                          |
+| **D**                         | WS 断但 bash 还在机器上跑                            | client 继续执行、缓冲输出；重连按 bootId 分岔：同 bootId 重挂+offset 续传，新 bootId 收 kill-list（**模型二**，详见 §3.4）                                                                                                    | 结果投递 **at-least-once**；落盘 **at-most-once**                          |
+| **E**                         | 输出流中途 agent DO 被驱逐（二次下发同一 tool_call） | 幂等键在 executionId；**去重点在 service DO journal**（模型二）：重放二次下发 → service DO 回缓存结果或重挂，client 绝不二次 spawn → service DO（去重）+ agent DO（结果去重）                                                 | 执行 **at-most-once**；结果落盘 **at-most-once**；投递 **at-least-once**   |
+| **F**                         | result 落盘前丢失（claim/ack 在哪侧）                | **claim 权威 = daemon service DO journal，ack 权威 = agent DO 事件日志**（模型二）；结果保留至 ack，ack 只在 agent DO 落盘后发出（详见 §3.6）                                                                                 | at-least-once 投递 × at-most-once 记录 = 恰好一次被承认                    |
+| **G（新增断点）**             | steer 与驱逐叠加                                     | steer 先落盘 ⇒ 不丢；重放必携带未消费 steer（§2.3）                                                                                                                                                                           | 生效 **at-least-once**（重复消费由「记录所消费 steer seq」防）             |
+| **H（新增断点）**             | 并行调用部分完成                                     | 每调用独立 executionId；已终态不重发，未终态同键重问（§2.2）                                                                                                                                                                  | 每调用执行 **at-most-once**；整批收敛 **at-least-once**                    |
+| **I（新增断点）**             | 取消与驱逐竞态                                       | cancel_requested 落盘即承诺收敛；恢复重发 kill（双侧 executionId 幂等）（§2.4）                                                                                                                                               | cancel 投递 **at-least-once**；turn 收敛唯一终态                           |
+| **J（新增断点，模型二特有）** | daemon service DO 驱逐于执行输出流中途               | hibernation API 下普通驱逐不断连、journal 重放即恢复；硬重启/部署断 WS → client 走 D 的重连路径：同 bootId 重挂，从 service DO 告知的 lastOffset 续发，offset 去重兜底（§3.4/§3.5）                                           | 输出字节 **at-least-once** 上行 × **at-most-once** 落盘                    |
 
 矩阵无「待定」格。G/H/I 是裁定 A–F 过程中发现的矩阵遗漏；J 是模型二引入的新故障形态（service DO 自己成了有状态节点），均按工单要求补入并标注。
 
@@ -187,11 +187,11 @@ stateDiagram-v2
 
 **场景**：service DO 被驱逐（hibernation 外）或 client 租约过期后重建会话，旧会话的 in-flight requestId 续传还是作废？
 
-| | 模型一（host 所有） | 模型二（边缘所有） |
-|---|---|---|
-| 裁定 | requestId 作废。service DO 本身无执行状态，驱逐只丢内存映射；恢复靠 agent DO watchdog 用同 executionId 重发，host journal 去重 | requestId 作废。service DO 重放自己的执行 journal（平台确认屏障 + 重放语义），RUNNING 集合完整恢复；client 重连时对账（§5.2），agent DO watchdog 仅作兜底 |
-| 恢复驱动者 | agent DO watchdog + host journal（跨两个故障域） | service DO 自恢复（单节点重放，平台强项） |
-| 保证 | 执行 at-most-once；下发 at-least-once | 同左 |
+|            | 模型一（host 所有）                                                                                                            | 模型二（边缘所有）                                                                                                                                        |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 裁定       | requestId 作废。service DO 本身无执行状态，驱逐只丢内存映射；恢复靠 agent DO watchdog 用同 executionId 重发，host journal 去重 | requestId 作废。service DO 重放自己的执行 journal（平台确认屏障 + 重放语义），RUNNING 集合完整恢复；client 重连时对账（§5.2），agent DO watchdog 仅作兜底 |
+| 恢复驱动者 | agent DO watchdog + host journal（跨两个故障域）                                                                               | service DO 自恢复（单节点重放，平台强项）                                                                                                                 |
+| 保证       | 执行 at-most-once；下发 at-least-once                                                                                          | 同左                                                                                                                                                      |
 
 **推荐：模型二。** 理由：① 两模型对 requestId 的裁定相同（作废——bb 顶替语义：新连接 close 1000 `replaced`，在途显式废弃），差异只在执行连续体由谁恢复；模型二让「拥有会话的节点同时拥有执行状态」，单节点重放即可回答一切，模型一则要跨「edge 路由 + host journal」两个故障域拼真相；② 租约过期在模型二下直接驱动孤儿标记（§5），决策者有唯一权威；模型一下「client 死没死」要等 host 自己回来汇报。
 **对不变量的影响**：模型二新增 I19（service DO journal 重放确定性）；I17（租约与顶替语义）两模型相同；模型一路径下 I15（watchdog 兜底）是唯一恢复驱动，模型二下 I15 降级为兜底断言，主路径由 I19 覆盖。
@@ -200,39 +200,39 @@ stateDiagram-v2
 
 **场景**：client↔service DO 的 WS 断开，bash 继续在跑；孤儿谁收尸？重连后 result 找得到主人吗？client 重启后执行状态要不要持久？
 
-| | 模型一（host 所有） | 模型二（边缘所有） |
-|---|---|---|
-| 断连期间 | client 继续执行、输出入缓冲、journal 落盘进度 | 同左（缓冲行为相同）；**断连期间不自杀在跑进程**——瞬时网络抖动不该杀工作 |
-| 重连 resume | 靠 client 自己的 journal + bootId 对账：RUNNING 重挂、COMPLETED 重发结果 | client 无逻辑 journal：session/open 报 bootId + 全量 announce（§8.2）；**同 bootId** = 进程没死只是断连 → service DO 告知每条 RUNNING 的 ackedOffset，client 从缓冲续发（offset 去重）；**新 bootId** = client 重启过 → 收 kill-list |
-| client 重启 | journal 对账：旧 RUNNING 判 outcome_unknown，按 pgid+启动时间核验后杀孤儿；**执行状态要持久（host journal 是必需品）** | **执行逻辑状态不持久**（client 非权威）：service DO 发 kill-list `{executionId, pid, pidStartedAt}`，client 对照 /proc marker 扫描（§8.2）逐条核验杀进程组；旧执行全部判 outcome_unknown |
-| 孤儿收尸人 | host 自己（重启时对账） | service DO（租约失效发现 + kill-list 下发），client 只是杀手 |
-| result 找主人 | host 保留结果到 agent DO ack | service DO 保留结果到 agent DO ack；executionId 自路由 |
-| 已上行输出的命运 | client 死 → 未上报的输出随缓冲丢失 | 已上行到 service DO 的输出**已落 journal，client 死不丢** |
-| 保证 | 结果投递 at-least-once；落盘 at-most-once | 同左 |
+|                  | 模型一（host 所有）                                                                                                    | 模型二（边缘所有）                                                                                                                                                                                                                   |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 断连期间         | client 继续执行、输出入缓冲、journal 落盘进度                                                                          | 同左（缓冲行为相同）；**断连期间不自杀在跑进程**——瞬时网络抖动不该杀工作                                                                                                                                                             |
+| 重连 resume      | 靠 client 自己的 journal + bootId 对账：RUNNING 重挂、COMPLETED 重发结果                                               | client 无逻辑 journal：session/open 报 bootId + 全量 announce（§8.2）；**同 bootId** = 进程没死只是断连 → service DO 告知每条 RUNNING 的 ackedOffset，client 从缓冲续发（offset 去重）；**新 bootId** = client 重启过 → 收 kill-list |
+| client 重启      | journal 对账：旧 RUNNING 判 outcome_unknown，按 pgid+启动时间核验后杀孤儿；**执行状态要持久（host journal 是必需品）** | **执行逻辑状态不持久**（client 非权威）：service DO 发 kill-list `{executionId, pid, pidStartedAt}`，client 对照 /proc marker 扫描（§8.2）逐条核验杀进程组；旧执行全部判 outcome_unknown                                             |
+| 孤儿收尸人       | host 自己（重启时对账）                                                                                                | service DO（租约失效发现 + kill-list 下发），client 只是杀手                                                                                                                                                                         |
+| result 找主人    | host 保留结果到 agent DO ack                                                                                           | service DO 保留结果到 agent DO ack；executionId 自路由                                                                                                                                                                               |
+| 已上行输出的命运 | client 死 → 未上报的输出随缓冲丢失                                                                                     | 已上行到 service DO 的输出**已落 journal，client 死不丢**                                                                                                                                                                            |
+| 保证             | 结果投递 at-least-once；落盘 at-most-once                                                                              | 同左                                                                                                                                                                                                                                 |
 
 **推荐：模型二。** 理由：① 「执行逻辑状态要不要持久」这个问题在模型二下直接消失——host 上只需持久身份，client 可随时断、换、重装（可替换 ≠ 无状态：它仍持有物理现实观察窗与重传缓冲，§8.1），正合项目 thesis（大脑在边缘，机器是耗材）与 M1 fleet；② 已上行输出在边缘落盘，client 死亡的损失窗口从「整段结果」缩到「缓冲区尾部」；③ 收尸决策者唯一（租约权威），模型一的 host 自收尸在「client 永不回来」时一样失效，两者对「机器永远消失」等价，但模型二对「client 重装/换新机器」免费。
 **对不变量的影响**：I18 改写（重启诚实 = kill-list 恰好覆盖旧 bootId 的 RUNNING 集合，断言对象从 host journal 变为 service DO 下发的 kill-list）；新增 I20（offset 续传去重）；模型一的「host journal 先于上报落盘」断言删除（host 无 journal）。
 
 ### 3.5 断点 E（输出流中途 agent DO 被驱逐，二次下发同一 tool_call）——双模型对照
 
-| | 模型一（host 所有） | 模型二（边缘所有） |
-|---|---|---|
-| 去重点 | host journal 查 executionId（RUNNING→重挂；COMPLETED→回缓存；UNKNOWN→执行） | service DO journal 查 executionId，**连 host 都不用问**（RUNNING→重挂回报通道；COMPLETED→直接回缓存结果；UNKNOWN→才下发 client） |
-| agent DO 侧 | 重放派生集合去重结果，重复 result 丢弃并补 ack | 同左 |
-| 保证 | 执行 at-most-once；结果落盘 at-most-once；投递 at-least-once | 同左 |
+|             | 模型一（host 所有）                                                         | 模型二（边缘所有）                                                                                                               |
+| ----------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| 去重点      | host journal 查 executionId（RUNNING→重挂；COMPLETED→回缓存；UNKNOWN→执行） | service DO journal 查 executionId，**连 host 都不用问**（RUNNING→重挂回报通道；COMPLETED→直接回缓存结果；UNKNOWN→才下发 client） |
+| agent DO 侧 | 重放派生集合去重结果，重复 result 丢弃并补 ack                              | 同左                                                                                                                             |
+| 保证        | 执行 at-most-once；结果落盘 at-most-once；投递 at-least-once                | 同左                                                                                                                             |
 
 **推荐：模型二。** 理由：去重点从全系统最不耐久的节点（host journal 可随 dataDir 被 wipe、可随 LXC 重建丢失）挪到有平台持久性契约的 DO SQLite；host journal 丢失在模型一下等于去重能力丢失（同 executionId 会被二次执行——恰好击穿 at-most-once），在模型二下根本不参与去重。
 **对不变量的影响**：I16 的断言点从「host 执行计数」改为「fake client 的 spawn 计数对同 executionId = 1」，去重发生在 service DO（断言它拦截了二次下发）。
 
 ### 3.6 断点 F（result 落盘前丢失，claim/ack 的 source of truth）——双模型对照
 
-| | 模型一（host 所有） | 模型二（边缘所有） |
-|---|---|---|
-| claim 权威 | host journal（执行是否发生、结果为何） | daemon service DO journal |
-| ack 权威 | agent DO 事件日志（结果是否被 trajectory 承认） | 同左 |
-| 保留与 ack | host 先写 journal 再上报；结果保留至 ack；ack 只在 agent DO 落盘后发出 | service DO 先落 journal 再转发 agent DO；结果保留至 ack，ack 后转 tombstone |
-| 诚实缺口 | client 崩在「子进程退出」与「journal 写盘」之间 → outcome_unknown | client 崩在「进程退出」与「字节流上行完」之间 → service DO 只有部分输出、无 exit status → outcome_unknown |
-| 不可信跨度 | edge↔host 两个故障域之间的 claim/ack | **claim/ack 双双收敛到边缘**（两只 DO，同一耐久级别）；唯一不可信的是 client→service DO 这一段字节流，而字节流故障天然由 offset+去重吸收 |
+|            | 模型一（host 所有）                                                    | 模型二（边缘所有）                                                                                                                       |
+| ---------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| claim 权威 | host journal（执行是否发生、结果为何）                                 | daemon service DO journal                                                                                                                |
+| ack 权威   | agent DO 事件日志（结果是否被 trajectory 承认）                        | 同左                                                                                                                                     |
+| 保留与 ack | host 先写 journal 再上报；结果保留至 ack；ack 只在 agent DO 落盘后发出 | service DO 先落 journal 再转发 agent DO；结果保留至 ack，ack 后转 tombstone                                                              |
+| 诚实缺口   | client 崩在「子进程退出」与「journal 写盘」之间 → outcome_unknown      | client 崩在「进程退出」与「字节流上行完」之间 → service DO 只有部分输出、无 exit status → outcome_unknown                                |
+| 不可信跨度 | edge↔host 两个故障域之间的 claim/ack                                   | **claim/ack 双双收敛到边缘**（两只 DO，同一耐久级别）；唯一不可信的是 client→service DO 这一段字节流，而字节流故障天然由 offset+去重吸收 |
 
 **推荐：模型二。** 理由：两模型的「诚实缺口」认识论等价（都有不可知的崩溃窗口，都判 outcome_unknown），但模型二把 claim/ack 闭环从跨网络、跨耐久级别的 edge↔host 对账，缩成边缘内部两只 DO 之间的对账——故障域更少、收敛更快、可断言性更强（L1 内可全程用 fake client 验证）。
 **对不变量的影响**：新增 I21（claim/ack 边缘内闭环：service DO 仅在 agent DO ack 后转 tombstone；ack 时序在落盘之后）；I6/I7 不变（agent DO 侧）。
@@ -265,15 +265,15 @@ stateDiagram-v2
 
 ### 5.1 超时与租约归属表
 
-| 机制 | 数值 | 策略所有者 | 执行者 | 说明 |
-|---|---|---|---|---|
-| 心跳 / 租约 | 5s / 30s（bb 默认值） | daemon service DO | 双方 | 任意合法 WS 消息续租（bb 语义）；`setWebSocketAutoResponse` 处理协议层 ping 不唤醒 DO |
-| 断连宽限 | 5s（bb `DAEMON_DISCONNECT_GRACE_MS`） | daemon service DO | service DO | 宽限内重连不标记孤儿，不作废在途 |
-| `exec.spawn` ack | 30s（bb `COMMAND_TIMEOUT_MS`） | agent DO | service DO | 仅 spawn 问答；执行本体是 settled 长事务，无 30s 帽（bb 同款分层） |
-| 执行超时 | 随 `tool.call` 下发（M0 默认 10min） | agent DO（策略） | 主：service DO（watchdog alarm 到期下发 `exec.kill`）；备：client 本地定时器（断连窗口兜底，到点自杀进程组） | SIGTERM → 5s → SIGKILL |
-| 执行 watchdog | execTimeout + 5min 传输宽限 | agent DO | alarm handler | 到期用同一 executionId 重问 service DO，不直接判死 |
-| 模型调用 cap | 15min（平台单出站操作上限） | 平台 | agent DO watchdog | 到期按 seal 处理 |
-| turn watchdog | turn 开始即设 | agent DO | alarm handler | 僵死 turn 巡检的总兜底 |
+| 机制             | 数值                                  | 策略所有者        | 执行者                                                                                                       | 说明                                                                                  |
+| ---------------- | ------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| 心跳 / 租约      | 5s / 30s（bb 默认值）                 | daemon service DO | 双方                                                                                                         | 任意合法 WS 消息续租（bb 语义）；`setWebSocketAutoResponse` 处理协议层 ping 不唤醒 DO |
+| 断连宽限         | 5s（bb `DAEMON_DISCONNECT_GRACE_MS`） | daemon service DO | service DO                                                                                                   | 宽限内重连不标记孤儿，不作废在途                                                      |
+| `exec.spawn` ack | 30s（bb `COMMAND_TIMEOUT_MS`）        | agent DO          | service DO                                                                                                   | 仅 spawn 问答；执行本体是 settled 长事务，无 30s 帽（bb 同款分层）                    |
+| 执行超时         | 随 `tool.call` 下发（M0 默认 10min）  | agent DO（策略）  | 主：service DO（watchdog alarm 到期下发 `exec.kill`）；备：client 本地定时器（断连窗口兜底，到点自杀进程组） | SIGTERM → 5s → SIGKILL                                                                |
+| 执行 watchdog    | execTimeout + 5min 传输宽限           | agent DO          | alarm handler                                                                                                | 到期用同一 executionId 重问 service DO，不直接判死                                    |
+| 模型调用 cap     | 15min（平台单出站操作上限）           | 平台              | agent DO watchdog                                                                                            | 到期按 seal 处理                                                                      |
+| turn watchdog    | turn 开始即设                         | agent DO          | alarm handler                                                                                                | 僵死 turn 巡检的总兜底                                                                |
 
 无挂起等待路径（bb 同款）：client 离线时下发立即得 `host_offline` 显式错误并落盘，由 FSM/模型决策，而不是无限等注册。
 
@@ -432,17 +432,16 @@ bb as-built 依据：`docs/research/bb-daemon-protocol.md`（session/open 三步
 
 ### 8.1 client 本地状态最小清单（什么写盘、什么纯内存、崩溃下场）
 
-| 状态 | 存哪 | 角色 | 崩溃下场 |
-|---|---|---|---|
-| `hostId` / `hostKey` | dataDir 磁盘（0600） | 身份 | **唯一必须持久的**；丢了重 enroll（bb 同形：`host-id` + `auth.json`） |
-| `bootId` | 纯内存，进程启动时生成 | incarnation 标识 | 崩溃即新 bootId——这是判定树的输入，**故意不落盘**（落盘反而制造「假同 bootId」） |
-| 进程表 `executionId→{pid, pgid, 管道句柄}` | 纯内存 | OS 物理现实的观察窗 | 丢失；由 §8.2 的 /proc marker 扫描近似重建（只够核验杀，不够续管道） |
-| 输出环形缓冲（每执行 ≤1MB）+ 每条执行的 `ackedOffset` 读偏移 | 纯内存 | 重传源 + 缓冲裁剪依据 | 丢失 ≤1MB 未 ack 尾部；缺口以 `output_truncated` 显式标记（§8.3），不静默 |
-| sessionId / 心跳租约参数 | 纯内存 | 会话句柄 | 断即作废，下次 session/open 换新 |
-| capabilities（PTY 支持、平台、shell 路径、协议版本） | 启动探测，纯内存 | announce 载荷 | 每次重报，无状态 |
+| 状态                                                         | 存哪                   | 角色                  | 崩溃下场                                                                         |
+| ------------------------------------------------------------ | ---------------------- | --------------------- | -------------------------------------------------------------------------------- |
+| `hostId` / `hostKey`                                         | dataDir 磁盘（0600）   | 身份                  | **唯一必须持久的**；丢了重 enroll（bb 同形：`host-id` + `auth.json`）            |
+| `bootId`                                                     | 纯内存，进程启动时生成 | incarnation 标识      | 崩溃即新 bootId——这是判定树的输入，**故意不落盘**（落盘反而制造「假同 bootId」） |
+| 进程表 `executionId→{pid, pgid, 管道句柄}`                   | 纯内存                 | OS 物理现实的观察窗   | 丢失；由 §8.2 的 /proc marker 扫描近似重建（只够核验杀，不够续管道）             |
+| 输出环形缓冲（每执行 ≤1MB）+ 每条执行的 `ackedOffset` 读偏移 | 纯内存                 | 重传源 + 缓冲裁剪依据 | 丢失 ≤1MB 未 ack 尾部；缺口以 `output_truncated` 显式标记（§8.3），不静默        |
+| sessionId / 心跳租约参数                                     | 纯内存                 | 会话句柄              | 断即作废，下次 session/open 换新                                                 |
+| capabilities（PTY 支持、平台、shell 路径、协议版本）         | 启动探测，纯内存       | announce 载荷         | 每次重报，无状态                                                                 |
 
 裁定：**client 写盘只限身份**。输出缓冲不写盘——写盘等于局部回退模型一的 host journal，换来的只是崩溃瞬间 ≤1MB 的未 ack 尾部；缺口诚实标记即可。这是本节唯一留给用户的真实分叉（见 §8.8）。
-
 
 ### 8.2 boot announce（client 上线声明）
 

@@ -17,7 +17,7 @@ import {
 /** A complete canned turn as fake-edge emits it, seq-contiguous. */
 function cannedTurnEnvelopes(threadId: string): ThreadEventEnvelope[] {
   const base = { threadId, createdAt: 1_000 };
-  const raw: Array<[string, Record<string, unknown>]> = [
+  const raw: [string, Record<string, unknown>][] = [
     ["client/thread/start", { title: "hello" }],
     [
       "client/turn/requested",
@@ -40,10 +40,7 @@ function cannedTurnEnvelopes(threadId: string): ThreadEventEnvelope[] {
         },
       },
     ],
-    [
-      "item/started",
-      { turnId: "turn_1", item: { type: "agentMessage", id: "itm_a", text: "" } },
-    ],
+    ["item/started", { turnId: "turn_1", item: { type: "agentMessage", id: "itm_a", text: "" } }],
     ["item/agentMessage/delta", { turnId: "turn_1", itemId: "itm_a", delta: "he" }],
     ["item/agentMessage/delta", { turnId: "turn_1", itemId: "itm_a", delta: "llo" }],
     [
@@ -112,9 +109,7 @@ describe("seq/replay semantics", () => {
     const events = cannedTurnEnvelopes("thr_t");
     expect(isSeqContiguous(events)).toBe(true);
     expect(isSeqContiguous(events.slice(4), 5)).toBe(true);
-    const withGap = [events[0], events[2]].filter(
-      (envelope) => envelope !== undefined,
-    );
+    const withGap = [events[0], events[2]].filter((envelope) => envelope !== undefined);
     expect(isSeqContiguous(withGap)).toBe(false);
   });
 

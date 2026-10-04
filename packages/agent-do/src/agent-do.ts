@@ -16,11 +16,7 @@ import {
   type ExecutionRuntime,
   type ReplayState,
 } from "./turn-state.js";
-import type {
-  AgentEventDataByType,
-  AgentEventRecord,
-  AgentEventType,
-} from "./fsm-events.js";
+import type { AgentEventDataByType, AgentEventRecord, AgentEventType } from "./fsm-events.js";
 import { parseAgentEvent, type AnyAgentEvent } from "./fsm-events.js";
 import { executionIdFor, threadIdFromExecutionId } from "./ids.js";
 import {
@@ -37,11 +33,7 @@ import type {
   ExecutionUpdate,
   ToolResultPayload,
 } from "./daemon.js";
-import {
-  ModelProviderError,
-  type ModelRequest,
-  type ModelStreamChunk,
-} from "./provider.js";
+import { ModelProviderError, type ModelRequest, type ModelStreamChunk } from "./provider.js";
 import { projectToUxEvents } from "./ux-projection.js";
 import { getAgentRuntime } from "./injection.js";
 import { modelRequestFromEvents } from "./translate.js";
@@ -85,12 +77,7 @@ export interface AgentDoBindings {
 
 export class AgentRpcError extends Error {
   constructor(
-    readonly code:
-      | "not_found"
-      | "conflict"
-      | "invalid"
-      | "wrong_thread"
-      | "no_runtime",
+    readonly code: "not_found" | "conflict" | "invalid" | "wrong_thread" | "no_runtime",
     message: string,
   ) {
     super(message);
@@ -112,7 +99,7 @@ export interface CreateThreadResult {
 export interface SendMessageRequest {
   /** Client-generated idempotency key (protocol `clientRequestId`). */
   clientRequestId: string;
-  content: Array<{ type: "text"; text: string }>;
+  content: { type: "text"; text: string }[];
   mode: "auto" | "start" | "steer";
 }
 
@@ -159,7 +146,7 @@ type ModelCallOutcome =
       kind: "completed";
       modelCallId: number;
       text: string;
-      toolCalls: Array<{ name: string; arguments: Record<string, unknown> }>;
+      toolCalls: { name: string; arguments: Record<string, unknown> }[];
     }
   | { kind: "sealed"; modelCallId: number }
   | { kind: "cancelled"; modelCallId: number }
@@ -180,15 +167,12 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   private readonly activeDrivers = new Map<string, AbortController>();
   private readonly execWaiters = new Map<
     string,
-    Array<{ turnId: string; wake: (forced: boolean) => void }>
+    { turnId: string; wake: (forced: boolean) => void }[]
   >();
 
   constructor(ctx: DurableObjectState, env: AgentDoBindings) {
     super(ctx, env);
-    this.cfg = decodeWatchdogConfig(
-      env.AGENT_DO_WATCHDOG,
-      DEFAULT_WATCHDOG_CONFIG,
-    );
+    this.cfg = decodeWatchdogConfig(env.AGENT_DO_WATCHDOG, DEFAULT_WATCHDOG_CONFIG);
     this.log = new EventLog(ctx.storage, env.BLOBS, this.cfg.r2BypassBytes);
     this.state = this.loadState();
     if (this.state.threadId !== null) this.threadId = this.state.threadId;
@@ -227,8 +211,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       return { turnId: existing.turnId, steer: existing.kind === "steer", duplicated: true };
     }
     const active = this.activeTurn();
-    const wantSteer =
-      request.mode === "steer" || (request.mode === "auto" && active !== undefined);
+    const wantSteer = request.mode === "steer" || (request.mode === "auto" && active !== undefined);
     if (wantSteer) {
       if (active === undefined) {
         throw new AgentRpcError("invalid", "steer requested with no active turn");
@@ -362,7 +345,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     await this.ready();
     let parsed: unknown;
     try {
-      parsed = JSON.parse(typeof message === "string" ? message : new TextDecoder().decode(message));
+      parsed = JSON.parse(
+        typeof message === "string" ? message : new TextDecoder().decode(message),
+      );
     } catch {
       ws.send(JSON.stringify({ type: "unsubscribed", target: { kind: "thread-list" } }));
       return;
@@ -375,7 +360,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       this.threadId !== null &&
       target.threadId !== this.threadId
     ) {
-      throw new AgentRpcError("wrong_thread", `subscription targets foreign thread ${target.threadId}`);
+      throw new AgentRpcError(
+        "wrong_thread",
+        `subscription targets foreign thread ${target.threadId}`,
+      );
     }
     ws.send(JSON.stringify({ type: clientMessage.data.type, target }));
   }
@@ -417,9 +405,14 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
 
   private loadState(): ReplayState {
     const rows = this.ctx.storage.sql
-      .exec<{ seq: number; id: string; thread_id: string; type: string; data: string; created_at: number }>(
-        "SELECT seq, id, thread_id, type, data, created_at FROM events ORDER BY seq",
-      )
+      .exec<{
+        seq: number;
+        id: string;
+        thread_id: string;
+        type: string;
+        data: string;
+        created_at: number;
+      }>("SELECT seq, id, thread_id, type, data, created_at FROM events ORDER BY seq")
       .toArray();
     const events = rows.map((row) =>
       parseAgentEvent({
@@ -592,20 +585,14 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           if (waitOutcome === "turn_failed") return;
           continue;
         }
-        const pendingSteers = turn.steerSeqs.filter(
-          (seq) => !turn.consumedSteerSeqs.includes(seq),
-        );
+        const pendingSteers = turn.steerSeqs.filter((seq) => !turn.consumedSteerSeqs.includes(seq));
         const started = yield* Effect.promise(() =>
           self.appendEvent("model.call_started", {
             turnId,
             consumedSteerSeqs: pendingSteers,
           }),
         );
-        const outcome: ModelCallOutcome = yield* self.consumeModelCall(
-          turnId,
-          started.seq,
-          signal,
-        );
+        const outcome: ModelCallOutcome = yield* self.consumeModelCall(turnId, started.seq, signal);
         if (outcome.kind === "cancelled") {
           yield* Effect.promise(() => self.finalizeCancel(turnId));
           return;
@@ -667,12 +654,16 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
               timeoutMs: self.cfg.execTimeoutMs,
             }),
           );
-          executionIds.push(executionIdFor(self.threadId as string, record.seq));
+          executionIds.push(executionIdFor(self.threadId!, record.seq));
         }
-        yield* Effect.forEach(executionIds, (executionId) => Effect.promise(() => self.dispatchExecution(turnId, executionId)), {
-          concurrency: "unbounded",
-          discard: true,
-        });
+        yield* Effect.forEach(
+          executionIds,
+          (executionId) => Effect.promise(() => self.dispatchExecution(turnId, executionId)),
+          {
+            concurrency: "unbounded",
+            discard: true,
+          },
+        );
         const waitOutcome: "done" | "cancelled" | "turn_failed" = yield* Effect.promise(() =>
           self.waitForExecutions(turnId, executionIds, signal),
         );
@@ -720,49 +711,57 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         });
       const guarded: Effect.Effect<ModelCallOutcome, ProviderPullFailure> = Effect.gen(
         function* () {
-        const provider = getAgentRuntime(self.threadId as string).provider;
-        const request = yield* Effect.promise(() => self.buildModelRequest(turnId, modelCallId));
-          const iterator = provider.streamTurn(request, {
-            signal: combined,
-          })[Symbol.asyncIterator]();
-          const pull: Effect.Effect<IteratorResult<ModelStreamChunk>, ProviderPullFailure> =
-            Effect.callback((resume) => {
+          const provider = getAgentRuntime(self.threadId!).provider;
+          const request = yield* Effect.promise(() => self.buildModelRequest(turnId, modelCallId));
+          const iterator = provider
+            .streamTurn(request, {
+              signal: combined,
+            })
+            [Symbol.asyncIterator]();
+          const pull: Effect.Effect<
+            IteratorResult<ModelStreamChunk>,
+            ProviderPullFailure
+          > = Effect.callback((resume) => {
             void iterator.next().then(
-              (result) => resume(Effect.succeed(result)),
-                (error: unknown) => resume(Effect.fail(new ProviderPullFailure(error))),
+              (result) => {
+                resume(Effect.succeed(result));
+              },
+              (error: unknown) => {
+                resume(Effect.fail(new ProviderPullFailure(error)));
+              },
             );
           });
-        for (;;) {
+          for (;;) {
             const next = yield* pull;
             if (next.done === true) break;
             const chunk = next.value;
-          if (chunk.kind === "text-delta") {
-            if (!sawFirstByte) {
-              sawFirstByte = true;
-              lastFlushAt = Date.now();
+            if (chunk.kind === "text-delta") {
+              if (!sawFirstByte) {
+                sawFirstByte = true;
+                lastFlushAt = Date.now();
+              }
+              pendingDelta += chunk.text;
+              pendingDeltaBytes += new TextEncoder().encode(chunk.text).byteLength;
+              const now = Date.now();
+              if (
+                pendingDeltaBytes >= self.cfg.deltaFlushBytes ||
+                now - lastFlushAt >= self.cfg.deltaFlushMs
+              ) {
+                lastFlushAt = now;
+                yield* flushDelta();
+              }
+              continue;
             }
-            pendingDelta += chunk.text;
-            pendingDeltaBytes += new TextEncoder().encode(chunk.text).byteLength;
-            const now = Date.now();
-            if (
-              pendingDeltaBytes >= self.cfg.deltaFlushBytes ||
-              now - lastFlushAt >= self.cfg.deltaFlushMs
-            ) {
-              lastFlushAt = now;
-              yield* flushDelta();
-            }
-            continue;
+            yield* flushDelta();
+            return {
+              kind: "completed" as const,
+              modelCallId,
+              text,
+              toolCalls: chunk.toolCalls,
+            };
           }
           yield* flushDelta();
-          return {
-            kind: "completed" as const,
-            modelCallId,
-            text,
-            toolCalls: chunk.toolCalls,
-          };
-        }
-        yield* flushDelta();
-        return { kind: "completed" as const, modelCallId, text, toolCalls: [] };
+          return { kind: "completed" as const, modelCallId, text, toolCalls: [] };
         },
       );
       const outcome = yield* Effect.catchIf(
@@ -804,7 +803,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     if (call === undefined) return { kind: "sealed", modelCallId };
     const turnId = call.turnId;
     const isCap =
-      typeof error === "object" && error !== null && "_tag" in error && error._tag === "TimeoutError";
+      typeof error === "object" &&
+      error !== null &&
+      "_tag" in error &&
+      error._tag === "TimeoutError";
     if (isCap && !signal.aborted) {
       callAbort.abort();
       await this.appendEvent("model.call_sealed", {
@@ -814,8 +816,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       });
       return { kind: "sealed", modelCallId };
     }
-    const pullFailure =
-      error instanceof ProviderPullFailure ? error.error : error;
+    const pullFailure = error instanceof ProviderPullFailure ? error.error : error;
     const failure = this.classifyProviderFailure(pullFailure, sawFirstByte);
     if (signal.aborted) {
       await this.appendEvent("model.call_failed", {
@@ -897,7 +898,11 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   private eventData(seq: number): AnyAgentEvent | null {
     if (this.threadId === null) return null;
     const row = this.ctx.storage.sql
-      .exec<{ data: string }>("SELECT data FROM events WHERE thread_id = ? AND seq = ?", this.threadId, seq)
+      .exec<{ data: string }>(
+        "SELECT data FROM events WHERE thread_id = ? AND seq = ?",
+        this.threadId,
+        seq,
+      )
       .one();
     if (row === undefined) return null;
     return parseAgentEvent({
@@ -912,7 +917,11 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
 
   private eventTypeOf(seq: number): string {
     const row = this.ctx.storage.sql
-      .exec<{ type: string }>("SELECT type FROM events WHERE thread_id = ? AND seq = ?", this.threadId, seq)
+      .exec<{ type: string }>(
+        "SELECT type FROM events WHERE thread_id = ? AND seq = ?",
+        this.threadId,
+        seq,
+      )
       .one();
     return row?.type ?? "";
   }
@@ -932,7 +941,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         namespace.idFromName(this.state.machineId ?? "local"),
       ) as unknown as DaemonServiceClient;
     }
-    const registered = getAgentRuntime(this.threadId as string).daemon;
+    const registered = getAgentRuntime(this.threadId!).daemon;
     if (registered === undefined) {
       throw new AgentRpcError(
         "no_runtime",
@@ -950,13 +959,12 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     let outcome: DispatchOutcome;
     try {
       outcome = await this.daemon().dispatch({
-        threadId: this.threadId as string,
+        threadId: this.threadId!,
         turnId,
         executionId,
         machineId: this.state.machineId ?? "local",
         tool: callData?.type === "tool.call" ? callData.data.tool : "unknown",
-        arguments:
-          callData?.type === "tool.call" ? callData.data.arguments : {},
+        arguments: callData?.type === "tool.call" ? callData.data.arguments : {},
         timeoutMs: execution.timeoutMs,
       });
     } catch (error) {
@@ -1041,7 +1049,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     };
     const waiters = executionIds.map((_executionId) => ({
       turnId,
-      wake: (_forced: boolean) => check(),
+      wake: (_forced: boolean) => {
+        check();
+      },
     }));
     for (let i = 0; i < executionIds.length; i++) {
       const executionId = executionIds[i];
@@ -1051,7 +1061,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       existing.push(waiter);
       this.execWaiters.set(executionId, existing);
     }
-    const onAbort = () => check();
+    const onAbort = () => {
+      check();
+    };
     if (signal.aborted) onAbort();
     else signal.addEventListener("abort", onAbort, { once: true });
     check();
@@ -1118,7 +1130,12 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       };
       for (const id of pending) {
         const existing = this.execWaiters.get(id) ?? [];
-        existing.push({ turnId, wake: () => check() });
+        existing.push({
+          turnId,
+          wake: () => {
+            check();
+          },
+        });
         this.execWaiters.set(id, existing);
       }
       await promise;
@@ -1199,7 +1216,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   }
 
   /** Test/config seam: persist a watchdog config patch. */
-  async configureWatchdog(patch: Record<string, number>): Promise<{ config: Record<string, number> }> {
+  async configureWatchdog(
+    patch: Record<string, number>,
+  ): Promise<{ config: Record<string, number> }> {
     await this.ready();
     const merged = mergeWatchdogConfig(this.cfg, parseWatchdogConfigPatch(patch));
     this.cfg = merged;

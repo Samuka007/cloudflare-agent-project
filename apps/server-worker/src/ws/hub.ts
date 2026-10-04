@@ -25,9 +25,8 @@ import {
  *   (hub.ts:957-961 "Skipping invalid realtime broadcast").
  */
 export class NotificationHubDO extends DurableObject {
-  private threadEventWaiters: Array<ThreadEventWaiter> = [];
+  private threadEventWaiters: ThreadEventWaiter[] = [];
   private daemonDisconnects: DaemonDisconnect[] = [];
-
 
   // --- public /ws endpoint ---------------------------------------------------
 
@@ -51,9 +50,7 @@ export class NotificationHubDO extends DurableObject {
   webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): void {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(
-        typeof raw === "string" ? raw : new TextDecoder().decode(raw),
-      );
+      parsed = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw));
     } catch {
       ws.close(1008, "invalid-message");
       return;
@@ -64,9 +61,7 @@ export class NotificationHubDO extends DurableObject {
       return;
     }
     const keys = new Set<string>(readAttachment(ws).keys);
-    const key = realtimeSubscriptionTargetKey(
-      message.data.target as RealtimeSubscriptionTarget,
-    );
+    const key = realtimeSubscriptionTargetKey(message.data.target);
     if (message.data.type === "subscribe") {
       keys.add(key);
     } else {
@@ -100,10 +95,7 @@ export class NotificationHubDO extends DurableObject {
     return { delivered };
   }
 
-  async notifyProject(
-    projectId: string,
-    changes: string[],
-  ): Promise<{ delivered: number }> {
+  async notifyProject(projectId: string, changes: string[]): Promise<{ delivered: number }> {
     return {
       delivered: this.broadcastChanged({
         type: "changed",
@@ -128,10 +120,7 @@ export class NotificationHubDO extends DurableObject {
     };
   }
 
-  async notifyHost(
-    hostId: string,
-    changes: string[],
-  ): Promise<{ delivered: number }> {
+  async notifyHost(hostId: string, changes: string[]): Promise<{ delivered: number }> {
     return {
       delivered: this.broadcastChanged({
         type: "changed",
@@ -153,9 +142,7 @@ export class NotificationHubDO extends DurableObject {
   }
 
   /** Transient, unpersisted frames → every registered client (bb hub.ts:741-808). */
-  async broadcastSignal(
-    frame: Record<string, unknown>,
-  ): Promise<{ delivered: number }> {
+  async broadcastSignal(frame: Record<string, unknown>): Promise<{ delivered: number }> {
     const payload = JSON.stringify(frame);
     const sockets = this.ctx.getWebSockets();
     for (const socket of sockets) {
@@ -187,30 +174,22 @@ export class NotificationHubDO extends DurableObject {
     const waiter: ThreadEventWaiter = { threadId: args.threadId, release };
     this.threadEventWaiters.push(waiter);
     const timer = setTimeout(() => {
-      this.threadEventWaiters = this.threadEventWaiters.filter(
-        (candidate) => candidate !== waiter,
-      );
+      this.threadEventWaiters = this.threadEventWaiters.filter((candidate) => candidate !== waiter);
       release();
     }, waitMs);
     try {
       await promise;
       return {
-        resolved: this.threadEventWaiters.every(
-          (candidate) => candidate !== waiter,
-        ),
+        resolved: this.threadEventWaiters.every((candidate) => candidate !== waiter),
       };
     } finally {
       clearTimeout(timer);
-      this.threadEventWaiters = this.threadEventWaiters.filter(
-        (candidate) => candidate !== waiter,
-      );
+      this.threadEventWaiters = this.threadEventWaiters.filter((candidate) => candidate !== waiter);
     }
   }
 
   private resolveThreadWaiters(threadId: string): void {
-    const pending = this.threadEventWaiters.filter(
-      (waiter) => waiter.threadId === threadId,
-    );
+    const pending = this.threadEventWaiters.filter((waiter) => waiter.threadId === threadId);
     for (const waiter of pending) {
       waiter.release();
     }
@@ -219,32 +198,24 @@ export class NotificationHubDO extends DurableObject {
   // --- daemon disconnect grace (bb pendingDaemonDisconnects, hub.ts:166-173) --
 
   async markDaemonDisconnected(args: { hostId: string }): Promise<{ ok: true }> {
-    this.daemonDisconnects = this.daemonDisconnects.filter(
-      (entry) => entry.hostId !== args.hostId,
-    );
+    this.daemonDisconnects = this.daemonDisconnects.filter((entry) => entry.hostId !== args.hostId);
     this.daemonDisconnects.push({
       hostId: args.hostId,
       atMs: Date.now(),
     });
-    await this.ctx.storage.setAlarm(
-      Date.now() + DAEMON_ACTIVE_WORK_DISCONNECT_GRACE_MS,
-    );
+    await this.ctx.storage.setAlarm(Date.now() + DAEMON_ACTIVE_WORK_DISCONNECT_GRACE_MS);
     return { ok: true };
   }
 
   async markDaemonConnected(args: { hostId: string }): Promise<{ ok: true }> {
-    this.daemonDisconnects = this.daemonDisconnects.filter(
-      (entry) => entry.hostId !== args.hostId,
-    );
+    this.daemonDisconnects = this.daemonDisconnects.filter((entry) => entry.hostId !== args.hostId);
     return { ok: true };
   }
 
   async getDaemonDisconnectState(args: {
     hostId: string;
   }): Promise<{ inGrace: boolean; graceExpiresAt: number | null }> {
-    const entry = this.daemonDisconnects.find(
-      (candidate) => candidate.hostId === args.hostId,
-    );
+    const entry = this.daemonDisconnects.find((candidate) => candidate.hostId === args.hostId);
     if (!entry) {
       return { inGrace: false, graceExpiresAt: null };
     }
@@ -307,9 +278,7 @@ interface SocketAttachment {
 }
 
 function readAttachment(socket: WebSocket): SocketAttachment {
-  const attachment = socket.deserializeAttachment() as
-    | SocketAttachment
-    | null;
+  const attachment = socket.deserializeAttachment() as SocketAttachment | null;
   return attachment ?? { keys: [] };
 }
 
@@ -328,8 +297,7 @@ export const DAEMON_ACTIVE_WORK_DISCONNECT_GRACE_MS = 5_000;
 
 function subscriptionKeysForMessage(
   message:
-    | { entity: "thread" | "project" | "environment" | "host"; id?: string }
-    | { entity: "system" },
+    { entity: "thread" | "project" | "environment" | "host"; id?: string } | { entity: "system" },
 ): string[] {
   if (message.entity === "system") {
     return ["system"];

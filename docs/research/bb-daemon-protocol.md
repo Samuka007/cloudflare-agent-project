@@ -136,24 +136,24 @@ server（Node，非 DO）侧：升级后 `hub.registerDaemon(sessionId, hostId, 
 
 **server → daemon**（`hostDaemonServerWsMessageSchema`，`session.ts:587-602`）：
 
-| type | 字段要点 |
-|---|---|
-| `session-close` | `reason: replaced \| expired \| daemon-disconnect` |
-| `host-rpc.request` | `requestId` + 完整 command（schema 校验） |
-| `watch-set.replace` | 全量替换文件监听目标集（generation + workspace/threadStorage targets） |
-| `connect-shares.replace` | 全量替换端口共享集（generation + ports） |
+| type                                                      | 字段要点                                                               |
+| --------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `session-close`                                           | `reason: replaced \| expired \| daemon-disconnect`                     |
+| `host-rpc.request`                                        | `requestId` + 完整 command（schema 校验）                              |
+| `watch-set.replace`                                       | 全量替换文件监听目标集（generation + workspace/threadStorage targets） |
+| `connect-shares.replace`                                  | 全量替换端口共享集（generation + ports）                               |
 | `terminal.open` / `attach` / `input` / `resize` / `close` | requestId/terminalId；attach 支持 `sinceSeq` 断点重放；input 为 base64 |
 
 **daemon → server**（`hostDaemonDaemonWsMessageSchema`，`session.ts:688-699`）：
 
-| type | 字段要点 |
-|---|---|
-| `heartbeat` | 空 `{}`（任意消息都会续租，见 §2.1） |
-| `environment-change` | `environmentId` + `change: work-status-changed \| git-refs-changed \| thread-storage-changed` |
-| `environment-metadata-change` | `environmentId` + workspace 属性 |
-| `connect-tunnel.identity` | 隧道标签身份（label/baseDomain/machineId） |
-| `terminal.opened` / `output` / `replay` / `exited` / `error` | output 携带 `chunk { seq, dataBase64 }`；replay 带 `replayStartSeq/nextSeq` |
-| `host-rpc.response` | `requestId` + `ok: true\|false`（成功含 result，失败含 errorCode/errorMessage） |
+| type                                                         | 字段要点                                                                                      |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `heartbeat`                                                  | 空 `{}`（任意消息都会续租，见 §2.1）                                                          |
+| `environment-change`                                         | `environmentId` + `change: work-status-changed \| git-refs-changed \| thread-storage-changed` |
+| `environment-metadata-change`                                | `environmentId` + workspace 属性                                                              |
+| `connect-tunnel.identity`                                    | 隧道标签身份（label/baseDomain/machineId）                                                    |
+| `terminal.opened` / `output` / `replay` / `exited` / `error` | output 携带 `chunk { seq, dataBase64 }`；replay 带 `replayStartSeq/nextSeq`                   |
+| `host-rpc.response`                                          | `requestId` + `ok: true\|false`（成功含 result，失败含 errorCode/errorMessage）               |
 
 ---
 
@@ -163,18 +163,18 @@ server（Node，非 DO）侧：升级后 `hub.registerDaemon(sessionId, hostId, 
 
 ## 附：关键常量
 
-| 常量 | 值 | 位置 |
-|---|---|---|
-| `HOST_DAEMON_PROTOCOL_VERSION` | 128 | `packages/host-daemon-contract/src/commands.ts:40` |
-| WS 子协议 | `bb-host-daemon.v1` | `host-daemon-contract/src/session.ts:33` |
-| `HEARTBEAT_INTERVAL_MS` / `LEASE_TIMEOUT_MS`（server 默认） | 5s / 30s | `apps/server/src/constants.ts:2-3` |
-| `COMMAND_TIMEOUT_MS` / `DAEMON_DISCONNECT_GRACE_MS` | 30s / 5s | `apps/server/src/constants.ts:1,4` |
-| `LIVE_DAEMON_COMMAND_TIMEOUT_MS` | 24h | `apps/server/src/services/hosts/live-command.ts:21` |
-| WS 重连退避 | 1s→30s，×2，启动超时 60s | `apps/host-daemon/src/server-connection-support.ts:104-108` |
-| 事件防抖 | 100ms | `apps/host-daemon/src/event-sink.ts:11` |
-| OMP RPC 超时（启动/请求） | 30s / 30s | `packages/agent-runtime/src/omp/bridge/bridge.ts:331-332` |
-| OMP RPC 帧上限 / 分片 / 重组上限 | 1MiB / 256KiB / 64MiB | `bridge.ts:179-184` |
-| 隧道 `PROTOCOL_VERSION` / 心跳文本 / chunk 上限 | 1 / `bbt:hb`,`bbt:hb-ack` / 1MiB | `packages/tunnel-contract/src/index.ts:17-30` |
-| 隧道客户端心跳 / 判死 | 20s / 60s | `packages/tunnel-client/src/session.ts:24-25` |
-| 隧道重连退避（稳定阈值） | 1s→30s（10s） | `packages/tunnel-client/src/reconnect.ts:2-10` |
-| TunnelDO resp-head 超时 / presence 周期 | 30s / 50s | `apps/connect/src/tunnel-do.ts:26,30` |
+| 常量                                                        | 值                               | 位置                                                        |
+| ----------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------- |
+| `HOST_DAEMON_PROTOCOL_VERSION`                              | 128                              | `packages/host-daemon-contract/src/commands.ts:40`          |
+| WS 子协议                                                   | `bb-host-daemon.v1`              | `host-daemon-contract/src/session.ts:33`                    |
+| `HEARTBEAT_INTERVAL_MS` / `LEASE_TIMEOUT_MS`（server 默认） | 5s / 30s                         | `apps/server/src/constants.ts:2-3`                          |
+| `COMMAND_TIMEOUT_MS` / `DAEMON_DISCONNECT_GRACE_MS`         | 30s / 5s                         | `apps/server/src/constants.ts:1,4`                          |
+| `LIVE_DAEMON_COMMAND_TIMEOUT_MS`                            | 24h                              | `apps/server/src/services/hosts/live-command.ts:21`         |
+| WS 重连退避                                                 | 1s→30s，×2，启动超时 60s         | `apps/host-daemon/src/server-connection-support.ts:104-108` |
+| 事件防抖                                                    | 100ms                            | `apps/host-daemon/src/event-sink.ts:11`                     |
+| OMP RPC 超时（启动/请求）                                   | 30s / 30s                        | `packages/agent-runtime/src/omp/bridge/bridge.ts:331-332`   |
+| OMP RPC 帧上限 / 分片 / 重组上限                            | 1MiB / 256KiB / 64MiB            | `bridge.ts:179-184`                                         |
+| 隧道 `PROTOCOL_VERSION` / 心跳文本 / chunk 上限             | 1 / `bbt:hb`,`bbt:hb-ack` / 1MiB | `packages/tunnel-contract/src/index.ts:17-30`               |
+| 隧道客户端心跳 / 判死                                       | 20s / 60s                        | `packages/tunnel-client/src/session.ts:24-25`               |
+| 隧道重连退避（稳定阈值）                                    | 1s→30s（10s）                    | `packages/tunnel-client/src/reconnect.ts:2-10`              |
+| TunnelDO resp-head 超时 / presence 周期                     | 30s / 50s                        | `apps/connect/src/tunnel-do.ts:26,30`                       |

@@ -1,9 +1,9 @@
+import { AgentDO, setAgentRuntime, type AgentDoBindings } from "@cap/agent-do";
 import {
-  AgentDO,
-  setAgentRuntime,
-  type AgentDoBindings,
-} from "@cap/agent-do";
-import { DaemonServiceDO, daemonServiceWorker, type WorkerEnv as DaemonServiceWorkerEnv } from "@cap/daemon-service";
+  DaemonServiceDO,
+  daemonServiceWorker,
+  type WorkerEnv as DaemonServiceWorkerEnv,
+} from "@cap/daemon-service";
 import { HostOrchestratorDO, setProviderAdapter } from "@cap/daemon-worker";
 import {
   ManagerDo,
@@ -57,7 +57,9 @@ export class ComposedAgentDO extends AgentDO {
 export class ComposedHostOrchestratorDO extends HostOrchestratorDO {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env as unknown as ConstructorParameters<typeof HostOrchestratorDO>[1]);
-    setProviderAdapter(createEdgeAgentAdapter(env as Env & ManagerDoBindings & { MANAGER: DurableObjectNamespace }));
+    setProviderAdapter(
+      createEdgeAgentAdapter(env as Env & ManagerDoBindings & { MANAGER: DurableObjectNamespace }),
+    );
   }
 }
 
@@ -85,6 +87,10 @@ export default {
         DAEMON_HOST_KEY: env.DAEMON_HOST_KEY ?? "poc-dev-host-key",
         DAEMON_HOST_ID: env.DAEMON_HOST_ID,
         DAEMON_MACHINE_ID: env.DAEMON_MACHINE_ID,
+        DAEMON_EDGE_KV: env.DAEMON_EDGE_KV,
+        DAEMON_NEGATIVE_CACHE_MS: env.DAEMON_NEGATIVE_CACHE_MS,
+        DAEMON_RATE_LIMIT_CAPACITY: env.DAEMON_RATE_LIMIT_CAPACITY,
+        DAEMON_RATE_LIMIT_REFILL_PER_SEC: env.DAEMON_RATE_LIMIT_REFILL_PER_SEC,
       };
       return daemonServiceWorker.fetch(request, serviceEnv);
     }
@@ -98,7 +104,11 @@ export default {
    * timing. The cron pings the lease store; daemon session sweeps ride DO
    * alarms (#27/#30).
    */
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<void> {
     ctx.waitUntil(
       (async () => {
         const id = env.LEASES.idFromName("leases");

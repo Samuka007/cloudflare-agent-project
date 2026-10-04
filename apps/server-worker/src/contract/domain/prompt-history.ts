@@ -22,9 +22,7 @@ export interface PromptHistoryComparableEntry {
   input: readonly PromptInput[];
 }
 
-interface TakeVisiblePromptHistoryEntriesArgs<
-  TEntry extends PromptHistoryComparableEntry,
-> {
+interface TakeVisiblePromptHistoryEntriesArgs<TEntry extends PromptHistoryComparableEntry> {
   entries: readonly TEntry[];
   limit: number;
 }
@@ -36,9 +34,7 @@ export function arePromptHistoryInputsEqual(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-export function takeVisiblePromptHistoryEntries<
-  TEntry extends PromptHistoryComparableEntry,
->({
+export function takeVisiblePromptHistoryEntries<TEntry extends PromptHistoryComparableEntry>({
   entries,
   limit,
 }: TakeVisiblePromptHistoryEntriesArgs<TEntry>): TEntry[] {
@@ -49,10 +45,7 @@ export function takeVisiblePromptHistoryEntries<
   const visibleEntries: TEntry[] = [];
   for (const entry of entries) {
     const lastVisibleEntry = visibleEntries[visibleEntries.length - 1];
-    if (
-      lastVisibleEntry &&
-      arePromptHistoryInputsEqual(lastVisibleEntry.input, entry.input)
-    ) {
+    if (lastVisibleEntry && arePromptHistoryInputsEqual(lastVisibleEntry.input, entry.input)) {
       continue;
     }
 

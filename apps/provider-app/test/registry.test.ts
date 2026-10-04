@@ -94,9 +94,7 @@ test("thread/start spawns one agent DO per thread and reuses it on restart", asy
   const second = expectOk(await call(managerName, startCommand(threadId)));
   expect(second.providerThreadId).toBe(first.providerThreadId);
 
-  const other = expectOk(
-    await call(managerName, startCommand(`thr-other-${crypto.randomUUID()}`)),
-  );
+  const other = expectOk(await call(managerName, startCommand(`thr-other-${crypto.randomUUID()}`)));
   expect(other.providerThreadId).not.toBe(first.providerThreadId);
 
   // The agent DO holds exactly one thread.created — reuse did not double-spawn.
@@ -133,7 +131,10 @@ test("registry survives manager DO eviction and stays consistent with the agent 
   // And the recovered thread still runs turns end-to-end.
   const sent = expectOk(
     await afterAbort(() =>
-      call(managerName, turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`)),
+      call(
+        managerName,
+        turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`),
+      ),
     ),
   );
   await afterAbort(() => waitTurnComplete(threadId, stringField(sent, "turnId")));
@@ -150,7 +151,10 @@ test("interrupted stop poisons the row; resume refuses without the descriptor", 
   const started = expectOk(await call(managerName, startCommand(threadId)));
   const providerThreadId = started.providerThreadId as string;
   const sent = expectOk(
-    await call(managerName, turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`)),
+    await call(
+      managerName,
+      turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`),
+    ),
   );
 
   const stopped = expectOk(
@@ -205,9 +209,7 @@ test("discard removes the row; later resume is thread_not_found", async () => {
   const started = expectOk(await call(managerName, startCommand(threadId)));
   const providerThreadId = started.providerThreadId as string;
 
-  expectOk(
-    await call(managerName, { type: "thread/discard", threadId, providerThreadId }),
-  );
+  expectOk(await call(managerName, { type: "thread/discard", threadId, providerThreadId }));
   assertFailure(
     await call(managerName, resumeCommand(threadId, providerThreadId)),
     "thread_not_found",

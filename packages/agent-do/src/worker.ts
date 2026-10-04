@@ -59,11 +59,17 @@ async function handleDriveRoute(
 ): Promise<Response> {
   const hostKey = env.DAEMON_HOST_KEY ?? "poc-dev-host-key";
   if (request.headers.get("authorization") !== `Bearer ${hostKey}`) {
-    return Response.json({ code: "unauthorized", message: "bearer hostKey required" }, { status: 401 });
+    return Response.json(
+      { code: "unauthorized", message: "bearer hostKey required" },
+      { status: 401 },
+    );
   }
   const [, , threadId, leaf] = path.split("/");
   if (threadId === undefined || threadId === "") {
-    return Response.json({ code: "not_found", message: "use /drive/:threadId[/events]" }, { status: 404 });
+    return Response.json(
+      { code: "not_found", message: "use /drive/:threadId[/events]" },
+      { status: 404 },
+    );
   }
   // The composed rig always binds AGENT_DO; namespace.get() drops the class
   // RPC type, so the stub is retyped at this one boundary (rig-only surface).
@@ -84,7 +90,10 @@ async function handleDriveRoute(
       }
     }
     if (text === undefined || text === "") {
-      return Response.json({ code: "validation_failed", message: "text required" }, { status: 422 });
+      return Response.json(
+        { code: "validation_failed", message: "text required" },
+        { status: 422 },
+      );
     }
     ensureRuntime(env);
     await stub.createThread({
@@ -104,7 +113,9 @@ async function handleDriveRoute(
   }
   if (request.method === "GET" && leaf === "events") {
     const sinceSeq = Number(new URL(request.url).searchParams.get("sinceSeq") ?? "0");
-    return Response.json(await stub.getEvents({ sinceSeq: Number.isFinite(sinceSeq) ? sinceSeq : 0 }));
+    return Response.json(
+      await stub.getEvents({ sinceSeq: Number.isFinite(sinceSeq) ? sinceSeq : 0 }),
+    );
   }
   return Response.json({ code: "not_found", message: `no drive route ${path}` }, { status: 404 });
 }
@@ -126,10 +137,7 @@ const DRIVE_ERROR_STATUS: Record<string, number> = {
  * full-chain hookup smoke runs against.
  */
 export default {
-  async fetch(
-    request: Request,
-    env: AgentDoBindings & Partial<WorkerEnv>,
-  ): Promise<Response> {
+  async fetch(request: Request, env: AgentDoBindings & Partial<WorkerEnv>): Promise<Response> {
     const path = new URL(request.url).pathname;
     try {
       if (path.startsWith("/drive/") || path === "/drive") {
@@ -143,6 +151,10 @@ export default {
           DAEMON_HOST_KEY: env.DAEMON_HOST_KEY ?? "poc-dev-host-key",
           DAEMON_HOST_ID: env.DAEMON_HOST_ID,
           DAEMON_MACHINE_ID: env.DAEMON_MACHINE_ID,
+          DAEMON_EDGE_KV: env.DAEMON_EDGE_KV,
+          DAEMON_NEGATIVE_CACHE_MS: env.DAEMON_NEGATIVE_CACHE_MS,
+          DAEMON_RATE_LIMIT_CAPACITY: env.DAEMON_RATE_LIMIT_CAPACITY,
+          DAEMON_RATE_LIMIT_REFILL_PER_SEC: env.DAEMON_RATE_LIMIT_REFILL_PER_SEC,
         };
         return daemonServiceWorker.fetch(request, serviceEnv);
       }

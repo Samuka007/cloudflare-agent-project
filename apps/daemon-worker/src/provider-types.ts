@@ -44,35 +44,22 @@ export const permissionEscalationValues = ["ask", "deny"] as const;
 export type PermissionEscalation = (typeof permissionEscalationValues)[number];
 
 export const promptInputVisibilityValues = ["agent-only"] as const;
-export type PromptInputVisibility =
-  (typeof promptInputVisibilityValues)[number];
+export type PromptInputVisibility = (typeof promptInputVisibilityValues)[number];
 
-export const promptMentionPathSourceValues = [
-  "workspace",
-  "thread-storage",
-] as const;
-export type PromptMentionPathSource =
-  (typeof promptMentionPathSourceValues)[number];
+export const promptMentionPathSourceValues = ["workspace", "thread-storage"] as const;
+export type PromptMentionPathSource = (typeof promptMentionPathSourceValues)[number];
 
 export const promptMentionPathEntryKindValues = ["file", "directory"] as const;
-export type PromptMentionPathEntryKind =
-  (typeof promptMentionPathEntryKindValues)[number];
+export type PromptMentionPathEntryKind = (typeof promptMentionPathEntryKindValues)[number];
 
 export const promptMentionCommandTriggerValues = ["/"] as const;
-export type PromptMentionCommandTrigger =
-  (typeof promptMentionCommandTriggerValues)[number];
+export type PromptMentionCommandTrigger = (typeof promptMentionCommandTriggerValues)[number];
 
 export const promptMentionCommandSourceValues = ["skill", "command"] as const;
-export type PromptMentionCommandSource =
-  (typeof promptMentionCommandSourceValues)[number];
+export type PromptMentionCommandSource = (typeof promptMentionCommandSourceValues)[number];
 
-export const promptMentionCommandOriginValues = [
-  "builtin",
-  "project",
-  "user",
-] as const;
-export type PromptMentionCommandOrigin =
-  (typeof promptMentionCommandOriginValues)[number];
+export const promptMentionCommandOriginValues = ["builtin", "project", "user"] as const;
+export type PromptMentionCommandOrigin = (typeof promptMentionCommandOriginValues)[number];
 
 // ---------------------------------------------------------------------------
 // Permission policy (bb runtimePermissionPolicySchema, structural port).
@@ -143,11 +130,11 @@ interface PromptInputVisibilityFields {
 }
 
 export type PromptInput =
-  | {
+  | ({
       type: "text";
       text: string;
       mentions: PromptTextMention[];
-    } & PromptInputVisibilityFields
+    } & PromptInputVisibilityFields)
   | ({ type: "image"; url: string } & PromptInputVisibilityFields)
   | ({
       /** Absolute paths pass through; relative paths are attachment refs. */
@@ -186,8 +173,8 @@ export interface RuntimeThreadExecutionBaseOptions {
   providerSubagentsEnabled?: boolean;
 }
 
-export type RuntimeThreadExecutionOptions =
-  RuntimeThreadExecutionBaseOptions & RuntimePermissionPolicy;
+export type RuntimeThreadExecutionOptions = RuntimeThreadExecutionBaseOptions &
+  RuntimePermissionPolicy;
 
 // ---------------------------------------------------------------------------
 // Provider metadata (bb provider-types.ts / agent-runtime types.ts).
@@ -195,12 +182,12 @@ export type RuntimeThreadExecutionOptions =
 
 // JSON-facing vocabulary uses type aliases (not interfaces) so result
 // payloads satisfy the AdapterCommandResultValue index-signature union.
-export type ModelReasoningEffort = {
+export interface ModelReasoningEffort {
   reasoningEffort: ReasoningLevel;
   description: string;
-};
+}
 
-export type AvailableModel = {
+export interface AvailableModel {
   id: string;
   model: string;
   displayName: string;
@@ -210,7 +197,7 @@ export type AvailableModel = {
   supportedReasoningEfforts: ModelReasoningEffort[];
   defaultReasoningEffort: ReasoningLevel;
   isDefault: boolean;
-};
+}
 
 export interface ProviderCapabilities {
   supportsArchive: boolean;
@@ -243,7 +230,7 @@ export type AgentRuntimeSkillRoot =
  * the descriptor is bb-authored, not omp-native; the stable recovery order is
  * switch_session(sessionFile) → open_session(sessionDir) → get_entries{since}).
  */
-export type OmpSessionRecoveryDescriptor = {
+export interface OmpSessionRecoveryDescriptor {
   sessionId: string;
   sessionFile: string;
-};
+}

@@ -41,12 +41,9 @@ export const pluginBrandingSchema = z
       });
     }
   })
-  .refine(
-    (branding) => branding.icon !== undefined || branding.logo !== undefined,
-    {
-      message: "must declare at least branding.icon or branding.logo.light",
-    },
-  );
+  .refine((branding) => branding.icon !== undefined || branding.logo !== undefined, {
+    message: "must declare at least branding.icon or branding.logo.light",
+  });
 
 export const pluginBbManifestSchema = z
   .object({

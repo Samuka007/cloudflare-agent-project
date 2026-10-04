@@ -8,13 +8,13 @@
     "bindings": [
       // One orchestrator per hostId (idFromName(hostId)): session mirror +
       // command journal + watch-set aggregation (#27).
-      { "name": "ORCHESTRATOR", "class_name": "HostOrchestratorDO" }
-    ]
+      { "name": "ORCHESTRATOR", "class_name": "HostOrchestratorDO" },
+    ],
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["HostOrchestratorDO"]
-    }
-  ]
+      "new_sqlite_classes": ["HostOrchestratorDO"],
+    },
+  ],
 }

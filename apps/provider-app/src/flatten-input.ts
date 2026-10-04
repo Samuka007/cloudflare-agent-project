@@ -17,11 +17,6 @@ export function flattenPromptInputGroups(
     return input;
   }
   return inputGroups.flatMap((group, index) =>
-    index === 0
-      ? group
-      : [
-          { type: "text" as const, text: "\n\n", mentions: [] },
-          ...group,
-        ],
+    index === 0 ? group : [{ type: "text" as const, text: "\n\n", mentions: [] }, ...group],
   );
 }

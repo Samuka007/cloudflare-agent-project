@@ -57,7 +57,7 @@ export function managerFacadeByName(name: string): ManagerFacade {
   // DurableObjectStub's conditional RPC typing explodes when checked for
   // structural assignability against ManagerFacade; at runtime the stub IS
   // the facade, so the cast skips the check instead of running it.
-  return managerStubByName(name) as unknown as ManagerFacade;
+  return managerStubByName(name);
 }
 
 /** Exact-key mock above the manager's `*` fallback — returns the provider. */
@@ -73,7 +73,10 @@ export function registerMock(
 /** bb-shaped execution options with a full permission policy. */
 export function executionOptions(
   overrides?: Partial<
-    Pick<RuntimeThreadExecutionOptions, "model" | "reasoningLevel" | "serviceTier" | "permissionMode">
+    Pick<
+      RuntimeThreadExecutionOptions,
+      "model" | "reasoningLevel" | "serviceTier" | "permissionMode"
+    >
   >,
 ): RuntimeThreadExecutionOptions {
   const mode = overrides?.permissionMode ?? "full";
@@ -138,10 +141,7 @@ export type AgentEvent = {
   [T in AgentEventType]: AgentEventRecord<T>;
 }[AgentEventType];
 
-export function assertFailure(
-  outcome: AdapterCommandOutcome,
-  errorCode: string,
-): void {
+export function assertFailure(outcome: AdapterCommandOutcome, errorCode: string): void {
   expect(outcome.ok).toBe(false);
   if (outcome.ok) throw new Error(`expected ${errorCode} failure`);
   expect(outcome.errorCode).toBe(errorCode);
@@ -154,10 +154,7 @@ export async function eventsOf(threadId: string): Promise<AgentEvent[]> {
 }
 
 /** Poll until the agent DO reports a terminal event for the turn. */
-export async function waitTurnComplete(
-  threadId: string,
-  turnId: string,
-): Promise<AgentEvent[]> {
+export async function waitTurnComplete(threadId: string, turnId: string): Promise<AgentEvent[]> {
   let snapshot: AgentEvent[] = [];
   await expect
     .poll(

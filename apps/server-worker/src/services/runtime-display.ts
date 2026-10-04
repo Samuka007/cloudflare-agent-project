@@ -1,10 +1,7 @@
 import type { Env } from "../env.js";
 import type { ThreadDbRow } from "../db/rows.js";
 import { getThreadHierarchyDepth } from "../db/control-plane.js";
-import type {
-  ThreadListEntry,
-  ThreadRuntimeState,
-} from "../contract/domain/thread.js";
+import type { ThreadListEntry, ThreadRuntimeState } from "../contract/domain/thread.js";
 import type { ThreadResponse } from "../contract/api/threads.js";
 
 /** bb thread-parent.ts:6. */
@@ -60,7 +57,6 @@ export function toThreadResponse(row: ThreadDbRow): ThreadResponse {
     canSpawnChild: true,
   };
 }
-
 
 export async function toThreadResponseWithSpawnCheck(
   env: Env,

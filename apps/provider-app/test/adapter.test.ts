@@ -82,7 +82,10 @@ test("full chain: thread/start → turn/start → event stream → relay parity"
   expect(listResult.models[0]?.model).toBe("glm-5.3");
 
   const sent = expectOk(
-    await handle(adapter, turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`)),
+    await handle(
+      adapter,
+      turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`),
+    ),
   );
   expect(sent.agentInvoked).toBe(true);
 
@@ -121,7 +124,10 @@ test("full chain survives manager + agent DO eviction through the adapter", asyn
   const started = expectOk(await handle(adapter, startCommand(threadId)));
   const providerThreadId = started.providerThreadId as string;
   const firstTurn = expectOk(
-    await handle(adapter, turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`)),
+    await handle(
+      adapter,
+      turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`),
+    ),
   );
   await waitTurnComplete(threadId, stringField(firstTurn, "turnId"));
 
@@ -144,10 +150,15 @@ test("full chain survives manager + agent DO eviction through the adapter", asyn
 
   const secondTurn = expectOk(
     await afterAbort(() =>
-      handle(freshAdapter, turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`)),
+      handle(
+        freshAdapter,
+        turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`),
+      ),
     ),
   );
-  const events = await afterAbort(() => waitTurnComplete(threadId, stringField(secondTurn, "turnId")));
+  const events = await afterAbort(() =>
+    waitTurnComplete(threadId, stringField(secondTurn, "turnId")),
+  );
   expect(events.filter((event) => event.type === "turn.completed")).toHaveLength(2);
 });
 
@@ -160,7 +171,10 @@ test("steer rides the active turn; mismatched expected turn is refused", async (
   const started = expectOk(await handle(adapter, startCommand(threadId)));
   const providerThreadId = started.providerThreadId as string;
   const sent = expectOk(
-    await handle(adapter, turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`)),
+    await handle(
+      adapter,
+      turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`),
+    ),
   );
   const turnId = stringField(sent, "turnId");
 
@@ -197,7 +211,12 @@ test("steer rides the active turn; mismatched expected turn is refused", async (
 
   // Cleanup: the interrupted stop poisons and cancels the hung turn.
   expectOk(
-    await handle(adapter, { type: "thread/stop", threadId, providerThreadId, activeTurnId: turnId }),
+    await handle(adapter, {
+      type: "thread/stop",
+      threadId,
+      providerThreadId,
+      activeTurnId: turnId,
+    }),
   );
   const after = await waitTurnComplete(threadId, turnId);
   expect(after.some((event) => event.type === "turn.cancelled")).toBe(true);
@@ -212,7 +231,10 @@ test("second turn/start while a turn is active maps the agent conflict", async (
   const started = expectOk(await handle(adapter, startCommand(threadId)));
   const providerThreadId = started.providerThreadId as string;
   expectOk(
-    await handle(adapter, turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`)),
+    await handle(
+      adapter,
+      turnCommand(threadId, providerThreadId, `creq-${crypto.randomUUID().slice(0, 8)}`),
+    ),
   );
 
   const outcome = await handle(
@@ -232,7 +254,8 @@ test("second turn/start while a turn is active maps the agent conflict", async (
 test("handleCommand settles inside the budget with deadline_exceeded", async () => {
   // A manager facade that never settles — the adapter's own budget must fire.
   const hanging: ManagerFacade = {
-    handleAdapterCommand: (): Promise<AdapterCommandOutcome> => new Promise<AdapterCommandOutcome>(() => {}),
+    handleAdapterCommand: (): Promise<AdapterCommandOutcome> =>
+      new Promise<AdapterCommandOutcome>(() => {}),
   };
   const hungAdapter = new EdgeAgentProviderAdapter(hanging, resolveHarness({}));
   const outcome = await hungAdapter.handleCommand(
@@ -265,7 +288,12 @@ test("unsupported and registry-only commands answer deterministically", async ()
   );
 
   const renamed = expectOk(
-    await handle(adapter, { type: "thread/name/set", threadId, providerThreadId, title: "renamed" }),
+    await handle(adapter, {
+      type: "thread/name/set",
+      threadId,
+      providerThreadId,
+      title: "renamed",
+    }),
   );
   expect(renamed).toEqual({ title: "renamed" });
 
@@ -290,7 +318,10 @@ test("turn/start on an unknown provider thread is thread_not_found", async () =>
   const adapter = adapterFor(managerFacadeByName(managerName));
 
   assertFailure(
-    await handle(adapter, turnCommand(threadId, `pthr_${threadId}`, `creq-${crypto.randomUUID().slice(0, 8)}`)),
+    await handle(
+      adapter,
+      turnCommand(threadId, `pthr_${threadId}`, `creq-${crypto.randomUUID().slice(0, 8)}`),
+    ),
     "thread_not_found",
   );
 });

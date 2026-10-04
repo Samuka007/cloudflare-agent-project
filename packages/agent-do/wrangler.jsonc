@@ -6,13 +6,9 @@
   "durable_objects": {
     "bindings": [
       { "name": "AGENT_DO", "class_name": "AgentDO" },
-      { "name": "DAEMON_SERVICE", "class_name": "TestDaemonServiceDO" }
-    ]
+      { "name": "DAEMON_SERVICE", "class_name": "TestDaemonServiceDO" },
+    ],
   },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["AgentDO", "TestDaemonServiceDO"] }
-  ],
-  "r2_buckets": [
-    { "binding": "BLOBS", "bucket_name": "agent-do-blobs" }
-  ]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AgentDO", "TestDaemonServiceDO"] }],
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "agent-do-blobs" }],
 }

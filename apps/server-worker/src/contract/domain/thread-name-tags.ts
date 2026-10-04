@@ -59,9 +59,7 @@ export function fromProviderExternalThreadName(name: string): string {
   return untagThreadName({ name, tag: BB_THREAD_NAME_TAG });
 }
 
-export function normalizeProviderThreadNameEvent(
-  event: ThreadEvent,
-): ThreadEvent {
+export function normalizeProviderThreadNameEvent(event: ThreadEvent): ThreadEvent {
   if (event.type !== "thread/name/updated") {
     return event;
   }

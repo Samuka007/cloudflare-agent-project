@@ -8,10 +8,7 @@ import type { ThreadTab } from "../contract/api/thread-tabs.js";
  * GET returns {revision: 0, tabs: []} when no row exists; PUT is a compare-
  * and-set on revision → {outcome: "conflict", revision} on mismatch.
  */
-export async function getStoredThreadTabs(
-  env: Env,
-  threadId: string,
-): Promise<ThreadTabsResponse> {
+export async function getStoredThreadTabs(env: Env, threadId: string): Promise<ThreadTabsResponse> {
   const row = await env.DB.prepare(
     "SELECT thread_id, tabs_json, revision, updated_at FROM thread_tabs WHERE thread_id = ?",
   )
@@ -25,8 +22,7 @@ export async function getStoredThreadTabs(
 }
 
 export type ReplaceThreadTabsResult =
-  | { outcome: "stored"; stored: ThreadTabsResponse }
-  | { outcome: "conflict"; revision: number };
+  { outcome: "stored"; stored: ThreadTabsResponse } | { outcome: "conflict"; revision: number };
 
 export async function replaceStoredThreadTabs(
   env: Env,
@@ -46,9 +42,7 @@ export async function replaceStoredThreadTabs(
     const stored = await getStoredThreadTabs(env, args.threadId);
     return { outcome: "stored", stored };
   }
-  const existing = await env.DB.prepare(
-    "SELECT revision FROM thread_tabs WHERE thread_id = ?",
-  )
+  const existing = await env.DB.prepare("SELECT revision FROM thread_tabs WHERE thread_id = ?")
     .bind(args.threadId)
     .first();
   if (existing === null) {

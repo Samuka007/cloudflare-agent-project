@@ -37,7 +37,7 @@ export const FIRST_SEQ = 1;
  * to pin the replay contract.
  */
 export function isSeqContiguous(
-  events: ReadonlyArray<{ seq: number }>,
+  events: readonly { seq: number }[],
   fromSeq: number = FIRST_SEQ,
 ): boolean {
   if (events.length === 0) return true;

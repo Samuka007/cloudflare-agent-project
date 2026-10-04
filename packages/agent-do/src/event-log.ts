@@ -1,9 +1,4 @@
-import type {
-  AgentEventRecord,
-  AgentEventType,
-  AnyAgentEvent,
-  BlobRef,
-} from "./fsm-events.js";
+import type { AgentEventRecord, AgentEventType, AnyAgentEvent, BlobRef } from "./fsm-events.js";
 import { agentEventDataSchemas, isBlobRef, parseAgentEvent } from "./fsm-events.js";
 
 /**
@@ -161,7 +156,9 @@ export class EventLog {
 
   private resolveBlob(ref: BlobRef): Promise<string> {
     if (this.blobs === undefined) {
-      throw new Error(`event references R2 blob ${ref.__blob__.key} but no R2 binding is configured`);
+      throw new Error(
+        `event references R2 blob ${ref.__blob__.key} but no R2 binding is configured`,
+      );
     }
     return this.blobs.get(ref.__blob__.key).then((obj) => {
       if (obj === null) {
@@ -227,10 +224,7 @@ export class EventLog {
   count(threadId: string): number {
     return Number(
       this.storage.sql
-        .exec<{ n: number }>(
-          "SELECT COUNT(*) AS n FROM events WHERE thread_id = ?",
-          threadId,
-        )
+        .exec<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE thread_id = ?", threadId)
         .one().n,
     );
   }

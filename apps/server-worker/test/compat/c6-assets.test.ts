@@ -15,7 +15,7 @@ describe("criterion 6: SPA fallback + assets 404", () => {
     const response = await SELF.fetch("https://example.com/");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/html");
-    expect(await response.text()).toContain("<div id=\"root\">");
+    expect(await response.text()).toContain('<div id="root">');
     expect(response.headers.get("cache-control")).toContain("no-store");
   });
 

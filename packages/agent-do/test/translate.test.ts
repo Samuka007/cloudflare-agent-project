@@ -199,7 +199,12 @@ describe("translation: event log → model request", () => {
     if (trailing === undefined) throw new Error("missing trailing user message");
     expect(trailing.role).toBe("user");
     expect(trailing.content).toEqual([
-      { type: "tool_result", tool_use_id: toolUseIdFor(`${THREAD}:5`), content: "a b c", is_error: false },
+      {
+        type: "tool_result",
+        tool_use_id: toolUseIdFor(`${THREAD}:5`),
+        content: "a b c",
+        is_error: false,
+      },
       { type: "text", text: "只要前三个" },
     ]);
     // call 1's own request predates the steer

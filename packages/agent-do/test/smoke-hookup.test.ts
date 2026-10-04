@@ -95,9 +95,7 @@ class HookupClient {
   }
 
   async waitForSpawn(): Promise<ExecSpawnServiceFrame> {
-    return this.waitFor(
-      (frame): frame is ExecSpawnServiceFrame => frame.type === "exec.spawn",
-    );
+    return this.waitFor((frame): frame is ExecSpawnServiceFrame => frame.type === "exec.spawn");
   }
 
   acknowledgeSpawn(spawn: ExecSpawnServiceFrame): void {
@@ -172,36 +170,40 @@ async function driveBashRoundtrip(
   return rig.waitTurnComplete(sent.turnId);
 }
 
-test("hookup: mock relay turn roundtrips through the real DaemonServiceDO", { timeout: 60_000 }, async () => {
-  const rig = await createRig({ turns: MOCK_TURNS });
-  const client = new HookupClient(rig.threadId);
-  await client.dial();
+test(
+  "hookup: mock relay turn roundtrips through the real DaemonServiceDO",
+  { timeout: 60_000 },
+  async () => {
+    const rig = await createRig({ turns: MOCK_TURNS });
+    const client = new HookupClient(rig.threadId);
+    await client.dial();
 
-  const events = await driveBashRoundtrip(rig, client, "hookup-mock-1");
+    const events = await driveBashRoundtrip(rig, client, "hookup-mock-1");
 
-  expect(typeList(events)).toEqual([
-    "thread.created",
-    "turn.input",
-    "model.call_started",
-    "model.delta",
-    "model.call_completed",
-    "tool.call",
-    "tool.dispatch",
-    "tool.exec_started",
-    "tool.output",
-    "tool.result",
-    "model.call_started",
-    "model.delta",
-    "model.call_completed",
-    "turn.completed",
-  ]);
-  const dispatch = events.find((event) => event.type === "tool.dispatch");
-  expect(dispatch?.data).toMatchObject({ outcome: "accepted", attempt: 1 });
-  const result = events.find((event) => event.type === "tool.result");
-  expect(result?.data).toMatchObject({ status: "ok", output: "hookup-output\n" });
-  // exactly one spawn frame: the real journal dedups (§3.5) — one roundtrip
-  expect(client.inbound.filter((frame) => frame.type === "exec.spawn")).toHaveLength(1);
-});
+    expect(typeList(events)).toEqual([
+      "thread.created",
+      "turn.input",
+      "model.call_started",
+      "model.delta",
+      "model.call_completed",
+      "tool.call",
+      "tool.dispatch",
+      "tool.exec_started",
+      "tool.output",
+      "tool.result",
+      "model.call_started",
+      "model.delta",
+      "model.call_completed",
+      "turn.completed",
+    ]);
+    const dispatch = events.find((event) => event.type === "tool.dispatch");
+    expect(dispatch?.data).toMatchObject({ outcome: "accepted", attempt: 1 });
+    const result = events.find((event) => event.type === "tool.result");
+    expect(result?.data).toMatchObject({ status: "ok", output: "hookup-output\n" });
+    // exactly one spawn frame: the real journal dedups (§3.5) — one roundtrip
+    expect(client.inbound.filter((frame) => frame.type === "exec.spawn")).toHaveLength(1);
+  },
+);
 
 const relayKey = __RELAY_ENV__.MODEL_RELAY_API_KEY;
 const relayBase = __RELAY_ENV__.MODEL_RELAY_BASE_URL_ANTHROPIC;
@@ -239,10 +241,11 @@ test.skipIf(relayKey === undefined || relayKey === "" || relayBase === undefined
     const call2 = startedCalls.find((event) => event.seq > (completed[0]?.seq ?? 0));
     if (call2 === undefined) throw new Error("missing second model call");
     const replay = JSON.stringify(
-      anthropicRequestBody(
-        modelRequestFromEvents(events, call2.data.turnId, call2.seq),
-        { model: relayModel, maxTokens: 8192, thinking: { type: "disabled" } },
-      ),
+      anthropicRequestBody(modelRequestFromEvents(events, call2.data.turnId, call2.seq), {
+        model: relayModel,
+        maxTokens: 8192,
+        thinking: { type: "disabled" },
+      }),
     );
     expect(replay).toBe(provider.bodies[1]);
   },

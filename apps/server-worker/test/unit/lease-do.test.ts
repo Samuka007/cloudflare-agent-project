@@ -19,7 +19,7 @@ function waitFor(ms: number): Promise<void> {
 
 function leaseStore(): LeaseStub {
   const stub = env.LEASES.get(env.LEASES.idFromName("test-leases"));
-  return stub as unknown as LeaseStub;
+  return stub;
 }
 
 describe("lease store DO (bb previewLeases semantics)", () => {
@@ -47,7 +47,7 @@ describe("lease store DO (bb previewLeases semantics)", () => {
     // needed before forcing the alarm.
     await store.createLease({ leaseId: "lease-b", ttlMs: 0 });
     const stub = env.LEASES.get(env.LEASES.idFromName("test-leases"));
-    const ran = await runDurableObjectAlarm(stub as DurableObjectStub);
+    const ran = await runDurableObjectAlarm(stub);
     if (!ran) {
       // Alarm already fired between scheduling and the test — force eviction.
       const forced = await store.evictExpired();

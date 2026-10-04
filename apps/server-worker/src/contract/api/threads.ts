@@ -68,9 +68,7 @@ export const createExecutionInputSourcesSchema = z
     permissionMode: executionInputFieldSourceSchema.optional(),
   })
   .strict();
-export type CreateExecutionInputSources = z.infer<
-  typeof createExecutionInputSourcesSchema
->;
+export type CreateExecutionInputSources = z.infer<typeof createExecutionInputSourcesSchema>;
 
 export const existingThreadExecutionInputSourcesSchema = z
   .object({
@@ -91,9 +89,7 @@ export type ExistingThreadExecutionInputSources = z.infer<
 // first message), mirroring the `client/turn/requested` event whose
 // `senderThreadId` is non-null only for agent/system starts.
 export const startedOnBehalfOfInitiatorSchema = z.enum(["agent", "system"]);
-export type StartedOnBehalfOfInitiator = z.infer<
-  typeof startedOnBehalfOfInitiatorSchema
->;
+export type StartedOnBehalfOfInitiator = z.infer<typeof startedOnBehalfOfInitiatorSchema>;
 
 export const startedOnBehalfOfSchema = z.object({
   initiator: startedOnBehalfOfInitiatorSchema,
@@ -229,9 +225,7 @@ export const providerRateLimitRecoveryReasonSchema = z.enum([
   "superseded",
   "execution-unavailable",
 ]);
-export type ProviderRateLimitRecoveryReason = z.infer<
-  typeof providerRateLimitRecoveryReasonSchema
->;
+export type ProviderRateLimitRecoveryReason = z.infer<typeof providerRateLimitRecoveryReasonSchema>;
 
 export const providerRateLimitRecoveryCandidateSchema = z.object({
   failedRequestId: clientTurnRequestIdSchema,
@@ -251,9 +245,7 @@ export const providerRateLimitRecoveryStatusSchema = z.object({
   rateLimits: providerRateLimitStateSchema.nullable(),
   candidate: providerRateLimitRecoveryCandidateSchema.nullable(),
 });
-export type ProviderRateLimitRecoveryStatus = z.infer<
-  typeof providerRateLimitRecoveryStatusSchema
->;
+export type ProviderRateLimitRecoveryStatus = z.infer<typeof providerRateLimitRecoveryStatusSchema>;
 
 export const continueAfterProviderRateLimitRequestSchema = z
   .object({
@@ -305,33 +297,25 @@ export const createQueuedMessageRequestSchema = z.object({
   executionInputSources: existingThreadExecutionInputSourcesSchema.optional(),
   senderThreadId: z.string().min(1).optional(),
 });
-export type CreateQueuedMessageRequest = z.infer<
-  typeof createQueuedMessageRequestSchema
->;
+export type CreateQueuedMessageRequest = z.infer<typeof createQueuedMessageRequestSchema>;
 
 export const updateQueuedMessageRequestSchema = z.object({
   expectedUpdatedAt: z.number().int().nonnegative(),
   input: z.array(promptInputSchema).min(1),
 });
-export type UpdateQueuedMessageRequest = z.infer<
-  typeof updateQueuedMessageRequestSchema
->;
+export type UpdateQueuedMessageRequest = z.infer<typeof updateQueuedMessageRequestSchema>;
 
 export const sendQueuedMessageRequestSchema = z.object({
   mode: sendQueuedMessageModeSchema,
 });
-export type SendQueuedMessageRequest = z.infer<
-  typeof sendQueuedMessageRequestSchema
->;
+export type SendQueuedMessageRequest = z.infer<typeof sendQueuedMessageRequestSchema>;
 
 export const reorderQueuedMessageRequestSchema = z.object({
   previousQueuedMessageId: z.string().min(1).nullable(),
   nextQueuedMessageId: z.string().min(1).nullable(),
   groupBoundaryQueuedMessageId: z.string().min(1).optional(),
 });
-export type ReorderQueuedMessageRequest = z.infer<
-  typeof reorderQueuedMessageRequestSchema
->;
+export type ReorderQueuedMessageRequest = z.infer<typeof reorderQueuedMessageRequestSchema>;
 
 export const setQueuedMessageGroupBoundaryRequestSchema = z.object({
   expectedGroupedPrefixQueuedMessageIds: z.array(z.string().min(1)).min(1),
@@ -345,9 +329,7 @@ export const sendQueuedMessageResponseSchema = z.object({
   ok: z.literal(true),
   queuedMessage: threadQueuedMessageSchema,
 });
-export type SendQueuedMessageResponse = z.infer<
-  typeof sendQueuedMessageResponseSchema
->;
+export type SendQueuedMessageResponse = z.infer<typeof sendQueuedMessageResponseSchema>;
 
 export const threadListResponseSchema = z.array(threadListEntrySchema);
 export type ThreadListResponse = z.infer<typeof threadListResponseSchema>;
@@ -359,9 +341,7 @@ export const resolveThreadMentionsRequestSchema = z
     threadIds: z.array(rawThreadIdSchema).max(THREAD_MENTION_RESOLVE_MAX_IDS),
   })
   .strict();
-export type ResolveThreadMentionsRequest = z.infer<
-  typeof resolveThreadMentionsRequestSchema
->;
+export type ResolveThreadMentionsRequest = z.infer<typeof resolveThreadMentionsRequestSchema>;
 
 export const threadMentionResolutionSchema = z
   .object({
@@ -370,16 +350,10 @@ export const threadMentionResolutionSchema = z
     label: z.string().min(1),
   })
   .strict();
-export type ThreadMentionResolution = z.infer<
-  typeof threadMentionResolutionSchema
->;
+export type ThreadMentionResolution = z.infer<typeof threadMentionResolutionSchema>;
 
-export const resolveThreadMentionsResponseSchema = z.array(
-  threadMentionResolutionSchema,
-);
-export type ResolveThreadMentionsResponse = z.infer<
-  typeof resolveThreadMentionsResponseSchema
->;
+export const resolveThreadMentionsResponseSchema = z.array(threadMentionResolutionSchema);
+export type ResolveThreadMentionsResponse = z.infer<typeof resolveThreadMentionsResponseSchema>;
 
 export const threadSearchHighlightRangeSchema = z
   .object({
@@ -390,9 +364,7 @@ export const threadSearchHighlightRangeSchema = z
   .refine((range) => range.end > range.start, {
     message: "highlight range end must be greater than start",
   });
-export type ThreadSearchHighlightRange = z.infer<
-  typeof threadSearchHighlightRangeSchema
->;
+export type ThreadSearchHighlightRange = z.infer<typeof threadSearchHighlightRangeSchema>;
 
 export const threadSearchMatchSchema = z
   .object({
@@ -420,9 +392,7 @@ export const threadSearchResultGroupSchema = z
     results: z.array(threadSearchResultSchema),
   })
   .strict();
-export type ThreadSearchResultGroup = z.infer<
-  typeof threadSearchResultGroupSchema
->;
+export type ThreadSearchResultGroup = z.infer<typeof threadSearchResultGroupSchema>;
 
 export const threadSearchResponseSchema = z
   .object({
@@ -465,19 +435,14 @@ export const threadWithIncludesResponseSchema = threadResponseSchema.extend({
   environment: environmentSchema.nullable().optional(),
   host: hostSchema.nullable().optional(),
 });
-export type ThreadWithIncludesResponse = z.infer<
-  typeof threadWithIncludesResponseSchema
->;
+export type ThreadWithIncludesResponse = z.infer<typeof threadWithIncludesResponseSchema>;
 
-export const threadPendingInteractionsResponseSchema = z.array(
-  pendingInteractionSchema,
-);
+export const threadPendingInteractionsResponseSchema = z.array(pendingInteractionSchema);
 export type ThreadPendingInteractionsResponse = z.infer<
   typeof threadPendingInteractionsResponseSchema
 >;
 
-export const resolvePendingInteractionRequestSchema =
-  pendingInteractionResolutionSchema;
+export const resolvePendingInteractionRequestSchema = pendingInteractionResolutionSchema;
 export type ResolvePendingInteractionRequest = z.infer<
   typeof resolvePendingInteractionRequestSchema
 >;
@@ -485,23 +450,15 @@ export type ResolvePendingInteractionRequest = z.infer<
 export const respondPluginInteractionRequestSchema = z.object({
   value: jsonValueSchema,
 });
-export type RespondPluginInteractionRequest = z.infer<
-  typeof respondPluginInteractionRequestSchema
->;
+export type RespondPluginInteractionRequest = z.infer<typeof respondPluginInteractionRequestSchema>;
 
-export const threadQueuedMessageListResponseSchema = z.array(
-  threadQueuedMessageSchema,
-);
-export type ThreadQueuedMessageListResponse = z.infer<
-  typeof threadQueuedMessageListResponseSchema
->;
+export const threadQueuedMessageListResponseSchema = z.array(threadQueuedMessageSchema);
+export type ThreadQueuedMessageListResponse = z.infer<typeof threadQueuedMessageListResponseSchema>;
 
 export const threadChildSummaryResponseSchema = z.object({
   nonDeletedChildCount: z.number().int().nonnegative(),
 });
-export type ThreadChildSummaryResponse = z.infer<
-  typeof threadChildSummaryResponseSchema
->;
+export type ThreadChildSummaryResponse = z.infer<typeof threadChildSummaryResponseSchema>;
 
 export const deleteThreadRequestSchema = z.object({
   childThreadsConfirmed: z.boolean(),
@@ -537,9 +494,7 @@ export const reorderPinnedThreadRequestSchema = z.object({
   previousThreadId: z.string().min(1).nullable(),
   nextThreadId: z.string().min(1).nullable(),
 });
-export type ReorderPinnedThreadRequest = z.infer<
-  typeof reorderPinnedThreadRequestSchema
->;
+export type ReorderPinnedThreadRequest = z.infer<typeof reorderPinnedThreadRequestSchema>;
 
 /** Which root a secondary-panel file path is relative to. */
 export const panelFileSourceSchema = z.enum(["workspace", "thread-storage"]);
@@ -550,13 +505,7 @@ export type PanelFileSource = z.infer<typeof panelFileSourceSchema>;
  * placements add panes through the eighth pane; at the cap they replace the
  * focused pane. `replace` always replaces the focused pane.
  */
-export const threadOpenSplitSchema = z.enum([
-  "right",
-  "down",
-  "left",
-  "top",
-  "replace",
-]);
+export const threadOpenSplitSchema = z.enum(["right", "down", "left", "top", "replace"]);
 export type ThreadOpenSplit = z.infer<typeof threadOpenSplitSchema>;
 
 /** Optional secondary-panel file to open with a thread. */
@@ -632,12 +581,8 @@ export const threadPaneActionSchema = z.enum([
 export type ThreadPaneAction = z.infer<typeof threadPaneActionSchema>;
 
 /** Request body for POST /threads/:id/pane-action. */
-export const threadPaneActionRequestSchema = z
-  .object({ action: threadPaneActionSchema })
-  .strict();
-export type ThreadPaneActionRequest = z.infer<
-  typeof threadPaneActionRequestSchema
->;
+export const threadPaneActionRequestSchema = z.object({ action: threadPaneActionSchema }).strict();
+export type ThreadPaneActionRequest = z.infer<typeof threadPaneActionRequestSchema>;
 
 /** Ephemeral server→client request to change an already-open thread pane. */
 export const threadPaneActionSignalSchema = z
@@ -648,9 +593,7 @@ export const threadPaneActionSignalSchema = z
     action: threadPaneActionSchema,
   })
   .strict();
-export type ThreadPaneActionSignal = z.infer<
-  typeof threadPaneActionSignalSchema
->;
+export type ThreadPaneActionSignal = z.infer<typeof threadPaneActionSignalSchema>;
 
 /** Lenient inbound parser for clients connected to a newer server. */
 export const threadPaneActionSignalLenientSchema = z.object({
@@ -664,17 +607,13 @@ export const threadPaneActionSignalLenientSchema = z.object({
 export const threadPaneActionResponseSchema = z.object({
   delivered: z.number().int().nonnegative(),
 });
-export type ThreadPaneActionResponse = z.infer<
-  typeof threadPaneActionResponseSchema
->;
+export type ThreadPaneActionResponse = z.infer<typeof threadPaneActionResponseSchema>;
 
 export const threadArchiveAllResponseSchema = z.object({
   ok: z.literal(true),
   archivedThreadIds: z.array(z.string().min(1)),
 });
-export type ThreadArchiveAllResponse = z.infer<
-  typeof threadArchiveAllResponseSchema
->;
+export type ThreadArchiveAllResponse = z.infer<typeof threadArchiveAllResponseSchema>;
 
 export const threadListQuerySchema = z.object({
   projectId: z.string().min(1).optional(),
@@ -710,9 +649,7 @@ export const timelinePaginationCursorSchema = z
     anchorId: z.string().min(1),
   })
   .strict();
-export type TimelinePaginationCursor = z.infer<
-  typeof timelinePaginationCursorSchema
->;
+export type TimelinePaginationCursor = z.infer<typeof timelinePaginationCursorSchema>;
 
 export const timelinePageMetadataSchema = z
   .object({
@@ -769,9 +706,7 @@ export const timelineTurnSummaryDetailsQuerySchema = z.object({
   sourceSeqStart: z.string().regex(/^\d+$/),
   sourceSeqEnd: z.string().regex(/^\d+$/),
 });
-export type TimelineTurnSummaryDetailsQuery = z.infer<
-  typeof timelineTurnSummaryDetailsQuerySchema
->;
+export type TimelineTurnSummaryDetailsQuery = z.infer<typeof timelineTurnSummaryDetailsQuerySchema>;
 
 /** Maximum rows returned by the low-level thread event diagnostic endpoint. */
 export const THREAD_EVENT_LIST_LIMIT_MAX = 500;
@@ -782,13 +717,10 @@ export const threadEventsQuerySchema = z
     limit: z
       .string()
       .regex(/^\d+$/)
-      .refine(
-        (value) => {
-          const parsed = Number(value);
-          return parsed > 0 && parsed <= THREAD_EVENT_LIST_LIMIT_MAX;
-        },
-        `limit must be between 1 and ${THREAD_EVENT_LIST_LIMIT_MAX}`,
-      ),
+      .refine((value) => {
+        const parsed = Number(value);
+        return parsed > 0 && parsed <= THREAD_EVENT_LIST_LIMIT_MAX;
+      }, `limit must be between 1 and ${THREAD_EVENT_LIST_LIMIT_MAX}`),
   })
   .partial();
 export type ThreadEventsQuery = z.infer<typeof threadEventsQuerySchema>;
@@ -806,32 +738,23 @@ export const threadStorageFilesQuerySchema = z
     limit: z.string().regex(/^\d+$/),
   })
   .partial();
-export type ThreadStorageFilesQuery = z.infer<
-  typeof threadStorageFilesQuerySchema
->;
+export type ThreadStorageFilesQuery = z.infer<typeof threadStorageFilesQuerySchema>;
 
-export const threadStoragePathsQuerySchema =
-  threadStorageFilesQuerySchema.extend({
-    includeFiles: pathListIncludeQueryValueSchema,
-    includeDirectories: pathListIncludeQueryValueSchema,
-  });
-export type ThreadStoragePathsQuery = z.infer<
-  typeof threadStoragePathsQuerySchema
->;
+export const threadStoragePathsQuerySchema = threadStorageFilesQuerySchema.extend({
+  includeFiles: pathListIncludeQueryValueSchema,
+  includeDirectories: pathListIncludeQueryValueSchema,
+});
+export type ThreadStoragePathsQuery = z.infer<typeof threadStoragePathsQuerySchema>;
 
 export const threadStorageContentQuerySchema = z.object({
   path: z.string().min(1),
 });
-export type ThreadStorageContentQuery = z.infer<
-  typeof threadStorageContentQuerySchema
->;
+export type ThreadStorageContentQuery = z.infer<typeof threadStorageContentQuerySchema>;
 
 export const threadHostFileContentQuerySchema = z.object({
   path: z.string().min(1),
 });
-export type ThreadHostFileContentQuery = z.infer<
-  typeof threadHostFileContentQuerySchema
->;
+export type ThreadHostFileContentQuery = z.infer<typeof threadHostFileContentQuerySchema>;
 
 export const threadFilesRawQuerySchema = z.object({
   /** Absolute filesystem path of an HTML file on the thread's host. */
@@ -876,9 +799,7 @@ export const threadTimelineResponseSchema = z.object({
    */
   delta: timelineDeltaSchema.optional(),
 });
-export type ThreadTimelineResponse = z.infer<
-  typeof threadTimelineResponseSchema
->;
+export type ThreadTimelineResponse = z.infer<typeof threadTimelineResponseSchema>;
 
 /**
  * Lightweight attachment counts for a conversation-outline item. The full
@@ -909,13 +830,10 @@ export const threadConversationOutlineItemSchema = z
     id: z.string().min(1),
     role: z.enum(["user", "assistant"]),
     preview: z.string(),
-    attachmentSummary:
-      threadConversationOutlineAttachmentSummarySchema.nullable(),
+    attachmentSummary: threadConversationOutlineAttachmentSummarySchema.nullable(),
   })
   .strict();
-export type ThreadConversationOutlineItem = z.infer<
-  typeof threadConversationOutlineItemSchema
->;
+export type ThreadConversationOutlineItem = z.infer<typeof threadConversationOutlineItemSchema>;
 
 export const threadConversationOutlineResponseSchema = z
   .object({
@@ -928,32 +846,26 @@ export type ThreadConversationOutlineResponse = z.infer<
   typeof threadConversationOutlineResponseSchema
 >;
 
-export const threadStorageFileListResponseSchema =
-  workspaceFileListResponseSchema.extend({
-    /**
-     * Absolute on-host path to the thread's storage directory. Useful for
-     * clients that need to construct a full path for filesystem operations
-     * (e.g. opening a storage file in the user's editor). The path is on
-     * the thread's host machine, so it is only usable when that host is the
-     * user's local machine.
-     */
-    storageRootPath: z.string(),
-  });
-export type ThreadStorageFileListResponse = z.infer<
-  typeof threadStorageFileListResponseSchema
->;
+export const threadStorageFileListResponseSchema = workspaceFileListResponseSchema.extend({
+  /**
+   * Absolute on-host path to the thread's storage directory. Useful for
+   * clients that need to construct a full path for filesystem operations
+   * (e.g. opening a storage file in the user's editor). The path is on
+   * the thread's host machine, so it is only usable when that host is the
+   * user's local machine.
+   */
+  storageRootPath: z.string(),
+});
+export type ThreadStorageFileListResponse = z.infer<typeof threadStorageFileListResponseSchema>;
 
-export const threadStoragePathListResponseSchema =
-  workspacePathListResponseSchema.extend({
-    /**
-     * Absolute on-host path to the thread's storage directory. Useful for
-     * clients that need to construct a full path for filesystem operations
-     * (e.g. opening a storage file in the user's editor). The path is on
-     * the thread's host machine, so it is only usable when that host is the
-     * user's local machine.
-     */
-    storageRootPath: z.string(),
-  });
-export type ThreadStoragePathListResponse = z.infer<
-  typeof threadStoragePathListResponseSchema
->;
+export const threadStoragePathListResponseSchema = workspacePathListResponseSchema.extend({
+  /**
+   * Absolute on-host path to the thread's storage directory. Useful for
+   * clients that need to construct a full path for filesystem operations
+   * (e.g. opening a storage file in the user's editor). The path is on
+   * the thread's host machine, so it is only usable when that host is the
+   * user's local machine.
+   */
+  storageRootPath: z.string(),
+});
+export type ThreadStoragePathListResponse = z.infer<typeof threadStoragePathListResponseSchema>;

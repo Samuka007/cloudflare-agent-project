@@ -3,10 +3,7 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import {
-  defaultResolvedCodeTheme,
-  resolvedCodeThemeSchema,
-} from "./code-theme.js";
+import { defaultResolvedCodeTheme, resolvedCodeThemeSchema } from "./code-theme.js";
 
 /**
  * App color palette ("theme"), distinct from light/dark *mode* (which stays a
@@ -115,10 +112,7 @@ export const FAVICON_COLORS = [
 ] as const;
 export type FaviconColor = (typeof FAVICON_COLORS)[number];
 
-export const faviconColorPreferenceSchema = z.enum([
-  "default",
-  ...FAVICON_COLORS,
-]);
+export const faviconColorPreferenceSchema = z.enum(["default", ...FAVICON_COLORS]);
 export type FaviconColorPreference = z.infer<typeof faviconColorPreferenceSchema>;
 
 export const defaultFaviconColor: FaviconColorPreference = "default";

@@ -16,10 +16,7 @@ import {
  * buildListThreadsFilters / buildListThreadsOrderBy (threads.ts:686-757).
  */
 
-export async function getProject(
-  env: Env,
-  projectId: string,
-): Promise<ProjectRow | null> {
+export async function getProject(env: Env, projectId: string): Promise<ProjectRow | null> {
   const row = await env.DB.prepare(
     "SELECT id, kind, name, git_remote_url, sort_key, deleted_at, created_at, updated_at FROM projects WHERE id = ?",
   )
@@ -87,9 +84,7 @@ export async function updateProject(
 
 // --- thread sections -------------------------------------------------------------
 
-export async function listThreadSections(
-  env: Env,
-): Promise<ThreadSectionRow[]> {
+export async function listThreadSections(env: Env): Promise<ThreadSectionRow[]> {
   const { results } = await env.DB.prepare(
     "SELECT id, name, created_at, updated_at FROM thread_sections ORDER BY created_at ASC, id ASC",
   ).all();
@@ -125,9 +120,7 @@ export async function renameThreadSection(
   env: Env,
   args: { id: string; name: string },
 ): Promise<ThreadSectionRow | null> {
-  await env.DB.prepare(
-    "UPDATE thread_sections SET name = ?, updated_at = ? WHERE id = ?",
-  )
+  await env.DB.prepare("UPDATE thread_sections SET name = ?, updated_at = ? WHERE id = ?")
     .bind(args.name, Date.now(), args.id)
     .run();
   return getThreadSection(env, args.id);
@@ -167,7 +160,7 @@ export interface ThreadListFilters {
 export async function listThreads(
   env: Env,
   filters: ThreadListFilters,
-): Promise<Array<ThreadDbRow & { hasPendingInteraction: boolean }>> {
+): Promise<(ThreadDbRow & { hasPendingInteraction: boolean })[]> {
   const where: string[] = ["t.deleted_at IS NULL"];
   const binds: unknown[] = [];
   if (!filters.includeHidden) {
@@ -193,16 +186,10 @@ export async function listThreads(
     where.push("t.section_id IS NULL");
   }
   if (filters.archived !== undefined) {
-    where.push(
-      filters.archived ? "t.archived_at IS NOT NULL" : "t.archived_at IS NULL",
-    );
+    where.push(filters.archived ? "t.archived_at IS NOT NULL" : "t.archived_at IS NULL");
   }
   if (filters.hasParent !== undefined) {
-    where.push(
-      filters.hasParent
-        ? "t.parent_thread_id IS NOT NULL"
-        : "t.parent_thread_id IS NULL",
-    );
+    where.push(filters.hasParent ? "t.parent_thread_id IS NOT NULL" : "t.parent_thread_id IS NULL");
   }
   if (filters.originKind !== undefined) {
     where.push("t.origin_kind = ?");
@@ -218,10 +205,11 @@ export async function listThreads(
       ? "t.archived_at DESC, t.id DESC"
       : "CASE WHEN t.pinned_at IS NOT NULL THEN 0 ELSE 1 END ASC, t.pin_sort_key ASC, t.id ASC, t.created_at DESC, t.id DESC";
 
-  let sql = `SELECT ${THREAD_COLUMN_SQL
-    .split(", ")
+  let sql = `SELECT ${THREAD_COLUMN_SQL.split(", ")
     .map((c) => `t.${c}`)
-    .join(", ")}, EXISTS(SELECT 1 FROM pending_interactions pi WHERE pi.thread_id = t.id AND pi.status IN ('pending','resolving')) AS has_pending_interaction FROM threads t WHERE ${where.join(" AND ")} ORDER BY ${orderBy}`;
+    .join(
+      ", ",
+    )}, EXISTS(SELECT 1 FROM pending_interactions pi WHERE pi.thread_id = t.id AND pi.status IN ('pending','resolving')) AS has_pending_interaction FROM threads t WHERE ${where.join(" AND ")} ORDER BY ${orderBy}`;
   if (filters.limit !== undefined) {
     sql += " LIMIT ?";
     binds.push(filters.limit);
@@ -231,20 +219,17 @@ export async function listThreads(
     binds.push(filters.offset);
   }
 
-  const { results } = await env.DB.prepare(sql).bind(...binds).all();
+  const { results } = await env.DB.prepare(sql)
+    .bind(...binds)
+    .all();
   return results.map((row) => ({
     ...toThreadDbRow(row),
     hasPendingInteraction: row.has_pending_interaction === 1,
   }));
 }
 
-export async function getThreadRow(
-  env: Env,
-  threadId: string,
-): Promise<ThreadDbRow | null> {
-  const row = await env.DB.prepare(
-    `SELECT ${THREAD_COLUMN_SQL} FROM threads WHERE id = ?`,
-  )
+export async function getThreadRow(env: Env, threadId: string): Promise<ThreadDbRow | null> {
+  const row = await env.DB.prepare(`SELECT ${THREAD_COLUMN_SQL} FROM threads WHERE id = ?`)
     .bind(threadId)
     .first();
   return row ? toThreadDbRow(row) : null;
@@ -262,10 +247,7 @@ export async function countNonDeletedAssignedChildThreads(
   return row ? Number(row.n) : 0;
 }
 
-export async function getThreadHierarchyDepth(
-  env: Env,
-  threadId: string,
-): Promise<number> {
+export async function getThreadHierarchyDepth(env: Env, threadId: string): Promise<number> {
   const row = await env.DB.prepare(
     `WITH RECURSIVE chain(id, depth) AS (
        SELECT id, 0 FROM threads WHERE id = ?
@@ -283,12 +265,11 @@ export async function getThreadHierarchyDepth(
   let depth = 0;
   let currentId: string | null = threadId;
   while (currentId && depth < 64) {
-    const parent: { parent_thread_id: string | null } | null =
-      await env.DB.prepare(
-        "SELECT parent_thread_id FROM threads WHERE id = ?",
-      )
-        .bind(currentId)
-        .first();
+    const parent: { parent_thread_id: string | null } | null = await env.DB.prepare(
+      "SELECT parent_thread_id FROM threads WHERE id = ?",
+    )
+      .bind(currentId)
+      .first();
     if (!parent?.parent_thread_id) {
       break;
     }
@@ -348,7 +329,7 @@ export async function createThreadRecord(
       now,
     )
     .run();
-  return (await getThreadRow(env, args.id)) as ThreadDbRow;
+  return (await getThreadRow(env, args.id))!;
 }
 
 const THREAD_COLUMNS_PLACEHOLDER = THREAD_COLUMN_SQL.split(", ")
@@ -418,21 +399,16 @@ export async function updateThreadRecord(
   await env.DB.prepare(`UPDATE threads SET ${sets.join(", ")} WHERE id = ?`)
     .bind(...binds, threadId)
     .run();
-  const row = (await getThreadRow(env, threadId)) as ThreadDbRow;
+  const row = (await getThreadRow(env, threadId))!;
   return { row, changedKinds };
 }
 
-export async function markThreadDeleted(
-  env: Env,
-  threadId: string,
-): Promise<ThreadDbRow | null> {
+export async function markThreadDeleted(env: Env, threadId: string): Promise<ThreadDbRow | null> {
   const current = await getThreadRow(env, threadId);
   if (!current || current.deletedAt !== null) {
     return null;
   }
-  await env.DB.prepare(
-    "UPDATE threads SET deleted_at = ?, updated_at = ? WHERE id = ?",
-  )
+  await env.DB.prepare("UPDATE threads SET deleted_at = ?, updated_at = ? WHERE id = ?")
     .bind(Date.now(), Date.now(), threadId)
     .run();
   return getThreadRow(env, threadId);
@@ -461,10 +437,7 @@ export async function pinThread(
   return getThreadRow(env, threadId);
 }
 
-export async function unpinThread(
-  env: Env,
-  threadId: string,
-): Promise<ThreadDbRow | null> {
+export async function unpinThread(env: Env, threadId: string): Promise<ThreadDbRow | null> {
   const current = await getThreadRow(env, threadId);
   if (!current) {
     return null;
@@ -495,9 +468,7 @@ export async function setThreadArchived(
   if (!archived && current.archivedAt === null) {
     return current;
   }
-  await env.DB.prepare(
-    "UPDATE threads SET archived_at = ?, updated_at = ? WHERE id = ?",
-  )
+  await env.DB.prepare("UPDATE threads SET archived_at = ?, updated_at = ? WHERE id = ?")
     .bind(archived ? Date.now() : null, Date.now(), threadId)
     .run();
   return getThreadRow(env, threadId);

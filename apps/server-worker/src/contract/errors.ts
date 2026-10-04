@@ -3,11 +3,7 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import {
-  environmentStatusSchema,
-  hostStatusSchema,
-  threadStatusSchema,
-} from "./domain/index.js";
+import { environmentStatusSchema, hostStatusSchema, threadStatusSchema } from "./domain/index.js";
 
 /** Base public error envelope shared by server routes. Route-specific schemas
  *  may extend this with typed fields such as structured `details` while
@@ -24,9 +20,7 @@ export const environmentNotReadyErrorDetailsSchema = z.object({
   environmentStatus: environmentStatusSchema,
   hasPath: z.boolean(),
 });
-export type EnvironmentNotReadyErrorDetails = z.infer<
-  typeof environmentNotReadyErrorDetailsSchema
->;
+export type EnvironmentNotReadyErrorDetails = z.infer<typeof environmentNotReadyErrorDetailsSchema>;
 
 export const threadNotWritableReasonSchema = z.enum([
   "archived",
@@ -38,18 +32,14 @@ export const threadNotWritableReasonSchema = z.enum([
   "already_active",
   "still_starting",
 ]);
-export type ThreadNotWritableReason = z.infer<
-  typeof threadNotWritableReasonSchema
->;
+export type ThreadNotWritableReason = z.infer<typeof threadNotWritableReasonSchema>;
 
 export const threadNotWritableErrorDetailsSchema = z.object({
   reason: threadNotWritableReasonSchema,
   archivedAt: z.number().int().nonnegative().nullable(),
   threadStatus: threadStatusSchema,
 });
-export type ThreadNotWritableErrorDetails = z.infer<
-  typeof threadNotWritableErrorDetailsSchema
->;
+export type ThreadNotWritableErrorDetails = z.infer<typeof threadNotWritableErrorDetailsSchema>;
 
 export const threadEnvironmentUnavailableReasonSchema = z.enum([
   "never_attached",
@@ -67,11 +57,7 @@ export type ThreadEnvironmentUnavailableErrorDetails = z.infer<
   typeof threadEnvironmentUnavailableErrorDetailsSchema
 >;
 
-export const hostUnavailableReasonSchema = z.enum([
-  "suspended",
-  "disconnected",
-  "destroyed",
-]);
+export const hostUnavailableReasonSchema = z.enum(["suspended", "disconnected", "destroyed"]);
 
 export const hostUnavailableErrorDetailsSchema = z.object({
   reason: hostUnavailableReasonSchema,
@@ -79,22 +65,15 @@ export const hostUnavailableErrorDetailsSchema = z.object({
   suspendedAt: z.number().int().nonnegative().nullable(),
   destroyedAt: z.number().int().nonnegative().nullable(),
 });
-export type HostUnavailableErrorDetails = z.infer<
-  typeof hostUnavailableErrorDetailsSchema
->;
+export type HostUnavailableErrorDetails = z.infer<typeof hostUnavailableErrorDetailsSchema>;
 
-export const projectUnavailableReasonSchema = z.enum([
-  "deleted",
-  "pending_deletion",
-]);
+export const projectUnavailableReasonSchema = z.enum(["deleted", "pending_deletion"]);
 
 export const projectUnavailableErrorDetailsSchema = z.object({
   reason: projectUnavailableReasonSchema,
   deletedAt: z.number().int().nonnegative().nullable(),
 });
-export type ProjectUnavailableErrorDetails = z.infer<
-  typeof projectUnavailableErrorDetailsSchema
->;
+export type ProjectUnavailableErrorDetails = z.infer<typeof projectUnavailableErrorDetailsSchema>;
 
 export const parentThreadInvalidReasonSchema = z.enum([
   "not_found",
@@ -105,22 +84,16 @@ export const parentThreadInvalidReasonSchema = z.enum([
   "cycle",
   "too_deep",
 ]);
-export type ParentThreadInvalidReason = z.infer<
-  typeof parentThreadInvalidReasonSchema
->;
+export type ParentThreadInvalidReason = z.infer<typeof parentThreadInvalidReasonSchema>;
 
 export const parentThreadInvalidSubjectSchema = z.enum(["parent", "sender"]);
-export type ParentThreadInvalidSubject = z.infer<
-  typeof parentThreadInvalidSubjectSchema
->;
+export type ParentThreadInvalidSubject = z.infer<typeof parentThreadInvalidSubjectSchema>;
 
 export const parentThreadInvalidErrorDetailsSchema = z.object({
   reason: parentThreadInvalidReasonSchema,
   subject: parentThreadInvalidSubjectSchema,
 });
-export type ParentThreadInvalidErrorDetails = z.infer<
-  typeof parentThreadInvalidErrorDetailsSchema
->;
+export type ParentThreadInvalidErrorDetails = z.infer<typeof parentThreadInvalidErrorDetailsSchema>;
 
 export const environmentNotReadyApiErrorSchema = apiErrorSchema.extend({
   code: z.literal("environment_not_ready"),
@@ -132,12 +105,10 @@ export const threadNotWritableApiErrorSchema = apiErrorSchema.extend({
   details: threadNotWritableErrorDetailsSchema,
 });
 
-export const threadEnvironmentUnavailableApiErrorSchema = apiErrorSchema.extend(
-  {
-    code: z.literal("thread_environment_unavailable"),
-    details: threadEnvironmentUnavailableErrorDetailsSchema,
-  },
-);
+export const threadEnvironmentUnavailableApiErrorSchema = apiErrorSchema.extend({
+  code: z.literal("thread_environment_unavailable"),
+  details: threadEnvironmentUnavailableErrorDetailsSchema,
+});
 
 export const hostUnavailableApiErrorSchema = apiErrorSchema.extend({
   code: z.literal("host_unavailable"),

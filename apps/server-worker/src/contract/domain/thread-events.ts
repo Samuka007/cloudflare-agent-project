@@ -10,10 +10,7 @@ import {
   userQuestionPendingInteractionPayloadSchema,
   userQuestionPendingInteractionResolutionSchema,
 } from "./pending-interactions.js";
-import {
-  promptInputSchema,
-  recordedThreadExecutionOptionsSchema,
-} from "./shared-types.js";
+import { promptInputSchema, recordedThreadExecutionOptionsSchema } from "./shared-types.js";
 import { jsonValueSchema } from "./json-value.js";
 import { clientTurnRequestIdSchema } from "./protocol-ids.js";
 
@@ -90,12 +87,8 @@ export const threadEnvironmentStartReasonValues = [
   "boot-active-resume",
   "resume-existing-provider-session",
 ] as const;
-export const threadEnvironmentStartReasonSchema = z.enum(
-  threadEnvironmentStartReasonValues,
-);
-export type ThreadEnvironmentStartReason = z.infer<
-  typeof threadEnvironmentStartReasonSchema
->;
+export const threadEnvironmentStartReasonSchema = z.enum(threadEnvironmentStartReasonValues);
+export type ThreadEnvironmentStartReason = z.infer<typeof threadEnvironmentStartReasonSchema>;
 
 /**
  * Execution values are historical facts once recorded in the event stream.
@@ -127,9 +120,7 @@ export const clientTurnLifecycleEventDataSchema = z.object({
     params: z.record(z.string(), z.unknown()),
   }),
 });
-export type ClientTurnLifecycleEventData = z.infer<
-  typeof clientTurnLifecycleEventDataSchema
->;
+export type ClientTurnLifecycleEventData = z.infer<typeof clientTurnLifecycleEventDataSchema>;
 
 export const turnRequestEventDataSchema = z.object({
   direction: z.literal("outbound"),
@@ -164,9 +155,7 @@ export const turnRequestRejectedEventDataSchema = z.object({
   reason: z.string().min(1),
   message: z.string().min(1),
 });
-export type TurnRequestRejectedEventData = z.infer<
-  typeof turnRequestRejectedEventDataSchema
->;
+export type TurnRequestRejectedEventData = z.infer<typeof turnRequestRejectedEventDataSchema>;
 
 export const systemErrorEventDataSchema = z
   .object({
@@ -182,8 +171,7 @@ export const systemErrorEventDataSchema = z
     if (hasReconnectAttempt !== hasReconnectTotal) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message:
-          "system/error reconnectAttempt and reconnectTotal must be provided together",
+        message: "system/error reconnectAttempt and reconnectTotal must be provided together",
       });
       return;
     }
@@ -195,24 +183,15 @@ export const systemErrorEventDataSchema = z
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message:
-          "system/error reconnectAttempt cannot be greater than reconnectTotal",
+        message: "system/error reconnectAttempt cannot be greater than reconnectTotal",
       });
     }
   });
 export type SystemErrorEventData = z.infer<typeof systemErrorEventDataSchema>;
 
-export const ownershipChangeOperationActionValues = [
-  "assign",
-  "release",
-  "transfer",
-] as const;
-export const ownershipChangeOperationActionSchema = z.enum(
-  ownershipChangeOperationActionValues,
-);
-export type OwnershipChangeOperationAction = z.infer<
-  typeof ownershipChangeOperationActionSchema
->;
+export const ownershipChangeOperationActionValues = ["assign", "release", "transfer"] as const;
+export const ownershipChangeOperationActionSchema = z.enum(ownershipChangeOperationActionValues);
+export type OwnershipChangeOperationAction = z.infer<typeof ownershipChangeOperationActionSchema>;
 
 export const ownershipChangeOperationMetadataSchema = z.object({
   action: ownershipChangeOperationActionSchema,
@@ -232,18 +211,14 @@ export const systemOperationEventDataSchema = z.object({
   operationId: z.string(),
   metadata: z.record(z.string(), jsonValueSchema).optional(),
 });
-export type SystemOperationEventData = z.infer<
-  typeof systemOperationEventDataSchema
->;
+export type SystemOperationEventData = z.infer<typeof systemOperationEventDataSchema>;
 
 export const systemPermissionGrantLifecycleEventDataSchema = z.object({
   interactionId: z.string(),
   providerId: z.string(),
   providerRequestId: z.string(),
   status: pendingInteractionStatusSchema,
-  resolution: approvalPendingInteractionResolutionSchema
-    .nullable()
-    .default(null),
+  resolution: approvalPendingInteractionResolutionSchema.nullable().default(null),
   statusReason: z.string().nullable().default(null),
   subject: pendingInteractionPermissionGrantApprovalSubjectSchema,
 });
@@ -256,9 +231,7 @@ export const systemUserQuestionLifecycleEventDataSchema = z.object({
   providerId: z.string(),
   providerRequestId: z.string(),
   status: pendingInteractionStatusSchema,
-  resolution: userQuestionPendingInteractionResolutionSchema
-    .nullable()
-    .default(null),
+  resolution: userQuestionPendingInteractionResolutionSchema.nullable().default(null),
   statusReason: z.string().nullable().default(null),
   payload: userQuestionPendingInteractionPayloadSchema,
 });
@@ -273,12 +246,8 @@ export const systemThreadInterruptedReasonValues = [
   // with no current producer.
   "provider-turn-idle",
 ] as const;
-export const systemThreadInterruptedReasonSchema = z.enum(
-  systemThreadInterruptedReasonValues,
-);
-export type SystemThreadInterruptedReason = z.infer<
-  typeof systemThreadInterruptedReasonSchema
->;
+export const systemThreadInterruptedReasonSchema = z.enum(systemThreadInterruptedReasonValues);
+export type SystemThreadInterruptedReason = z.infer<typeof systemThreadInterruptedReasonSchema>;
 
 export const systemThreadInterruptedEventDataSchema = z.object({
   reason: systemThreadInterruptedReasonSchema,
@@ -295,9 +264,7 @@ export const provisioningTranscriptEntrySchema = z.object({
   status: z.enum(["started", "completed", "failed"]).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
-export type ProvisioningTranscriptEntry = z.infer<
-  typeof provisioningTranscriptEntrySchema
->;
+export type ProvisioningTranscriptEntry = z.infer<typeof provisioningTranscriptEntrySchema>;
 
 export const systemThreadProvisioningStatusValues = [
   "active",
@@ -305,12 +272,8 @@ export const systemThreadProvisioningStatusValues = [
   "failed",
   "cancelled",
 ] as const;
-export const systemThreadProvisioningStatusSchema = z.enum(
-  systemThreadProvisioningStatusValues,
-);
-export type SystemThreadProvisioningStatus = z.infer<
-  typeof systemThreadProvisioningStatusSchema
->;
+export const systemThreadProvisioningStatusSchema = z.enum(systemThreadProvisioningStatusValues);
+export type SystemThreadProvisioningStatus = z.infer<typeof systemThreadProvisioningStatusSchema>;
 
 export const systemThreadProvisioningEventDataSchema = z.object({
   provisioningId: z.string(),
@@ -353,7 +316,7 @@ export type SystemProviderTurnWatchdogEventData = z.infer<
   typeof systemProviderTurnWatchdogEventDataSchema
 >;
 
-export type ThreadEventDataByType = {
+export interface ThreadEventDataByType {
   "client/thread/start": ClientTurnLifecycleEventData;
   "client/turn/requested": TurnRequestEventData;
   "client/turn/rejected": TurnRequestRejectedEventData;
@@ -366,4 +329,4 @@ export type ThreadEventDataByType = {
   "system/userQuestion/lifecycle": SystemUserQuestionLifecycleEventData;
   "system/thread-provisioning": SystemThreadProvisioningEventData;
   "system/provider-turn-watchdog": SystemProviderTurnWatchdogEventData;
-};
+}

@@ -133,10 +133,7 @@ export type AdapterCommand =
   | { type: "thread/archive"; threadId: string; providerThreadId: string }
   | { type: "thread/unarchive"; threadId: string; providerThreadId: string };
 
-export type TurnStartAdapterCommand = Extract<
-  AdapterCommand,
-  { type: "turn/start" }
->;
+export type TurnStartAdapterCommand = Extract<AdapterCommand, { type: "turn/start" }>;
 
 /** bb parseModelListResult projection for `model/list` outcomes. */
 export interface AdapterModelListResult {
@@ -184,12 +181,7 @@ export function flattenPromptInputGroups(
     return input;
   }
   return inputGroups.flatMap((group, index) =>
-    index === 0
-      ? group
-      : [
-          { type: "text" as const, text: "\n\n", mentions: [] },
-          ...group,
-        ],
+    index === 0 ? group : [{ type: "text" as const, text: "\n\n", mentions: [] }, ...group],
   );
 }
 
@@ -233,9 +225,7 @@ export interface ProviderAdapter {
    */
   approvalRequestPolicy: "runtime" | "provider";
   /** Collapses accepted no-op values onto their effective setting. */
-  normalizeExecutionOptions?(
-    options: RuntimeThreadExecutionOptions,
-  ): RuntimeThreadExecutionOptions;
+  normalizeExecutionOptions?(options: RuntimeThreadExecutionOptions): RuntimeThreadExecutionOptions;
   /**
    * `live` settings ride the next turn command; `session` settings require
    * rebuilding the provider session (bb provider-adapter.ts:292-299).

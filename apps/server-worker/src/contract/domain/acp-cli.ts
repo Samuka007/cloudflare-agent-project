@@ -15,9 +15,7 @@ const providerSkillRootPathSchema = z
       !/^[a-zA-Z]:\//u.test(normalized) &&
       normalized
         .split("/")
-        .every(
-          (segment) => segment !== "" && segment !== "." && segment !== "..",
-        )
+        .every((segment) => segment !== "" && segment !== "." && segment !== "..")
     );
   }, "Skill roots must be relative paths without dot segments");
 
@@ -39,9 +37,7 @@ export const providerNativeSkillRootsSchema = z
     project: uniqueProviderSkillRootPathsSchema.default([]),
   })
   .strict();
-export type ProviderNativeSkillRoots = z.infer<
-  typeof providerNativeSkillRootsSchema
->;
+export type ProviderNativeSkillRoots = z.infer<typeof providerNativeSkillRootsSchema>;
 
 export const acpReasoningCliLevelValueOverridesSchema = z.partialRecord(
   reasoningLevelSchema,

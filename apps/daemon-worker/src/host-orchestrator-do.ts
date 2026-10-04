@@ -6,10 +6,7 @@ import {
   DAEMON_WS_SUBPROTOCOL,
   COMMAND_TIMEOUT_MS,
 } from "./constants.js";
-import {
-  getMachineDispatcher,
-  getProviderAdapter,
-} from "./injection.js";
+import { getMachineDispatcher, getProviderAdapter } from "./injection.js";
 import type {
   AdapterCommand,
   AdapterCommandOutcome,
@@ -21,15 +18,8 @@ import {
   type DaemonSessionCloseReason,
   type HostDaemonSessionOpenRequest,
 } from "./session-contract.js";
-import {
-  executionIdFor,
-  type MachineCommandDispatchOutcome,
-} from "./seam/machine-dispatch.js";
-import {
-  WatchSetAggregator,
-  type WatchSetApplyArgs,
-  type DaemonWatchSet,
-} from "./watch-set.js";
+import { executionIdFor, type MachineCommandDispatchOutcome } from "./seam/machine-dispatch.js";
+import { WatchSetAggregator, type WatchSetApplyArgs, type DaemonWatchSet } from "./watch-set.js";
 
 /**
  * Per-host orchestration DO (#27): the bb daemon's orchestration half as one
@@ -192,12 +182,12 @@ export interface HostDaemonCommandAttemptRow {
   settledAt: number | null;
 }
 
-export type DisconnectDisposition = {
+export interface DisconnectDisposition {
   sessionId: string;
   hostId: string;
   kind: "daemon-disconnect-grace-completed";
   completedAt: number;
-};
+}
 
 export type SessionOpenOutcome =
   | {
@@ -225,8 +215,7 @@ export type SocketAttachOutcome =
   | { kind: "rejected"; closeCode: 1008; reason: string };
 
 export type DaemonMessageReceipt =
-  | { kind: "renewed"; leaseExpiresAt: number }
-  | { kind: "inactive" };
+  { kind: "renewed"; leaseExpiresAt: number } | { kind: "inactive" };
 
 export type CommandDispatchOutcome =
   | { kind: "settled"; outcome: AdapterCommandOutcome; attemptId: string }
@@ -245,7 +234,7 @@ export type CommandSettleOutcome =
 
 // Type aliases (not interfaces) so they satisfy the SqlStorage exec
 // Record<string, SqlStorageValue> constraint via implicit index signatures.
-type SessionRowSql = {
+interface SessionRowSql {
   id: string;
   host_id: string;
   instance_id: string;
@@ -264,7 +253,7 @@ type SessionRowSql = {
   active_thread_ids: string;
   created_at: number;
   updated_at: number;
-};
+}
 
 function sessionFromSql(row: SessionRowSql): HostDaemonSessionRow {
   return {
@@ -289,7 +278,7 @@ function sessionFromSql(row: SessionRowSql): HostDaemonSessionRow {
   };
 }
 
-type CommandRowSql = {
+interface CommandRowSql {
   id: string;
   host_id: string;
   session_id: string | null;
@@ -303,7 +292,7 @@ type CommandRowSql = {
   created_at: number;
   fetched_at: number | null;
   completed_at: number | null;
-};
+}
 
 function commandFromSql(row: CommandRowSql): HostDaemonCommandRow {
   return {
@@ -326,7 +315,7 @@ function commandFromSql(row: CommandRowSql): HostDaemonCommandRow {
   };
 }
 
-type AttemptRowSql = {
+interface AttemptRowSql {
   id: string;
   command_id: string;
   session_id: string | null;
@@ -334,7 +323,7 @@ type AttemptRowSql = {
   delivered_at: number;
   lease_expires_at: number;
   settled_at: number | null;
-};
+}
 
 function attemptFromSql(row: AttemptRowSql): HostDaemonCommandAttemptRow {
   return {
@@ -397,10 +386,7 @@ export class HostOrchestratorDO extends DurableObject {
 
   private metaGet(key: string): string | undefined {
     const row = this.sql
-      .exec<{ value: string }>(
-        "SELECT value FROM orchestrator_meta WHERE key = ?",
-        key,
-      )
+      .exec<{ value: string }>("SELECT value FROM orchestrator_meta WHERE key = ?", key)
       .toArray()[0];
     return row?.value;
   }
@@ -422,9 +408,7 @@ export class HostOrchestratorDO extends DurableObject {
       return;
     }
     if (stored !== incoming) {
-      throw new Error(
-        `host mismatch: this orchestrator DO owns ${stored}, got ${incoming}`,
-      );
+      throw new Error(`host mismatch: this orchestrator DO owns ${stored}, got ${incoming}`);
     }
     this.hostId = incoming;
   }
@@ -620,9 +604,7 @@ export class HostOrchestratorDO extends DurableObject {
    * already-expired sessions answer `inactive` — the WS layer closes 1008
    * "inactive-session".
    */
-  async recordDaemonMessage(args: {
-    sessionId: string;
-  }): Promise<DaemonMessageReceipt> {
+  async recordDaemonMessage(args: { sessionId: string }): Promise<DaemonMessageReceipt> {
     const session = this.getSessionRow(args.sessionId);
     if (session === null || session.status !== "active") {
       return { kind: "inactive" };
@@ -632,10 +614,7 @@ export class HostOrchestratorDO extends DurableObject {
       this.closeSessionRow(session.id, "expired", now);
       return { kind: "inactive" };
     }
-    const leaseExpiresAt = Math.max(
-      now + session.leaseTimeoutMs,
-      session.leaseExpiresAt + 1,
-    );
+    const leaseExpiresAt = Math.max(now + session.leaseTimeoutMs, session.leaseExpiresAt + 1);
     this.sql.exec(
       "UPDATE host_daemon_sessions SET lease_expires_at = ?, updated_at = ? WHERE id = ?",
       leaseExpiresAt,
@@ -651,9 +630,7 @@ export class HostOrchestratorDO extends DurableObject {
     return this.recordDaemonMessage(args);
   }
 
-  async getSession(args: {
-    sessionId: string;
-  }): Promise<HostDaemonSessionRow | null> {
+  async getSession(args: { sessionId: string }): Promise<HostDaemonSessionRow | null> {
     return this.getSessionRow(args.sessionId);
   }
 
@@ -663,9 +640,7 @@ export class HostOrchestratorDO extends DurableObject {
 
   async listSessions(): Promise<HostDaemonSessionRow[]> {
     return this.sql
-      .exec<SessionRowSql>(
-        "SELECT * FROM host_daemon_sessions ORDER BY created_at, id",
-      )
+      .exec<SessionRowSql>("SELECT * FROM host_daemon_sessions ORDER BY created_at, id")
       .toArray()
       .map(sessionFromSql);
   }
@@ -714,11 +689,7 @@ export class HostOrchestratorDO extends DurableObject {
     return row === undefined ? null : sessionFromSql(row);
   }
 
-  private closeSessionRow(
-    sessionId: string,
-    reason: DaemonSessionCloseReason,
-    now: number,
-  ): void {
+  private closeSessionRow(sessionId: string, reason: DaemonSessionCloseReason, now: number): void {
     this.sql.exec(
       "UPDATE host_daemon_sessions SET status = 'closed', closed_at = ?, " +
         "close_reason = ?, socket_attached = 0, updated_at = ? " +
@@ -746,12 +717,9 @@ export class HostOrchestratorDO extends DurableObject {
     // The journal is host-scoped: openSession binds the host first (bb wrote
     // host_daemon_commands rows only for enrolled hosts).
     if (this.metaGet("host_id") === undefined) {
-      throw new Error(
-        "no host bound — openSession must run before enqueueCommand",
-      );
+      throw new Error("no host bound — openSession must run before enqueueCommand");
     }
-    const nextCursor =
-      Number(this.metaGet("command_cursor") ?? "0") + 1;
+    const nextCursor = Number(this.metaGet("command_cursor") ?? "0") + 1;
     const commandId = newId("hcmd");
     const now = Date.now();
     this.sql.exec(
@@ -781,9 +749,7 @@ export class HostOrchestratorDO extends DurableObject {
     timeoutMs?: number;
     route?: "provider" | "machine";
   }): Promise<CommandDispatchOutcome> {
-    const run = this.dispatchChain.then(() =>
-      this.dispatchCommandInner(args),
-    );
+    const run = this.dispatchChain.then(() => this.dispatchCommandInner(args));
     this.dispatchChain = run.catch(() => {});
     return run;
   }
@@ -919,7 +885,11 @@ export class HostOrchestratorDO extends DurableObject {
    */
   async retryCommand(args: {
     commandId: string;
-  }): Promise<{ queued: boolean; state: HostDaemonCommandRow["state"] | null; retryCount: number | null }> {
+  }): Promise<{
+    queued: boolean;
+    state: HostDaemonCommandRow["state"] | null;
+    retryCount: number | null;
+  }> {
     const cmd = this.getCommandRow(args.commandId);
     if (cmd === undefined || cmd.state !== "failed") {
       return {
@@ -935,24 +905,18 @@ export class HostOrchestratorDO extends DurableObject {
     return { queued: true, state: "pending", retryCount: cmd.retryCount + 1 };
   }
 
-  async getCommand(args: {
-    commandId: string;
-  }): Promise<HostDaemonCommandRow | null> {
+  async getCommand(args: { commandId: string }): Promise<HostDaemonCommandRow | null> {
     return this.getCommandRow(args.commandId) ?? null;
   }
 
   async listCommands(): Promise<HostDaemonCommandRow[]> {
     return this.sql
-      .exec<CommandRowSql>(
-        "SELECT * FROM host_daemon_commands ORDER BY cursor",
-      )
+      .exec<CommandRowSql>("SELECT * FROM host_daemon_commands ORDER BY cursor")
       .toArray()
       .map(commandFromSql);
   }
 
-  async listAttempts(args: {
-    commandId: string;
-  }): Promise<HostDaemonCommandAttemptRow[]> {
+  async listAttempts(args: { commandId: string }): Promise<HostDaemonCommandAttemptRow[]> {
     return this.sql
       .exec<AttemptRowSql>(
         "SELECT * FROM host_daemon_command_attempts WHERE command_id = ? ORDER BY delivered_at, id",
@@ -973,10 +937,7 @@ export class HostOrchestratorDO extends DurableObject {
 
   private getAttemptRow(attemptId: string): HostDaemonCommandAttemptRow | undefined {
     const row = this.sql
-      .exec<AttemptRowSql>(
-        "SELECT * FROM host_daemon_command_attempts WHERE id = ?",
-        attemptId,
-      )
+      .exec<AttemptRowSql>("SELECT * FROM host_daemon_command_attempts WHERE id = ?", attemptId)
       .toArray()[0];
     return row === undefined ? undefined : attemptFromSql(row);
   }
@@ -1093,10 +1054,7 @@ export class HostOrchestratorDO extends DurableObject {
   }
 
   private persistWatchInterests(aggregator: WatchSetAggregator): void {
-    this.metaSet(
-      "watch_interests",
-      JSON.stringify(aggregator.snapshotInterests()),
-    );
+    this.metaSet("watch_interests", JSON.stringify(aggregator.snapshotInterests()));
   }
 
   // ===========================================================================
@@ -1105,9 +1063,7 @@ export class HostOrchestratorDO extends DurableObject {
 
   async drainDaemonOutbox(): Promise<DaemonServerMessage[]> {
     const rows = this.sql
-      .exec<{ seq: number; payload: string }>(
-        "SELECT seq, payload FROM daemon_outbox ORDER BY seq",
-      )
+      .exec<{ seq: number; payload: string }>("SELECT seq, payload FROM daemon_outbox ORDER BY seq")
       .toArray();
     this.sql.exec("DELETE FROM daemon_outbox");
     return rows.map((row) => daemonServerMessageSchema.parse(JSON.parse(row.payload)));

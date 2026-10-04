@@ -38,8 +38,10 @@ function streamResponse(text: string, chunkAt = Math.ceil(text.length / 2)): Res
   return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
-function sseLines(events: Array<[string, unknown]>): string {
-  return events.map(([name, payload]) => `event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`).join("");
+function sseLines(events: [string, unknown][]): string {
+  return events
+    .map(([name, payload]) => `event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`)
+    .join("");
 }
 
 function messageStart(): [string, unknown] {
@@ -52,11 +54,13 @@ function messageStop(): [string, unknown] {
 
 async function collect(provider: AnthropicRelayProvider): Promise<{
   texts: string[];
-  toolCalls: Array<Array<{ name: string; arguments: Record<string, unknown> }>>;
+  toolCalls: { name: string; arguments: Record<string, unknown> }[][];
 }> {
   const texts: string[] = [];
-  const toolCalls: Array<Array<{ name: string; arguments: Record<string, unknown> }>> = [];
-  for await (const chunk of provider.streamTurn(REQUEST, { signal: new AbortController().signal })) {
+  const toolCalls: { name: string; arguments: Record<string, unknown> }[][] = [];
+  for await (const chunk of provider.streamTurn(REQUEST, {
+    signal: new AbortController().signal,
+  })) {
     if (chunk.kind === "text-delta") texts.push(chunk.text);
     else toolCalls.push(chunk.toolCalls);
   }
@@ -68,13 +72,43 @@ describe("relay client: happy paths", () => {
     const sse =
       sseLines([
         messageStart(),
-        ["content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text" } }],
-        ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hel" } }],
-        ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "lo" } }],
+        [
+          "content_block_start",
+          { type: "content_block_start", index: 0, content_block: { type: "text" } },
+        ],
+        [
+          "content_block_delta",
+          { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hel" } },
+        ],
+        [
+          "content_block_delta",
+          { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "lo" } },
+        ],
         ["content_block_stop", { type: "content_block_stop", index: 0 }],
-        ["content_block_start", { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "call_1", name: "bash" } }],
-        ["content_block_delta", { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: "{\"comm" } }],
-        ["content_block_delta", { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: "and\":\"echo hi\"}" } }],
+        [
+          "content_block_start",
+          {
+            type: "content_block_start",
+            index: 1,
+            content_block: { type: "tool_use", id: "call_1", name: "bash" },
+          },
+        ],
+        [
+          "content_block_delta",
+          {
+            type: "content_block_delta",
+            index: 1,
+            delta: { type: "input_json_delta", partial_json: '{"comm' },
+          },
+        ],
+        [
+          "content_block_delta",
+          {
+            type: "content_block_delta",
+            index: 1,
+            delta: { type: "input_json_delta", partial_json: 'and":"echo hi"}' },
+          },
+        ],
         ["content_block_stop", { type: "content_block_stop", index: 1 }],
         ["message_delta", { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: {} }],
         messageStop(),
@@ -100,12 +134,35 @@ describe("relay client: happy paths", () => {
     const sse =
       sseLines([
         messageStart(),
-        ["content_block_start", { type: "content_block_start", index: 0, content_block: { type: "thinking" } }],
-        ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "let me think" } }],
-        ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } }],
+        [
+          "content_block_start",
+          { type: "content_block_start", index: 0, content_block: { type: "thinking" } },
+        ],
+        [
+          "content_block_delta",
+          {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "thinking_delta", thinking: "let me think" },
+          },
+        ],
+        [
+          "content_block_delta",
+          {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "signature_delta", signature: "sig" },
+          },
+        ],
         ["content_block_stop", { type: "content_block_stop", index: 0 }],
-        ["content_block_start", { type: "content_block_start", index: 1, content_block: { type: "text" } }],
-        ["content_block_delta", { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "answer" } }],
+        [
+          "content_block_start",
+          { type: "content_block_start", index: 1, content_block: { type: "text" } },
+        ],
+        [
+          "content_block_delta",
+          { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "answer" } },
+        ],
         ["content_block_stop", { type: "content_block_stop", index: 1 }],
         ["message_delta", { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: {} }],
         messageStop(),
@@ -128,8 +185,18 @@ describe("relay client: seal semantics (post-first-byte, never re-called)", () =
           encoder.encode(
             sseLines([
               messageStart(),
-              ["content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text" } }],
-              ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "par" } }],
+              [
+                "content_block_start",
+                { type: "content_block_start", index: 0, content_block: { type: "text" } },
+              ],
+              [
+                "content_block_delta",
+                {
+                  type: "content_block_delta",
+                  index: 0,
+                  delta: { type: "text_delta", text: "par" },
+                },
+              ],
             ]),
           ),
         );
@@ -150,8 +217,14 @@ describe("relay client: seal semantics (post-first-byte, never re-called)", () =
   test("EOF without message_stop is a break, never an implicit completion", async () => {
     const sse = sseLines([
       messageStart(),
-      ["content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text" } }],
-      ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "cut" } }],
+      [
+        "content_block_start",
+        { type: "content_block_start", index: 0, content_block: { type: "text" } },
+      ],
+      [
+        "content_block_delta",
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "cut" } },
+      ],
     ]);
     const provider = new AnthropicRelayProvider({
       ...CONFIG,
@@ -168,10 +241,19 @@ describe("relay client: seal semantics (post-first-byte, never re-called)", () =
     const sse =
       sseLines([
         messageStart(),
-        ["content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text" } }],
-        ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "partial" } }],
+        [
+          "content_block_start",
+          { type: "content_block_start", index: 0, content_block: { type: "text" } },
+        ],
+        [
+          "content_block_delta",
+          { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "partial" } },
+        ],
         ["content_block_stop", { type: "content_block_stop", index: 0 }],
-        ["message_delta", { type: "message_delta", delta: { stop_reason: "max_tokens" }, usage: {} }],
+        [
+          "message_delta",
+          { type: "message_delta", delta: { stop_reason: "max_tokens" }, usage: {} },
+        ],
         messageStop(),
       ]) + "\n";
     const provider = new AnthropicRelayProvider({
@@ -188,8 +270,22 @@ describe("relay client: seal semantics (post-first-byte, never re-called)", () =
     const sse =
       sseLines([
         messageStart(),
-        ["content_block_start", { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "call_1", name: "bash" } }],
-        ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"command\": \"echo" } }],
+        [
+          "content_block_start",
+          {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "tool_use", id: "call_1", name: "bash" },
+          },
+        ],
+        [
+          "content_block_delta",
+          {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "input_json_delta", partial_json: '{"command": "echo' },
+          },
+        ],
         ["content_block_stop", { type: "content_block_stop", index: 0 }],
         ["message_delta", { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: {} }],
         messageStop(),
@@ -239,7 +335,10 @@ describe("relay client: pre-first-byte classification", () => {
   });
 
   test("401 → non-retryable auth failure", async () => {
-    const provider = statusProvider(401, { type: "error", error: { type: "authentication_error" } });
+    const provider = statusProvider(401, {
+      type: "error",
+      error: { type: "authentication_error" },
+    });
     await expect(collect(provider)).rejects.toMatchObject({
       retryable: false,
       afterFirstByte: false,
@@ -276,7 +375,10 @@ describe("relay client: abort", () => {
           encoder.encode(
             sseLines([
               messageStart(),
-              ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "x" } }],
+              [
+                "content_block_delta",
+                { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "x" } },
+              ],
             ]),
           ),
         );
@@ -284,7 +386,9 @@ describe("relay client: abort", () => {
         // abort breaks the pending read with an AbortError.
         controller.signal.addEventListener(
           "abort",
-          () => stream.error(new DOMException("The operation was aborted.", "AbortError")),
+          () => {
+            stream.error(new DOMException("The operation was aborted.", "AbortError"));
+          },
           { once: true },
         );
       },
@@ -293,9 +397,9 @@ describe("relay client: abort", () => {
       ...CONFIG,
       fetchImpl: async () => new Response(body, { status: 200 }),
     });
-    const iterator = provider.streamTurn(REQUEST, { signal: controller.signal })[
-      Symbol.asyncIterator
-    ]();
+    const iterator = provider
+      .streamTurn(REQUEST, { signal: controller.signal })
+      [Symbol.asyncIterator]();
     const first = await iterator.next();
     expect(first.value.kind).toBe("text-delta");
     controller.abort();

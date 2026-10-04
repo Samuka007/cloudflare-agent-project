@@ -32,7 +32,7 @@ export interface AgentDoRpc {
   }): Promise<{ threadId: string; duplicated: boolean }>;
   sendMessage(args: {
     clientRequestId: string;
-    content: Array<{ type: "text"; text: string }>;
+    content: { type: "text"; text: string }[];
     mode: "auto" | "start" | "steer";
   }): Promise<{ turnId: string; steer: boolean; duplicated: boolean }>;
   getEvents(args: {
@@ -120,9 +120,7 @@ function bridgeFailure(
   where: string,
   outcome: Extract<AdapterCommandOutcome, { ok: false }>,
 ): never {
-  throw new Error(
-    `${where} failed: ${outcome.errorCode}: ${outcome.errorMessage}`,
-  );
+  throw new Error(`${where} failed: ${outcome.errorCode}: ${outcome.errorMessage}`);
 }
 
 function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
@@ -135,13 +133,12 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
   const orchestrator = orchestratorNs.get(
     orchestratorNs.idFromName(hostId),
   ) as unknown as OrchestratorJournalRpc;
-  const manager = managerNs.get(
-    managerNs.idFromName("manager"),
-  ) as unknown as ManagerRegistryRpc;
+  const manager = managerNs.get(managerNs.idFromName("manager")) as unknown as ManagerRegistryRpc;
   // Reads stay direct: the event log projection lives on the per-thread DO.
-  const reader = env.AGENT_DO.get(
-    env.AGENT_DO.idFromName(threadId),
-  ) as unknown as Pick<AgentDoRpc, "getEvents">;
+  const reader = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId)) as unknown as Pick<
+    AgentDoRpc,
+    "getEvents"
+  >;
 
   async function dispatch(command: AdapterCommand): Promise<AdapterCommandOutcome> {
     const ensured = await orchestrator.ensureHost({ hostId });
@@ -167,9 +164,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
         type: "thread/start",
         threadId,
         cwd: env.DATA_DIR ?? "/data",
-        ...(args.title
-          ? { input: [{ type: "text", text: args.title, mentions: [] }] }
-          : {}),
+        ...(args.title ? { input: [{ type: "text", text: args.title, mentions: [] }] } : {}),
         options: bridgeContext(env),
         instructionMode: "append",
       };
@@ -206,9 +201,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
       if (args.mode === "steer") {
         const outcome = await steerTurn();
         if (outcome === null) {
-          throw new Error(
-            `sendMessage failed: steer requested with no active provider turn`,
-          );
+          throw new Error(`sendMessage failed: steer requested with no active provider turn`);
         }
         if (!outcome.ok) bridgeFailure("turn/steer", outcome);
         const result = outcome.result as { turnId?: string };
@@ -259,9 +252,10 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
     // The daemon-service DO delivers execution updates itself (#30 forward
     // path); the control plane never originates them.
     async onExecutionUpdate(u) {
-      const stub = env.AGENT_DO.get(
-        env.AGENT_DO.idFromName(threadId),
-      ) as unknown as Pick<AgentDoRpc, "onExecutionUpdate">;
+      const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId)) as unknown as Pick<
+        AgentDoRpc,
+        "onExecutionUpdate"
+      >;
       return stub.onExecutionUpdate(u);
     },
   };
@@ -272,10 +266,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
  * not yet created). bb getLatestThreadSequence equivalent on the D1 events
  * table (data.ts:328) — here the log lives in the DO.
  */
-export async function getLatestThreadSequence(
-  env: Env,
-  threadId: string,
-): Promise<number> {
+export async function getLatestThreadSequence(env: Env, threadId: string): Promise<number> {
   const result = await agentDoFor(env, threadId).getEvents({
     sinceSeq: Number.MAX_SAFE_INTEGER,
     limit: 1,

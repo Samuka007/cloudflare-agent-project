@@ -17,24 +17,18 @@ export function setProviderAdapter(adapter: ProviderAdapter): void {
 
 export function getProviderAdapter(): ProviderAdapter {
   if (providerAdapter === undefined) {
-    throw new Error(
-      "no provider adapter installed — call setProviderAdapter() first",
-    );
+    throw new Error("no provider adapter installed — call setProviderAdapter() first");
   }
   return providerAdapter;
 }
 
-export function setMachineDispatcher(
-  dispatcher: MachineCommandDispatcher,
-): void {
+export function setMachineDispatcher(dispatcher: MachineCommandDispatcher): void {
   machineDispatcher = dispatcher;
 }
 
 export function getMachineDispatcher(): MachineCommandDispatcher {
   if (machineDispatcher === undefined) {
-    throw new Error(
-      "no machine dispatcher installed — call setMachineDispatcher() first",
-    );
+    throw new Error("no machine dispatcher installed — call setMachineDispatcher() first");
   }
   return machineDispatcher;
 }

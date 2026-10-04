@@ -11,42 +11,48 @@
  */
 declare const __untyped: unique symbol;
 /** Sentinel type for endpoints whose output is not yet explicitly typed. */
-export type Untyped = { readonly [__untyped]: never };
-export type Endpoint<
+export interface Untyped {
+  readonly [__untyped]: never;
+}
+export interface Endpoint<
   Input,
   Output = Untyped,
   Status extends number = 200,
   Format extends "json" | "text" | "binary" = "json",
-> = {
+> {
   input: Input;
   output: Output;
   outputFormat: Format;
   status: Status;
-};
+}
 export type EmptyInput = Record<never, never>;
 
-export type PathId = { param: { id: string } };
-export type PathProjectId = { param: { id: string } };
-export type PathThreadAndQueuedMessage = {
+export interface PathId {
+  param: { id: string };
+}
+export interface PathProjectId {
+  param: { id: string };
+}
+export interface PathThreadAndQueuedMessage {
   param: { id: string; queuedMessageId: string };
-};
+}
 /**
  * Thread routes that address a workspace-relative file as a path suffix
  * (`:filePath{.+}` matches across slashes). Clients must percent-encode each
  * path segment themselves — hono's `$url()` substitutes params verbatim.
  */
-export type PathThreadAndFilePath = {
+export interface PathThreadAndFilePath {
   param: { id: string; filePath: string };
-};
-export type PathPreviewAndFilePath = {
+}
+export interface PathPreviewAndFilePath {
   param: { id: string; filePath: string };
-};
-export type PathThreadAndTerminal = {
+}
+export interface PathThreadAndTerminal {
   param: { id: string; terminalId: string };
-};
-export type PathEnvironmentAndTerminal = {
+}
+export interface PathEnvironmentAndTerminal {
   param: { id: string; terminalId: string };
-};
-export type PathTerminal = {
+}
+export interface PathTerminal {
   param: { terminalId: string };
-};
+}

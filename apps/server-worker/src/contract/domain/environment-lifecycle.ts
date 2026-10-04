@@ -93,8 +93,7 @@ export interface EnvironmentLifecyclePathDependentTarget {
 }
 
 export type EnvironmentLifecycleTarget =
-  | EnvironmentStatus
-  | EnvironmentLifecyclePathDependentTarget;
+  EnvironmentStatus | EnvironmentLifecyclePathDependentTarget;
 
 /**
  * The environment state machine. Two structural properties (the B* decoupling):
@@ -155,13 +154,10 @@ export interface EnvironmentLifecycleRowState {
   status: EnvironmentStatus;
 }
 
-export type EnvironmentLifecycleNoopReason =
-  | "illegal-transition"
-  | "superseded";
+export type EnvironmentLifecycleNoopReason = "illegal-transition" | "superseded";
 
 export type EnvironmentLifecycleEvaluation =
-  | { to: EnvironmentStatus }
-  | { noop: EnvironmentLifecycleNoopReason; detail: string };
+  { to: EnvironmentStatus } | { noop: EnvironmentLifecycleNoopReason; detail: string };
 
 export interface EvaluateEnvironmentLifecycleEventArgs {
   environment: EnvironmentLifecycleRowState;
@@ -203,9 +199,6 @@ export function evaluateEnvironmentLifecycleEvent(
     return { to: target };
   }
   return {
-    to:
-      environment.path !== null
-        ? target.withWorkspacePath
-        : target.withoutWorkspacePath,
+    to: environment.path !== null ? target.withWorkspacePath : target.withoutWorkspacePath,
   };
 }

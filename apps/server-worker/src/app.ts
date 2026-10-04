@@ -73,12 +73,10 @@ export function createApp(env: Env): Hono<AppEnv> {
   return app;
 }
 
-async function serveAssets(
-  env: Env,
-  request: Request,
-  spaFallback: boolean,
-): Promise<Response> {
-  const assetResponse = await env.ASSETS.fetch(new Request(request.url, { headers: request.headers }));
+async function serveAssets(env: Env, request: Request, spaFallback: boolean): Promise<Response> {
+  const assetResponse = await env.ASSETS.fetch(
+    new Request(request.url, { headers: request.headers }),
+  );
   if (assetResponse.status !== 404) {
     const headers = new Headers(assetResponse.headers);
     if (new URL(request.url).pathname.startsWith("/assets/")) {

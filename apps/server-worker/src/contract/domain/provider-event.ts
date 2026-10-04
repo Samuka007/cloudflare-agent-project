@@ -18,10 +18,7 @@ import {
   turnRequestRejectedEventDataSchema,
 } from "./thread-events.js";
 import { jsonValueSchema } from "./json-value.js";
-import {
-  threadEventScopeSchema,
-  validateThreadEventScope,
-} from "./thread-event-scope.js";
+import { threadEventScopeSchema, validateThreadEventScope } from "./thread-event-scope.js";
 import { clientTurnRequestIdSchema } from "./protocol-ids.js";
 import {
   backgroundTaskStatusSchema,
@@ -41,15 +38,9 @@ export type ThreadEventItemStatus = z.infer<typeof threadEventItemStatusSchema>;
 export const threadEventItemApprovalStatusSchema = z
   .enum(["waiting_for_approval", "denied"])
   .nullable();
-export type ThreadEventItemApprovalStatus = z.infer<
-  typeof threadEventItemApprovalStatusSchema
->;
+export type ThreadEventItemApprovalStatus = z.infer<typeof threadEventItemApprovalStatusSchema>;
 
-export const threadEventTurnStatusSchema = z.enum([
-  "completed",
-  "failed",
-  "interrupted",
-]);
+export const threadEventTurnStatusSchema = z.enum(["completed", "failed", "interrupted"]);
 export type ThreadEventTurnStatus = z.infer<typeof threadEventTurnStatusSchema>;
 
 export const providerErrorCategoryValues = [
@@ -83,15 +74,8 @@ export const providerErrorInfoSchema = z.object({
 });
 export type ProviderErrorInfo = z.infer<typeof providerErrorInfoSchema>;
 
-export const providerRateLimitStatusSchema = z.enum([
-  "allowed",
-  "warning",
-  "blocked",
-  "unknown",
-]);
-export type ProviderRateLimitStatus = z.infer<
-  typeof providerRateLimitStatusSchema
->;
+export const providerRateLimitStatusSchema = z.enum(["allowed", "warning", "blocked", "unknown"]);
+export type ProviderRateLimitStatus = z.infer<typeof providerRateLimitStatusSchema>;
 
 export const providerRateLimitWindowSchema = z.object({
   /** Opaque provider-issued key. New provider windows must not break parsing. */
@@ -100,9 +84,7 @@ export const providerRateLimitWindowSchema = z.object({
   status: providerRateLimitStatusSchema,
   resetsAtMs: z.number().int().nonnegative().nullable(),
 });
-export type ProviderRateLimitWindow = z.infer<
-  typeof providerRateLimitWindowSchema
->;
+export type ProviderRateLimitWindow = z.infer<typeof providerRateLimitWindowSchema>;
 
 export const providerRateLimitStateSchema = z.object({
   providerId: z.string().min(1),
@@ -110,20 +92,12 @@ export const providerRateLimitStateSchema = z.object({
   kind: z.enum(["subscription-window", "credits", "spend-control", "unknown"]),
   windows: z.array(providerRateLimitWindowSchema),
   reachedReason: z.string().min(1).nullable(),
-  overageStatus: z
-    .enum(["allowed", "warning", "rejected", "unavailable"])
-    .nullable(),
+  overageStatus: z.enum(["allowed", "warning", "rejected", "unavailable"]).nullable(),
   overageReason: z.string().min(1).nullable(),
 });
-export type ProviderRateLimitState = z.infer<
-  typeof providerRateLimitStateSchema
->;
+export type ProviderRateLimitState = z.infer<typeof providerRateLimitStateSchema>;
 
-export const threadEventFileChangeKindSchema = z.enum([
-  "add",
-  "delete",
-  "update",
-]);
+export const threadEventFileChangeKindSchema = z.enum(["add", "delete", "update"]);
 
 export const threadEventFileChangeSchema = z.object({
   path: z.string(),
@@ -133,15 +107,8 @@ export const threadEventFileChangeSchema = z.object({
 });
 export type ThreadEventFileChange = z.infer<typeof threadEventFileChangeSchema>;
 
-export const threadEventPlanStepStatusSchema = z.enum([
-  "pending",
-  "active",
-  "completed",
-  "failed",
-]);
-export type ThreadEventPlanStepStatus = z.infer<
-  typeof threadEventPlanStepStatusSchema
->;
+export const threadEventPlanStepStatusSchema = z.enum(["pending", "active", "completed", "failed"]);
+export type ThreadEventPlanStepStatus = z.infer<typeof threadEventPlanStepStatusSchema>;
 
 export const threadEventPlanStepSchema = z.object({
   step: z.string(),
@@ -157,9 +124,7 @@ export const threadEventWebSearchItemSchema = z.object({
   parentToolCallId: z.string().optional(),
   parentBackgroundTaskId: z.string().optional(),
 });
-export type ThreadEventWebSearchItem = z.infer<
-  typeof threadEventWebSearchItemSchema
->;
+export type ThreadEventWebSearchItem = z.infer<typeof threadEventWebSearchItemSchema>;
 
 export const threadEventWebFetchItemSchema = z.object({
   type: z.literal("webFetch"),
@@ -171,9 +136,7 @@ export const threadEventWebFetchItemSchema = z.object({
   parentToolCallId: z.string().optional(),
   parentBackgroundTaskId: z.string().optional(),
 });
-export type ThreadEventWebFetchItem = z.infer<
-  typeof threadEventWebFetchItemSchema
->;
+export type ThreadEventWebFetchItem = z.infer<typeof threadEventWebFetchItemSchema>;
 
 export const threadEventImageViewItemSchema = z.object({
   type: z.literal("imageView"),
@@ -182,9 +145,7 @@ export const threadEventImageViewItemSchema = z.object({
   parentToolCallId: z.string().optional(),
   parentBackgroundTaskId: z.string().optional(),
 });
-export type ThreadEventImageViewItem = z.infer<
-  typeof threadEventImageViewItemSchema
->;
+export type ThreadEventImageViewItem = z.infer<typeof threadEventImageViewItemSchema>;
 
 export const threadEventTextTruncationSchema = z.object({
   originalLength: z.number(),
@@ -205,9 +166,7 @@ export const threadEventUserContentSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("localImage"), path: z.string() }),
   z.object({ type: z.literal("localFile"), path: z.string() }),
 ]);
-export type ThreadEventUserContent = z.infer<
-  typeof threadEventUserContentSchema
->;
+export type ThreadEventUserContent = z.infer<typeof threadEventUserContentSchema>;
 
 export const threadEventTokenUsageBreakdownSchema = z.object({
   totalTokens: z.number(),
@@ -216,18 +175,14 @@ export const threadEventTokenUsageBreakdownSchema = z.object({
   outputTokens: z.number(),
   reasoningOutputTokens: z.number(),
 });
-export type ThreadEventTokenUsageBreakdown = z.infer<
-  typeof threadEventTokenUsageBreakdownSchema
->;
+export type ThreadEventTokenUsageBreakdown = z.infer<typeof threadEventTokenUsageBreakdownSchema>;
 
 export const threadEventContextWindowUsageSchema = z.object({
   usedTokens: z.number().nullable(),
   modelContextWindow: z.number().nullable(),
   estimated: z.boolean(),
 });
-export type ThreadEventContextWindowUsage = z.infer<
-  typeof threadEventContextWindowUsageSchema
->;
+export type ThreadEventContextWindowUsage = z.infer<typeof threadEventContextWindowUsageSchema>;
 
 export const threadEventTokenUsageSchema = z.object({
   total: threadEventTokenUsageBreakdownSchema,
@@ -236,14 +191,8 @@ export const threadEventTokenUsageSchema = z.object({
 });
 export type ThreadEventTokenUsage = z.infer<typeof threadEventTokenUsageSchema>;
 
-export const threadEventWarningCategorySchema = z.enum([
-  "deprecation",
-  "config",
-  "general",
-]);
-export type ThreadEventWarningCategory = z.infer<
-  typeof threadEventWarningCategorySchema
->;
+export const threadEventWarningCategorySchema = z.enum(["deprecation", "config", "general"]);
+export type ThreadEventWarningCategory = z.infer<typeof threadEventWarningCategorySchema>;
 
 export const providerRawEventSchema = z.object({
   jsonrpc: z.literal("2.0"),
@@ -337,9 +286,7 @@ export const threadEventBackgroundTaskItemSchema = z.object({
   parentToolCallId: z.string().optional(),
   parentBackgroundTaskId: z.string().optional(),
 });
-export type ThreadEventBackgroundTaskItem = z.infer<
-  typeof threadEventBackgroundTaskItemSchema
->;
+export type ThreadEventBackgroundTaskItem = z.infer<typeof threadEventBackgroundTaskItemSchema>;
 
 export const threadEventItemSchema = z.discriminatedUnion("type", [
   z
@@ -396,9 +343,7 @@ export const threadEventItemSchema = z.discriminatedUnion("type", [
     tool: z.string(),
     arguments: z.record(z.string(), z.unknown()).optional(),
     /** Server-enriched labels for a native plugin tool's timeline row. */
-    statusLabels: z
-      .object({ pending: z.string(), completed: z.string() })
-      .optional(),
+    statusLabels: z.object({ pending: z.string(), completed: z.string() }).optional(),
     status: threadEventItemStatusSchema,
     result: z.unknown().optional(),
     error: z.string().optional(),
@@ -444,9 +389,7 @@ export const ompSessionRecoveryDescriptorSchema = z
     sessionFile: z.string().min(1),
   })
   .strict();
-export type OmpSessionRecoveryDescriptor = z.infer<
-  typeof ompSessionRecoveryDescriptorSchema
->;
+export type OmpSessionRecoveryDescriptor = z.infer<typeof ompSessionRecoveryDescriptorSchema>;
 
 /**
  * Events originating from a provider process via the agent runtime.
@@ -688,14 +631,9 @@ const unscopedProviderEventSchema = z.discriminatedUnion("type", [
 const scopedEventDataSchema = z.object({
   scope: threadEventScopeSchema,
 });
-export const providerEventSchema = unscopedProviderEventSchema.and(
-  scopedEventDataSchema,
-);
+export const providerEventSchema = unscopedProviderEventSchema.and(scopedEventDataSchema);
 export type ProviderEvent = z.infer<typeof providerEventSchema>;
-export type ProviderUnhandledEvent = Extract<
-  ProviderEvent,
-  { type: "provider/unhandled" }
->;
+export type ProviderUnhandledEvent = Extract<ProviderEvent, { type: "provider/unhandled" }>;
 export const providerEventTypeValues = unscopedProviderEventSchema.options.map(
   (option) => option.shape.type.value,
 );
@@ -778,61 +716,54 @@ const unscopedSystemEventSchema = z.union([
     })
     .merge(systemProviderTurnWatchdogEventDataSchema),
 ]);
-export const systemEventSchema = unscopedSystemEventSchema.and(
-  scopedEventDataSchema,
-);
+export const systemEventSchema = unscopedSystemEventSchema.and(scopedEventDataSchema);
 
 const eventPropertyBagSchema = z.record(z.string(), z.unknown());
 const legacyClientRequestKey = ["clientRequest", "Sequence"].join("");
-const rejectLegacyClientRequestSequenceSchema = z
-  .unknown()
-  .superRefine((value, ctx) => {
-    const eventResult = eventPropertyBagSchema.safeParse(value);
-    if (!eventResult.success) {
-      return;
-    }
+const rejectLegacyClientRequestSequenceSchema = z.unknown().superRefine((value, ctx) => {
+  const eventResult = eventPropertyBagSchema.safeParse(value);
+  if (!eventResult.success) {
+    return;
+  }
 
-    if (Object.hasOwn(eventResult.data, legacyClientRequestKey)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "legacy request sequence field is no longer accepted",
-        path: [legacyClientRequestKey],
-      });
-    }
+  if (Object.hasOwn(eventResult.data, legacyClientRequestKey)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "legacy request sequence field is no longer accepted",
+      path: [legacyClientRequestKey],
+    });
+  }
 
-    const itemResult = eventPropertyBagSchema.safeParse(eventResult.data.item);
-    if (
-      itemResult.success &&
-      itemResult.data.type === "userMessage" &&
-      Object.hasOwn(itemResult.data, legacyClientRequestKey)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "legacy user-message request sequence field is no longer accepted",
-        path: ["item", legacyClientRequestKey],
-      });
-    }
-  });
+  const itemResult = eventPropertyBagSchema.safeParse(eventResult.data.item);
+  if (
+    itemResult.success &&
+    itemResult.data.type === "userMessage" &&
+    Object.hasOwn(itemResult.data, legacyClientRequestKey)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "legacy user-message request sequence field is no longer accepted",
+      path: ["item", legacyClientRequestKey],
+    });
+  }
+});
 
 /** All thread events — provider-originated or system-originated. */
 export const threadEventSchema = rejectLegacyClientRequestSequenceSchema.pipe(
-  z
-    .union([providerEventSchema, systemEventSchema])
-    .superRefine((event, ctx) => {
-      const result = validateThreadEventScope({
-        type: event.type,
-        scope: event.scope,
+  z.union([providerEventSchema, systemEventSchema]).superRefine((event, ctx) => {
+    const result = validateThreadEventScope({
+      type: event.type,
+      scope: event.scope,
+    });
+    if (!result.valid) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: result.message ?? "Invalid thread event scope",
+        path: ["scope"],
       });
-      if (!result.valid) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: result.message ?? "Invalid thread event scope",
-          path: ["scope"],
-        });
-        return;
-      }
-    }),
+      return;
+    }
+  }),
 );
 export type ThreadEvent = z.infer<typeof threadEventSchema>;
 export type ThreadEventType = ThreadEvent["type"];

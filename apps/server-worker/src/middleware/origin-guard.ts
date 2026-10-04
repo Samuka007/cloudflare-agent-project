@@ -28,7 +28,13 @@ function parseOriginLike(value: string): URL | null {
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       return null;
     }
-    if (url.username !== "" || url.password !== "" || url.pathname !== "/" || url.search !== "" || url.hash !== "") {
+    if (
+      url.username !== "" ||
+      url.password !== "" ||
+      url.pathname !== "/" ||
+      url.search !== "" ||
+      url.hash !== ""
+    ) {
       return null;
     }
     return url;
@@ -40,11 +46,9 @@ function parseOriginLike(value: string): URL | null {
 function requestTargets(ctx: Context): RequestTargets {
   const origins = new Set<string>();
   const hostnames = new Set<string>();
-  const proto = ctx.req.header("x-forwarded-proto") ?? new URL(ctx.req.url).protocol.replace(":", "");
-  const candidates = [
-    ctx.req.header("host"),
-    ctx.req.header("x-forwarded-host")?.split(",")[0],
-  ];
+  const proto =
+    ctx.req.header("x-forwarded-proto") ?? new URL(ctx.req.url).protocol.replace(":", "");
+  const candidates = [ctx.req.header("host"), ctx.req.header("x-forwarded-host")?.split(",")[0]];
   for (const candidate of candidates) {
     if (!candidate) {
       continue;
@@ -105,7 +109,10 @@ const GUARD_EXEMPT_PREFIXES: string[] = [];
 
 export async function originGuard(ctx: Context, next: Next): Promise<Response | void> {
   const origin = ctx.req.header("origin");
-  if (origin !== undefined && !GUARD_EXEMPT_PREFIXES.some((prefix) => ctx.req.path.startsWith(prefix))) {
+  if (
+    origin !== undefined &&
+    !GUARD_EXEMPT_PREFIXES.some((prefix) => ctx.req.path.startsWith(prefix))
+  ) {
     const trusted = isTrustedOrigin(origin, ctx.env as Env, requestTargets(ctx));
     if (!trusted) {
       throw new ApiError({

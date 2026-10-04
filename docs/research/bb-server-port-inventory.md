@@ -26,19 +26,19 @@
 
 `server.ts:463-473` 注册 11 个公开路由族（前缀 `/api/v1`）：
 
-| 路由族 | 文件 | 覆盖 |
-|---|---|---|
-| projects | `routes/projects.ts` | 项目 CRUD、sources、attachments、threads 嵌套、skills、execution defaults（:133-246 响应组装） |
-| thread-sections | `routes/thread-sections.ts` | 侧栏分区管理 |
-| files | `routes/files.ts` | 文件浏览/预览 lease（TTL 内存 map，:363-386） |
-| hosts | `routes/hosts.ts` | 机器 fleet |
-| terminals | `routes/terminals.ts` | 终端会话 REST |
-| environments | `routes/environments.ts` | 环境管理 |
-| threads | `routes/threads/index.ts:9-15`（base/actions/data/interactions/tabs 五子文件） | 线程 CRUD、发消息、timeline（rows+maxSeq+page+delta，`routes/threads/data.ts:389-432` 带 timelineLatestRowsCache/conversationOutlineCache 内存 LRU） |
-| system | `routes/system.ts` | `/system/config`、generalSettings（app_settings 表读写 :162-201）、keybindings、appearance、experiments、voice transcription（:352-365） |
-| plugin-catalog | `routes/plugin-catalog.ts:33-155` | 目录、搜索、图标、install、marketplaces |
-| plugins | `routes/plugins.ts:196-612` | 插件 CRUD、settings、rpc 分发、日志、token、updates |
-| skills-registry | `routes/skills-registry.ts:52-165` | 技能市场 |
+| 路由族          | 文件                                                                           | 覆盖                                                                                                                                                 |
+| --------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| projects        | `routes/projects.ts`                                                           | 项目 CRUD、sources、attachments、threads 嵌套、skills、execution defaults（:133-246 响应组装）                                                       |
+| thread-sections | `routes/thread-sections.ts`                                                    | 侧栏分区管理                                                                                                                                         |
+| files           | `routes/files.ts`                                                              | 文件浏览/预览 lease（TTL 内存 map，:363-386）                                                                                                        |
+| hosts           | `routes/hosts.ts`                                                              | 机器 fleet                                                                                                                                           |
+| terminals       | `routes/terminals.ts`                                                          | 终端会话 REST                                                                                                                                        |
+| environments    | `routes/environments.ts`                                                       | 环境管理                                                                                                                                             |
+| threads         | `routes/threads/index.ts:9-15`（base/actions/data/interactions/tabs 五子文件） | 线程 CRUD、发消息、timeline（rows+maxSeq+page+delta，`routes/threads/data.ts:389-432` 带 timelineLatestRowsCache/conversationOutlineCache 内存 LRU） |
+| system          | `routes/system.ts`                                                             | `/system/config`、generalSettings（app_settings 表读写 :162-201）、keybindings、appearance、experiments、voice transcription（:352-365）             |
+| plugin-catalog  | `routes/plugin-catalog.ts:33-155`                                              | 目录、搜索、图标、install、marketplaces                                                                                                              |
+| plugins         | `routes/plugins.ts:196-612`                                                    | 插件 CRUD、settings、rpc 分发、日志、token、updates                                                                                                  |
+| skills-registry | `routes/skills-registry.ts:52-165`                                             | 技能市场                                                                                                                                             |
 
 `/internal/*`（daemon 专用，`server.ts:480-486`）：hosts（enroll/enroll-key）、session（命令/事件/工具回调/交互请求）、skills（技能树 hash 拉取）、events、tool-calls、interactive-requests。鉴权例外清单 :381-402（enroll-key/enroll/ws 豁免，其余验 Bearer daemon key）。
 
@@ -63,7 +63,7 @@
 
 ### 1.6 持久化格局
 
-- **SQLite（better-sqlite3 + drizzle，`packages/db/src/connection.ts:1-3,168`）**：40+ 迁移表——threads、events（append-only，`event_large_values` 溢出表 `0031` :1）、projects、environments、hosts、host_daemon_*、terminal_sessions、pending_interactions、app_settings（`0026`）、system_experiments（`0028`）、app_theme（`0042`）、automation_*、workflow_*、prompt_history_entries、queued_thread_messages、thread_search_segments 等。
+- **SQLite（better-sqlite3 + drizzle，`packages/db/src/connection.ts:1-3,168`）**：40+ 迁移表——threads、events（append-only，`event_large_values` 溢出表 `0031` :1）、projects、environments、hosts、host_daemon__、terminal_sessions、pending_interactions、app_settings（`0026`）、system_experiments（`0028`）、app_theme（`0042`）、automation__、workflow_*、prompt_history_entries、queued_thread_messages、thread_search_segments 等。
 - **纯内存（移植时必须显式安置）**：NotificationHub 全部 socket/订阅/waiter 态、`routes/files.ts` previewLeases（:363，TTL→DO alarm 语义）、`routes/threads/data.ts` timeline LRU（:390-430，可丢弃）、`lifecycle-dedupers`、AsyncLocalStorage 请求上下文。
 
 ---
@@ -105,18 +105,18 @@ bridge ──spawn──► omp --mode rpc / claude-code / codex app-server / AC
 
 ## 3. harness / agent 应用级配置面（Q3）
 
-| 类别 | 入口 | 证据 |
-|---|---|---|
-| 模型路由 | thread execution options（model/serviceTier/reasoningLevel）+ project_execution_defaults 表 + 推理兜底 env | `provider-adapter.ts:115-132`；`start-server.ts:80-81`；`0000_baseline.sql:279` |
-| 执行设置漂移 | live vs session 分类 | `provider-adapter.ts:297-299` |
-| 权限 | RuntimePermissionPolicy + permission escalation（user turn ask / system turn deny）+ approvalRequestPolicy | `thread-runtime-config.ts:136-147`；`provider-adapter.ts:276-283` |
-| 工具策略 | dynamicTools/disallowedTools（built-in + 插件注册，session 启动时冻结） | `thread-runtime-config.ts:113-134` |
-| Prompt/instructions | STANDARD_AGENT_INSTRUCTIONS 模板 + 工具说明 + 插件 contributeInstructions（4096 上限）+ workspace/数据目录 instructions | `thread-runtime-config.ts:44-52,256-299` |
-| Skills | skillRoots（project/shared/plugin/injected 四源）+ SkillTreeRegistry + skills/configure | `thread-runtime-config.ts:191-245`；`runtime-provider-process.ts:222-240` |
-| MCP/ACP | 已知 ACP launch spec + bb-app managed config 自定义 ACP agent | `known-acp-agents.ts:26-94`；`start-server.ts:74` |
-| 插件设置 | plugins/:id/settings GET/PUT + app_settings/theme/experiments 表 | `routes/plugins.ts:477-506`；`routes/system.ts:162-201` |
-| 服务端模型调用 | OpenAI 兼容 key（标题生成/语音转写） | `start-server.ts:84,88`；`routes/system.ts:352-365` |
-| OMP 特例 | OMP 拥有自己的 tools/rules/skills/memory/auth/subagents | `thread-runtime-config.ts:186-189` |
+| 类别                | 入口                                                                                                                    | 证据                                                                            |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| 模型路由            | thread execution options（model/serviceTier/reasoningLevel）+ project_execution_defaults 表 + 推理兜底 env              | `provider-adapter.ts:115-132`；`start-server.ts:80-81`；`0000_baseline.sql:279` |
+| 执行设置漂移        | live vs session 分类                                                                                                    | `provider-adapter.ts:297-299`                                                   |
+| 权限                | RuntimePermissionPolicy + permission escalation（user turn ask / system turn deny）+ approvalRequestPolicy              | `thread-runtime-config.ts:136-147`；`provider-adapter.ts:276-283`               |
+| 工具策略            | dynamicTools/disallowedTools（built-in + 插件注册，session 启动时冻结）                                                 | `thread-runtime-config.ts:113-134`                                              |
+| Prompt/instructions | STANDARD_AGENT_INSTRUCTIONS 模板 + 工具说明 + 插件 contributeInstructions（4096 上限）+ workspace/数据目录 instructions | `thread-runtime-config.ts:44-52,256-299`                                        |
+| Skills              | skillRoots（project/shared/plugin/injected 四源）+ SkillTreeRegistry + skills/configure                                 | `thread-runtime-config.ts:191-245`；`runtime-provider-process.ts:222-240`       |
+| MCP/ACP             | 已知 ACP launch spec + bb-app managed config 自定义 ACP agent                                                           | `known-acp-agents.ts:26-94`；`start-server.ts:74`                               |
+| 插件设置            | plugins/:id/settings GET/PUT + app_settings/theme/experiments 表                                                        | `routes/plugins.ts:477-506`；`routes/system.ts:162-201`                         |
+| 服务端模型调用      | OpenAI 兼容 key（标题生成/语音转写）                                                                                    | `start-server.ts:84,88`；`routes/system.ts:352-365`                             |
+| OMP 特例            | OMP 拥有自己的 tools/rules/skills/memory/auth/subagents                                                                 | `thread-runtime-config.ts:186-189`                                              |
 
 M0 harness 最小面（#17 裁定 Q4）：模型中转配置 + host 绑定声明 + session 注册表；其余类别按需长进来。
 
@@ -125,6 +125,7 @@ M0 harness 最小面（#17 裁定 Q4）：模型中转配置 + host 绑定声明
 ## 4. Node 绑定清单（Q4）
 
 **server（apps/server/src）**：
+
 - `@hono/node-server` + `@hono/node-ws`：HTTP listener（start-server.ts:1,38-43）与 WS upgrade（server.ts:1,273）→ Workers 原生 fetch/WS。
 - `node:fs`：静态服务与预压缩旁车（server.ts:2,214-227,632）、install 资产（:326,344）、插件源（routes/plugins.ts:2）→ Workers Assets / R2。
 - `node:child_process`：bb-app tarball 重建（services/install/bb-app-artifact.ts:1-8）→ 削除。

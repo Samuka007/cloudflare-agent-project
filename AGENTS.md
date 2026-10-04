@@ -29,7 +29,7 @@ No leading marker. When only reviewing or commenting on agent-authored work, do 
 Your training memory is a **stale belief state**, not the world. Treat it accordingly:
 
 - **Priors are for discussion only.** Any fact that lands in code, rulings, config, or tickets must come from a fresh observation (schema introspection, official docs, live API call) — never from memory alone.
-- **Sample before high-cost actions.** The more irreversible the action, the earlier the observation: verify endpoints/protocols against current docs *before* calling, query the live schema *before* asserting an API exists.
+- **Sample before high-cost actions.** The more irreversible the action, the earlier the observation: verify endpoints/protocols against current docs _before_ calling, query the live schema _before_ asserting an API exists.
 - **Prior half-life scales with ecosystem velocity**: weeks for fast-moving surfaces (effect, GitHub GraphQL, Cloudflare API), years for stable ones (SQL, HTTP). Confidence must decay to match.
 - Known failure modes this rule exists to prevent: calling `/user/tokens/verify` with an account-owned `cfat_` token and concluding "invalid"; guessing GraphQL type names from memory instead of querying `__schema`.
 

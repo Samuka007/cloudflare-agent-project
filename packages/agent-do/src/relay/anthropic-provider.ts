@@ -134,7 +134,8 @@ export class AnthropicRelayProvider implements ModelProvider {
         switch (payload.type) {
           case "error": {
             throw new ModelProviderError({
-              message: `relay stream error: ${payload.error?.type ?? "unknown"} ${payload.error?.message ?? ""}`.trim(),
+              message:
+                `relay stream error: ${payload.error?.type ?? "unknown"} ${payload.error?.message ?? ""}`.trim(),
               retryable: false,
               afterFirstByte: true,
             });

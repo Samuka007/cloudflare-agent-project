@@ -75,9 +75,7 @@ export function clampPermissionModeToCeiling(args: {
   const supported = args.supportedPermissionModes ?? permissionModeValues;
   const allowed = supported
     .filter((mode) => permissionModeRank(mode) <= ceilingRank)
-    .sort(
-      (left, right) => permissionModeRank(right) - permissionModeRank(left),
-    );
+    .sort((left, right) => permissionModeRank(right) - permissionModeRank(left));
   return allowed[0] ?? null;
 }
 
@@ -88,29 +86,22 @@ export function clampPermissionModeToCeiling(args: {
  */
 export const permissionModeInputSchema = z
   .union([permissionModeSchema, z.literal("workspace-write")])
-  .transform(
-    (permissionMode): PermissionMode =>
-      permissionMode === "workspace-write" ? "accept-edits" : permissionMode,
+  .transform((permissionMode): PermissionMode =>
+    permissionMode === "workspace-write" ? "accept-edits" : permissionMode,
   );
 
-export const legacyRecordedPermissionModeValues = [
-  "workspace-write",
-  "readonly",
-] as const;
+export const legacyRecordedPermissionModeValues = ["workspace-write", "readonly"] as const;
 export const recordedPermissionModeSchema = z.enum([
   ...permissionModeValues,
   ...legacyRecordedPermissionModeValues,
 ]);
-export type RecordedPermissionMode = z.infer<
-  typeof recordedPermissionModeSchema
->;
+export type RecordedPermissionMode = z.infer<typeof recordedPermissionModeSchema>;
 
 export const permissionEscalationValues = ["ask", "deny"] as const;
 export const permissionEscalationSchema = z.enum(permissionEscalationValues);
 export type PermissionEscalation = z.infer<typeof permissionEscalationSchema>;
 
-export const DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_ENDPOINT =
-  "https://api.anthropic.com";
+export const DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_ENDPOINT = "https://api.anthropic.com";
 
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const CLAUDE_CODE_MOCK_CLI_TRAFFIC_TEST_HOSTNAME = "api.anthropic.com";
@@ -153,15 +144,12 @@ export const claudeCodeMockCliTrafficConfigSchema = z
     endpoint: claudeCodeMockCliTrafficEndpointSchema,
   })
   .strict();
-export type ClaudeCodeMockCliTrafficConfig = z.infer<
-  typeof claudeCodeMockCliTrafficConfigSchema
->;
+export type ClaudeCodeMockCliTrafficConfig = z.infer<typeof claudeCodeMockCliTrafficConfigSchema>;
 
-export const DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG: ClaudeCodeMockCliTrafficConfig =
-  {
-    enabled: false,
-    endpoint: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_ENDPOINT,
-  };
+export const DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG: ClaudeCodeMockCliTrafficConfig = {
+  enabled: false,
+  endpoint: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_ENDPOINT,
+};
 
 export const promptInputVisibilityValues = ["agent-only"] as const;
 export const promptInputVisibilitySchema = z.enum(promptInputVisibilityValues);
@@ -170,52 +158,25 @@ const promptInputVisibilityFields = {
   visibility: promptInputVisibilitySchema.optional(),
 };
 
-export const promptMentionPathSourceValues = [
-  "workspace",
-  "thread-storage",
-] as const;
-export const promptMentionPathSourceSchema = z.enum(
-  promptMentionPathSourceValues,
-);
-export type PromptMentionPathSource = z.infer<
-  typeof promptMentionPathSourceSchema
->;
+export const promptMentionPathSourceValues = ["workspace", "thread-storage"] as const;
+export const promptMentionPathSourceSchema = z.enum(promptMentionPathSourceValues);
+export type PromptMentionPathSource = z.infer<typeof promptMentionPathSourceSchema>;
 
 export const promptMentionPathEntryKindValues = ["file", "directory"] as const;
-export const promptMentionPathEntryKindSchema = z.enum(
-  promptMentionPathEntryKindValues,
-);
-export type PromptMentionPathEntryKind = z.infer<
-  typeof promptMentionPathEntryKindSchema
->;
+export const promptMentionPathEntryKindSchema = z.enum(promptMentionPathEntryKindValues);
+export type PromptMentionPathEntryKind = z.infer<typeof promptMentionPathEntryKindSchema>;
 
 export const promptMentionCommandTriggerValues = ["/"] as const;
-export const promptMentionCommandTriggerSchema = z.enum(
-  promptMentionCommandTriggerValues,
-);
-export type PromptMentionCommandTrigger = z.infer<
-  typeof promptMentionCommandTriggerSchema
->;
+export const promptMentionCommandTriggerSchema = z.enum(promptMentionCommandTriggerValues);
+export type PromptMentionCommandTrigger = z.infer<typeof promptMentionCommandTriggerSchema>;
 
 export const promptMentionCommandSourceValues = ["skill", "command"] as const;
-export const promptMentionCommandSourceSchema = z.enum(
-  promptMentionCommandSourceValues,
-);
-export type PromptMentionCommandSource = z.infer<
-  typeof promptMentionCommandSourceSchema
->;
+export const promptMentionCommandSourceSchema = z.enum(promptMentionCommandSourceValues);
+export type PromptMentionCommandSource = z.infer<typeof promptMentionCommandSourceSchema>;
 
-export const promptMentionCommandOriginValues = [
-  "builtin",
-  "project",
-  "user",
-] as const;
-export const promptMentionCommandOriginSchema = z.enum(
-  promptMentionCommandOriginValues,
-);
-export type PromptMentionCommandOrigin = z.infer<
-  typeof promptMentionCommandOriginSchema
->;
+export const promptMentionCommandOriginValues = ["builtin", "project", "user"] as const;
+export const promptMentionCommandOriginSchema = z.enum(promptMentionCommandOriginValues);
+export type PromptMentionCommandOrigin = z.infer<typeof promptMentionCommandOriginSchema>;
 
 const canonicalPromptMentionResourceSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -367,24 +328,16 @@ const BUILTIN_COMPACT_COMMAND = { trigger: "/", name: "compact" } as const;
  * Whether input consists solely of one selected built-in `/compact` mention.
  * Raw matching text and project/user commands intentionally do not qualify.
  */
-export function isStandaloneBuiltinCompactCommand(
-  input: readonly PromptInput[],
-): boolean {
+export function isStandaloneBuiltinCompactCommand(input: readonly PromptInput[]): boolean {
   const selected = input.flatMap((item) =>
     item.type === "text"
       ? item.mentions
-          .filter((mention) =>
-            isSelectedPromptCommandMention(mention, BUILTIN_COMPACT_COMMAND),
-          )
+          .filter((mention) => isSelectedPromptCommandMention(mention, BUILTIN_COMPACT_COMMAND))
           .map((mention) => ({ mention, text: item.text }))
       : [],
   );
   const standalone = selected[0];
-  if (
-    selected.length !== 1 ||
-    !standalone ||
-    input.some((item) => item.type !== "text")
-  ) {
+  if (selected.length !== 1 || !standalone || input.some((item) => item.type !== "text")) {
     return false;
   }
   const { mention, text } = standalone;
@@ -396,10 +349,9 @@ export function isStandaloneBuiltinCompactCommand(
   ) {
     return false;
   }
-  return removeCommandMentionsFromPromptInput(
-    input,
-    BUILTIN_COMPACT_COMMAND,
-  ).every((item) => item.type === "text" && item.text.trim() === "");
+  return removeCommandMentionsFromPromptInput(input, BUILTIN_COMPACT_COMMAND).every(
+    (item) => item.type === "text" && item.text.trim() === "",
+  );
 }
 
 /** Structured prompt input for the selected built-in `/compact` command. */
@@ -434,9 +386,7 @@ export function promptInputHasCommandMention(
   return input.some(
     (item) =>
       item.type === "text" &&
-      item.mentions.some((mention) =>
-        isSelectedPromptCommandMention(mention, selector),
-      ),
+      item.mentions.some((mention) => isSelectedPromptCommandMention(mention, selector)),
   );
 }
 
@@ -456,10 +406,7 @@ function commandRemovalRanges(
     .sort((left, right) => left.start - right.start || left.end - right.end);
 }
 
-function removedBefore(
-  ranges: readonly PromptCommandRemovalRange[],
-  position: number,
-): number {
+function removedBefore(ranges: readonly PromptCommandRemovalRange[], position: number): number {
   let removed = 0;
   for (const range of ranges) {
     if (range.end <= position) {
@@ -473,9 +420,7 @@ function isInsideRemovalRange(
   ranges: readonly PromptCommandRemovalRange[],
   mention: PromptTextMention,
 ): boolean {
-  return ranges.some(
-    (range) => mention.start < range.end && mention.end > range.start,
-  );
+  return ranges.some((range) => mention.start < range.end && mention.end > range.start);
 }
 
 function removeCommandMentionsFromTextInput(
@@ -517,9 +462,7 @@ export function removeCommandMentionsFromPromptInput(
   selector: PromptCommandSelector,
 ): PromptInput[] {
   return input.map((item) =>
-    item.type === "text"
-      ? removeCommandMentionsFromTextInput(item, selector)
-      : item,
+    item.type === "text" ? removeCommandMentionsFromTextInput(item, selector) : item,
   );
 }
 
@@ -530,16 +473,9 @@ export const threadExecutionSourceSchema = z.enum([
 ]);
 export type ThreadExecutionSource = z.infer<typeof threadExecutionSourceSchema>;
 
-export const callerExecutionInputSourceValues = [
-  "explicit",
-  "client-preference",
-] as const;
-export const callerExecutionInputSourceSchema = z.enum(
-  callerExecutionInputSourceValues,
-);
-export type CallerExecutionInputSource = z.infer<
-  typeof callerExecutionInputSourceSchema
->;
+export const callerExecutionInputSourceValues = ["explicit", "client-preference"] as const;
+export const callerExecutionInputSourceSchema = z.enum(callerExecutionInputSourceValues);
+export type CallerExecutionInputSource = z.infer<typeof callerExecutionInputSourceSchema>;
 
 export const threadExecutionOptionsSchema = z.object({
   model: z.string().optional(),
@@ -549,68 +485,51 @@ export const threadExecutionOptionsSchema = z.object({
   source: threadExecutionSourceSchema.optional(),
   seq: z.number().int().optional(),
 });
-export type ThreadExecutionOptions = z.infer<
-  typeof threadExecutionOptionsSchema
->;
+export type ThreadExecutionOptions = z.infer<typeof threadExecutionOptionsSchema>;
 
-export const resolvedThreadExecutionOptionsSchema =
-  threadExecutionOptionsSchema.extend({
-    model: z.string().min(1),
-    serviceTier: serviceTierSchema,
-    reasoningLevel: reasoningLevelSchema,
-    permissionMode: permissionModeSchema,
-    source: threadExecutionSourceSchema,
-  });
-export type ResolvedThreadExecutionOptions = z.infer<
-  typeof resolvedThreadExecutionOptionsSchema
->;
+export const resolvedThreadExecutionOptionsSchema = threadExecutionOptionsSchema.extend({
+  model: z.string().min(1),
+  serviceTier: serviceTierSchema,
+  reasoningLevel: reasoningLevelSchema,
+  permissionMode: permissionModeSchema,
+  source: threadExecutionSourceSchema,
+});
+export type ResolvedThreadExecutionOptions = z.infer<typeof resolvedThreadExecutionOptionsSchema>;
 
-export const recordedThreadExecutionOptionsSchema =
-  resolvedThreadExecutionOptionsSchema.extend({
-    permissionMode: recordedPermissionModeSchema,
-  });
-export type RecordedThreadExecutionOptions = z.infer<
-  typeof recordedThreadExecutionOptionsSchema
->;
+export const recordedThreadExecutionOptionsSchema = resolvedThreadExecutionOptionsSchema.extend({
+  permissionMode: recordedPermissionModeSchema,
+});
+export type RecordedThreadExecutionOptions = z.infer<typeof recordedThreadExecutionOptionsSchema>;
 
 export const runtimePermissionScopeValues = ["workspace", "full"] as const;
-export const runtimePermissionScopeSchema = z.enum(
-  runtimePermissionScopeValues,
-);
-export type RuntimePermissionScope = z.infer<
-  typeof runtimePermissionScopeSchema
->;
+export const runtimePermissionScopeSchema = z.enum(runtimePermissionScopeValues);
+export type RuntimePermissionScope = z.infer<typeof runtimePermissionScopeSchema>;
 
 export const approvalReviewerValues = ["user", "automatic"] as const;
 export const approvalReviewerSchema = z.enum(approvalReviewerValues);
 export type ApprovalReviewer = z.infer<typeof approvalReviewerSchema>;
 
-export const runtimePermissionPolicySchema = z.discriminatedUnion(
-  "permissionMode",
-  [
-    z.object({
-      permissionMode: z.literal("accept-edits"),
-      permissionScope: z.literal("workspace"),
-      approvalReviewer: z.literal("user"),
-      permissionEscalation: permissionEscalationSchema,
-    }),
-    z.object({
-      permissionMode: z.literal("auto"),
-      permissionScope: z.literal("workspace"),
-      approvalReviewer: z.literal("automatic"),
-      permissionEscalation: permissionEscalationSchema,
-    }),
-    z.object({
-      permissionMode: z.literal("full"),
-      permissionScope: z.literal("full"),
-      approvalReviewer: z.null(),
-      permissionEscalation: z.null(),
-    }),
-  ],
-);
-export type RuntimePermissionPolicy = z.infer<
-  typeof runtimePermissionPolicySchema
->;
+export const runtimePermissionPolicySchema = z.discriminatedUnion("permissionMode", [
+  z.object({
+    permissionMode: z.literal("accept-edits"),
+    permissionScope: z.literal("workspace"),
+    approvalReviewer: z.literal("user"),
+    permissionEscalation: permissionEscalationSchema,
+  }),
+  z.object({
+    permissionMode: z.literal("auto"),
+    permissionScope: z.literal("workspace"),
+    approvalReviewer: z.literal("automatic"),
+    permissionEscalation: permissionEscalationSchema,
+  }),
+  z.object({
+    permissionMode: z.literal("full"),
+    permissionScope: z.literal("full"),
+    approvalReviewer: z.null(),
+    permissionEscalation: z.null(),
+  }),
+]);
+export type RuntimePermissionPolicy = z.infer<typeof runtimePermissionPolicySchema>;
 
 const runtimeThreadExecutionBaseOptionsSchema = z.object({
   model: z.string().min(1),
@@ -634,11 +553,10 @@ const runtimeThreadExecutionBaseOptionsSchema = z.object({
   providerSubagentsEnabled: z.boolean().optional(),
 });
 
-export const runtimeThreadExecutionOptionsSchema =
-  runtimeThreadExecutionBaseOptionsSchema.and(runtimePermissionPolicySchema);
-export type RuntimeThreadExecutionOptions = z.infer<
-  typeof runtimeThreadExecutionOptionsSchema
->;
+export const runtimeThreadExecutionOptionsSchema = runtimeThreadExecutionBaseOptionsSchema.and(
+  runtimePermissionPolicySchema,
+);
+export type RuntimeThreadExecutionOptions = z.infer<typeof runtimeThreadExecutionOptionsSchema>;
 
 export const projectExecutionDefaultsSchema = z.object({
   providerId: z.string().min(1),
@@ -647,6 +565,4 @@ export const projectExecutionDefaultsSchema = z.object({
   reasoningLevel: reasoningLevelSchema,
   permissionMode: permissionModeSchema,
 });
-export type ProjectExecutionDefaults = z.infer<
-  typeof projectExecutionDefaultsSchema
->;
+export type ProjectExecutionDefaults = z.infer<typeof projectExecutionDefaultsSchema>;

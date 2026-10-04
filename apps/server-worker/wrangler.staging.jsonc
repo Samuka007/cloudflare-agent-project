@@ -14,14 +14,14 @@
     "directory": "public",
     "binding": "ASSETS",
     "not_found_handling": "none",
-    "run_worker_first": true
+    "run_worker_first": true,
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "cap-control-plane",
-      "database_id": "4e823d64-cc93-4922-b576-ec1a455c02aa"
-    }
+      "database_id": "4e823d64-cc93-4922-b576-ec1a455c02aa",
+    },
   ],
   "durable_objects": {
     "bindings": [
@@ -30,8 +30,8 @@
       { "name": "AGENT_DO", "class_name": "ComposedAgentDO" },
       { "name": "ORCHESTRATOR", "class_name": "ComposedHostOrchestratorDO" },
       { "name": "MANAGER", "class_name": "ManagerDo" },
-      { "name": "DAEMON_SERVICE", "class_name": "DaemonServiceDO" }
-    ]
+      { "name": "DAEMON_SERVICE", "class_name": "DaemonServiceDO" },
+    ],
   },
   "migrations": [
     {
@@ -42,12 +42,21 @@
         "ComposedAgentDO",
         "ComposedHostOrchestratorDO",
         "ManagerDo",
-        "DaemonServiceDO"
-      ]
-    }
+        "DaemonServiceDO",
+      ],
+    },
+  ],
+  "kv_namespaces": [
+    {
+      // Edge shield (#36): hostKey-hash auth cache for the composed daemon
+      // face. Optional at runtime (env-key deployments skip it). Staging
+      // redeploy (#36) picks this up with no migration.
+      "binding": "DAEMON_EDGE_KV",
+      "id": "5b39e87d559b424a8f6432e6a2bc9ff7",
+    },
   ],
   "triggers": {
-    "crons": ["*/5 * * * *"]
+    "crons": ["*/5 * * * *"],
   },
   "vars": {
     "ACCESS_CHECK_ENABLED": "false",
@@ -55,6 +64,6 @@
     "ORCHESTRATOR_HOST_ID": "local",
     "DAEMON_HOST_ID": "local",
     "DAEMON_MACHINE_ID": "local",
-    "SERVER_VERSION": "staging-#31"
-  }
+    "SERVER_VERSION": "staging-#31",
+  },
 }

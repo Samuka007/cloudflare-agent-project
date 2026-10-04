@@ -23,9 +23,7 @@ export const threadEventItemStatusSchema = z.enum([
   "failed",
   "interrupted",
 ]);
-export type ThreadEventItemStatus = z.infer<
-  typeof threadEventItemStatusSchema
->;
+export type ThreadEventItemStatus = z.infer<typeof threadEventItemStatusSchema>;
 
 export const turnStatusSchema = z.enum(["completed", "failed", "interrupted"]);
 export type TurnStatus = z.infer<typeof turnStatusSchema>;
@@ -86,11 +84,7 @@ export type ThreadEventItem = z.infer<typeof threadEventItemSchema>;
 // Event types + per-type data schemas.
 // ---------------------------------------------------------------------------
 
-export const systemErrorCategorySchema = z.enum([
-  "machine_disconnected",
-  "internal",
-  "cancelled",
-]);
+export const systemErrorCategorySchema = z.enum(["machine_disconnected", "internal", "cancelled"]);
 export type SystemErrorCategory = z.infer<typeof systemErrorCategorySchema>;
 
 const turnIdField = z.string().min(1);
@@ -177,8 +171,7 @@ export class ThreadEventDataError extends Error {
 /** Validate the envelope and its per-type `data` payload. */
 export function parseThreadEvent(input: unknown): TypedThreadEvent {
   const envelope = threadEventEnvelopeSchema.parse(input);
-  const dataSchema: z.ZodType =
-    threadEventDataSchemas[envelope.type as ThreadEventType];
+  const dataSchema: z.ZodType = threadEventDataSchemas[envelope.type as ThreadEventType];
   const data = dataSchema.parse(envelope.data);
   return { ...envelope, data } as TypedThreadEvent;
 }
@@ -210,7 +203,7 @@ export type DaemonThreadEventInput = Omit<ThreadEventEnvelope, "seq">;
  * `turn/completed` event exists for `turnId`.
  */
 export function findTurnCompletedSeq(
-  events: ReadonlyArray<ThreadEventEnvelope>,
+  events: readonly ThreadEventEnvelope[],
   turnId: string,
 ): number | null {
   for (const event of events) {

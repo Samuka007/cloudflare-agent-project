@@ -33,10 +33,13 @@ function pickTurnId(data: EventData): string | null {
 function textOfContent(content: readonly unknown[]): string {
   return content
     .map((part) =>
-      part !== null && typeof part === "object" &&
-      (part as EventData).type === "text" && typeof (part as EventData).text === "string"
+      part !== null &&
+      typeof part === "object" &&
+      (part as EventData).type === "text" &&
+      typeof (part as EventData).text === "string"
         ? ((part as EventData).text as string)
-        : "")
+        : "",
+    )
     .join("");
 }
 
@@ -96,9 +99,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
 
   for (const event of events) {
     const raw: EventData =
-      event.data !== null && typeof event.data === "object"
-        ? (event.data as EventData)
-        : {};
+      event.data !== null && typeof event.data === "object" ? (event.data as EventData) : {};
     const turnId = pickTurnId(raw);
 
     switch (event.type) {
@@ -207,7 +208,13 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
         const item = parsed.data.item;
         const assistantRowId =
           item.type === "agentMessage"
-            ? ensureAssistantRow(item.id, pickTurnId(raw), event.threadId, event.seq, event.createdAt)
+            ? ensureAssistantRow(
+                item.id,
+                pickTurnId(raw),
+                event.threadId,
+                event.seq,
+                event.createdAt,
+              )
             : assistantByItemId.get(item.id);
         const assistantRow = assistantRowId ? rows.get(assistantRowId) : undefined;
         if (assistantRow && assistantRow.kind === "conversation") {
@@ -289,8 +296,8 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
     a.__order === b.__order ? a.id.localeCompare(b.id) : a.__order - b.__order,
   );
   return ordered.map(({ __order, ...row }) => {
-    void __order;
-    return timelineRowSchema.parse(row) as TimelineRow;
+    __order;
+    return timelineRowSchema.parse(row);
   });
 }
 
@@ -319,15 +326,10 @@ export function buildTimelinePage(
   query: TimelinePageQuery,
 ): TimelinePage {
   const anchor =
-    query.kind === "older" && query.beforeAnchor !== undefined
-      ? query.beforeAnchor
-      : undefined;
+    query.kind === "older" && query.beforeAnchor !== undefined ? query.beforeAnchor : undefined;
   const eligible =
     anchor !== undefined
-      ? allRows.filter(
-          (row) =>
-            row.sourceSeqStart < anchor.anchorSeq || row.id !== anchor.anchorId,
-        )
+      ? allRows.filter((row) => row.sourceSeqStart < anchor.anchorSeq || row.id !== anchor.anchorId)
       : allRows;
   const start = Math.max(0, eligible.length - query.segmentLimit);
   const rows = eligible.slice(start, start + query.segmentLimit);
@@ -401,8 +403,8 @@ export interface ConversationOutlineItem {
 
 export function buildConversationOutline(
   allRows: readonly TimelineRow[],
-): Array<ConversationOutlineItem> {
-  const items: Array<ConversationOutlineItem> = [];
+): ConversationOutlineItem[] {
+  const items: ConversationOutlineItem[] = [];
   for (const row of allRows) {
     if (row.kind !== "conversation") {
       continue;
@@ -412,9 +414,7 @@ export function buildConversationOutline(
       id: row.id,
       role: row.role,
       preview:
-        preview.length > PREVIEW_MAX_CHARS
-          ? `${preview.slice(0, PREVIEW_MAX_CHARS)}…`
-          : preview,
+        preview.length > PREVIEW_MAX_CHARS ? `${preview.slice(0, PREVIEW_MAX_CHARS)}…` : preview,
       attachmentSummary:
         row.attachments !== null
           ? {
