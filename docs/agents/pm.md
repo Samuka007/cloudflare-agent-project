@@ -53,7 +53,7 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 2. 七反模式过一遍：慢通道／重做／串行化／闲置占用／无账保守／轮询／retry-and-hope。
 3. 关票评论附证据（测试数、部署 URL、run 链接、file:line）；**无证据不关票**。
 4. 验收判据 = 用户打开能看到什么（反例 #53：字段全部"就位"但 Priority 列五个视图全不可见，验收却已通过）。
-5. staging 验证只经 `nix run .#staging-deploy`，从 origin/main HEAD。
+5. staging 验证经 `scripts/deploy-staging.sh` 两条调用面（#175）：merge→main 由 GHA `deploy-staging` workflow 自动部署；任意 commit 手动经 `nix run .#staging-deploy`。
 
 ## 2. 角色
 
