@@ -124,6 +124,11 @@ export interface ReplayState {
     schemaMode?: "permissive" | "strict";
   } | null;
   /**
+   * The identity row's journal timestamp (T18 wall-clock budget origin) —
+   * the fold-level twin of SubagentIdentityRecord.createdAt. null for Main.
+   */
+  identityCreatedAt: number | null;
+  /**
    * Pending interactions (M1.5 T4 ask) — the journal-folded SPA-visible ask
    * state, keyed by interactionId (tools/ask.ts projectInteractions).
    */
@@ -144,6 +149,7 @@ export function emptyReplayState(): ReplayState {
     modelCalls: new Map(),
     executions: new Map(),
     subagentIdentity: null,
+    identityCreatedAt: null,
     interactions: new Map(),
   };
 }
@@ -475,7 +481,11 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       // Thread-scoped JobRegistry journal data, not FSM state (proposal §3 T2:
       // jobs outlive turns); the projections in tools/job-registry.ts fold
       // them from the log — the task family (proposal §3 T16) likewise, via
-      // tools/task/*, and the T17 yield-gate family via tools/task/child-run.ts.
+      // tools/task/*, the T17 yield-gate family via tools/task/child-run.ts,
+      // and the T18 budget marker (fold-owned, driver-appended).
+      return;
+    }
+    case "task.budget_notice": {
       return;
     }
     case "task.subagent_identity": {
@@ -496,6 +506,7 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
           : { outputSchema: JSON.parse(event.data.outputSchemaJson) as unknown }),
         ...(event.data.schemaMode === undefined ? {} : { schemaMode: event.data.schemaMode }),
       };
+      state.identityCreatedAt = event.createdAt;
       return;
     }
     case "todo_phases": {

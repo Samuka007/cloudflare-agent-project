@@ -8,6 +8,7 @@ import {
   DEFAULT_TASK_TOOL_CONFIG,
   type TaskToolContext,
 } from "../src/tools/task/executor.js";
+import { SpawnSemaphore } from "../src/tools/task/semaphore.js";
 import {
   canSpawnAtDepth,
   BUNDLED_AGENT_DEFINITIONS,
@@ -285,6 +286,8 @@ describe("M1.5 T16 — executionId re-adopt (recovery, never a second spawn)", (
       },
       isolationOp: undefined,
       wake: () => Promise.resolve("cancelled" as const),
+      semaphore: new SpawnSemaphore(DEFAULT_TASK_TOOL_CONFIG.maxConcurrency),
+      trackSpawnRelease: () => undefined,
       config: DEFAULT_TASK_TOOL_CONFIG,
     };
     return { context, recordSpawnPlan, registryRegister };

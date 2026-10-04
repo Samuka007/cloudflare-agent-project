@@ -2,6 +2,7 @@ import type { EdgeToolResult } from "../edge.js";
 import type { IsolationOpOutcome } from "../../daemon.js";
 import { z } from "zod";
 import type { JobRegistration, JobRegistry } from "../job-registry.js";
+import { SpawnSemaphore } from "./semaphore.js";
 import type { WaitWake } from "../wait.js";
 import { newThreadId } from "@cap/protocol";
 import type { AnyAgentEvent } from "../../fsm-events.js";
@@ -71,6 +72,8 @@ export interface RunSubagentRequest {
   depth: number;
   task: string;
   solutionSpace?: string;
+  /** T18 batch shared context — rendered into the child's CONTEXT section. */
+  context?: string;
   model?: string;
   /**
    * T17 structured contract — mirrored onto the child identity row so the
@@ -78,19 +81,6 @@ export interface RunSubagentRequest {
    */
   outputSchema?: unknown;
   schemaMode?: "permissive" | "strict";
-}
-
-/** Validated flat spawn parameters (omp task schema, T16 slice + T20 isolated). */
-export interface ValidatedSpawnParams {
-  name?: string;
-  agent?: string;
-  task: string;
-  solutionSpace: string;
-  model?: string;
-  outputSchema?: unknown;
-  schemaMode?: "permissive" | "strict";
-  /** T20 #110: run the child against a daemon-side isolated workspace. */
-  isolated?: boolean;
 }
 
 export interface TaskToolConfig {
@@ -103,6 +93,12 @@ export interface TaskToolConfig {
   inlineSummaryCapChars: number;
   /** T20 #110: prepare/release RPC deadline (deployment execTimeoutMs). */
   isolationOpTimeoutMs: number;
+  /** omp task.maxConcurrency (default 32; 0 = no cap). */
+  maxConcurrency: number;
+  /** omp task.softRequestBudget (default 200); 1.5× hard-stops. */
+  softRequestBudget: number;
+  /** omp task.maxRuntimeMs (default 0 = off). */
+  maxRuntimeMs: number;
 }
 
 export const DEFAULT_TASK_TOOL_CONFIG: TaskToolConfig = {
@@ -112,7 +108,145 @@ export const DEFAULT_TASK_TOOL_CONFIG: TaskToolConfig = {
   maxOutputLines: MAX_OUTPUT_LINES,
   inlineSummaryCapChars: INLINE_SUMMARY_CAP_CHARS,
   isolationOpTimeoutMs: 600_000,
+  maxConcurrency: 32,
+  softRequestBudget: 200,
+  maxRuntimeMs: 0,
 };
+
+// ---------------------------------------------------------------------------
+// T18 batch form (omp task/index.ts:245-287 validateSpawnParams +
+// :296-328 resolveSpawnItems/spawnParamsFor, task.batch default on): one
+// call → N spawns. Validation five rejections + the container-model
+// rejection; flat shape stays accepted (lenientArgValidation, :619-629).
+//
+// CUT (ticket §3 T18 裁决点 4, recorded deviation): speculative pre-launch
+// (`task.speculativeLaunch` default on in omp — each closing tasks[] item
+// JSON object starts its SpawnRun during the stream, dispatch adopts
+// matching runs or discards all) is NOT ported. The M1.5 provider seam
+// (provider.ts ModelStreamChunk) delivers tool-call arguments only as a
+// terminal chunk — there is no per-item streaming parse point. Per the
+// card this is a trailing sub-ticket; the default-off release and the
+// upstream-default deviation are recorded on #108.
+// ---------------------------------------------------------------------------
+
+export interface SpawnItem {
+  name?: string;
+  agent?: string;
+  task: string;
+  solutionSpace: string;
+  /** T20 #110: run the child against a daemon-side isolated workspace. */
+  isolated?: boolean;
+  model?: string;
+  outputSchema?: unknown;
+  schemaMode?: "permissive" | "strict";
+}
+
+/** omp "put it on each tasks[] item" — the batch container takes no model. */
+const BATCH_CONTAINER_MODEL_REJECTED =
+  "Invalid arguments: `model` on a batch container is rejected — put it on each tasks[] item.";
+
+/**
+ * Normalize the wire args into spawn items: batch `{context, tasks[]}` (the
+ * omp default form) or flat `{...item}` (runtime lenient accept). Returns
+ * the omp-verbatim rejection text on the five batch violations:
+ * empty tasks / missing context / item missing task / duplicate names
+ * (case-insensitive) / top-level task coexisting with tasks.
+ */
+export function resolveSpawnItems(args: {
+  name?: string;
+  agent?: string;
+  task?: string;
+  solutionSpace?: string;
+  context?: string;
+  tasks?: unknown;
+  model?: string;
+  isolated?: unknown;
+  outputSchema?: unknown;
+  schemaMode?: "permissive" | "strict";
+}): { items: SpawnItem[] } | { error: string } {
+  if (args.tasks !== undefined) {
+    if (args.model !== undefined) {
+      return { error: BATCH_CONTAINER_MODEL_REJECTED };
+    }
+    if (args.task !== undefined) {
+      return {
+        error:
+          "Invalid arguments: top-level `task` and `tasks` are mutually exclusive — one call is either a batch container or a single spawn.",
+      };
+    }
+    if (typeof args.context !== "string" || args.context.trim() === "") {
+      return {
+        error: "Invalid arguments: batch form requires `context` — it renders into every child's CONTEXT section.",
+      };
+    }
+    if (!Array.isArray(args.tasks) || args.tasks.length === 0) {
+      return { error: "Invalid arguments: `tasks` must be a non-empty array of spawn items." };
+    }
+    const items: SpawnItem[] = [];
+    const seen = new Set<string>();
+    for (const raw of args.tasks) {
+      const item = raw as Record<string, unknown>;
+      if (typeof item.task !== "string" || item.task.trim() === "") {
+        return { error: "Invalid arguments: every tasks[] item requires a non-empty `task`." };
+      }
+      if (typeof item.solutionSpace !== "string" || item.solutionSpace.trim() === "") {
+        return {
+          error:
+            "Invalid arguments: every tasks[] item requires `solutionSpace` — the child's auto thinking tier takes no other input.",
+        };
+      }
+      if (item.name !== undefined) {
+        if (typeof item.name !== "string" || item.name === "") {
+          return { error: "Invalid arguments: tasks[] item `name` must be a non-empty string." };
+        }
+        const key = item.name.toLowerCase();
+        if (seen.has(key)) {
+          return {
+            error: `Invalid arguments: duplicate tasks[] item name "${item.name}" (case-insensitive).`,
+          };
+        }
+        seen.add(key);
+      }
+      items.push({
+        ...(typeof item.name === "string" ? { name: item.name } : {}),
+        ...(typeof item.agent === "string" ? { agent: item.agent } : {}),
+        task: item.task,
+        solutionSpace: item.solutionSpace,
+        ...(item.isolated === undefined ? {} : { isolated: item.isolated === true }),
+        ...(item.model === undefined ? {} : { model: item.model as string }),
+        ...(item.outputSchema === undefined ? {} : { outputSchema: item.outputSchema }),
+        ...(item.schemaMode === undefined ? {} : { schemaMode: item.schemaMode as "permissive" | "strict" }),
+      });
+    }
+    return { items };
+  }
+  // Flat single-spawn form (omp lenient accept).
+  if (typeof args.task !== "string" || args.task.trim() === "") {
+    return {
+      error: "Invalid arguments: `task` must be a non-empty self-contained assignment.",
+    };
+  }
+  if (typeof args.solutionSpace !== "string" || args.solutionSpace.trim() === "") {
+    return {
+      error:
+        "Invalid arguments: `solutionSpace` must describe how open-ended the child's problem is (omp per-item required field).",
+    };
+  }
+  return {
+    items: [
+      {
+        ...(args.name === undefined ? {} : { name: args.name }),
+        ...(args.agent === undefined ? {} : { agent: args.agent }),
+        task: args.task,
+        solutionSpace: args.solutionSpace,
+        ...(args.isolated === undefined ? {} : { isolated: args.isolated === true }),
+        ...(args.model === undefined ? {} : { model: args.model }),
+        ...(args.outputSchema === undefined ? {} : { outputSchema: args.outputSchema }),
+        ...(args.schemaMode === undefined ? {} : { schemaMode: args.schemaMode }),
+      },
+    ],
+  };
+}
 
 /**
  * DO-bound context (the wait.ts WaitToolContext precedent): storage/timer
@@ -159,6 +293,21 @@ export interface TaskToolContext {
     | undefined;
   /** DO wake channel (edgeWaiters): resolves on settle/message/cap/cancel. */
   wake(): Promise<WaitWake["kind"]>;
+  /**
+   * T18 session-level spawn semaphore — one permit per SpawnRun, unified
+   * across all task calls (task semantics §4.1). DO-singleton; acquire-time
+   * cap reads make in-place config changes apply to queued spawns.
+   */
+  semaphore: SpawnSemaphore;
+  /**
+   * Permit bookkeeping: the executor registers the run's release right after
+   * acquire; the DO releases when the settlement row lands (the permit spans
+   * dispatch→settlement, so a parked blocking executor never starves its own
+   * child — the omp provider-concurrency bracket, adapted to the DO split:
+   * the descendant runs under its own DO's semaphore, so the held permit
+   * cannot self-lock the tree, upstream issue #3749).
+   */
+  trackSpawnRelease(spawnId: string, release: () => void): void;
   config: TaskToolConfig;
 }
 
@@ -219,23 +368,18 @@ function blockingResultOutput(
   return `${statusText}\n\n${settlement.output}`;
 }
 
-/** Flat validation failures that the registry schema cannot express. */
-function validateSpawnShape(params: ValidatedSpawnParams): string | undefined {
-  if (params.task.trim() === "")
-    return "Invalid arguments: `task` must be a non-empty self-contained assignment.";
-  if (params.solutionSpace.trim() === "") {
-    return "Invalid arguments: `solutionSpace` must describe how open-ended the child's problem is (omp per-item required field).";
-  }
-  return undefined;
-}
-
 /**
- * Execute one flat `task` call. The registry row has already schema-validated
- * `args`; shape failures beyond the schema (empty required strings, unknown
- * agent kind) render omp-style error outputs.
+ * Execute one `task` call — flat single spawn (T16) or the T18 batch
+ * container. `args` arrives RAW: the edge routes task leniently
+ * (omp lenientArgValidation, task/index.ts:619-629), so resolveSpawnItems is
+ * the self-check that speaks (batch five rejections + container-model
+ * rejection render omp-verbatim; flat empty-string shape failures included).
+ * Per omp §3.4 the sync face aggregates: any item error fails the whole call
+ * while every item's output still reports; a mid-batch cancellation returns
+ * immediately.
  */
 export async function runTaskTool(
-  params: ValidatedSpawnParams,
+  args: Record<string, unknown>,
   ctx: TaskToolContext,
 ): Promise<EdgeToolResult> {
   // omp canSpawnAtDepth gate: the wire surface already strips `task` past the
@@ -243,10 +387,35 @@ export async function runTaskTool(
   if (!canSpawnAtDepth(ctx.config.maxRecursionDepth, ctx.depth)) {
     return { status: "error", output: DEPTH_CAP_BLOCKED };
   }
-  const shapeError = validateSpawnShape(params);
-  if (shapeError !== undefined) return { status: "error", output: shapeError };
+  const resolved = resolveSpawnItems(args);
+  if ("error" in resolved) return { status: "error", output: resolved.error };
+  const context = typeof args.context === "string" ? args.context : undefined;
+  if (ctx.subagentHost === undefined) return { status: "error", output: NO_SUBAGENT_HOST };
 
-  const agentName = params.agent ?? "task";
+  const outputs: string[] = [];
+  let anyError = false;
+  for (const [index, item] of resolved.items.entries()) {
+    // Batch items plan under per-item executionIds (`<call>#<i>`) so a
+    // recovery re-dispatch re-adopts each child individually; the flat form
+    // keeps the bare executionId (T16 journal compatibility).
+    const executionId = resolved.items.length === 1 ? ctx.executionId : `${ctx.executionId}#${index}`;
+    const result = await spawnOne({ item, executionId, context, ctx });
+    if (result.status === "cancelled") return result;
+    if (result.status === "error") anyError = true;
+    outputs.push(result.output);
+  }
+  return { status: anyError ? "error" : "ok", output: outputs.join("\n\n") };
+}
+
+/** One spawn item of a (possibly single-item) call. */
+async function spawnOne(request: {
+  item: SpawnItem;
+  executionId: string;
+  context: string | undefined;
+  ctx: TaskToolContext;
+}): Promise<EdgeToolResult> {
+  const { item, executionId, context, ctx } = request;
+  const agentName = item.agent ?? "task";
   const definition: AgentDefinition | undefined = agentDefinitionFor(agentName);
   if (definition === undefined) {
     return {
@@ -257,22 +426,24 @@ export async function runTaskTool(
   const mode = resolveExecutionMode(definition, ctx.config.asyncEnabled);
 
   const events = await ctx.events();
-  const existing = planForExecution(events, ctx.executionId);
+  const existing = planForExecution(events, executionId);
   if (existing !== undefined) {
     // Recovery re-dispatch: re-adopt the journaled plan — never a second spawn.
+    // (No new permit: the original dispatch already holds this run's slot.)
     return readoptExistingSpawn(existing, ctx);
   }
-
   const plans = projectSpawnPlans(events);
-  const base = params.name ?? defaultAgentName(plans);
+  const base = item.name ?? defaultAgentName(plans);
   const allocated = uniquifyAgentName(base, takenAgentNames(plans));
   const agentId = nestAgentId(ctx.parentAgentId, allocated);
   const spawnId = newThreadId();
+  // Narrowed once: the runTaskTool loop pre-checks the binding, but awaits
+  // between here and the RPCs would un-narrow the property read.
+  const host = ctx.subagentHost;
+  if (host === undefined) return { status: "error", output: NO_SUBAGENT_HOST };
   // Discriminated shape instead of a nullable id: the background branch
   // narrows naturally (the registration rides the plan row's jobId).
   const background = mode === "background" ? { jobId: crypto.randomUUID() } : null;
-
-  if (ctx.subagentHost === undefined) return { status: "error", output: NO_SUBAGENT_HOST };
 
   // T20 #110: isolation prepare runs BEFORE the plan row and the child —
   // a failure here (no daemon binding, backend chain exhausted, baseline
@@ -290,7 +461,7 @@ export async function runTaskTool(
     mergeMode: "patch" | "branch";
     applyGate: boolean;
   } | null = null;
-  if (params.isolated === true) {
+  if (item.isolated === true) {
     if (ctx.isolationOp === undefined) {
       return {
         status: "error",
@@ -301,7 +472,7 @@ export async function runTaskTool(
       machineId: ctx.machineId,
       threadId: ctx.threadId,
       op: "prepare",
-      arguments: { threadId: spawnId, agentId, description: params.task },
+      arguments: { threadId: spawnId, agentId, description: item.task },
       timeoutMs: ctx.config.isolationOpTimeoutMs,
     });
     if (outcome.kind !== "ok") {
@@ -315,12 +486,18 @@ export async function runTaskTool(
     isolation = parseIsolationPrepare(outcome.result.output);
   }
 
+  // The permit spans dispatch→settlement: acquired only when a NEW run is
+  // actually starting (after isolation prepare — a failed prepare takes no
+  // slot), released by the DO when the settlement row lands.
+  const release = await ctx.semaphore.acquire();
+  ctx.trackSpawnRelease(spawnId, release);
+
   // Journal-first (iron rule 1): the plan row (with the prepare outcome
   // JSON-encoded, same rule as outputSchemaJson) lands before the child DO
   // RPCs — the spawn-dedup authority for everything below.
   await ctx.recordSpawnPlan({
     seq: 0,
-    executionId: ctx.executionId,
+    executionId,
     spawnId,
     agentId,
     agent: agentName,
@@ -329,31 +506,33 @@ export async function runTaskTool(
     machineId: ctx.machineId,
     mode,
     jobId: background === null ? null : background.jobId,
-    task: params.task,
-    solutionSpace: params.solutionSpace,
-    ...(params.model === undefined ? {} : { model: params.model }),
-    ...(params.outputSchema === undefined ? {} : { outputSchema: params.outputSchema }),
-    ...(params.schemaMode === undefined ? {} : { schemaMode: params.schemaMode }),
+    task: item.task,
+    solutionSpace: item.solutionSpace,
+    ...(context === undefined ? {} : { context }),
+    ...(item.model === undefined ? {} : { model: item.model }),
+    ...(item.outputSchema === undefined ? {} : { outputSchema: item.outputSchema }),
+    ...(item.schemaMode === undefined ? {} : { schemaMode: item.schemaMode }),
     ...(isolation === null ? {} : { isolation }),
     depth: ctx.depth + 1,
   });
 
   try {
-    await ctx.subagentHost.createThread({
+    await host.createThread({
       threadId: spawnId,
       title: `task: ${agentId}`,
       machineId: ctx.machineId,
     });
-    await ctx.subagentHost.runSubagent({
+    await host.runSubagent({
       spawnId,
       agentId,
       parentThreadId: ctx.threadId,
       depth: ctx.depth + 1,
-      task: params.task,
-      solutionSpace: params.solutionSpace,
-      ...(params.model === undefined ? {} : { model: params.model }),
-      ...(params.outputSchema === undefined ? {} : { outputSchema: params.outputSchema }),
-      ...(params.schemaMode === undefined ? {} : { schemaMode: params.schemaMode }),
+      task: item.task,
+      solutionSpace: item.solutionSpace,
+      ...(context === undefined ? {} : { context }),
+      ...(item.model === undefined ? {} : { model: item.model }),
+      ...(item.outputSchema === undefined ? {} : { outputSchema: item.outputSchema }),
+      ...(item.schemaMode === undefined ? {} : { schemaMode: item.schemaMode }),
     });
   } catch (error) {
     // Child bring-up failed before any turn ran: settle the spawn as failed so

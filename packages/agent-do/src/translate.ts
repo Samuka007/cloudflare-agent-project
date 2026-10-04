@@ -126,6 +126,7 @@ export function modelRequestFromEvents(
       case "task.yield_reminder":
       case "task.yield_warning":
       case "task.yield_completed":
+      case "task.budget_notice":
         break;
       case "task.async_result":
         // Consumed above from the full log; the turn filter skips it here.
