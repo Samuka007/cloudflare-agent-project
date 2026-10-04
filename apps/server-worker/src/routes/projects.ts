@@ -4,6 +4,7 @@ import {
   createThreadSectionRequestSchema,
   deleteThreadSectionRequestSchema,
   projectListQuerySchema,
+  promptHistoryResponseSchema,
   projectResponseSchema,
   sidebarBootstrapResponseSchema,
   threadSectionMutationResponseSchema,
@@ -11,6 +12,11 @@ import {
   updateThreadSectionRequestSchema,
   projectWithThreadsResponseSchema,
 } from "../contract/api/projects.js";
+import {
+  PROMPT_HISTORY_ENTRY_LIMIT,
+  projectExecutionDefaultsSchema,
+  takeVisiblePromptHistoryEntries,
+} from "../contract/domain/index.js";
 import { threadListEntrySchema } from "../contract/domain/thread.js";
 import { ApiError } from "../shared/api-error.js";
 import { parseOr422, requireJsonBody } from "../shared/route-utils.js";
@@ -164,6 +170,33 @@ export function registerProjectRoutes(app: Hono<{ Bindings: HonoBindings }>): vo
     return ctx.json({ ok: true });
   });
 
+  // bb routes/projects.ts:393-400: public project required, then the stored
+  // defaults (typed ProjectExecutionDefaults | null, server-contract
+  // public-api.ts:381-388). No composer 404: the resolved runtime default.
+  routes.get("/projects/:id/default-execution-options", async (ctx) => {
+    await requirePublicProject(ctx.env, ctx.req.param("id"));
+    return ctx.json(resolveProjectDefaultExecutionOptions(ctx.env));
+  });
+
+  // bb routes/projects.ts:402-418: public project required, limit clamped to
+  // PROMPT_HISTORY_ENTRY_LIMIT (bb parseBoundedPositiveOptionalInteger), and
+  // the entry array (PromptHistoryResponse, public-api.ts:389-396). The port
+  // persists no prompt history yet, so listProjectPromptHistory
+  // (services/prompt-history.ts:191-213) runs over an empty store and the
+  // visibility pass returns the bb empty list.
+  routes.get("/projects/:id/prompt-history", async (ctx) => {
+    await requirePublicProject(ctx.env, ctx.req.param("id"));
+    const limit = parseBoundedPositiveOptionalInteger({
+      defaultValue: PROMPT_HISTORY_ENTRY_LIMIT,
+      max: PROMPT_HISTORY_ENTRY_LIMIT,
+      name: "limit",
+      value: ctx.req.query("limit"),
+    });
+    return ctx.json(
+      promptHistoryResponseSchema.parse(takeVisiblePromptHistoryEntries({ entries: [], limit })),
+    );
+  });
+
   app.route("/api/v1", routes);
 }
 
@@ -241,6 +274,58 @@ async function toProjectWithThreads(env: Env, row: ProjectRow) {
     threads: threads.map((thread) => threadListEntrySchema.parse(toThreadListEntry(thread))),
     defaultExecutionOptions: null,
   };
+}
+
+/**
+ * bb services/lib/validation.ts:11-47 (parseOptionalInteger +
+ * parseBoundedPositiveOptionalInteger): parseInt, 400 invalid_request on
+ * garbage, clamp to max, 400 invalid_request when non-positive.
+ */
+function parseBoundedPositiveOptionalInteger(args: {
+  defaultValue: number;
+  max: number;
+  name: string;
+  value: string | undefined;
+}): number {
+  const parsed = args.value === undefined ? undefined : Number.parseInt(args.value, 10);
+  if (parsed !== undefined && !Number.isFinite(parsed)) {
+    throw new ApiError({
+      status: 400,
+      code: "invalid_request",
+      message: `Invalid integer for ${args.name}`,
+    });
+  }
+  const bounded = Math.min(parsed ?? args.defaultValue, args.max);
+  if (bounded <= 0) {
+    throw new ApiError({
+      status: 400,
+      code: "invalid_request",
+      message: `${args.name} must be a positive integer`,
+    });
+  }
+  return bounded;
+}
+
+/**
+ * bb resolveProjectCreateDefaultExecutionPlan (services/threads/
+ * thread-execution-plan.ts:409-424) serves the stored defaults or null; the
+ * port has no stored-defaults face yet, so it always resolves the bb
+ * ProjectExecutionDefaults shape (packages/domain shared-types.ts:639-645)
+ * from runtime policy: the omp provider seam (routes/threads.ts thread
+ * create), the relay model (env.MODEL_RELAY_MODEL, falling back to "glm-5.3"
+ * exactly like packages/agent-do/src/worker.ts:41), bb's tier and reasoning
+ * policy constants (services/threads/thread-default-policy.ts:24-25) and the
+ * harness permission default "full" (env.ts HARNESS_PERMISSION_MODE).
+ */
+function resolveProjectDefaultExecutionOptions(env: Env) {
+  const relayModel = env.MODEL_RELAY_MODEL?.trim();
+  return projectExecutionDefaultsSchema.parse({
+    providerId: "omp",
+    model: relayModel === undefined || relayModel === "" ? "glm-5.3" : relayModel,
+    serviceTier: "default",
+    reasoningLevel: "medium",
+    permissionMode: "full",
+  });
 }
 
 async function requirePublicProject(env: Env, projectId: string): Promise<ProjectRow> {
