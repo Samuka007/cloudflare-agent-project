@@ -21,13 +21,13 @@ BoardSmith 章程（board-smith.md）的正本。板面任何结构性变更先�
 
 | 值 | 语义 | 谁写 |
 |---|---|---|
-| Backlog | 承诺/收容但**当前不可派发**（被 blocking 边挡住，或非当前波次/里程碑未启动） | sync 派生（open 无 milestone）+ PM 调整（blocked/波次门控） |
-| Todo | **可派发集**：open ∧ 无未关 blocking 边 ∧ 非 ready-for-human ∧ DoR 过闸 | sync 派生（open+milestone）+ PM 回调（被挡时降 Backlog） |
+| Backlog | **未排期**：收容/承诺但未进当前执行波次（PM 调度决定——与 blocking 无关） | sync 派生（open 无 milestone）+ PM 排期调整 |
+| Todo | **已排期**：进入当前执行波次的票（被挡与否由 blocking 轴表达，不映入本轴） | sync 派生（open+milestone）+ PM 排期调整 |
 | In Progress | lane 在跑 | PM 派发时直写 |
 | Wait for user | 等用户裁决 | sync 派生（open+ready-for-human） |
 | Done / Canceled | 关闭 / wontfix | sync 派生 |
 
-**派发自动化（用户裁决 2026-10-04）**：`ready-for-agent` 不是标签——dispatchable 是**派生谓词**（open ∧ 无未关 blocking 边 ∧ Status=Todo ∧ ¬ready-for-human）。PM 每回合把 dispatchable 集清到并发预算满或空；PMGuard 审计"Todo 非空且预算有余而未派"=P1。
+**派发谓词（用户裁决 2026-10-04）**：`ready-for-agent` 不是标签——dispatchable 是**跨轴派生谓词**：`open ∧ Status=Todo ∧ 无未关 blocking 边 ∧ ¬ready-for-human`。各轴只存自己的正交事实，一切决策（派发/解锁/预警）从轴组合**推导**，任何单轴不得烘焙另一轴的语义（如"被挡→Backlog"=轴污染，2026-10-04 已纠）。PM 每回合把 dispatchable 集清到并发预算满或空；PMGuard 审计"dispatchable 非空且预算有余而未派"=P1。
 
 ## 结构关系
 
