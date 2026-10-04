@@ -126,3 +126,47 @@ export function decodeWatchdogConfig(
   if (raw === undefined || raw === "") return base;
   return mergeWatchdogConfig(base, parseWatchdogConfigPatch(JSON.parse(raw)));
 }
+
+// ---------------------------------------------------------------------------
+// Experimental tool gates (#150) — omp gates five tools behind config flags
+// that all default false (tools/index.ts:766-772, session/settings.ts:246-249,
+// context-settings.ts:66-69): think = cfgExternalThinking, context_notes +
+// new_context = cfgCompactionExperimentalContextManagement, checkpoint +
+// rewind = cfgCheckpointEnabled. T1/T3 shipped them ungated; this restores
+// the omp posture: deployment-time env inputs (#102 patch-over-defaults
+// pattern), all default OFF.
+// ---------------------------------------------------------------------------
+
+export interface ExperimentalToolConfig {
+  /** omp cfgExternalThinking — gates `think` (paired with forceReasoningOff). */
+  externalThinking: boolean;
+  /** omp cfgCompactionExperimentalContextManagement — gates context_notes + new_context. */
+  contextNotes: boolean;
+  /** omp cfgCheckpointEnabled — gates checkpoint + rewind. */
+  checkpoint: boolean;
+}
+
+export const DEFAULT_EXPERIMENTAL_TOOL_CONFIG: ExperimentalToolConfig = {
+  externalThinking: false,
+  contextNotes: false,
+  checkpoint: false,
+};
+
+function envFlag(raw: string | undefined): boolean {
+  if (raw === undefined) return false;
+  const normalized = raw.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "on";
+}
+
+/** Deployment env → gate config (#102 patch-over-defaults pattern). */
+export function decodeExperimentalToolConfig(env: {
+  AGENT_DO_EXTERNAL_THINKING?: string;
+  AGENT_DO_CONTEXT_NOTES?: string;
+  AGENT_DO_CHECKPOINT?: string;
+}): ExperimentalToolConfig {
+  return {
+    externalThinking: envFlag(env.AGENT_DO_EXTERNAL_THINKING),
+    contextNotes: envFlag(env.AGENT_DO_CONTEXT_NOTES),
+    checkpoint: envFlag(env.AGENT_DO_CHECKPOINT),
+  };
+}
