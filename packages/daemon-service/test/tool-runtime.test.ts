@@ -227,6 +227,17 @@ describe("T6 #96 — manage_skill: SKILL.md exclusive management", () => {
     body,
   });
 
+  test("managed-skills store resolves under the daemon-private agentDir (#182 regression)", async () => {
+    // Value import stays dynamic: it must observe the resolver AFTER
+    // createToolHost re-pointed it (runtime discipline — a static import
+    // would read the pre-pin freeze and see the operator's ~/.omp/agent).
+    const { getManagedSkillsDir } = await import(
+      "@oh-my-pi/pi-coding-agent/autolearn/managed-skills",
+    );
+    expect(getManagedSkillsDir()).toBe(join(agentDir, "managed-skills"));
+    expect(process.env.PI_CODING_AGENT_DIR).toBe(agentDir);
+  });
+
   test("create/update/delete lifecycle writes SKILL.md under the daemon-private managed root", async () => {
     const created = await executeDispatch(
       host,

@@ -20,10 +20,10 @@ import { installAgentAuth, type AgentAuthConfig } from "./agent-auth.js";
  * Runtime discipline (spike §5 verdict): omp executes ONLY under Bun — the
  * daemon client process must be started with Bun (omp ships raw TS and
  * imports `bun` built-ins); the Node-side tsc program typechecks against the
- * package's shipped dist/types declarations. omp modules load LAZILY inside
- * createToolHost (dynamic imports): the process-global agent dir must be
- * redirected (PI_CODING_AGENT_DIR) before omp's dir resolver freezes at
- * module load, and the version gate runs before any omp import.
+ * package's shipped dist/types declarations. The omp module graph (and its
+ * DirResolver) loads at this module's import — the static Settings import —
+ * so createToolHost re-points the frozen resolver via pi-utils' setAgentDir
+ * before any tool executes; the version gate runs before any omp import.
  */
 
 /** The dispatch frame (control-plane §4; agent-do ToolDispatchRequest minus
@@ -191,13 +191,23 @@ export async function createToolHost(
   // Agent-dir isolation (T6 #96): process-global omp paths — the
   // managed-skills store (getManagedSkillsDir → getAgentDir()), auth,
   // session-index db — must resolve under the daemon-private directory, not
-  // the operator's ~/.omp. The dir resolver freezes at omp module load, so
-  // the env pin lands BEFORE the dynamic imports below.
-  process.env.PI_CODING_AGENT_DIR = agentDir;
+  // the operator's ~/.omp. Setting the env var alone is a NO-OP once the
+  // resolver has frozen (the static Settings import above already froze it):
+  // getAgentDir() kept serving the pre-pin default (~/.omp/agent), so
+  // manage_skill wrote skills outside the sandbox (#182). setAgentDir
+  // rebuilds the live resolver — and re-pins the env var — so every later
+  // getAgentDir() read resolves under agentDir. It stays BEFORE the dynamic
+  // imports below: on a cold process those specifiers load the resolver, and
+  // the daemon-private dir must be the baseline by the time anything reads it.
+  // (Dynamic, not static: pi-utils/dirs loads the native addon, and the addon
+  // version gate must run before ANY omp import — a static specifier here
+  // would crash the process on a stale addon before the gate can refuse it.)
+  const { setAgentDir } = await import("@oh-my-pi/pi-utils/dirs");
+  setAgentDir(agentDir);
   // Static imports cannot work here: omp's module graph freezes the
   // process-global agent-dir resolver at load time (pi-utils dirs.ts module
   // init), and the daemon-private agentDir is a runtime config value — the
-  // env pin above must land BEFORE these specifiers evaluate.
+  // re-point above must land BEFORE these specifiers evaluate.
   const [
     { Settings },
     { ArtifactManager },
