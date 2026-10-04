@@ -20,7 +20,7 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 - **worktree**：PM 经 herdr 预建——`herdr worktree create --cwd <repo> --branch lane/<slug> --base origin/main --label <slug> --no-focus`，取 `.result.worktree.path`（确定性路径 `~/.herdr/worktrees/<repo>/<branch-as-dash>`，注册表可查）。lane cd 入内即工作，全程在该树；**主仓 checkout 归 PM 独占**（劫持事故条款：lane 入主仓或自建树 = 违规）。关账后 PM `herdr worktree remove --workspace <id>`；盘点 `herdr worktree list`。
 - **效率预算行**：预期墙钟／资源上限／等待方式（交付即回 or 脚本化监控）；超 50% 须解释。
 - **资源所有权账本**：owned files/dirs + worktree 路径 + owned 外部资源（staging 部署、secret、面板）。PM 派单前做**不相交断言**——两 lane 地盘相交 = 派单错误。
-- **分支纪律**：lane 只推 `lane/<ticket>-<slug>`，PR 由 PM 审后 merge（origin/main 唯一写者 = PR 合并）；事故热修直推豁免须票面留 PM 亲验证据。
+- **分支纪律**：lane 只推 `lane/<ticket>-<slug>`，PR 由 PM 审后 merge。**main 分支保护=一切经 PR（2026-10-04 起，repo rule 强制）**——PM 文档/热修同样走短命分支 PR；对 main 的 push 非 ff 拒绝=硬停，先 `git status --branch` 看分叉方向，force 类操作仅限事故回滚本身且须 --force-with-lease 钉基线。
 - **POMDP 条款**：根因未证实不动码；60 分钟未定位根因 → 报告而非猜改。
 - **验收 checklist**；lane 报告必带：commit hash、CI run、测试计数、file:line 根因（修 bug 票）。
 
