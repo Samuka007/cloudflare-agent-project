@@ -33,3 +33,10 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      # T5' (#128): the vendored omp runtime executes only under Bun — the
+      # five-tool acceptance (native gate + dispatch adapter) is a Bun-only
+      # suite the Workers vitest run excludes.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1
+      - run: pnpm --dir packages/daemon-service test:runtime

@@ -7,6 +7,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } })],
   test: {
+    // tool-runtime.test.ts runs under `bun test` (the omp runtime needs Bun);
+    // the Workers-side L1 suites stay here.
+    exclude: ["**/node_modules/**", "test/tool-runtime.test.ts"],
     maxWorkers: 1,
     minWorkers: 1,
     isolate: false,

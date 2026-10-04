@@ -3,7 +3,12 @@ import { abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
 import { createRig, resetRuntime } from "./helpers.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";
 import { executionIdFor } from "../src/ids.js";
-import { M0_RENDER_FLAGS, TOOL_REGISTRY, toolRegistryRow, wireToolSet } from "../src/tools/registry.js";
+import {
+  M0_RENDER_FLAGS,
+  TOOL_REGISTRY,
+  toolRegistryRow,
+  wireToolSet,
+} from "../src/tools/registry.js";
 import { runEdgeTool, type EdgeToolContext } from "../src/tools/edge.js";
 import {
   TODO_PHASES_ENTRY_TYPE,
@@ -12,7 +17,13 @@ import {
   latestTodoPhases,
   todoJournalState,
 } from "../src/tools/session-tree.js";
-import { applyParams, clonePhases, formatSummary, resolveTodoParams, type TodoPhase } from "../src/tools/todo-state.js";
+import {
+  applyParams,
+  clonePhases,
+  formatSummary,
+  resolveTodoParams,
+  type TodoPhase,
+} from "../src/tools/todo-state.js";
 
 afterEach(() => {
   resetRuntime();
@@ -64,8 +75,12 @@ function callsOf(events: readonly AnyAgentEvent[], tool: string): AnyAgentEvent[
 }
 
 function resultsOf(events: readonly AnyAgentEvent[], tool: string): AnyAgentEvent[] {
-  const executionIds = new Set(callsOf(events, tool).map((call) => executionIdFor(call.threadId, call.seq)));
-  return events.filter((event) => event.type === "tool.result" && executionIds.has(event.data.executionId));
+  const executionIds = new Set(
+    callsOf(events, tool).map((call) => executionIdFor(call.threadId, call.seq)),
+  );
+  return events.filter(
+    (event) => event.type === "tool.result" && executionIds.has(event.data.executionId),
+  );
 }
 
 function requireResult(
@@ -157,8 +172,12 @@ describe("M1.5 T3 — todo op state machine (T:todo.ts verbatim, practice 9)", (
     expect(unblocked.get("c-task")).toBe("completed");
     expect(unblocked.get("a-task")).toBe("abandoned");
     // `rm` phase-target clears the phase's tasks; task-target removes one.
-    expect(firstPhase(applyParams(fiveStatusPhases(), { op: "rm", phase: "P" }).phases).tasks).toEqual([]);
-    const rmOne = firstPhase(applyParams(fiveStatusPhases(), { op: "rm", task: "b-task" }).phases).tasks;
+    expect(
+      firstPhase(applyParams(fiveStatusPhases(), { op: "rm", phase: "P" }).phases).tasks,
+    ).toEqual([]);
+    const rmOne = firstPhase(
+      applyParams(fiveStatusPhases(), { op: "rm", task: "b-task" }).phases,
+    ).tasks;
     expect(rmOne.map((task) => task.content)).toEqual(["p-task", "ip-task", "c-task", "a-task"]);
   });
 
@@ -186,7 +205,10 @@ describe("M1.5 T3 — todo op state machine (T:todo.ts verbatim, practice 9)", (
       ],
       { op: "rm", task: "gone" },
     );
-    expect(firstPhase(demotedAfterRm.phases).tasks.map((task) => task.status)).toEqual(["in_progress", "pending"]);
+    expect(firstPhase(demotedAfterRm.phases).tasks.map((task) => task.status)).toEqual([
+      "in_progress",
+      "pending",
+    ]);
 
     // None in_progress: earliest pending promotes.
     const promoted = applyParams(
@@ -202,7 +224,10 @@ describe("M1.5 T3 — todo op state machine (T:todo.ts verbatim, practice 9)", (
       ],
       { op: "rm", task: "done-one" },
     );
-    expect(firstPhase(promoted.phases).tasks.map((task) => task.status)).toEqual(["in_progress", "pending"]);
+    expect(firstPhase(promoted.phases).tasks.map((task) => task.status)).toEqual([
+      "in_progress",
+      "pending",
+    ]);
 
     // All open work blocked: nothing promotes.
     const allBlocked = applyParams(
@@ -217,7 +242,10 @@ describe("M1.5 T3 — todo op state machine (T:todo.ts verbatim, practice 9)", (
       ],
       { op: "view" },
     );
-    expect(firstPhase(allBlocked.phases).tasks.map((task) => task.status)).toEqual(["blocked", "blocked"]);
+    expect(firstPhase(allBlocked.phases).tasks.map((task) => task.status)).toEqual([
+      "blocked",
+      "blocked",
+    ]);
   });
 
   test("op error strings are omp-verbatim and any error discards the whole op", () => {
@@ -240,12 +268,19 @@ describe("M1.5 T3 — todo op state machine (T:todo.ts verbatim, practice 9)", (
       },
       { op: { op: "start" }, error: "Missing task content" },
       { op: { op: "start", task: "nope" }, error: 'Task "nope" not found' },
-      { op: { op: "start", task: "task-3" }, error: 'Task "task-3" not found. Tasks are referenced by content, not by IDs — pass the task\'s full text from the previous result.' },
+      {
+        op: { op: "start", task: "task-3" },
+        error:
+          'Task "task-3" not found. Tasks are referenced by content, not by IDs — pass the task\'s full text from the previous result.',
+      },
       { op: { op: "block" }, error: "block requires a task or phase target" },
       { op: { op: "unblock" }, error: "unblock requires a task or phase target" },
       { op: { op: "append", items: ["x"] }, error: "Missing phase name for append operation" },
       { op: { op: "append", phase: "P" }, error: "Missing items for append operation" },
-      { op: { op: "append", phase: "P", items: ["p-task"] }, error: 'Task "p-task" already exists' },
+      {
+        op: { op: "append", phase: "P", items: ["p-task"] },
+        error: 'Task "p-task" already exists',
+      },
       { op: { op: "rm", phase: "Nope" }, error: 'Phase "Nope" not found' },
     ];
     for (const { op, error } of cases) {
@@ -274,7 +309,9 @@ describe("M1.5 T3 — todo op state machine (T:todo.ts verbatim, practice 9)", (
     // Neither target: every task in every phase. (clonePhases — omp execute
     // hands applyParams a clone; the fixture must survive the first call.)
     expect(
-      applyParams(clonePhases(phases), { op: "done" }).phases.flatMap((p) => p.tasks.map((t) => t.status)),
+      applyParams(clonePhases(phases), { op: "done" }).phases.flatMap((p) =>
+        p.tasks.map((t) => t.status),
+      ),
     ).toEqual(["completed", "completed"]);
     // Phase target: only that phase — except normalization promotes the
     // earliest pending task globally (omp normalizeInProgressTask), so
@@ -299,7 +336,9 @@ describe("M1.5 T3 — todo op state machine (T:todo.ts verbatim, practice 9)", (
     expect(appendedPhase.tasks).toEqual([{ content: "t3", status: "pending" }]);
     // init rebuilds from scratch; flat items synthesize the default phase.
     const flat = applyParams([], { op: "init", items: ["only"] });
-    expect(flat.phases).toEqual([{ name: "Tasks", tasks: [{ content: "only", status: "in_progress" }] }]);
+    expect(flat.phases).toEqual([
+      { name: "Tasks", tasks: [{ content: "only", status: "in_progress" }] },
+    ]);
     const phased = applyParams([], { op: "init", items: ["only"], phase: "Setup" });
     expect(firstPhase(phased.phases).name).toBe("Setup");
   });
@@ -390,7 +429,13 @@ describe("M1.5 T3 — session-tree projections (T:checkpoint.ts rehydrate/apply 
   }
 
   function call(tool: string, seq: number, args: Record<string, unknown>): AnyAgentEvent {
-    return ev("tool.call", seq, { turnId: "t1", modelCallId: 1, tool, arguments: args, timeoutMs: 1_000 });
+    return ev("tool.call", seq, {
+      turnId: "t1",
+      modelCallId: 1,
+      tool,
+      arguments: args,
+      timeoutMs: 1_000,
+    });
   }
 
   function result(tool: string, callSeq: number, seq: number, status: string): AnyAgentEvent {
@@ -407,10 +452,7 @@ describe("M1.5 T3 — session-tree projections (T:checkpoint.ts rehydrate/apply 
     expect(checkpointRewindState([], THREAD)).toEqual({ phase: "idle" });
 
     // cp(ok) → active, boundary = cp result seq.
-    const cp = [
-      call("checkpoint", 3, { goal: "g" }),
-      result("checkpoint", 3, 4, "ok"),
-    ];
+    const cp = [call("checkpoint", 3, { goal: "g" }), result("checkpoint", 3, 4, "ok")];
     expect(checkpointRewindState(cp, THREAD)).toEqual({ phase: "active", checkpointResultSeq: 4 });
 
     // cp(ok) rw(ok) → completed; boundary = the cp result the rewind targets.
@@ -432,13 +474,13 @@ describe("M1.5 T3 — session-tree projections (T:checkpoint.ts rehydrate/apply 
 
     // A later ok checkpoint clears the retained rewind (active again).
     journal.push(call("checkpoint", 9, { goal: "g2" }), result("checkpoint", 9, 10, "ok"));
-    expect(checkpointRewindState(journal, THREAD)).toEqual({ phase: "active", checkpointResultSeq: 10 });
+    expect(checkpointRewindState(journal, THREAD)).toEqual({
+      phase: "active",
+      checkpointResultSeq: 10,
+    });
 
     // error/failed results never decide the phase.
-    const errored = [
-      call("checkpoint", 3, { goal: "g" }),
-      result("checkpoint", 3, 4, "error"),
-    ];
+    const errored = [call("checkpoint", 3, { goal: "g" }), result("checkpoint", 3, 4, "error")];
     expect(checkpointRewindState(errored, THREAD)).toEqual({ phase: "idle" });
   });
 
@@ -501,7 +543,9 @@ describe("M1.5 T3 — session-tree projections (T:checkpoint.ts rehydrate/apply 
     expect(todoJournalState(journal, "thr-x:7").previous).toEqual([
       { name: "P", tasks: [{ content: "a", status: "completed" }] },
     ]);
-    expect(latestTodoPhases(journal)).toEqual([{ name: "P", tasks: [{ content: "a", status: "completed" }] }]);
+    expect(latestTodoPhases(journal)).toEqual([
+      { name: "P", tasks: [{ content: "a", status: "completed" }] },
+    ]);
     expect(latestTodoPhases([])).toEqual([]);
   });
 });
@@ -510,7 +554,10 @@ describe("M1.5 T3 — session-tree projections (T:checkpoint.ts rehydrate/apply 
 // Executor branches against a stubbed context (crash-window + omp error text)
 // ---------------------------------------------------------------------------
 
-function stubCtx(overrides: Partial<EdgeToolContext> = {}): { ctx: EdgeToolContext; appends: TodoPhase[][] } {
+function stubCtx(overrides: Partial<EdgeToolContext> = {}): {
+  ctx: EdgeToolContext;
+  appends: TodoPhase[][];
+} {
   const appends: TodoPhase[][] = [];
   const ctx: EdgeToolContext = {
     executionId: "thr-x:9",
@@ -535,7 +582,9 @@ describe("M1.5 T3 — executor branches (T:checkpoint.ts ToolError paths + crash
 
   test("interrupted snapshot completes the re-ask without re-applying the op", async () => {
     if (todoRow === undefined) throw new Error("todo row missing");
-    const interrupted: TodoPhase[] = [{ name: "P", tasks: [{ content: "a", status: "completed" }] }];
+    const interrupted: TodoPhase[] = [
+      { name: "P", tasks: [{ content: "a", status: "completed" }] },
+    ];
     const { ctx, appends } = stubCtx({
       todoState: () => Promise.resolve({ previous: [], interrupted }),
     });
@@ -603,10 +652,15 @@ describe("M1.5 T3 — executor branches (T:checkpoint.ts ToolError paths + crash
 describe("M1.5 T3 — registry rows (control-plane §1.1, classification §2.2)", () => {
   test("the session-tree trio is registered class edge with do-local routing and omp intent modes", () => {
     // omp builtin-names.ts order restricted to the registered set: bash,
-    // checkpoint, rewind, context_notes, new_context, wait, todo, think
-    // (hidden tool last).
+    // the T5' vendored-runtime host five, checkpoint, rewind,
+    // context_notes, new_context, wait, todo, think (hidden tool second
+    // to write, the T5' write row).
     expect(TOOL_REGISTRY.map((row) => row.name)).toEqual([
       "bash",
+      "read",
+      "edit",
+      "glob",
+      "grep",
       "checkpoint",
       "rewind",
       "context_notes",
@@ -614,6 +668,7 @@ describe("M1.5 T3 — registry rows (control-plane §1.1, classification §2.2)"
       "wait",
       "todo",
       "think",
+      "write",
     ]);
     for (const name of ["checkpoint", "rewind", "todo"]) {
       const row = toolRegistryRow(name);
@@ -650,7 +705,10 @@ describe("M1.5 T3 — registry rows (control-plane §1.1, classification §2.2)"
       required: string[];
     };
     expect(schema.required).toEqual(["op", "i"]);
-    expect(schema.properties.task).toEqual({ type: "string", description: "verbatim task content" });
+    expect(schema.properties.task).toEqual({
+      type: "string",
+      description: "verbatim task content",
+    });
     expect(schema.properties.list).toEqual({
       type: "array",
       description: "phases for init",
@@ -664,7 +722,15 @@ describe("M1.5 T3 — registry rows (control-plane §1.1, classification §2.2)"
       },
     });
     const properties = schema.properties;
-    expect(Object.keys(properties)).toEqual(["i", "op", "items", "list", "phase", "reason", "task"]);
+    expect(Object.keys(properties)).toEqual([
+      "i",
+      "op",
+      "items",
+      "list",
+      "phase",
+      "reason",
+      "task",
+    ]);
   });
 });
 
@@ -693,7 +759,10 @@ describe("M1.5 T3 — todo end-to-end (DO-local, zero daemon, replay-consistent)
     // init + done persist canonical snapshots; view writes nothing.
     const entries = todoEntries(events);
     expect(entries).toHaveLength(2);
-    if (entries[0]?.type !== TODO_PHASES_ENTRY_TYPE || entries[1]?.type !== TODO_PHASES_ENTRY_TYPE) {
+    if (
+      entries[0]?.type !== TODO_PHASES_ENTRY_TYPE ||
+      entries[1]?.type !== TODO_PHASES_ENTRY_TYPE
+    ) {
       throw new Error("entry vanished");
     }
     expect(entries[0].data).toMatchObject({ version: 1, op: "init" });
@@ -756,7 +825,7 @@ describe("M1.5 T3 — todo end-to-end (DO-local, zero daemon, replay-consistent)
     const failed = requireResult(events, "todo", 1);
     expect(failed.data.status).toBe("error");
     expect(failed.data.output).toBe(
-      "Errors: Task \"ghost\" not found\n" +
+      'Errors: Task "ghost" not found\n' +
         [
           "Remaining items (2):",
           "  - clone repo [in_progress] (Setup)",
@@ -794,7 +863,9 @@ describe("M1.5 T3 — todo end-to-end (DO-local, zero daemon, replay-consistent)
     expect(repaired.data.status).toBe("ok");
     const firstEntry = todoEntries(events)[0];
     expect(firstEntry?.type).toBe(TODO_PHASES_ENTRY_TYPE);
-    expect(firstEntry?.type === TODO_PHASES_ENTRY_TYPE ? firstEntry.data.op : undefined).toBe("init");
+    expect(firstEntry?.type === TODO_PHASES_ENTRY_TYPE ? firstEntry.data.op : undefined).toBe(
+      "init",
+    );
     const rejected = requireResult(events, "todo", 1);
     expect(rejected.data.status).toBe("error");
     expect(rejected.data.output).toContain("Invalid todo arguments: ");
@@ -827,10 +898,7 @@ describe("M1.5 T3 — todo end-to-end (DO-local, zero daemon, replay-consistent)
 
   test("re-asking a terminal todo executionId answers from the journal — zero second snapshot", async () => {
     const rig = await createRig({
-      turns: [
-        { toolCalls: [{ name: "todo", arguments: { ...INIT } }] },
-        { deltas: ["done"] },
-      ],
+      turns: [{ toolCalls: [{ name: "todo", arguments: { ...INIT } }] }, { deltas: ["done"] }],
     });
     const sent = await rig.stub.sendMessage({
       clientRequestId: "in-t3-todo-dedup",
@@ -883,7 +951,9 @@ describe("M1.5 T3 — checkpoint/rewind end-to-end (branchWithSummary 同构 pro
     // shows an older wording — code is the runtime truth).
     const cp = requireResult(events, "checkpoint", 0);
     expect(cp.data.status).toBe("ok");
-    expect(cp.data.output).toBe("Checkpoint: find the leak\nFinish exploration and formulate findings.");
+    expect(cp.data.output).toBe(
+      "Checkpoint: find the leak\nFinish exploration and formulate findings.",
+    );
 
     // rewind acknowledges verbatim; the report rides the tool.call arguments.
     const rw = requireResult(events, "rewind", 0);
@@ -986,9 +1056,13 @@ describe("M1.5 T3 — checkpoint/rewind end-to-end (branchWithSummary 同构 pro
       before.map((event) => [event.seq, event.type, event.id]),
     );
     expect(checkpointRewindState(after, threadId)).toEqual(checkpointRewindState(before, threadId));
-    expect(activeBranchAfterRewind(after, threadId)).toEqual(activeBranchAfterRewind(before, threadId));
+    expect(activeBranchAfterRewind(after, threadId)).toEqual(
+      activeBranchAfterRewind(before, threadId),
+    );
     const replayedState = checkpointRewindState(after, threadId);
     expect(replayedState.phase).toBe("completed");
-    expect(replayedState.phase === "completed" ? replayedState.report : undefined).toBe("report survives");
+    expect(replayedState.phase === "completed" ? replayedState.report : undefined).toBe(
+      "report survives",
+    );
   });
 });

@@ -124,6 +124,26 @@ export const execKilledAckFrameSchema = z.object({
   verified: z.boolean(),
 });
 
+/**
+ * Structured host-tool result (M1.5/T5'): the client's embedded omp runtime
+ * projects omp AgentToolResult into the agent-do ToolResultPayload shape —
+ * status/exitCode/output/outputTruncated travel verbatim (an omp isError or
+ * timeout is NOT an exit-code derivation, unlike the bash exec.exited path).
+ */
+export const toolResultPayloadSchema = z.object({
+  status: z.enum(["ok", "error", "timeout", "cancelled"]),
+  exitCode: z.null(),
+  output: z.string(),
+  outputTruncated: z.boolean().optional(),
+});
+
+export const toolExitedFrameSchema = z.object({
+  type: z.literal("tool.exited"),
+  threadId: z.string().min(1),
+  executionId: z.string().min(1),
+  result: toolResultPayloadSchema,
+});
+
 export const clientFrameSchema = z.discriminatedUnion("type", [
   bootAnnounceFrameSchema,
   heartbeatFrameSchema,
@@ -133,6 +153,7 @@ export const clientFrameSchema = z.discriminatedUnion("type", [
   execOutputGapFrameSchema,
   execExitedFrameSchema,
   execKilledAckFrameSchema,
+  toolExitedFrameSchema,
 ]);
 export type ClientFrame = z.infer<typeof clientFrameSchema>;
 export type ExecStartedFrame = Extract<ClientFrame, { type: "exec.started" }>;
@@ -142,6 +163,7 @@ export type ExecOutputGapFrame = Extract<ClientFrame, { type: "exec.output_gap" 
 export type ExecExitedFrame = Extract<ClientFrame, { type: "exec.exited" }>;
 export type ExecKilledAckFrame = Extract<ClientFrame, { type: "exec.killed_ack" }>;
 export type BootAnnounceReceived = Extract<ClientFrame, { type: "boot.announce" }>;
+export type ToolExitedFrame = Extract<ClientFrame, { type: "tool.exited" }>;
 
 // ---------------------------------------------------------------------------
 // Service → client frames.
@@ -162,6 +184,22 @@ export const execSpawnFrameSchema = z.object({
   command: z.string(),
   /** Sandbox-relative working directory; the client clamps into the root. */
   cwd: z.string(),
+  timeoutMs: z.number().int().positive(),
+});
+
+/**
+ * Host-tool dispatch relay (M1.5/T5'): the tool-agnostic agent-do dispatch
+ * frame carried verbatim to the client's embedded runtime. The machineId leg
+ * of the agent-do frame is implicit — the WS session is bound to the machine
+ * and dispatch() already rejected mis-routes (§5.1).
+ */
+export const toolExecFrameSchema = z.object({
+  type: z.literal("tool.exec"),
+  requestId: z.string(),
+  threadId: z.string().min(1),
+  executionId: z.string().min(1),
+  tool: z.string().min(1),
+  arguments: z.record(z.string(), z.unknown()),
   timeoutMs: z.number().int().positive(),
 });
 
@@ -227,6 +265,7 @@ export const errorFrameSchema = z.object({
 export const serviceFrameSchema = z.discriminatedUnion("type", [
   sessionReadyFrameSchema,
   execSpawnFrameSchema,
+  toolExecFrameSchema,
   execResumeFrameSchema,
   execKillFrameSchema,
   killListFrameSchema,
@@ -237,6 +276,7 @@ export const serviceFrameSchema = z.discriminatedUnion("type", [
 ]);
 export type ServiceFrame = z.infer<typeof serviceFrameSchema>;
 export type ExecSpawnServiceFrame = Extract<ServiceFrame, { type: "exec.spawn" }>;
+export type ToolExecServiceFrame = Extract<ServiceFrame, { type: "tool.exec" }>;
 export type KillListServiceFrame = Extract<ServiceFrame, { type: "kill.list" }>;
 export type ExecOutputAckServiceFrame = Extract<ServiceFrame, { type: "exec.output_ack" }>;
 

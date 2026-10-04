@@ -40,6 +40,7 @@ import {
   type KillListServiceFrame,
   observedFingerprint,
   type ServiceFrame,
+  type ToolExitedFrame,
 } from "./protocol.js";
 
 /**
@@ -185,7 +186,6 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
 
   async dispatch(request: ToolDispatchRequest): Promise<DispatchOutcome> {
     await this.ready();
-    const command = bashCommandOf(request.arguments);
     const existing = this.state.executions.get(request.executionId);
     // Execution dedup point (§3.5/E): COMPLETED or acked tombstone is
     // answered from the journal — the client never spawns twice (I16).
@@ -214,6 +214,15 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
         return { kind: "host_offline" };
       }
     }
+    // M1.5/T5' routing: bash keeps the M0 command projection (our PTY-less
+    // executor — spike §4 verdict, not-worth); every other host tool rides
+    // the embedded omp runtime on the client, relayed verbatim. The frame is
+    // tool-agnostic here; unknown tool names are answered by the client host
+    // with a structured error payload.
+    if (request.tool !== "bash") {
+      return this.dispatchTool(request);
+    }
+    const command = bashCommandOf(request.arguments);
     if (command === null) {
       // Caller contract violation (bash tool schema guarantees command):
       // persisted, explicit, never a silent no-op.
@@ -239,11 +248,54 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
       threadId: request.threadId,
       bootId: this.state.session?.bootId ?? "?",
       machineId: request.machineId,
+      tool: null,
+      argumentsJson: null,
       command,
       cwd: sandboxCwdOf(request.arguments),
       timeoutMs,
     });
     const ack = await this.forwardSpawn(request, command);
+    if (!ack.ok) {
+      this.journal({
+        kind: "spawn_failed",
+        at: Date.now(),
+        executionId: request.executionId,
+        error: ack.error ?? "spawn_refused",
+      });
+      return { kind: "host_offline" };
+    }
+    void this.scheduleNextAlarm();
+    return { kind: "accepted" };
+  }
+
+  /**
+   * Host-tool path (T5'): journal-first, forward tool.exec, settle on the
+   * client's tool.exited. Same iron rules as the bash path: execution dedup
+   * at the journal, spawn watchdog re-forward, timeout kill forward, and
+   * results that only exist after journal persistence.
+   */
+  private async dispatchTool(request: ToolDispatchRequest): Promise<DispatchOutcome> {
+    const current = this.state.executions.get(request.executionId);
+    if (current?.state === "RUNNING" && current.spawnAcked) {
+      // Re-attach (§3.5): the same boot already holds the live run; its
+      // stream continues. Zero additional execution.
+      return { kind: "accepted" };
+    }
+    const timeoutMs = request.timeoutMs > 0 ? request.timeoutMs : DEFAULT_EXEC_TIMEOUT_MS;
+    this.journal({
+      kind: "dispatch",
+      at: Date.now(),
+      executionId: request.executionId,
+      threadId: request.threadId,
+      bootId: this.state.session?.bootId ?? "?",
+      machineId: request.machineId,
+      tool: request.tool,
+      argumentsJson: JSON.stringify(request.arguments),
+      command: "",
+      cwd: ".",
+      timeoutMs,
+    });
+    const ack = await this.forwardToolExec(request, timeoutMs);
     if (!ack.ok) {
       this.journal({
         kind: "spawn_failed",
@@ -524,6 +576,9 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
       case "exec.killed_ack":
         this.handleKillReceipt(frame.data);
         return;
+      case "tool.exited":
+        await this.handleToolExited(frame.data);
+        return;
     }
   }
 
@@ -785,6 +840,21 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     this.inflightRequests.delete(frame.requestId);
     const record = this.state.executions.get(frame.executionId);
     if (record?.state !== "RUNNING" || record.spawnAcked) return;
+    if (record.tool !== null) {
+      // Host-tool run accepted (T5'): no pid exists — journal the pid-0
+      // sentinel (the same sentinel observedSnapshot uses for pid-less
+      // entries) and open the started update; output/result follow via
+      // exec.output / tool.exited.
+      this.journal({
+        kind: "spawn_ack",
+        at: Date.now(),
+        executionId: frame.executionId,
+        pid: 0,
+        pidStartedAt: 0,
+      });
+      void this.forwardToAgent({ kind: "started", executionId: frame.executionId });
+      return;
+    }
     if (frame.pid === undefined || frame.pidStartedAt === undefined) return;
     this.journal({
       kind: "spawn_ack",
@@ -904,6 +974,31 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     await this.forwardResultToAgent(frame.executionId);
   }
 
+  /**
+   * Structured host-tool closure (T5'): the omp projection travels verbatim
+   * (isError/timeout/truncation are payload facts, not exit-code derivations)
+   * and is journaled inside the exited op so live state and replayed state
+   * stay identical (§8.3 先落盘后 ack — the agent update leaves only after
+   * persistence).
+   */
+  private async handleToolExited(frame: ToolExitedFrame): Promise<void> {
+    const record = this.state.executions.get(frame.executionId);
+    if (record?.state !== "RUNNING") return;
+    this.journal({
+      kind: "exited",
+      at: Date.now(),
+      executionId: frame.executionId,
+      status: frame.result.status,
+      exitCode: frame.result.exitCode,
+      finalOffset: record.lastOffset,
+      toolResult: {
+        ...frame.result,
+        output: clampInlineOutput(frame.result.output),
+      },
+    });
+    await this.forwardResultToAgent(frame.executionId);
+  }
+
   private handleKillReceipt(frame: ExecKilledAckFrame): void {
     // Audit-only: the UNKNOWN outcome was journaled at kill-list time, so a
     // client that dies again cannot stall closure (§5.2.3). The receipt just
@@ -956,15 +1051,27 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
             executionId: record.executionId,
             requestId,
           });
-          this.send(socket, {
-            type: "exec.spawn",
-            requestId,
-            threadId: record.threadId,
-            executionId: record.executionId,
-            command: record.command,
-            cwd: record.cwd,
-            timeoutMs: record.timeoutMs,
-          });
+          if (record.tool !== null) {
+            this.send(socket, {
+              type: "tool.exec",
+              requestId,
+              threadId: record.threadId,
+              executionId: record.executionId,
+              tool: record.tool,
+              arguments: JSON.parse(record.argumentsJson ?? "{}") as Record<string, unknown>,
+              timeoutMs: record.timeoutMs,
+            });
+          } else {
+            this.send(socket, {
+              type: "exec.spawn",
+              requestId,
+              threadId: record.threadId,
+              executionId: record.executionId,
+              command: record.command,
+              cwd: record.cwd,
+              timeoutMs: record.timeoutMs,
+            });
+          }
         }
         nextDeadline = Math.min(nextDeadline, now + SPAWN_ACK_TIMEOUT_MS);
         continue;
@@ -1040,6 +1147,36 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
       executionId: request.executionId,
       command,
       cwd: sandboxCwdOf(request.arguments),
+      timeoutMs,
+    });
+    return promise;
+  }
+
+  /** tool.exec relay — the tool-agnostic frame minus the machineId leg. */
+  private forwardToolExec(request: ToolDispatchRequest, timeoutMs: number): Promise<SpawnAck> {
+    const socket = this.liveSocket();
+    if (socket === null) return Promise.resolve({ ok: false, error: "no_socket" });
+    const requestId = crypto.randomUUID();
+    this.inflightRequests.set(requestId, request.executionId);
+    this.journal({
+      kind: "spawn_forwarded",
+      at: Date.now(),
+      executionId: request.executionId,
+      requestId,
+    });
+    const { promise, resolve } = Promise.withResolvers<SpawnAck>();
+    const timer = setTimeout(() => {
+      this.spawnWaiters.delete(requestId);
+      resolve({ ok: false, error: "spawn_ack_timeout" });
+    }, SPAWN_ACK_TIMEOUT_MS);
+    this.spawnWaiters.set(requestId, { resolve, timer });
+    this.send(socket, {
+      type: "tool.exec",
+      requestId,
+      threadId: request.threadId,
+      executionId: request.executionId,
+      tool: request.tool,
+      arguments: request.arguments,
       timeoutMs,
     });
     return promise;
