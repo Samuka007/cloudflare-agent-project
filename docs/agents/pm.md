@@ -58,9 +58,10 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 依据 [tracker-structure-linear-mapping.md](../research/tracker-structure-linear-mapping.md)：
 
 - **phase 轴 = milestone**（M0–M3）：只承载"何时/哪期"，与重要性无关。伞票/spec 票挂所属阶段。
-- **重要性轴 = Priority**：board 单选字段（P0=放行/阻止/资损；P1=核心语义或可见损伤；P2=卫生），`priority:p*` 标签为输入面，workflow 单向镜像（标签→字段）。
+- **重要性轴 = Priority**：`priority:p*` 标签是唯一真相与输入面（P0=放行/阻止/资损；P1=核心语义或可见损伤；P2=卫生），board Priority 字段是**缓存**（镜像标签，换 board 分组/排序/内联编辑）——缓存模式非双写：字段从不手设，漂移即以标签回改。词表三档封顶（p3 已废）。
 - **生命周期轴 = Status**：project-board-sync 从 issue 事件推导——closed+wontfix→Canceled；closed→Done；open+`ready-for-human`→**Wait for user**；open+milestone→Todo；open 无 milestone→Backlog。**In Progress 由 PM 派发时直写**，PR 合并关票后自然收敛 Done。
 - triage 五标签是收件箱轴，独立保留；**futurework**（无 milestone）与 backlog（承诺未排期）的区别在此成文。
+- **标签词表已清沉积（2026-10-04）**：双胞胎家族全删——`stage:*`（↔milestone）、`status:awaiting-user`/`status:agent-ready`（↔triage 五标签）、`scope:bb`/`scope:worker-agent`（↔block:*）、`type:map`（↔wayfinder:map）、`priority:p3`（越档）。存留 `scope:infra`（横切环境面，无 block 对应物）。
 
 ## 4. 里程碑交付
 
