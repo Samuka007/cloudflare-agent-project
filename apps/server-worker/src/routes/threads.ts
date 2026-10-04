@@ -49,6 +49,7 @@ import {
 } from "../db/control-plane.js";
 import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs.js";
 import { toThreadListEntry, toThreadResponseWithSpawnCheck } from "../services/runtime-display.js";
+import { settleThreadTurnStatus } from "../services/thread-run-settlement.js";
 import {
   buildConversationOutline,
   buildTimelinePage,
@@ -322,7 +323,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
 
   routes.get("/threads/:id/timeline", async (ctx) => {
     const query = parseOr422(threadTimelineQuerySchema, ctx.req.query());
-    const row = await requirePublicThread(ctx);
+    let row = await requirePublicThread(ctx);
     let segmentLimit = THREAD_TIMELINE_DEFAULT_SEGMENT_LIMIT;
     if (query.segmentLimit !== undefined) {
       const parsed = Number(query.segmentLimit);
@@ -339,6 +340,16 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       sinceSeq: 0,
       project: "ux",
     });
+    // Terminal turn events settle the coarse M0 execution status (#52):
+    // the send route flips `active` on dispatch; without consuming the
+    // agent DO's turn/completed the row never leaves active and the SPA
+    // derives a permanent waiting-for-host busy state (census #45 P0-3).
+    const settlement = await settleThreadTurnStatus(ctx.env, row, events);
+    if (settlement !== null) {
+      row = settlement.row;
+      await hub(ctx).notifyThread(row.id, ["status-changed"], { projectId: row.projectId });
+      await hub(ctx).notifyProject(row.projectId, ["threads-changed"]);
+    }
     const allRows = projectTimelineRows(events);
     const kind = query.beforeAnchorSeq !== undefined ? "older" : "latest";
     if (query.beforeAnchorSeq !== undefined) {
