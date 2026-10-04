@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.wrangler/
+bb/
+pnpm-lock.yaml
+**/worker-configuration.d.ts
+apps/server-worker/public/
+# TODO(#37 remainder): daemon-service skips this round — sibling lanes #35/#36
+# own the package; enable formatting when their work lands.
+packages/daemon-service/
