@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { activeTurnIdFromEvents } from "@cap/agent-do";
 import {
   createThreadRequestSchema,
   deleteThreadRequestSchema,
@@ -83,7 +84,7 @@ import {
   timelineLatestRowsCache,
 } from "../services/timeline.js";
 import { computeTimelineRowDelta } from "../contract/thread-timeline.js";
-import { agentDoFor } from "../seam/agent-do.js";
+import { agentDoCancelTurn, agentDoFor } from "../seam/agent-do.js";
 import type { Env, HonoBindings } from "../app-types.js";
 
 /** bb timeline.ts:163-165. */
@@ -460,10 +461,24 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
   });
 
   routes.post("/threads/:id/stop", async (ctx) => {
-    // bb stopThreadForCurrentState (thread-lifecycle.ts:1470-1522): with no
-    // attached environment the stop is a no-op release — M0 threads have no
-    // environment (family OUT), so the route is exactly that path.
-    await requirePublicThread(ctx);
+    // bb stopThreadForCurrentState (thread-lifecycle.ts:1470-1522): an idle
+    // thread's stop is a release no-op; an in-flight turn must actually
+    // cancel. The turn-cancel face is journal state on the per-thread agent
+    // DO (T19: turn.cancel_requested → abort driver → kill non-terminal
+    // executions, including the ask-pending interrupt whose watchdog the DO
+    // deliberately suspends — "the user is the deadline"), so derive the
+    // active turn from the raw journal and cancel on the DO directly, the
+    // same direct-read pattern every journal consumer above uses. See
+    // agentDoCancelTurn for why the orchestrator's thread/stop is not used.
+    const row = await requirePublicThread(ctx);
+    const { events } = await agentDoFor(ctx.env, row.id).getEvents({
+      sinceSeq: 0,
+      project: "raw",
+    });
+    const turnId = activeTurnIdFromEvents(events);
+    if (turnId !== null) {
+      await agentDoCancelTurn(ctx.env, row.id, turnId);
+    }
     return ctx.json({ ok: true });
   });
 

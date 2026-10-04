@@ -66,6 +66,29 @@ export function agentDoFor(env: Env, threadId: string): AgentDoRpc {
   return stub as unknown as AgentDoRpc;
 }
 
+/**
+ * Direct per-thread DO turn cancel (#226 stop route). The DO journal is the
+ * sole truth for turn state (manager-do.ts consistency model: the registry's
+ * activeTurnId is an advisory command-boundary mirror), so the control plane
+ * cancels where the turn lives — the same direct-stub pattern as the events
+ * reader inside orchestratorBackedRpc. Deliberately not the orchestrator's
+ * thread/stop face: that one poisons the provider-session registry for an
+ * interrupted turn (external-CLI recovery parity), and the composed edge-agent
+ * path has no recovery consumer, so a routed stop would brick the thread's
+ * next turn over a session the DO journal already folds clean.
+ */
+export function agentDoCancelTurn(
+  env: Env,
+  threadId: string,
+  turnId: string,
+): Promise<{ accepted: boolean }> {
+  const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId)) as unknown as Pick<
+    AgentDoRpc,
+    "cancelTurn"
+  >;
+  return stub.cancelTurn({ turnId });
+}
+
 // ---------------------------------------------------------------------------
 // Orchestrator-backed composition (#31): writes route
 // server → daemon-worker (command journal, provider route) → provider-app
