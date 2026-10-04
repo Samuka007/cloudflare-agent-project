@@ -89,7 +89,7 @@ export interface JevSnapshot {
   url: string;
   title: string;
   landmarks: string[];
-  headings: Array<{ level: string; text: string }>;
+  headings: { level: string; text: string }[];
   dialogs: string[];
   alerts: string[];
   /** Ordered interactive elements; ref N === elements[N-1]. */
@@ -221,10 +221,14 @@ async function listTargets(http: string, attempts = 3): Promise<CdpTarget[]> {
 }
 
 export function sleep(ms: number): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
-  setTimeout(resolve, ms);
+  const { promise, resolve } = Promise.withResolvers<undefined>();
+  setTimeout(() => {
+    resolve(undefined);
+  }, ms);
   return promise;
 }
+
+export type { JudgeAnswer };
 
 /** One request/response over the short-lived browser-level WS. */
 async function browserSend(
@@ -248,7 +252,7 @@ async function browserSend(
       else resolve(msg.result ?? {});
     };
     bws.addEventListener("message", onMsg);
-    const timer = setTimeout(() => reject(new JevError(`CDP ${method} timeout`)), timeoutMs);
+    const timer = setTimeout(() => { reject(new JevError(`CDP ${method} timeout`)); }, timeoutMs);
     bws.send(JSON.stringify({ id: 1, method, params }));
     try {
       return await promise;
@@ -306,7 +310,7 @@ export class JevPage implements FlowPage {
   private inputMode: "unsensed" | "trusted" | "synthetic" = "unsensed";
   private readonly pending = new Map<number, PendingEntry>();
   private readonly events: CdpEvent[] = [];
-  private readonly eventWaiters: Array<{ method: string; resolve: () => void }> = [];
+  private readonly eventWaiters: { method: string; resolve: () => void }[] = [];
   private genCounter = 0;
 
   private constructor(
@@ -356,13 +360,16 @@ export class JevPage implements FlowPage {
         return;
       }
       if ("method" in msg && typeof msg.method === "string") {
-        const params = "params" in msg && msg.params !== null && typeof msg.params === "object" ? msg.params : {};
+        const params =
+          "params" in msg && typeof msg.params === "object" && msg.params !== null
+            ? (msg.params as Record<string, unknown>)
+            : {};
         const event: CdpEvent = { method: msg.method, params, at: Date.now() };
         this.events.push(event);
         if (this.events.length > 400) this.events.splice(0, this.events.length - 400);
         for (let i = this.eventWaiters.length - 1; i >= 0; i -= 1) {
           const waiter = this.eventWaiters[i];
-          if (waiter !== undefined && waiter.method === msg.method) {
+          if (waiter?.method === msg.method) {
             this.eventWaiters.splice(i, 1);
             waiter.resolve();
           }
@@ -378,7 +385,7 @@ export class JevPage implements FlowPage {
 
   private async send<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
     const ws = this.ws;
-    if (ws === null || ws.readyState !== 1) throw new JevError(`CDP WS not open for ${method}`);
+    if (ws?.readyState !== 1) throw new JevError(`CDP WS not open for ${method}`);
     const id = ++this.nextId;
     const entry = Promise.withResolvers<unknown>();
     this.pending.set(id, entry);
@@ -399,12 +406,17 @@ export class JevPage implements FlowPage {
   async waitForEvent(method: string, timeoutMs = 20_000): Promise<void> {
     const recent = this.events.find((e) => e.method === method && Date.now() - e.at < 50);
     if (recent !== undefined) return;
-    const { promise, resolve } = Promise.withResolvers<void>();
+    const eventDone = Promise.withResolvers<true>();
+    const promise = eventDone.promise;
+    const resolve = (): boolean => {
+      eventDone.resolve(true);
+      return true;
+    };
     this.eventWaiters.push({ method, resolve });
     const timer = setTimeout(() => {
       const idx = this.eventWaiters.findIndex((w) => w.method === method && w.resolve === resolve);
       if (idx >= 0) this.eventWaiters.splice(idx, 1);
-      resolve();
+      eventDone.resolve(true);
     }, timeoutMs);
     try {
       await promise;
@@ -449,7 +461,7 @@ export class JevPage implements FlowPage {
           return { ok: true };
         })()`,
       );
-      return synthetic.ok === true ? { ok: true, why: "synthetic-click fallback (no owned point: occluded)" } : synthetic;
+      return synthetic.ok ? { ok: true, why: "synthetic-click fallback (no owned point: occluded)" } : synthetic;
     }
     const dispatch = (type: string): Promise<unknown> =>
       this.send("Input.dispatchMouseEvent", { type, x: point.x, y: point.y, button: "left", clickCount: 1 });
@@ -765,7 +777,7 @@ interface RawExtraction {
   url: string;
   title: string;
   landmarks: string[];
-  headings: Array<{ level: string; text: string }>;
+  headings: { level: string; text: string }[];
   dialogs: string[];
   alerts: string[];
   elements: JevElementRec[];
@@ -974,7 +986,7 @@ export async function snapshot(
     stateMode === "compact" && normalized.pageText.length > compactChars
       ? `${normalized.pageText.slice(0, compactChars)}…[page text truncated in compact mode]`
       : normalized.pageText;
-  const stateText = serializeState({ ...normalized, pageText }, stateMode);
+  const stateText = serializeState({ ...normalized, trimmedElements: normalized.trimmed, pageText }, stateMode);
   return {
     gen,
     url: normalized.url,
@@ -1202,8 +1214,9 @@ export interface Decision {
 }
 
 function answerOf(ans: Record<string, JudgeAnswer>, id: string): JudgeAnswer | undefined {
-  const value = ans[id];
-  return value !== null && typeof value === "object" ? value : undefined;
+  const value: unknown = ans[id]; // jev replies are wire data; the record type is an API-spec claim
+  if (typeof value !== "object" || value === null) return undefined;
+  return value;
 }
 
 function scoreValue(a: JudgeAnswer | undefined): number | undefined {
@@ -1359,7 +1372,7 @@ export interface FlowReport {
   stopped?: { reason: string; step: number };
   escalated?: boolean;
   steps: FlowStep[];
-  assertions: Array<{ name: string; pass: boolean; detail?: string }>;
+  assertions: { name: string; pass: boolean; detail?: string }[];
   degradedTo?: "compact";
   degradeStep?: number;
   metrics: {
@@ -1564,7 +1577,7 @@ export async function runFlow(opts: FlowOpts): Promise<FlowReport> {
             reason: `medium-band re-ask disagreed with first ask (${decision.action}@${decision.ref?.toFixed(0) ?? "-"} vs ${secondDecision.action}@${secondDecision.ref?.toFixed(0) ?? "-"})`,
             step: n,
           };
-          escalated = escalated || write;
+          if (write) escalated = true;
           break;
         }
       } else {
@@ -1600,7 +1613,7 @@ export async function runFlow(opts: FlowOpts): Promise<FlowReport> {
     if (decision.kind === "stop") {
       pushStep(n, snap, reply, decision, reasks);
       stopped = { reason: decision.reason ?? "stopped", step: n };
-      escalated = escalated || decision.escalated === true;
+      if (decision.escalated === true) escalated = true;
       break;
     }
 
@@ -1624,10 +1637,14 @@ export async function runFlow(opts: FlowOpts): Promise<FlowReport> {
       break;
     }
 
-    const exec = await executeAction(opts.page, decision.action as JeAction, decision.ref, opts);
+    if (decision.action === undefined) {
+      stopped = { reason: "act decision without action", step: n };
+      break;
+    }
+    const exec = await executeAction(opts.page, decision.action, decision.ref, opts);
     const trailLine =
       exec.execError !== undefined
-        ? `step ${n}: attempted ${decision.action} on ref ${decision.ref} (${decision.target ?? "-"}): failed (${exec.execError})`
+        ? `step ${n}: attempted ${decision.action} on ref ${String(decision.ref)} (${decision.target ?? "-"}): failed (${exec.execError})`
         : decision.action === "wait"
           ? `step ${n}: waited for settle`
           : `step ${n}: ${decision.action}${decision.ref !== undefined ? ` on ref ${decision.ref} (${decision.target ?? "-"})` : ""}`;

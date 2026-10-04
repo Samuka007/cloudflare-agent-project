@@ -43,7 +43,7 @@ interface PhaseSummary {
   goalReached: boolean;
   stopped?: { reason: string; step: number };
   escalated?: boolean;
-  assertions: Array<{ name: string; pass: boolean; detail?: string }>;
+  assertions: { name: string; pass: boolean; detail?: string }[];
   steps: number;
   metrics: FlowReport["metrics"];
   degradedTo?: "compact";
@@ -95,7 +95,7 @@ async function main(): Promise<void> {
         assertions: [assertRow("normalize: row absent with toggle off", false)],
       });
       verdict.normalize = summarize(normalize, verbose);
-      ok = ok && normalize.assertions.every((a) => a.pass);
+      if (!normalize.assertions.every((a) => a.pass)) ok = false;
     } else {
       verdict.normalize = "skipped (baseline row already absent)";
     }

@@ -16,6 +16,7 @@ import {
   decide,
   runFlow,
   type FlowPage,
+  type JudgeAnswer,
   type JevElementRec,
   type JevJudgeFn,
   type JevSnapshot,
@@ -32,10 +33,10 @@ interface FakeExtraction {
   url: string;
   title: string;
   landmarks?: string[];
-  headings?: Array<{ level: string; text: string }>;
+  headings?: { level: string; text: string }[];
   dialogs?: string[];
   alerts?: string[];
-  elements: Array<{ tag: string; role: string; name: string; checked?: string }>;
+  elements: { tag: string; role: string; name: string; checked?: string }[];
   trimmed?: number;
   pageText: string;
 }
@@ -43,7 +44,7 @@ interface FakeExtraction {
 /** Scripted FlowPage: extraction JSON per snapshot, action log, markers. */
 class FakePage implements FlowPage {
   scripts: FakeExtraction[];
-  calls: Array<{ kind: string; arg?: unknown }> = [];
+  calls: { kind: string; arg?: unknown }[] = [];
   private idx = 0;
   gen = 0;
 
@@ -56,51 +57,63 @@ class FakePage implements FlowPage {
     return this.gen;
   }
 
-  async evalJs<T>(expression: string): Promise<T> {
+  evalJs<T>(expression: string): Promise<T> {
     if (expression.includes("/*__jevExtract*/")) {
       const script = this.scripts[Math.min(this.idx, this.scripts.length - 1)];
       this.idx += 1;
-      return JSON.stringify(script) as T;
+      return Promise.resolve(JSON.stringify(script) as T);
     }
-    if (expression.includes("/*__jevBody*/")) return "ok body" as T;
-    return {} as T;
+    if (expression.includes("/*__jevBody*/")) return Promise.resolve("ok body" as T);
+    return Promise.resolve({} as T);
   }
 
-  async click(ref: number): Promise<{ ok: boolean; why?: string }> {
+  recorded(kind: string, arg?: unknown, text?: string): { kind: string; arg?: unknown; text?: string } {
+    const entry = { kind, arg, ...(text !== undefined ? { text } : {}) };
+    this.calls.push(entry);
+    return entry;
+  }
+
+  click(ref: number): Promise<{ ok: boolean; why?: string }> {
     this.calls.push({ kind: "click", arg: ref });
-    return { ok: true };
+    return Promise.resolve({ ok: true });
   }
 
-  async fill(ref: number, text: string): Promise<{ ok: boolean; why?: string }> {
-    this.calls.push({ kind: "fill", arg: ref, text });
-    return { ok: true };
+  fill(ref: number, text: string): Promise<{ ok: boolean; why?: string }> {
+    this.recorded("fill", ref, text);
+    return Promise.resolve({ ok: true });
   }
 
-  async selectOption(ref: number, text: string): Promise<{ ok: boolean; why?: string }> {
-    this.calls.push({ kind: "select", arg: ref, text });
-    return { ok: true };
+  selectOption(ref: number, text: string): Promise<{ ok: boolean; why?: string }> {
+    this.recorded("select", ref, text);
+    return Promise.resolve({ ok: true });
   }
 
-  async press(_key: string): Promise<void> {
+  press(_key: string): Promise<void> {
     this.calls.push({ kind: "press" });
+    return Promise.resolve();
   }
 
-  async scrollBy(deltaY: number): Promise<void> {
+  scrollBy(deltaY: number): Promise<void> {
     this.calls.push({ kind: "scroll", arg: deltaY });
+    return Promise.resolve();
   }
 
-  async settle(_ms: number): Promise<void> {}
-
-  async url(): Promise<string> {
-    return this.scripts[0]?.url ?? "";
+  settle(_ms: number): Promise<void> {
+    return Promise.resolve();
   }
 
-  async reload(_settleMs?: number): Promise<void> {
+  url(): Promise<string> {
+    return Promise.resolve(this.scripts[0]?.url ?? "");
+  }
+
+  reload(_settleMs?: number): Promise<void> {
     this.calls.push({ kind: "reload" });
+    return Promise.resolve();
   }
 
-  async navigate(_url: string, _settleMs?: number): Promise<void> {
+  navigate(_url: string, _settleMs?: number): Promise<void> {
     this.calls.push({ kind: "navigate" });
+    return Promise.resolve();
   }
 }
 
@@ -115,27 +128,29 @@ interface ScriptedReply {
 function scriptedJudge(replies: ScriptedReply[]): JevJudgeFn & { stateCount: () => number } {
   let calls = 0;
   let states = 0;
-  const fn = (async (state: unknown) => {
+  const fn = ((state: unknown) => {
     calls += 1;
     if (typeof state === "object") states += 1;
     const reply = replies[Math.min(calls - 1, replies.length - 1)];
     if (reply === undefined) throw new Error("no scripted reply");
     return { ...reply, rttMs: reply.rttMs ?? 42 };
-  }) as JevJudgeFn & { stateCount: () => number };
+  }) as unknown as JevJudgeFn & { stateCount: () => number };
   fn.stateCount = () => states;
   return fn;
 }
 
-function choiceAnswer(choice: string, confidence: number): Record<string, unknown> {
+function choiceAnswer(choice: string, confidence: number): JudgeAnswer {
   return { type: "choice", choice, confidence };
 }
 
-function noulAnswer(value: number): Record<string, unknown> {
+function noulAnswer(value: number): JudgeAnswer {
   return { type: "noul", noul: value };
 }
 
 /** Standard happy 6-answer set, individually overridden per test. */
-function baseAnswers(overrides: Record<string, Record<string, unknown>> = {}): Record<string, unknown> {
+type ScoreAnswer = JudgeAnswer & { score: number };
+
+function baseAnswers(overrides: Record<string, JudgeAnswer | ScoreAnswer> = {}): Record<string, JudgeAnswer> {
   return {
     next_action: choiceAnswer("click", 0.95),
     target_ref: choiceAnswer("1", 0.9),
@@ -143,8 +158,10 @@ function baseAnswers(overrides: Record<string, Record<string, unknown>> = {}): R
     detrimental_state: noulAnswer(0.01),
     progress: { type: "score", score: 1.5 },
     unexpected_nav: noulAnswer(0.01),
+    // progress answers carry `score`, which JudgeAnswer's declared shape omits
+    // (the kernel reads it via an `in` narrowing); the merge is spec-shaped.
     ...overrides,
-  };
+  } as Record<string, JudgeAnswer>;
 }
 
 function settingsPageExtraction(url = `https://${ALLOWLIST[0]}/threads/thr_jk45qe4786`): FakeExtraction {
@@ -241,22 +258,22 @@ describe("decide", () => {
   });
 
   it("stops on escalate, goal gate, detrimental, unexpected nav, bad ref, invalid action", () => {
-    const cases: Array<[Record<string, Record<string, unknown>>, RegExp]> = [
-      [baseAnswers({ next_action: choiceAnswer("escalate", 0.9) }), /escalate/],
-      [baseAnswers({ goal_achieved: noulAnswer(0.9) }), undefined] as unknown as [Record<string, Record<string, unknown>>, RegExp],
-      [baseAnswers({ detrimental_state: noulAnswer(0.8) }), /detrimental/],
-      [baseAnswers({ unexpected_nav: noulAnswer(0.8) }), /unexpected/],
-      [baseAnswers({ target_ref: choiceAnswer("9", 0.9) }), /invalid target_ref/],
-      [baseAnswers({ next_action: choiceAnswer(" teleport", 0.9) }), /invalid option/],
+    interface DecideCase { answers: Record<string, JudgeAnswer>; reason?: RegExp }
+    const stopCases: DecideCase[] = [
+      { answers: baseAnswers({ next_action: choiceAnswer("escalate", 0.9) }), reason: /escalate/ },
+      { answers: baseAnswers({ detrimental_state: noulAnswer(0.8) }), reason: /detrimental/ },
+      { answers: baseAnswers({ unexpected_nav: noulAnswer(0.8) }), reason: /unexpected/ },
+      { answers: baseAnswers({ target_ref: choiceAnswer("9", 0.9) }), reason: /invalid target_ref/ },
+      { answers: baseAnswers({ next_action: choiceAnswer(" teleport", 0.9) }), reason: /invalid option/ },
     ];
     // goal-gate case expect done:
-    const done = decide(cases[1]![0], snap, [0, 1]);
-    expect(done.kind).toBe("done");
-    const rest = [cases[0]!, ...cases.slice(2)] as Array<[Record<string, Record<string, unknown>>, RegExp]>;
-    for (const [answers, pattern] of rest) {
+    const doneAnswers = baseAnswers({ goal_achieved: noulAnswer(0.9) });
+    const doneCheck = decide(doneAnswers, snap, [0, 1]);
+    expect(doneCheck.kind).toBe("done");
+    for (const { answers, reason } of stopCases) {
       const d = decide(answers, snap, [0, 1]);
       expect(d.kind).toBe("stop");
-      expect(d.reason ?? "").toMatch(pattern);
+      expect(d.reason ?? "").toMatch(reason ?? /stop/);
     }
   });
 });
@@ -277,7 +294,7 @@ describe("runFlow", () => {
       page,
       allowlist: ALLOWLIST,
       judge,
-      assertions: [{ name: "body sanity", check: async () => true }],
+      assertions: [{ name: "body sanity", check: () => true }],
       settleMs: 1,
     });
     expect(report.ok).toBe(true);
@@ -360,7 +377,7 @@ describe("runFlow", () => {
 
   it("continues after execution errors and surfaces execError in steps", async () => {
     const page = new FakePage([settingsPageExtraction(), settingsPageExtraction()]);
-    page.click = async () => ({ ok: false, why: "tag drift: snapshot BUTTON vs live SPAN" });
+    page.click = () => Promise.resolve({ ok: false, why: "tag drift: snapshot BUTTON vs live SPAN" });
     const judge = scriptedJudge([
       { answers: baseAnswers({ next_action: choiceAnswer("click", 0.95) }) },
       { answers: baseAnswers({ next_action: choiceAnswer("done", 0.9), goal_achieved: noulAnswer(0.9) }) },
