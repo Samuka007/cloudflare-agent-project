@@ -6,8 +6,8 @@ relative to `bb/` at that pin; upstream drift moves lines, structural claims
 are the payload.
 
 One-line summary: bb has **one `threads` table** with two independent
-self-links — `parentThreadId` (hierarchy *ownership*) and `sourceThreadId`
-(conversation *provenance*, only ever paired with `originKind: "fork"`) — and a
+self-links — `parentThreadId` (hierarchy _ownership_) and `sourceThreadId`
+(conversation _provenance_, only ever paired with `originKind: "fork"`) — and a
 fleet shape where execution always binds through `thread.environmentId →
 environment.hostId`, never through the thread graph.
 
@@ -84,7 +84,7 @@ Rules enforced server-side:
    requires `originKind` so seeded forks can't reshape project execution
    defaults (thread-create.ts:697-729). Idle side-chat forks use exactly this:
    seed-only fork ⇒ `startedOnBehalfOf: { initiator: "agent",
-   senderThreadId: sourceThread.id }` (thread-fork.ts:140-144).
+senderThreadId: sourceThread.id }` (thread-fork.ts:140-144).
 7. Visibility default: explicit request wins; else a hierarchy child inherits
    its parent; else visible ("A side chat is forked with an explicit `hidden`
    by the plugin that owns it" — thread-create.ts:553-567, impl :581-586).
@@ -99,12 +99,12 @@ Rules enforced server-side:
 
 ### 3. The four "child" shapes (taxonomy)
 
-| shape | parentThreadId | sourceThreadId | originKind | visibility | lives on | owner |
-|---|---|---|---|---|---|---|
-| hierarchy child ("worker thread") | parent id | NULL | NULL | inherit parent (thread-create.ts:581-586) | parent's host by default (§7) | parent owns/reporting (§5) |
-| visible fork | NULL | source id | `fork` | requested (default visible; sdk default `visible`) | source's host, reuse or sibling worktree (thread-fork.ts:64-94) | standalone thread |
-| side chat | NULL | source id | `fork` | `hidden` (explicit) | source thread's *environment* (reuse, side-chat/server.ts:200-207) | side-chat plugin (`originPluginId: "side-chat"`) |
-| in-thread delegation | n/a — not a thread | n/a | n/a | n/a | same thread | provider subagent; timeline renders a `delegation` work row with nested `childRows` (`packages/thread-view/src/build-thread-timeline.ts:686-706`; link state `delegationParentToolCallIdsByProviderThreadId`, `build-event-projection.ts:823-828`) |
+| shape                             | parentThreadId     | sourceThreadId | originKind | visibility                                         | lives on                                                           | owner                                                                                                                                                                                                                                              |
+| --------------------------------- | ------------------ | -------------- | ---------- | -------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| hierarchy child ("worker thread") | parent id          | NULL           | NULL       | inherit parent (thread-create.ts:581-586)          | parent's host by default (§7)                                      | parent owns/reporting (§5)                                                                                                                                                                                                                         |
+| visible fork                      | NULL               | source id      | `fork`     | requested (default visible; sdk default `visible`) | source's host, reuse or sibling worktree (thread-fork.ts:64-94)    | standalone thread                                                                                                                                                                                                                                  |
+| side chat                         | NULL               | source id      | `fork`     | `hidden` (explicit)                                | source thread's _environment_ (reuse, side-chat/server.ts:200-207) | side-chat plugin (`originPluginId: "side-chat"`)                                                                                                                                                                                                   |
+| in-thread delegation              | n/a — not a thread | n/a            | n/a        | n/a                                                | same thread                                                        | provider subagent; timeline renders a `delegation` work row with nested `childRows` (`packages/thread-view/src/build-thread-timeline.ts:686-706`; link state `delegationParentToolCallIdsByProviderThreadId`, `build-event-projection.ts:823-828`) |
 
 Rows 1-3 are rows in `threads`; row 4 never touches the table — keep these
 apart when porting.
@@ -156,7 +156,7 @@ created idle at panel-open time" (plugins/side-chat/server.ts:1-5).
 - Client: per-assistant-message action "Send to main thread"
   (app.tsx:282-289, rpc call :253-263).
 - Server impl: `bb.sdk.threads.queuedMessages.create({ threadId:
-  sourceThreadId, input, senderThreadId })` — the **fork's text is queued on
+sourceThreadId, input, senderThreadId })` — the **fork's text is queued on
   the source thread** with the fork as sender (server.ts:227-236).
 - Persistence: `queued_thread_messages.senderThreadId`
   (`packages/db/src/schema.ts:842-843`); same route used by thread sends
@@ -212,7 +212,7 @@ machine**, corresponding to bb's `hostId ↔ socket` map (hub.ts:636-668); HTTP
 session-open → WS attach; `host-rpc.request/response` + requestId + explicit
 timeout (DO `alarm()` as the watchdog equivalent of hub waiters); daemon→server
 events via batched POST + server-owned sequence + per-event ack; disconnect =
-grace window + session invalidation + re-open reconciliation. Explicitly *not*
+grace window + session invalidation + re-open reconciliation. Explicitly _not_
 ported: TunnelDO's binary frame protocol (that channel is a reverse-relay data
 plane, not a low-fanout control plane).
 
@@ -276,7 +276,7 @@ graph:
 2. `originKind` is currently a single-valued enum (`fork`) with
    plugin attribution carried by `originPluginId` + `visibility` — a new child
    kind means widening the enum, not overloading parentThreadId.
-3. Forks/side chats are *not* hierarchy nodes yet still consume the spawn
+3. Forks/side chats are _not_ hierarchy nodes yet still consume the spawn
    allowance — depth-cap accounting counts them even though they don't nest.
 4. Physical placement rides `environmentId → hostId`; every default path
    (child inherit, fork reuse/sibling worktree, side-chat reuse) is

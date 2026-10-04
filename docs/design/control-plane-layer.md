@@ -47,11 +47,11 @@
 
 注意三个「住在下层但不属于下层」的权威，避免层图误读：
 
-| 权威 | 物理位置 | 为什么画进控制面层 |
-| --- | --- | --- |
-| 工具 schema 与启用裁决 | packages/agent-do（编译进 AgentDO） | 它裁决「模型看到什么工具面」，是控制职责；daemon 只收帧 |
-| thread→host 绑定 | `thread.created` 事件（AgentDO 轨迹） | 绑定事实必须显式在轨迹（总图 #1 裁决），重放即真相 |
-| 执行 claim（跑到哪/结果是什么） | DaemonServiceDO journal | 已由 unified-turn-state.md §1.2 裁给模型二，本文不改 |
+| 权威                            | 物理位置                              | 为什么画进控制面层                                      |
+| ------------------------------- | ------------------------------------- | ------------------------------------------------------- |
+| 工具 schema 与启用裁决          | packages/agent-do（编译进 AgentDO）   | 它裁决「模型看到什么工具面」，是控制职责；daemon 只收帧 |
+| thread→host 绑定                | `thread.created` 事件（AgentDO 轨迹） | 绑定事实必须显式在轨迹（总图 #1 裁决），重放即真相      |
+| 执行 claim（跑到哪/结果是什么） | DaemonServiceDO journal               | 已由 unified-turn-state.md §1.2 裁给模型二，本文不改    |
 
 三块与拆缝规则的关系：①决定**哪些工具存在、谁执行**；②决定**执行体落在哪台机器**；③决定**默认值与上限从哪读**。三块的扩展（#33 加工具、#14 加机器、settings 不动）都必须落在同一条脊柱上，这就是本票防碎片化的意义。
 
@@ -89,13 +89,13 @@
 
 落裁决（总图 #1「workspace binding + per-tool override, with explicit binding state in trajectory; no silent host switching」）：
 
-| 生命周期阶段 | 裁决 | 证据/落点 |
-| --- | --- | --- |
-| **绑定来源** | 创建时解析一次：thread 显式 host 选择 > project 级 workspace 绑定默认（D1 projects 行字段，M1 新增）> 部署默认单机 | 解析发生在 server-worker 创建路径；解析函数是控制面代码，不是 DO RPC |
-| **绑定冻结** | `createThread({machineId})` 一发即冻：写进 `thread.created`，此后派发一律从重放态解析，**每次工具派发零绑定查找**（practice 11：路由成本只在创建时付一次） | agent-do.ts:199 `machineId ?? "local"` 已是此形状 |
-| **绑定校验** | 组合路径 `ensureHost` 幂等校验，mismatch 即显式红（`seam/agent-do.ts:144-147` `host_mismatch`）——不静默改投 | HostOrchestratorDO per-host（idFromName(hostId)） |
-| **换绑** | 只能显式：owner 会话操作 + 新绑定事件（新轨迹事件 + FSM 迁移）。离线 host 的换绑产品行为归 #73 grilling，本文只定机制：**系统侧永不自动换** | 总图 #1「no silent host switching」 |
-| **跨 host 干活** | 不换绑当前 thread；派生 sub-agent thread 各自绑定目标 host（handoff 语义） | 总图 #1「handoff to sub-agent for cross-host work」 |
+| 生命周期阶段     | 裁决                                                                                                                                                       | 证据/落点                                                            |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| **绑定来源**     | 创建时解析一次：thread 显式 host 选择 > project 级 workspace 绑定默认（D1 projects 行字段，M1 新增）> 部署默认单机                                         | 解析发生在 server-worker 创建路径；解析函数是控制面代码，不是 DO RPC |
+| **绑定冻结**     | `createThread({machineId})` 一发即冻：写进 `thread.created`，此后派发一律从重放态解析，**每次工具派发零绑定查找**（practice 11：路由成本只在创建时付一次） | agent-do.ts:199 `machineId ?? "local"` 已是此形状                    |
+| **绑定校验**     | 组合路径 `ensureHost` 幂等校验，mismatch 即显式红（`seam/agent-do.ts:144-147` `host_mismatch`）——不静默改投                                                | HostOrchestratorDO per-host（idFromName(hostId)）                    |
+| **换绑**         | 只能显式：owner 会话操作 + 新绑定事件（新轨迹事件 + FSM 迁移）。离线 host 的换绑产品行为归 #73 grilling，本文只定机制：**系统侧永不自动换**                | 总图 #1「no silent host switching」                                  |
+| **跨 host 干活** | 不换绑当前 thread；派生 sub-agent thread 各自绑定目标 host（handoff 语义）                                                                                 | 总图 #1「handoff to sub-agent for cross-host work」                  |
 
 ### 2.2 裁决：host:path 覆盖发生在工具参数层，永不重写绑定
 
@@ -106,14 +106,14 @@
 
 ### 2.3 责任边界与 DO 请求量预算（practice 11）
 
-| 路径 | 必碰 DO？ | 边缘消化 | 说明 |
-| --- | --- | --- | --- |
-| thread 创建：绑定解析 | 否 | D1 读 project 绑定默认（边缘可缓存） | 解析是纯函数；命中部署默认时连 D1 都不碰 |
-| thread.created 绑定冻结 | 是（AgentDO append ×1） | — | 一次性，创建路径本就存在 |
-| 每工具派发 | 是（目标 service DO ×1） | 绑定从重放态解析，零附加查找 | 不为路由读 D1/其他 DO |
-| host:path 覆盖派发 | 是（目标机器 service DO ×1） | 偏差记录并入既有 `tool.dispatch` 事件，无独立写 | 覆盖不产生额外 DO 会计 |
-| /hosts 列表活性 | 否（D1 读） | 活性读时推导（hosts.ts:15-24 现状）+ 心跳 SQL 自节流投影（hosts-registry.ts） | #62 修复模式：投影写自节流 |
-| 换绑操作 | 是（AgentDO 绑定事件 ×1 + 后续派发自然迁移） | owner 会话门（Access JWT + owner 判定） | 显式低频操作 |
+| 路径                    | 必碰 DO？                                    | 边缘消化                                                                      | 说明                                     |
+| ----------------------- | -------------------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------- |
+| thread 创建：绑定解析   | 否                                           | D1 读 project 绑定默认（边缘可缓存）                                          | 解析是纯函数；命中部署默认时连 D1 都不碰 |
+| thread.created 绑定冻结 | 是（AgentDO append ×1）                      | —                                                                             | 一次性，创建路径本就存在                 |
+| 每工具派发              | 是（目标 service DO ×1）                     | 绑定从重放态解析，零附加查找                                                  | 不为路由读 D1/其他 DO                    |
+| host:path 覆盖派发      | 是（目标机器 service DO ×1）                 | 偏差记录并入既有 `tool.dispatch` 事件，无独立写                               | 覆盖不产生额外 DO 会计                   |
+| /hosts 列表活性         | 否（D1 读）                                  | 活性读时推导（hosts.ts:15-24 现状）+ 心跳 SQL 自节流投影（hosts-registry.ts） | #62 修复模式：投影写自节流               |
+| 换绑操作                | 是（AgentDO 绑定事件 ×1 + 后续派发自然迁移） | owner 会话门（Access JWT + owner 判定）                                       | 显式低频操作                             |
 
 归属裁定：**fleet 真相（有哪些机器、活不活）在 D1 hosts 表**（行由 #49 attach 桥创建，service DO 心跳投影刷新）；**thread 级绑定真相在轨迹**；两者用途正交（fleet 面答「机器状态」，轨迹答「这个 thread 在哪跑过」），不互相写。 orchestration journal（HostOrchestratorDO，per-host）是组合路径的命令审计半边，不是绑定的权威。
 
@@ -136,17 +136,17 @@
         → 单次调用参数（tool.call timeoutMs、watchdog config patch）
 ```
 
-  `classifyHarnessProjection` 的 unchanged/live/session 三值分类是链上「改了设置对在跑会话意味着什么」的通用形状；#42 的 thread 级 default-execution-options 复用同一分类语义（bb `classifyExecutionSettingsChange` 同构）。
+`classifyHarnessProjection` 的 unchanged/live/session 三值分类是链上「改了设置对在跑会话意味着什么」的通用形状；#42 的 thread 级 default-execution-options 复用同一分类语义（bb `classifyExecutionSettingsChange` 同构）。
 
 ### 3.2 与 ①② 的一致性钩子（防碎片化的核心）
 
-| 疑似设置的东西 | 裁决归属 | 理由 |
-| --- | --- | --- |
-| 工具开关（bb dynamicTools/disallowedTools 形状） | **不是设置**——注册表启用策略（§1.2） | provider 拥有工具面；设置面长出工具开关 = 第二裁决点 |
-| thread→host 绑定 | **不是设置**——路由数据（project 行字段 + thread 轨迹，§2.1） | 绑定是每 thread 一次性事实，不是可随时改的偏好；#50 里「personal 项目与 host:path 绑定纠缠」的查证不产生 per-host 设置，personal 行是 bb 逐字超集，保真偏差单独处置 |
-| 模型/中转/思考配置 | 部署 env（harness 三键），不进 app_settings | 秘密与部署拓扑不落控制面 DB；快照投影已定义（harness.ts projectHarness） |
-| xdev 开关、essential 集裁剪 | 注册表策略输入（部署期） | 同 §1.2，改它是发版行为不是改设置 |
-| 权限上限 | host 行 ceiling（唯一 per-host 值） | 操作上限语义，向下收敛 |
+| 疑似设置的东西                                   | 裁决归属                                                     | 理由                                                                                                                                                                |
+| ------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 工具开关（bb dynamicTools/disallowedTools 形状） | **不是设置**——注册表启用策略（§1.2）                         | provider 拥有工具面；设置面长出工具开关 = 第二裁决点                                                                                                                |
+| thread→host 绑定                                 | **不是设置**——路由数据（project 行字段 + thread 轨迹，§2.1） | 绑定是每 thread 一次性事实，不是可随时改的偏好；#50 里「personal 项目与 host:path 绑定纠缠」的查证不产生 per-host 设置，personal 行是 bb 逐字超集，保真偏差单独处置 |
+| 模型/中转/思考配置                               | 部署 env（harness 三键），不进 app_settings                  | 秘密与部署拓扑不落控制面 DB；快照投影已定义（harness.ts projectHarness）                                                                                            |
+| xdev 开关、essential 集裁剪                      | 注册表策略输入（部署期）                                     | 同 §1.2，改它是发版行为不是改设置                                                                                                                                   |
+| 权限上限                                         | host 行 ceiling（唯一 per-host 值）                          | 操作上限语义，向下收敛                                                                                                                                              |
 
 ---
 
@@ -166,13 +166,13 @@
 
 ### 与已排期票的接口对照
 
-| 票 | 消费本层哪块 | 本层给它的缝 | 它欠本层的回填 |
-| --- | --- | --- | --- |
-| #33 M1.5 工具集 | ① 注册面 | §1.1 注册表行形状 + §4 约束（协议零变更） | hybrid 后端选型（HTTP vs SQLite/文件）回写 §1.2 backend 字段取值 |
-| #14 M1 多机/fleet | ② 路由面 | §2.1 绑定生命周期 + §4 约束（重放态解析、显式换绑） | project 级 workspace 绑定默认的 D1 字段与解析函数实现；离线 host 换绑产品行为（喂 #73） |
-| #73 grilling（host:path 产品语义） | ② 路由面 | §2.2 参数层覆盖机制（本文是形状底稿） | UI 展示/离线行为的用户裁决，不回改机制层 |
-| #80 考古（bb/omp 路由形状） | ② 路由面 | §2 的空白标注 | omp host:path 精确参数语义（哪些工具、解析规则），回填 §2.2 |
-| settings 维持现状 | ③ 设置面 | §3.1 优先级链 + §3.2 判据表 | 无（#42 thread 级选项走既有 live/session 分类） |
+| 票                                 | 消费本层哪块 | 本层给它的缝                                        | 它欠本层的回填                                                                          |
+| ---------------------------------- | ------------ | --------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| #33 M1.5 工具集                    | ① 注册面     | §1.1 注册表行形状 + §4 约束（协议零变更）           | hybrid 后端选型（HTTP vs SQLite/文件）回写 §1.2 backend 字段取值                        |
+| #14 M1 多机/fleet                  | ② 路由面     | §2.1 绑定生命周期 + §4 约束（重放态解析、显式换绑） | project 级 workspace 绑定默认的 D1 字段与解析函数实现；离线 host 换绑产品行为（喂 #73） |
+| #73 grilling（host:path 产品语义） | ② 路由面     | §2.2 参数层覆盖机制（本文是形状底稿）               | UI 展示/离线行为的用户裁决，不回改机制层                                                |
+| #80 考古（bb/omp 路由形状）        | ② 路由面     | §2 的空白标注                                       | omp host:path 精确参数语义（哪些工具、解析规则），回填 §2.2                             |
+| settings 维持现状                  | ③ 设置面     | §3.1 优先级链 + §3.2 判据表                         | 无（#42 thread 级选项走既有 live/session 分类）                                         |
 
 ---
 
@@ -180,17 +180,17 @@
 
 实现/评审中遇到归属争议，先查此表；表外争议按 §0 拆缝规则推导，推导不出再开裁决。
 
-| 争议 | 裁决 | 依据 |
-| --- | --- | --- |
-| 工具 schema 该由 daemon 侧声明吗 | 否，AgentDO 注册表唯一权威 | providerOwnsRuntimeSurface（bb :186-189）；practice 1 契约单一源；§1.1 |
-| 新工具要不要改 daemon 协议 | 永不 | 派发帧工具无关（daemon.ts:17-26）；一条链承载全部 host 工具（分类表 §3.1） |
-| hybrid 工具的两半归谁 | 控制/状态半 DO，执行半 daemon 或 HTTP 后端 | 分类表 §3.3 拆缝规则 |
-| thread 搬机器走绑定还是覆盖 | 搬家=显式换绑（owner+轨迹事件）；单次跨机=host:path 参数覆盖 | 总图 #1；§2.1/§2.2 |
-| 派发时发现绑定 host 离线怎么办 | 显式 `host_offline`，不降级默认机器 | unified-turn-state §5.1；静默换 host 红线 |
-| 绑定信息查 D1 还是轨迹 | thread 级查轨迹（重放态）；fleet 活性查 D1 | §2.3 归属正交裁定 |
-| 新的 per-host 设置该开吗 | 只许收窄型操作字段，判据见 §3.1 | host ceiling 先例；防 n 行漂移 |
-| 设置改了对在跑会话生效吗 | unchanged/live/session 三值分类说话 | harness.ts classifyHarnessProjection；bb classifyExecutionSettingsChange |
-| 工具开关做成 app 设置行吗 | 不做；启用策略是注册表部署期输入 | §1.2/§3.2 一致性钩子 |
+| 争议                             | 裁决                                                         | 依据                                                                       |
+| -------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| 工具 schema 该由 daemon 侧声明吗 | 否，AgentDO 注册表唯一权威                                   | providerOwnsRuntimeSurface（bb :186-189）；practice 1 契约单一源；§1.1     |
+| 新工具要不要改 daemon 协议       | 永不                                                         | 派发帧工具无关（daemon.ts:17-26）；一条链承载全部 host 工具（分类表 §3.1） |
+| hybrid 工具的两半归谁            | 控制/状态半 DO，执行半 daemon 或 HTTP 后端                   | 分类表 §3.3 拆缝规则                                                       |
+| thread 搬机器走绑定还是覆盖      | 搬家=显式换绑（owner+轨迹事件）；单次跨机=host:path 参数覆盖 | 总图 #1；§2.1/§2.2                                                         |
+| 派发时发现绑定 host 离线怎么办   | 显式 `host_offline`，不降级默认机器                          | unified-turn-state §5.1；静默换 host 红线                                  |
+| 绑定信息查 D1 还是轨迹           | thread 级查轨迹（重放态）；fleet 活性查 D1                   | §2.3 归属正交裁定                                                          |
+| 新的 per-host 设置该开吗         | 只许收窄型操作字段，判据见 §3.1                              | host ceiling 先例；防 n 行漂移                                             |
+| 设置改了对在跑会话生效吗         | unchanged/live/session 三值分类说话                          | harness.ts classifyHarnessProjection；bb classifyExecutionSettingsChange   |
+| 工具开关做成 app 设置行吗        | 不做；启用策略是注册表部署期输入                             | §1.2/§3.2 一致性钩子                                                       |
 
 ---
 
