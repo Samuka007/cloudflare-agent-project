@@ -314,6 +314,7 @@ describe("M1.5 T16 — L1 chain over real child AgentDOs", () => {
 
     // Model-visible proof: the wire body of the reminder request carries the
     // dispatched task text (roles alternate: user → assistant → user).
+    if (reminderRequest === undefined) throw new Error("no reminder-turn request");
     const body = anthropicRequestBody(reminderRequest, {
       model: "glm-5.3",
       maxTokens: 8192,
