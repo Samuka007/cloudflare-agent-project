@@ -97,6 +97,19 @@ export interface ReplayState {
   /** Keyed by modelCallId = the `model.call_started` event seq (§0). */
   modelCalls: Map<number, ModelCallRuntime>;
   executions: Map<string, ExecutionRuntime>;
+  /**
+   * The child-journal `task.subagent_identity` row (M1.5 T16) — a subagent
+   * DO's replay-derivable self-knowledge: subagent wire surface, depth
+   * verdict and the parent-completion hook all read this. null for Main.
+   */
+  subagentIdentity: {
+    spawnId: string;
+    agentId: string;
+    parentThreadId: string;
+    sourceThreadId: string | null;
+    originKind: string | null;
+    depth: number;
+  } | null;
 }
 
 export function emptyReplayState(): ReplayState {
@@ -112,6 +125,7 @@ export function emptyReplayState(): ReplayState {
     inputIds: new Map(),
     modelCalls: new Map(),
     executions: new Map(),
+    subagentIdentity: null,
   };
 }
 
@@ -432,10 +446,30 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
     case "job.settled":
     case "job.delivered":
     case "peer.message":
-    case "peer.message_consumed": {
+    case "peer.message_consumed":
+    case "task.spawn_planned":
+    case "task.spawn_settled":
+    case "task.async_result": {
       // Thread-scoped JobRegistry journal data, not FSM state (proposal §3 T2:
       // jobs outlive turns); the projections in tools/job-registry.ts fold
-      // them from the log.
+      // them from the log — the task family (proposal §3 T16) likewise, via
+      // tools/task/*.
+      return;
+    }
+    case "task.subagent_identity": {
+      // Exactly one identity row per child DO: runSubagent dedups by the
+      // identity projection before appending, so a second row is a spawn bug.
+      if (state.subagentIdentity !== null) {
+        throw new FsmViolationError("duplicate task.subagent_identity");
+      }
+      state.subagentIdentity = {
+        spawnId: event.data.spawnId,
+        agentId: event.data.agentId,
+        parentThreadId: event.data.parentThreadId,
+        sourceThreadId: event.data.sourceThreadId,
+        originKind: event.data.originKind,
+        depth: event.data.depth,
+      };
       return;
     }
     case "todo_phases": {

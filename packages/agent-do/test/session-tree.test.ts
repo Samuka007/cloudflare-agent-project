@@ -653,8 +653,9 @@ describe("M1.5 T3 — registry rows (control-plane §1.1, classification §2.2)"
   test("the session-tree trio is registered class edge with do-local routing and omp intent modes", () => {
     // omp builtin-names.ts order restricted to the registered set: bash,
     // the T5' vendored-runtime host five, checkpoint, rewind,
-    // context_notes, new_context, wait, todo, think (hidden tool second
-    // to write, the T5' write row) and the T6 manage_skill tail (#30).
+    // context_notes, task, wait, todo, think, write, yield (T16 adds
+    // task between new_context and wait); T6 manage_skill is the last
+    // builtin (#30) and the T16 hidden yield closes the wire.
     expect(TOOL_REGISTRY.map((row) => row.name)).toEqual([
       "bash",
       "read",
@@ -665,11 +666,13 @@ describe("M1.5 T3 — registry rows (control-plane §1.1, classification §2.2)"
       "rewind",
       "context_notes",
       "new_context",
+      "task",
       "wait",
       "todo",
       "think",
       "write",
       "manage_skill",
+      "yield",
     ]);
     for (const name of ["checkpoint", "rewind", "todo"]) {
       const row = toolRegistryRow(name);

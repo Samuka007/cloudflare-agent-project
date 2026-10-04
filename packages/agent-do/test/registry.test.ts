@@ -85,22 +85,27 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
     const tools = wireToolSet(M0_RENDER_FLAGS);
     expect(tools.map((tool) => tool.name)).toEqual([
       "bash",
+      // T2/T3/T5'/T16 merge — omp builtin-names.ts order: the T5'
+      // vendored-runtime host five after bash; checkpoint/rewind before
+      // context_notes; task between new_context and wait; think and yield
+      // (hidden) last, write the T5' host row second to last.
       "read",
       "edit",
       "glob",
       "grep",
-      // T2/T3 merge — omp builtin-names.ts order: checkpoint/rewind before
-      // context_notes; wait between new_context and todo; think (hidden) last.
       "checkpoint",
       "rewind",
       "context_notes",
       "new_context",
+      "task",
       "wait",
       "todo",
       "think",
       "write",
-      // T6 #96 — omp builtin wire order #30 (last).
+      // T6 #96 — omp builtin wire order #30 (last builtin); the T16 hidden
+      // yield closes the wire after it (HIDDEN_TOOL_NAMES tail).
       "manage_skill",
+      "yield",
     ]);
 
     const bash = tools[0];
@@ -204,7 +209,11 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
     expect(order.indexOf("edit")).toBeLessThan(order.indexOf("glob"));
     expect(order.indexOf("glob")).toBeLessThan(order.indexOf("grep"));
     expect(order.indexOf("grep")).toBeLessThan(order.indexOf("context_notes"));
-    expect(order.indexOf("write")).toBe(order.length - 2);
+    // omp: write is the last of the host/builtin five; manage_skill (T6 #96)
+    // is the last BUILTIN row after it; the T16 hidden `yield`
+    // (HIDDEN_TOOL_NAMES) closes the wire.
+    expect(order.indexOf("write")).toBe(order.length - 3);
+    expect(order[order.length - 1]).toBe("yield");
   });
 
   test("M1.5/T6 #96 — manage_skill row is host/daemon-dispatch, wire order #30, narrow-free schema", () => {
@@ -213,8 +222,8 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
     expect(row?.backend).toEqual({ kind: "daemon-dispatch" });
     expect(row?.intent).toBe("require");
     // omp builtin-names.ts: manage_skill is the last builtin (index 30); the
-    // registry is a suffix of that order, so the row closes the wire.
-    expect(TOOL_REGISTRY[TOOL_REGISTRY.length - 1]?.name).toBe("manage_skill");
+    // only row after it is the T16 hidden `yield` (HIDDEN_TOOL_NAMES tail).
+    expect(TOOL_REGISTRY[TOOL_REGISTRY.length - 2]?.name).toBe("manage_skill");
     const tools = wireToolSet(M0_RENDER_FLAGS);
     const manageSkill = tools.find((tool) => tool.name === "manage_skill");
     expect(manageSkill?.input_schema).toEqual({

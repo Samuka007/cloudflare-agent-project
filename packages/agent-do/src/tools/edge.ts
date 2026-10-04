@@ -3,10 +3,9 @@ import type { AnyAgentEvent } from "../fsm-events.js";
 import { executionIdFor } from "../ids.js";
 import type { ToolRegistryRow } from "./registry.js";
 import { runWaitTool, type WaitToolContext } from "./wait.js";
-import {
-  type CheckpointRewindState,
-  type TodoJournalState,
-} from "./session-tree.js";
+import { runTaskTool, type TaskToolContext, type ValidatedSpawnParams } from "./task/executor.js";
+import { runYieldTool, type YieldToolArgs } from "./yield.js";
+import { type CheckpointRewindState, type TodoJournalState } from "./session-tree.js";
 import {
   applyParams,
   clonePhases,
@@ -48,6 +47,11 @@ export interface EdgeToolContext {
   /** Blocking-wait surface — bound only for `wait` (omp WaitTool session
    * deps); the DO owns journal accessors, alarm tables and the wake map. */
   wait?: WaitToolContext;
+  /**
+   * Subagent-spawn surface — bound only for `task` (M1.5 T16); the DO owns
+   * the journal, the AGENT_DO namespace seam and the wake channel.
+   */
+  task?: TaskToolContext;
   /**
    * Fold the todo journal: latest canonical snapshot plus any snapshot this
    * execution already committed (crash window recovery — session-tree.ts).
@@ -193,6 +197,23 @@ export async function runEdgeTool(
     return runWaitTool(ctx.wait);
   }
 
+  if (row.name === "task") {
+    // omp task/index.ts execute (edge half, M1.5 T16): journal-first spawn
+    // plan → child AgentDO bring-up → per-item mode (blocking inline park /
+    // background T2 registration). Bound only with the DO context.
+    if (ctx.task === undefined) {
+      return { status: "error", output: "task requires the DO-bound spawn context." };
+    }
+    return runTaskTool(validated as ValidatedSpawnParams, ctx.task);
+  }
+
+  if (row.name === "yield") {
+    // omp YieldTool.execute (M1.5 T16 minimal gate): pure shape validation —
+    // the tool.call/tool.result rows ARE the yield record; the child's
+    // completion hook projects the last terminal call from the journal.
+    return runYieldTool(validated as YieldToolArgs);
+  }
+
   if (row.name === "checkpoint") {
     // omp checkpoint.ts:72-86 — reject nested checkpoints, then acknowledge.
     // No journal write: the ok tool.result row IS the boundary marker (omp
@@ -205,7 +226,9 @@ export async function runEdgeTool(
     const params = validated as { goal: string };
     return {
       status: "ok",
-      output: [`Checkpoint: ${params.goal}`, "Finish exploration and formulate findings."].join("\n"),
+      output: [`Checkpoint: ${params.goal}`, "Finish exploration and formulate findings."].join(
+        "\n",
+      ),
     };
   }
 
@@ -216,7 +239,10 @@ export async function runEdgeTool(
     // (activeBranchAfterRewind projection; rollover tickets commit it).
     const state = await ctx.checkpointRewindState();
     if (state.phase !== "active") {
-      return { status: "error", output: state.phase === "completed" ? CHECKPOINT_COMPLETED : NO_ACTIVE_CHECKPOINT };
+      return {
+        status: "error",
+        output: state.phase === "completed" ? CHECKPOINT_COMPLETED : NO_ACTIVE_CHECKPOINT,
+      };
     }
     const params = validated as { report: string };
     const report = params.report.trim();
@@ -239,7 +265,10 @@ export async function runEdgeTool(
  * interrupted snapshot completes the run instead of re-applying a
  * non-idempotent op (init/append/rm all reject their own replay).
  */
-async function runTodoTool(args: Record<string, unknown>, ctx: EdgeToolContext): Promise<EdgeToolResult> {
+async function runTodoTool(
+  args: Record<string, unknown>,
+  ctx: EdgeToolContext,
+): Promise<EdgeToolResult> {
   const { previous, interrupted } = await ctx.todoState();
   if (interrupted !== undefined) {
     return { status: "ok", output: formatSummary(interrupted, [], false) };

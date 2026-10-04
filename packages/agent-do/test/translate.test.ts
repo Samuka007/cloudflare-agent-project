@@ -3,7 +3,7 @@ import type { AgentEventDataByType, AgentEventType } from "../src/fsm-events.js"
 import { parseAgentEvent, type AnyAgentEvent } from "../src/fsm-events.js";
 import { modelRequestFromEvents, ProjectionError } from "../src/translate.js";
 import { anthropicRequestBody, toolUseIdFor, SYSTEM_PROMPT_BLOCKS } from "../src/relay/wire.js";
-import { M0_RENDER_FLAGS, wireToolSet } from "../src/tools/registry.js";
+import { MAIN_WIRE_TOOLS, M0_RENDER_FLAGS, wireToolSet } from "../src/tools/registry.js";
 
 /**
  * Translation-layer invariants (#28 ruling ③): model-visible trio only,
@@ -97,7 +97,9 @@ describe("translation: event log → model request", () => {
   test("wire body: alternating roles, omp-verbatim bash tool, derived ids", () => {
     const request = modelRequestFromEvents(toolTurnLog(), "t1", 10);
     const body = anthropicRequestBody(request, WIRE_OPTS);
-    expect(body.tools).toEqual(wireToolSet(M0_RENDER_FLAGS));
+    // The Main surface (M1.5 T16): every registered row minus the hidden
+    // `yield` tail — the body renders MAIN_WIRE_TOOLS, not the raw registry.
+    expect(body.tools).toEqual(wireToolSet(M0_RENDER_FLAGS, MAIN_WIRE_TOOLS));
     const bash = body.tools.find((tool) => tool.name === "bash");
     if (bash === undefined) throw new Error("bash missing from registry-rendered tool set");
     expect(bash.input_schema.required).toEqual(["command", "i"]);
