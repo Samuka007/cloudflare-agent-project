@@ -108,6 +108,8 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
       "task",
       "wait",
       "todo",
+      // M1.5/T12 — builtin-names.ts:24: web_search between todo and write.
+      "web_search",
       "think",
       "write",
       // T10' merge — omp builtin-names.ts order: eval precedes github/glob;

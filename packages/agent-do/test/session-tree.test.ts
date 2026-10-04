@@ -654,10 +654,11 @@ describe("M1.5 T3 — registry rows (control-plane §1.1, classification §2.2)"
     // omp builtin-names.ts order restricted to the registered set: bash,
     // the T5' vendored-runtime host five, ask (T4, builtin #6), find (T11),
     // checkpoint, rewind, context_notes, task, wait, todo,
-    // think, write, eval, manage_skill, yield (T16 adds task between
-    // new_context and wait; T6 manage_skill is the last builtin #30, the
-    // T10' eval row rides after the T5' write row, and the T16 hidden yield
-    // closes the wire).
+    // web_search (T12, between todo and the hidden tail), think, write,
+    // eval, manage_skill, yield (T16 adds task between new_context and
+    // wait; T6 manage_skill is the last builtin #30, the T10' eval row
+    // rides after the T5' write row, and the T16 hidden yield closes the
+    // wire).
     expect(TOOL_REGISTRY.map((row) => row.name)).toEqual([
       "bash",
       "read",
@@ -673,6 +674,7 @@ describe("M1.5 T3 — registry rows (control-plane §1.1, classification §2.2)"
       "task",
       "wait",
       "todo",
+      "web_search",
       "think",
       "write",
       "eval",
