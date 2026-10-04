@@ -31,6 +31,10 @@ Milestone: GitHub `M0`。收官状态见 #31 报告；kill criteria：M0 是 bb 
   engineering.md 横切实践 11 "DO 请求量预算"入宪）、#38 服务端断 WS 自愈
 - SPA 白屏事故 → #39 部署流程纳入 dist 构建与资产断言（flake app `nix run .#staging-deploy`，
   工具链钉版 + shellcheck 门）
+- hosts 生命线修复（#62）：daemon 心跳 → 注册表 last_seen_at 投影（SQL 端 30s 节流，
+  防 D1 写配额烧穿；bb markHostSeen 语义），/hosts status 弃路由钉死 disconnected、
+  改读时派生（per-host service DO hostLiveness：现役会话 + 活 socket，bb
+  entity-lookup toHostStatus 语义），SPA "Host disconnected" 横幅与真值一致
 
 ### 工程实践
 
