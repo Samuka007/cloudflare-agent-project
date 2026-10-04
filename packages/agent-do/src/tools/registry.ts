@@ -71,6 +71,38 @@ const contextNotesSchema = type({
 
 const newContextSchema = type({});
 
+// omp packages/coding-agent/src/tools/security-scan.ts:21-45
+// (`securityScanSchema`, 18.6.0 verbatim — the 9-action dispatch face). The
+// per-action required fields (plan_id for start, operation_id for
+// status/cancel, validation_status/summary for validate, …) are omp ToolError
+// gates inside execute() — the narrow-free field set, same serialization wall
+// as ask.
+const securityScanSchema = type({
+  action:
+    "'preflight' | 'start' | 'status' | 'cancel' | 'validate' | 'cloud_scans' | 'cloud_start' | 'cloud_status' | 'cloud_pull'",
+  "plan_id?": "string",
+  "operation_id?": "string",
+  "target_kind?": "'repository' | 'scoped_path' | 'ref_diff' | 'working_tree'",
+  "include_paths?": "string[]",
+  "exclude_paths?": "string[]",
+  "base_revision?": "string",
+  "head_revision?": "string",
+  "knowledge_base_paths?": "string[]",
+  "output_root?": "string",
+  "archive_existing?": "boolean",
+  "credential_id?": "number.integer >= 1",
+  "scan_id?": "string",
+  "finding_id?": "string",
+  "validation_status?": "'unvalidated' | 'validated' | 'rejected' | 'partial' | 'error'",
+  "validation_summary?": "string",
+  "validation_evidence?": type({ label: "string > 0", explanation: "string" }).array(),
+  "cloud_configuration_id?": "string",
+  "repository_id?": "string",
+  "repository_url?": "string",
+  "environment_id?": "string",
+  "lookback_days?": "number.integer >= 1 | 'all'",
+});
+
 // omp tools/wait.ts:24 — empty schema; the tool takes no arguments (the wire
 // `i` intent field rides in properties, never required — omp wait.ts:59).
 const waitSchema = type({});
@@ -282,6 +314,18 @@ const CONTEXT_NOTES_DESCRIPTION_TEMPLATE =
 // omp packages/coding-agent/src/prompts/tools/new-context.md
 const NEW_CONTEXT_DESCRIPTION_TEMPLATE =
   "Request a new context window after the current turn. This experimental signal has no arguments and does not itself compact or alter the session transcript.";
+
+// omp packages/coding-agent/src/prompts/tools/security-scan.md verbatim.
+const SECURITY_SCAN_DESCRIPTION_TEMPLATE = `OMP-native repository security scans: plan, start, inspect, cancel, validate.
+\`preflight\`: immutable plan pinned to repository snapshot, model, exact OAuth credential.
+\`start\`: plan → background OMP job.
+\`status\`, \`cancel\`: returned operation ID.
+\`cloud_scans\`: Codex Security cloud configurations for exact selected ChatGPT OAuth account.
+\`cloud_start\`: creates/enables configuration using \`repository_id\`, \`repository_url\`, \`environment_id\`; consumes account's separate Codex Security cloud allowance; NEVER native-scan fallback.
+\`cloud_status\`: cloud progress.
+\`cloud_pull\`: cloud findings → canonical OMP security store, available through \`security://\`.
+Cloud actions: \`cloud_configuration_id\` required; \`credential_id\` MAY pin account.
+Security MUST be enabled in settings.`;
 
 // omp think.ts:56 — no prompt file exists; the tool's literal description.
 const THINK_DESCRIPTION = "private scratchpad; not shown to user";
@@ -717,12 +761,29 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     intent: "require",
   },
   {
+    // omp tools/security-scan.ts:107-289 — discoverable `security_scan`
+    // (M1.5/T15). Classification §2.3 calls the omp tool hybrid (native
+    // preflight/start vs cloud control-plane half), but the M1.5 ruling is
+    // 整体归 daemon — OAuth credentials stay in the host's daemon-private
+    // authStorage, no half migrates — which collapses the seam: the whole
+    // tool executes on the daemon host (omp's own SecurityScanTool, class
+    // host) behind the tool-agnostic frame, and the DO never sees credential
+    // material. omp declares no `intent` member → resolveIntentMode default
+    // "require".
+    name: "security_scan",
+    schema: securityScanSchema,
+    descriptionTemplate: SECURITY_SCAN_DESCRIPTION_TEMPLATE,
+    class: "host",
+    backend: { kind: "daemon-dispatch" },
+    intent: "require",
+  },
+  {
     // omp task/index.ts — essential hybrid `task`, edge half (M1.5 T16):
     // same-host single dispatch + journal-first spawn plan + child AgentDO
     // bring-up + result backflow; executor in tools/task/executor.ts.
-    // Wire order per omp builtin-names.ts: between security_scan and wait —
-    // security_scan is unregistered at M1.5, so `task` slots before `wait`.
-    // Orchestration face only: `isolated` execution is the daemon half (T20).
+    // Wire order per omp builtin-names.ts: after security_scan (T15), before
+    // wait. Orchestration face only: `isolated` execution is the daemon half
+    // (T20).
     name: "task",
     schema: taskSchema,
     descriptionTemplate: TASK_DESCRIPTION_TEMPLATE,
