@@ -1,7 +1,7 @@
 # Codebase Guidelines
 
 <current_wave>
-当前 wave：以可靠浏览器验收还原真实用户体验为前提，让 bb-agent-host 端到端正常运转——工具可用、渲染正确、事件返回、流式流动、Host disconnected 不再滞留、bb host 概念端点映射齐。不做题式完成：推进 wave 同时强化 PM 脚手架与开发框架（派发/审计/验收体验），wave 外沿项目最终愿景持续主观发掘非阻塞问题。
+当前 wave（W3）：以可靠浏览器验收还原真实用户体验为前提，让 bb-agent-host 端到端正常运转——工具可用、渲染正确、事件返回、流式流动、Host disconnected 不再滞留、bb host 概念端点映射齐。不做题式完成：推进 wave 同时强化 PM 脚手架与开发框架（派发/审计/验收体验），wave 外沿项目最终愿景持续主观发掘非阻塞问题。
 </current_wave>
 
 ## Engineering Doctrine（工程铁律——先读这个）
