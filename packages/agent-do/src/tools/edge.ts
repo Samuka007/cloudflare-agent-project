@@ -7,6 +7,7 @@ import { runTaskTool, type TaskToolContext, type ValidatedSpawnParams } from "./
 import { runYieldTool, type YieldToolArgs } from "./yield.js";
 import { runAskTool, type AskToolContext } from "./ask.js";
 import { type CheckpointRewindState, type TodoJournalState } from "./session-tree.js";
+import { runWebSearchTool, type WebSearchToolContext } from "./web-search.js";
 import {
   applyParams,
   clonePhases,
@@ -30,7 +31,8 @@ import {
 
 export interface EdgeToolResult {
   /** "cancelled" lands when the owning call/turn was cancelled while the
-   * edge executor was blocked (wait); T1 rows only produce ok|error. */
+   * edge executor was blocked or mid-transport (wait wake race; web_search
+   * outbound fetch — omp throwIfAborted rethrow semantics). */
   status: "ok" | "error" | "cancelled";
   output: string;
 }
@@ -56,6 +58,9 @@ export interface EdgeToolContext {
    * the journal, the AGENT_DO namespace seam and the wake channel.
    */
   task?: TaskToolContext;
+  /** Outbound-search surface — bound only for `web_search` (M1.5 T12):
+   * decoded config, the owning call's cancel signal, and the DO's fetch. */
+  webSearch?: WebSearchToolContext;
   /**
    * Fold the todo journal: latest canonical snapshot plus any snapshot this
    * execution already committed (crash window recovery — session-tree.ts).
@@ -267,6 +272,15 @@ export async function runEdgeTool(
       status: "ok",
       output: ["Rewind requested.", "Report captured for context replacement."].join("\n"),
     };
+  }
+
+  if (row.name === "web_search") {
+    // omp WebSearchTool.execute — engine chain walk in tools/web-search.ts;
+    // provider failures return `Error: …` text, abort rethrows as cancelled.
+    if (ctx.webSearch === undefined) {
+      return { status: "error", output: "web_search requires the DO-bound network context." };
+    }
+    return runWebSearchTool(validated as Parameters<typeof runWebSearchTool>[0], ctx.webSearch);
   }
 
   return { status: "error", output: `No edge executor for tool ${row.name}.` };
