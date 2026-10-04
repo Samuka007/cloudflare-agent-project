@@ -1678,32 +1678,25 @@ function laneBoard(...numbers: number[]): MockBoard {
 }
 
 describe("dorChecklist (pure)", () => {
-  it("five items in ticket order, all pass on a complete body, budget carries the line", () => {
+  it("three items in ticket order, all pass on a complete body; budget/precedent lines are no longer gate items (#224)", () => {
     const dor = dorChecklist(FULL_DOR_BODY);
-    expect(dor.map((c) => c.key)).toEqual([
-      "three-questions",
-      "acceptance",
-      "anchors",
-      "budget",
-      "precedent",
-    ]);
+    // #224: budget/precedent left the gate — a body may still carry the
+    // lines (budget rides the packet as an info line) but they never
+    // surface as checks; the exact key list below pins that.
+    expect(dor.map((c) => c.key)).toEqual(["three-questions", "acceptance", "anchors"]);
     expect(dor.every((c) => c.ok)).toBe(true);
-    expect(dor.find((c) => c.key === "budget")?.evidence).toContain("60min");
     expect(dor.find((c) => c.key === "three-questions")?.evidence).toContain("三问");
   });
 
-  it("missing items report ok:false with null evidence (skeleton budget = missing)", () => {
+  it("missing items report ok:false with null evidence", () => {
     const dor = dorChecklist(STRIPPED_DOR_BODY);
-    expect(dor.filter((c) => !c.ok).map((c) => c.key)).toEqual(["anchors", "precedent"]);
+    expect(dor.filter((c) => !c.ok).map((c) => c.key)).toEqual(["anchors"]);
     expect(dor.find((c) => c.key === "anchors")?.evidence).toBeNull();
-    const noBudget = dorChecklist("三问：有\n验收：有\n锚点：bb:x\n往例：有");
-    expect(noBudget.find((c) => c.key === "budget")?.ok).toBe(false);
   });
 
   // #199: detection is semantic — real writing like "上游锚：spec §D2-D4"
-  // or "预算 ≤1.5h" counts as evidence though neither carries the old
-  // word forms (锚点 / 预算：).
-  it("semantic detection: 锚：/§ refs/file paths/colonless time expressions count", () => {
+  // counts as evidence though it lacks the old word form (锚点).
+  it("semantic detection: 锚：/§ refs/file paths count", () => {
     const semantic = dorChecklist(
       "复用三问：零适配垫\n验收：端到端断言\n上游锚：spec §D2-D4+研究 stream-surface.md\n预算 ≤1.5h\n参照往例：#147 ≈ 1h",
     );
@@ -1712,8 +1705,6 @@ describe("dorChecklist (pure)", () => {
       "三问：a\n验收：b\n按 scripts/pm-autopilot.ts:583-594 修\n预算 40min\n往例：c",
     );
     expect(byPath.find((c) => c.key === "anchors")?.ok).toBe(true);
-    const byTimeExpr = dorChecklist("三问：a\n验收：b\n锚点：c\n≤40min\n往例：d");
-    expect(byTimeExpr.find((c) => c.key === "budget")?.ok).toBe(true);
   });
 });
 
@@ -1728,10 +1719,10 @@ describe("AP.lane (runGit seam — zero filesystem side effects)", () => {
   // PM through the advisory table, they never refuse.
   it("DoR is advisory: missing items print as gaps but the gate dispatches anyway", async () => {
     const rep = await lane(laneTicket({ body: STRIPPED_DOR_BODY }));
-    expect(rep.refused).toBe(false); // old gate refused here on ③/⑤
+    expect(rep.refused).toBe(false); // old gate refused here on ③
     expect(rep.ok).toBe(true);
     expect(rep.spawn).not.toBeNull();
-    expect(rep.dor.filter((c) => !c.ok).map((c) => c.key)).toEqual(["anchors", "precedent"]);
+    expect(rep.dor.filter((c) => !c.ok).map((c) => c.key)).toEqual(["anchors"]);
   });
 
   it("a fixture missing every DoR item still dispatches — only the board predicate refuses", async () => {
@@ -1855,7 +1846,6 @@ describe("AP.lane (runGit seam — zero filesystem side effects)", () => {
     expect(rep.dor.find((c) => c.key === "anchors")?.evidence).toContain(
       "docs/design/streaming-contract.md",
     );
-    expect(rep.dor.find((c) => c.key === "budget")?.evidence).toContain("预算 ≤1.5h");
   });
 });
 
