@@ -50,6 +50,8 @@ export interface AnthropicRequestBody {
   thinking: ThinkingConfig;
   system: AnthropicTextBlock[];
   tools: AnthropicToolDefinition[];
+  /** Present only on the T17 forced-yield attempt (reminder ladder, 3/3). */
+  tool_choice?: AnthropicToolChoiceTool;
   messages: AnthropicMessage[];
 }
 
@@ -57,6 +59,12 @@ export interface AnthropicToolDefinition {
   name: string;
   description: string;
   input_schema: Record<string, unknown>;
+}
+
+/** Anthropic tool_choice — the M1.5 T17 forced-yield shape only. */
+export interface AnthropicToolChoiceTool {
+  type: "tool";
+  name: string;
 }
 
 export class WireAssemblyError extends Error {
@@ -226,6 +234,11 @@ export function anthropicRequestBody(
       request.toolSurface === "subagent"
         ? wireToolSet(M0_RENDER_FLAGS, subagentWireTools(request.spawnPolicyBlocked === true))
         : wireToolSet(M0_RENDER_FLAGS, MAIN_WIRE_TOOLS),
+    // M1.5 T17: the ladder's forced attempt pins `yield` as the tool choice
+    // (translate derives it from the reminder marker bound to this turn).
+    ...(request.toolChoice === undefined
+      ? {}
+      : { tool_choice: { type: "tool", name: request.toolChoice.name } }),
     messages,
   };
 }

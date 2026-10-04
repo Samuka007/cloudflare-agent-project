@@ -69,6 +69,12 @@ export interface RunSubagentRequest {
   task: string;
   solutionSpace?: string;
   model?: string;
+  /**
+   * T17 structured contract — mirrored onto the child identity row so the
+   * child enforces the outputSchema verdict replay-pure (no parent contact).
+   */
+  outputSchema?: unknown;
+  schemaMode?: "permissive" | "strict";
 }
 
 /** Validated flat spawn parameters (omp taskSchemaNoIsolation T16 slice). */
@@ -257,6 +263,8 @@ export async function runTaskTool(
       task: params.task,
       solutionSpace: params.solutionSpace,
       ...(params.model === undefined ? {} : { model: params.model }),
+      ...(params.outputSchema === undefined ? {} : { outputSchema: params.outputSchema }),
+      ...(params.schemaMode === undefined ? {} : { schemaMode: params.schemaMode }),
     });
   } catch (error) {
     // Child bring-up failed before any turn ran: settle the spawn as failed so
@@ -375,10 +383,3 @@ export async function settleSpawn(
     await ctx.registry.settle(settlement.jobId, { status: settlement.status, output: capped });
   }
 }
-
-/**
- * The child's failure settlement when it exits without any yield — omp
- * docs/tools/task.md:186 SYSTEM WARNING prefix verbatim; the "after 3
- * reminders" clause is T17 (reminder ladder), so it is omitted here.
- */
-export const NO_YIELD_WARNING = "SYSTEM WARNING: Subagent exited without calling yield tool.";
