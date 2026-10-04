@@ -237,9 +237,9 @@ describe("M1.5 T16 — async-result boundary projection (translate)", () => {
     const earlier = modelRequestFromEvents(log, "t1", 3);
     expect(earlier.asyncResults).toEqual([]);
     expect(earlier.priorCalls).toHaveLength(0); // call 3 IS the first call
-    // …and the row never RE-INJECTS: turn t3's request (the projection is
-    // turn-scoped — prior turns' calls are invisible, exactly like the prior
-    // turns' own text) carries nothing on its trailing boundary.
+    // …and the row never RE-INJECTS: the row permanently rides its owning
+    // call's slice — for a later turn's request (#228 session fold) that call
+    // lives in priorTurns history, so t3's TRAILING boundary stays empty.
     const later = modelRequestFromEvents(log, "t3", 12);
     expect(later.asyncResults).toEqual([]);
     expect(later.priorCalls).toHaveLength(0);

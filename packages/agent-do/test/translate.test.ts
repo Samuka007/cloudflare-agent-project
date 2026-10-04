@@ -469,4 +469,78 @@ describe("translation: rewind boundary cut (#147)", () => {
       tokens(`[branch-summary] ${SUMMARY}`) + tokens("continue") + 40,
     );
   });
+
+  test("an armed rewind cut keeps pre-boundary turns out of priorTurns (#228 join)", () => {
+    // The cut hides t1 (the checkpoint exploration turn): the session fold
+    // must not re-admit pre-boundary turns — the summary replaces them.
+    const request = modelRequestFromEvents(rewindJournal(), "t2", 18);
+    expect(request.priorTurns).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Session-scoped fold (#228): prior turns ride every later request — the
+// child reminder-turn repro. omp §1.5: context rebuilds from the whole log.
+// ---------------------------------------------------------------------------
+describe("translation: session fold across turns (#228)", () => {
+  /** t1 = answered task; t2 = reminder-style follow-up. Both terminal. */
+  function twoTurnLog(): AnyAgentEvent[] {
+    return [
+      event(1, "thread.created", { title: "t", machineId: "local" }),
+      event(2, "turn.input", {
+        turnId: "t1",
+        inputId: "i1",
+        content: [{ type: "text", text: "Reply with exactly: OK" }],
+      }),
+      event(3, "model.call_started", { turnId: "t1", consumedSteerSeqs: [] }),
+      event(4, "model.call_completed", {
+        turnId: "t1",
+        modelCallId: 3,
+        text: "OK",
+        toolCalls: [],
+      }),
+      event(5, "turn.completed", { turnId: "t1" }),
+      event(6, "turn.input", {
+        turnId: "t2",
+        inputId: "i2",
+        content: [{ type: "text", text: "Reminder: submit your final result." }],
+      }),
+      event(7, "model.call_started", { turnId: "t2", consumedSteerSeqs: [] }),
+      event(8, "model.call_completed", {
+        turnId: "t2",
+        modelCallId: 7,
+        text: "OK",
+        toolCalls: [],
+      }),
+      event(9, "turn.completed", { turnId: "t2" }),
+    ];
+  }
+
+  test("prior turn's input and call history ride the second turn's request", () => {
+    const request = modelRequestFromEvents(twoTurnLog(), "t2", 7);
+    expect(request.input).toBe("Reminder: submit your final result.");
+    expect(request.priorCalls).toHaveLength(0); // t2's own first call IS current
+    expect(request.priorTurns).toHaveLength(1);
+    const prior = request.priorTurns?.[0];
+    expect(prior?.input).toBe("Reply with exactly: OK");
+    expect(prior?.calls).toHaveLength(1);
+    expect(prior?.calls[0]?.text).toBe("OK");
+    expect(prior?.calls[0]?.modelCallId).toBe(3);
+  });
+
+  test("wire: prior turn renders input → assistant, roles alternate, task text present", () => {
+    const body = anthropicRequestBody(modelRequestFromEvents(twoTurnLog(), "t2", 7), WIRE_OPTS);
+    expect(body.messages.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+    expect(JSON.stringify(body.messages)).toContain("Reply with exactly: OK");
+    // The reminder text stays the positionally-last user material.
+    const last = body.messages[body.messages.length - 1];
+    expect(JSON.stringify(last)).toContain("Reminder: submit your final result.");
+  });
+
+  test("replaying an earlier turn's request never sees later turns (future-proof)", () => {
+    const request = modelRequestFromEvents(twoTurnLog(), "t1", 3);
+    expect(request.input).toBe("Reply with exactly: OK");
+    expect(request.priorTurns).toBeUndefined();
+    expect(request.priorCalls).toHaveLength(0);
+  });
 });
