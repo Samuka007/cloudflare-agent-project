@@ -1,26 +1,24 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { EditTool } from "@oh-my-pi/pi-coding-agent/edit";
-import { GlobTool } from "@oh-my-pi/pi-coding-agent/tools/glob";
-import { GrepTool } from "@oh-my-pi/pi-coding-agent/tools/grep";
-import { ReadTool } from "@oh-my-pi/pi-coding-agent/tools/read";
-import { WriteTool } from "@oh-my-pi/pi-coding-agent/tools/write";
+import type { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 
 /**
  * Vendored omp tool runtime (M1.5/T5' #128): host construction, native-addon
- * version gate, and the dispatch-frame adapter. The five host tools
- * (read/glob/grep/write/edit) execute through omp's own `execute()` path —
+ * version gate, and the dispatch-frame adapter. The host tools
+ * (read/glob/grep/write/edit + manage_skill, T6 #96) execute through omp's own `execute()` path —
  * spike evidence docs/research/omp-runtime-embedding.md §1–§3; the vendoring
  * mechanism is npm dependency pinning (@oh-my-pi 18.6.0, exact in
  * package.json + pnpm-lock.yaml), so the runtime is the release artifact of
  * the pinned checkout (oh-my-pi npm 18.6.0) rather than a copied tree.
  *
- * Runtime discipline (spike §5 verdict): this module loads ONLY under Bun —
- * the daemon client process must be started with Bun (omp ships raw TS and
+ * Runtime discipline (spike §5 verdict): omp executes ONLY under Bun — the
+ * daemon client process must be started with Bun (omp ships raw TS and
  * imports `bun` built-ins); the Node-side tsc program typechecks against the
- * package's shipped dist/types declarations.
+ * package's shipped dist/types declarations. omp modules load LAZILY inside
+ * createToolHost (dynamic imports): the process-global agent dir must be
+ * redirected (PI_CODING_AGENT_DIR) before omp's dir resolver freezes at
+ * module load, and the version gate runs before any omp import.
  */
 
 /** The dispatch frame (control-plane §4; agent-do ToolDispatchRequest minus
@@ -75,6 +73,16 @@ export interface ToolHost {
   tools: Record<string, OmpTool>;
 }
 
+/**
+ * Host settings overrides (agent enablement, T6 #96): `autolearn.enabled`
+ * admits omp's own ManageSkillTool.createIf gate — the same flag omp checks,
+ * pinned host-side in the isolated settings (no daemon capability
+ * negotiation, control-plane §1.2).
+ */
+const HOST_SETTINGS_OVERRIDES: Record<string, unknown> = {
+  "autolearn.enabled": true,
+};
+
 // ---------------------------------------------------------------------------
 // Native addon version gate (spike §2: a stale addon — 15.5.6 vs 18.4.4 —
 // loads but misses exports and crashes at import; the gate refuses start).
@@ -93,10 +101,15 @@ export interface NativeAddonIdentity {
  * exception): the loader-state module is not in the package exports map, so
  * no static bare specifier can reach it — resolve the exported main entry
  * and import the sibling file by real path (identical under Bun and Node).
+ * The addon loads lazily on the natives surface import — until then
+ * `nativeAddonStatus()` is null — so the surface import happens HERE, before
+ * the status read; a stale addon surfaces as an import failure (spike §2's
+ * actual crash-at-import mode), which is itself a refusal.
  */
 export async function readNativeAddonStatus(): Promise<NativeAddonIdentity> {
   const require = createRequire(import.meta.url);
   const nativesEntry = require.resolve("@oh-my-pi/pi-natives");
+  await import(pathToFileURL(nativesEntry).href);
   // unknown boundary: the computed specifier resolves to `any` (no static
   // d.ts), and `any as T` trips no-unnecessary-type-assertion while a bare
   // typed assignment trips no-unsafe-assignment.
@@ -137,7 +150,38 @@ export async function createToolHost(
   agentDir: string,
   machineId: string,
 ): Promise<ToolHost> {
-  const settings = await Settings.loadIsolated({ cwd, agentDir });
+  // Agent-dir isolation (T6 #96): process-global omp paths — the
+  // managed-skills store (getManagedSkillsDir → getAgentDir()), auth,
+  // session-index db — must resolve under the daemon-private directory, not
+  // the operator's ~/.omp. The dir resolver freezes at omp module load, so
+  // the env pin lands BEFORE the dynamic imports below.
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  // Static imports cannot work here: omp's module graph freezes the
+  // process-global agent-dir resolver at load time (pi-utils dirs.ts module
+  // init), and the daemon-private agentDir is a runtime config value — the
+  // env pin above must land BEFORE these specifiers evaluate.
+  const [
+    { Settings },
+    { EditTool },
+    { GlobTool },
+    { GrepTool },
+    { ReadTool },
+    { WriteTool },
+    { ManageSkillTool },
+  ] = await Promise.all([
+    import("@oh-my-pi/pi-coding-agent/config/settings"),
+    import("@oh-my-pi/pi-coding-agent/edit"),
+    import("@oh-my-pi/pi-coding-agent/tools/glob"),
+    import("@oh-my-pi/pi-coding-agent/tools/grep"),
+    import("@oh-my-pi/pi-coding-agent/tools/read"),
+    import("@oh-my-pi/pi-coding-agent/tools/write"),
+    import("@oh-my-pi/pi-coding-agent/tools/manage-skill"),
+  ]);
+  const settings = await Settings.loadIsolated({
+    cwd,
+    agentDir,
+    overrides: HOST_SETTINGS_OVERRIDES,
+  });
   const session = {
     cwd,
     hasUI: false,
@@ -154,6 +198,10 @@ export async function createToolHost(
   ];
   const tools: Record<string, OmpTool> = {};
   for (const tool of candidates) tools[tool.name] = tool;
+  // manage_skill rides omp's own enablement gate (autolearn.enabled pinned
+  // on above); when the gate closes the tool is simply absent from the map.
+  const manageSkill = ManageSkillTool.createIf(session);
+  if (manageSkill !== null) tools[manageSkill.name] = manageSkill;
   return { machineId, settings, session, tools };
 }
 
