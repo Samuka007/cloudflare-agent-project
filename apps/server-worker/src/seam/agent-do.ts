@@ -1,4 +1,5 @@
 import type { Env } from "../env.js";
+import type { PendingInteractionRow } from "@cap/protocol";
 import type {
   AdapterCommand,
   AdapterCommandOutcome,
@@ -40,6 +41,13 @@ export interface AgentDoRpc {
     limit?: number;
     project?: "raw" | "ux";
   }): Promise<{ events: UxThreadEvent[]; latestSeq: number }>;
+  /** Journal-folded pending interactions (#225); the interactions routes' source. */
+  listInteractions(): Promise<{ interactions: PendingInteractionRow[] }>;
+  /** Ruling backflow (M1.5 T4); the resolve route's write face. */
+  resolveInteraction(args: {
+    interactionId: string;
+    resolution: unknown;
+  }): Promise<{ accepted: boolean; duplicated: boolean }>;
   cancelTurn(args: { turnId: string }): Promise<{ accepted: boolean }>;
   onExecutionUpdate(u: {
     executionId: string;
@@ -160,7 +168,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
   // Reads stay direct: the event log projection lives on the per-thread DO.
   const reader = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId)) as unknown as Pick<
     AgentDoRpc,
-    "getEvents"
+    "getEvents" | "listInteractions" | "resolveInteraction"
   >;
 
   async function dispatch(command: AdapterCommand): Promise<AdapterCommandOutcome> {
@@ -252,6 +260,16 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
 
     async getEvents(args) {
       return reader.getEvents(args);
+    },
+
+    async listInteractions() {
+      // Journal fold lives on the per-thread DO; reads stay direct.
+      return reader.listInteractions();
+    },
+
+    async resolveInteraction(args) {
+      // The journal append + wake live on the per-thread DO (M1.5 T4).
+      return reader.resolveInteraction(args);
     },
 
     async cancelTurn(args) {

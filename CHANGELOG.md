@@ -17,6 +17,18 @@
   journal 折叠本就干净、无恢复消费者。L2：agent-do ask.test.ts 停止路由 fold
   断言（ask pending = 可取消活动 turn，cancel 落 `turn.cancelled` 后清空）；
   L1：server-worker thread-stop.test.ts（静默 no-op、完成后 no-op、404）。
+- **#225 (P0) ask 不弹前端**：agent 调 `ask` 前端不弹交互卡（staging 真机）。
+  两处缝：① DO→hub 帧面——`interaction.*` journal 行落进 notifyHub 通用
+  `events-appended` 桶（#197 只做了 model.delta/turn.phase），而 SPA interactions
+  query 只在 `interactions-changed` 上 refetch；现特殊分支推送
+  `["interactions-changed", {latestSeq, hasPendingInteraction}]`（bb
+  buildInteractionChangeMetadata 同形），弹卡/横幅消失/侧栏徽标一次到位，T4 的
+  DO 私有 `pending-interaction` push 保持 I3 内部面。② 控制平面 REST 面——
+  `GET /threads/:id/interactions` 是 `[]` 桩、single/resolve 面缺失；现由 DO
+  journal fold（`listInteractions` RPC + `projectInteractionRows`）供行，bb
+  providerPendingInteractionSchema 校验出站，resolve 走既有 `resolveInteraction`
+  RPC；D1 `pending_interactions` 升级为 thread-list EXISTS 探针的镜像（读面
+  自愈）。bb 子模块零改动（fork 消费 hub bb 方言帧 + 上述 REST 面）。
 
 ## [m1.5] — 2026-10-04 · 工具集完备（omp 33 工具面边缘化）
 

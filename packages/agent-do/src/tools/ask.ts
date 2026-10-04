@@ -1,4 +1,5 @@
 import type {
+  PendingInteractionRow,
   PendingInteractionPayload,
   PendingInteractionResolution,
   PendingInteractionUserQuestionQuestion,
@@ -303,33 +304,79 @@ export function timeoutAutoSelect(question: PendingInteractionUserQuestionQuesti
 // Journal projection + executor
 // ---------------------------------------------------------------------------
 
+/**
+ * SPA-renderable fold of every interaction row into the protocol
+ * `PendingInteractionRow` shape (bb listPendingInteractionsByThread row +
+ * lifecycle transitions). One pass over the journal; terminal rows fold onto
+ * their registered row at-most-once (same guard the FSM applies).
+ */
+export function projectInteractionRows(
+  events: readonly AnyAgentEvent[],
+): PendingInteractionRow[] {
+  const byId = new Map<string, PendingInteractionRow>();
+  for (const event of events) {
+    if (event.type === "interaction.registered") {
+      const {
+        interactionId,
+        turnId,
+        executionId,
+        providerId,
+        providerThreadId,
+        providerRequestId,
+        expiresAt,
+        payload,
+      } = event.data;
+      byId.set(interactionId, {
+        id: interactionId,
+        threadId: event.threadId,
+        status: "pending",
+        statusReason: null,
+        createdAt: event.createdAt,
+        expiresAt,
+        resolvedAt: null,
+        executionId,
+        turnId,
+        origin: { kind: "provider", providerId, providerThreadId, providerRequestId },
+        payload,
+        resolution: null,
+      });
+    } else if (event.type === "interaction.resolved") {
+      const row = byId.get(event.data.interactionId);
+      if (row?.status === "pending") {
+        row.status = "resolved";
+        row.resolution = event.data.resolution;
+        row.resolvedAt = event.createdAt;
+      }
+    } else if (event.type === "interaction.interrupted") {
+      const row = byId.get(event.data.interactionId);
+      if (row?.status === "pending") {
+        row.status = "interrupted";
+        row.statusReason = event.data.statusReason;
+        row.resolvedAt = event.createdAt;
+      }
+    }
+  }
+  return [...byId.values()];
+}
+
 /** Latest interaction row for this execution (replay-derivable state). */
 export function interactionForExecution(
   events: readonly AnyAgentEvent[],
   executionId: string,
 ): InteractionProjection | undefined {
-  let registered: { interactionId: string; payload: PendingInteractionPayload } | undefined;
-  let resolution: PendingInteractionResolution | undefined;
-  let interrupted = false;
-  for (const event of events) {
-    if (event.type === "interaction.registered" && event.data.executionId === executionId) {
-      registered = { interactionId: event.data.interactionId, payload: event.data.payload };
-    } else if (event.type === "interaction.resolved" && registered !== undefined) {
-      if (event.data.interactionId === registered.interactionId) {
-        resolution = event.data.resolution;
-      }
-    } else if (event.type === "interaction.interrupted" && registered !== undefined) {
-      if (event.data.interactionId === registered.interactionId) {
-        interrupted = true;
-      }
-    }
-  }
-  if (registered === undefined) return undefined;
+  const row = projectInteractionRows(events).find(
+    (candidate) => candidate.executionId === executionId,
+  );
+  if (row === undefined) return undefined;
+  // The fold only ever produces pending|resolved|interrupted (never the bb
+  // resolving in-flight state — the DO settles synchronously).
+  const status: InteractionProjection["status"] =
+    row.status === "interrupted" ? "interrupted" : row.status === "resolved" ? "resolved" : "pending";
   return {
-    interactionId: registered.interactionId,
-    status: interrupted ? "interrupted" : resolution !== undefined ? "resolved" : "pending",
-    payload: registered.payload,
-    ...(resolution !== undefined ? { resolution } : {}),
+    interactionId: row.id,
+    status,
+    payload: row.payload,
+    ...(row.resolution !== null ? { resolution: row.resolution } : {}),
   };
 }
 
