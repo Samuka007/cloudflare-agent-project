@@ -45,6 +45,11 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       case "task.yield_warning":
       case "task.yield_completed":
       case "task.budget_notice":
+      // M1.5 T19 lifecycle journal family: folded by tools/task/lifecycle,
+      // not part of the UX envelope (same rule as the task family above).
+      case "task.subagent_parked":
+      case "task.subagent_revived":
+      case "task.subagent_aborted":
       case "todo_phases":
       // M1.5 T4 interaction journal family: the SPA renders the pending
       // interaction from the raw journal rows + the /ws pending-interaction

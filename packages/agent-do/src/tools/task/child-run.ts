@@ -5,6 +5,7 @@ import {
   type SubagentIdentityRecord,
   MAX_OUTPUT_LINES,
 } from "./types.js";
+import type { AbortReason } from "./lifecycle.js";
 
 /**
  * M1.5 T17 child-run gate (proposal §3 T17) — the replay-pure fold over the
@@ -142,6 +143,9 @@ export interface ChildRunState {
   /** The identity row's createdAt — the wall-clock origin (§4.1 runtimeMs). */
   runStartedAt: number | undefined;
   completed: { status: "ok" | "error"; output: string } | undefined;
+  /** T19 tombstone: a `task.subagent_aborted` row closed the run (first
+   * abort wins — later rows are confirm-only, never a flip). */
+  aborted: { reason: AbortReason; seq: number } | undefined;
   /** A `task.async_result` landed after the terminal yield → it is void. */
   stale: boolean;
   /** Spawn plans of this run without a settlement (the park gate). */
@@ -176,6 +180,7 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
     budgetNotice: undefined,
     runStartedAt: identityRecord === undefined ? undefined : identityRecord.createdAt,
     completed: undefined,
+    aborted: undefined,
     stale: false,
     pendingSpawns: [],
     emptyStreak: 0,
@@ -259,6 +264,10 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
         state.completed = { status: event.data.status, output: event.data.output };
         break;
       }
+      case "task.subagent_aborted": {
+        state.aborted ??= { reason: event.data.reason, seq: event.seq };
+        break;
+      }
       case "model.call_started": {
         state.modelCalls += 1;
         break;
@@ -289,6 +298,8 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
       case "peer.message":
       case "peer.message_consumed":
       case "task.subagent_identity":
+      case "task.subagent_parked":
+      case "task.subagent_revived":
       case "thread.created":
       case "todo_phases":
       case "tool.dispatch":
@@ -462,6 +473,13 @@ export type ChildRunVerdict =
 export function childRunVerdict(state: ChildRunState, budget?: ChildBudgetPolicy): ChildRunVerdict {
   if (state.identity === undefined) return { kind: "noop", reason: "not a subagent" };
   if (state.completed !== undefined) return { kind: "noop", reason: "run already settled" };
+  if (state.aborted !== undefined) {
+    // T19: a killed run delivers nothing — the gate stays closed (a late
+    // cancel-turn verdict would otherwise settle "cancelled before yielding"
+    // on top of the tombstone). The parent tombstone already settled the job
+    // cancelled; the child stays a confirm-only transcript.
+    return { kind: "noop", reason: "subagent aborted; tombstone resists further verdicts" };
+  }
   if (state.liveTurn) return { kind: "noop", reason: "reminder/assignment turn still live" };
   if (state.lastTurn?.terminal === "cancelled") {
     return { kind: "settle", status: "error", output: "Subagent run cancelled before yielding." };
@@ -713,6 +731,15 @@ export function renderAgentHistory(events: readonly AnyAgentEvent[], agentId: st
         break;
       case "task.yield_completed":
         lines.push(`[${event.seq}] settled ${event.data.status}: ${cap(event.data.output)}`);
+        break;
+      case "task.subagent_parked":
+        lines.push(`[${event.seq}] parked`);
+        break;
+      case "task.subagent_revived":
+        lines.push(`[${event.seq}] revived (from ${event.data.from})`);
+        break;
+      case "task.subagent_aborted":
+        lines.push(`[${event.seq}] aborted (${event.data.reason})`);
         break;
       case "experimental_context_notes":
       case "job.delivered":

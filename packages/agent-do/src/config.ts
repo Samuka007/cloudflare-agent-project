@@ -68,6 +68,12 @@ export interface WatchdogConfig {
   /** omp task.maxRuntimeMs (default 0 = off): wall-clock hard stop. */
   taskMaxRuntimeMs: number;
   /**
+   * T19 idle park TTL (omp task.agentIdleTtlMs, default 420_000 = 7 min):
+   * an IDLE subagent parks when the TTL elapses — session released, ref +
+   * sessionFile kept, `write agent://<id>` revives. ≤0 disables parking.
+   */
+  taskAgentIdleTtlMs: number;
+  /**
    * Ask cap (M1.5 T4; omp settings `ask.timeout`, docs/tools/ask.md §Limits:
    * "defaults to 0 seconds (disabled)"). 0 = no cap — a pending interaction
    * suspends the turn watchdog until resolved or interrupted; a non-zero
@@ -98,6 +104,7 @@ export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
   taskMaxConcurrency: 32,
   taskSoftRequestBudget: 200,
   taskMaxRuntimeMs: 0,
+  taskAgentIdleTtlMs: 420_000,
   askTimeoutMs: 0,
 };
 
@@ -123,6 +130,7 @@ const configPatchSchema = z.object({
   taskMaxConcurrency: z.number().int().nonnegative().optional(),
   taskSoftRequestBudget: z.number().int().positive().optional(),
   taskMaxRuntimeMs: z.number().int().nonnegative().optional(),
+  taskAgentIdleTtlMs: z.number().int().nonnegative().optional(),
   askTimeoutMs: z.number().int().nonnegative().optional(),
 });
 
