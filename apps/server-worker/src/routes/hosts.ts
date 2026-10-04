@@ -35,6 +35,25 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
     return ctx.json(await toHostRecord(ctx.env, row));
   });
 
+  routes.get("/hosts/:id/provider-cli-status", async (ctx) => {
+    // bb assertUsableHostId (routes/hosts.ts:288): unknown/destroyed host → 404.
+    await requireHost(ctx.env, ctx.req.param("id"));
+    // bb providerCliStatus RPCs provider_cli.status to the host daemon
+    // (routes/hosts.ts:286-297); without a connected daemon the retryable RPC
+    // surfaces 502 host_unavailable "Host is not connected" (services/hosts/
+    // online-rpc.ts:162-163). The M0 control plane has no daemon-RPC
+    // transport (providers face permanently cropped, matrix E8), so every
+    // host is exactly that offline state. The SPA's own bb mechanism renders
+    // the degraded "Status unavailable" row for the error
+    // (MachineSettingsView.tsx:332-356) instead of a hard failure — the
+    // #76 hide-via-bb-mechanism ruling.
+    throw new ApiError({
+      status: 502,
+      code: "host_unavailable",
+      message: "Host is not connected",
+    });
+  });
+
   routes.patch("/hosts/:id", async (ctx) => {
     const payload = await requireJsonBody(ctx, updateHostRequestSchema);
     await requireHost(ctx.env, ctx.req.param("id"));
@@ -101,8 +120,7 @@ async function toHostRecord(env: Env, row: HostDbRow): Promise<Host> {
 async function daemonConnected(env: Env, hostId: string): Promise<boolean> {
   const namespace = env.DAEMON_SERVICE;
   if (namespace === undefined) return false;
-  const stub = namespace.get(namespace.idFromName(hostId)) as DurableObjectStub &
-    DaemonServiceDO;
+  const stub = namespace.get(namespace.idFromName(hostId)) as DurableObjectStub & DaemonServiceDO;
   try {
     return (await stub.hostLiveness({ hostId })).connected;
   } catch {

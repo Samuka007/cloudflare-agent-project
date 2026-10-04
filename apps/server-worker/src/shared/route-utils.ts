@@ -71,3 +71,33 @@ export function intParam(ctx: Context, name: string): number {
   }
   return parsed;
 }
+
+/**
+ * bb services/lib/validation.ts:11-47 (parseOptionalInteger +
+ * parseBoundedPositiveOptionalInteger): parseInt, 400 invalid_request on
+ * garbage, clamp to max, 400 invalid_request when non-positive.
+ */
+export function parseBoundedPositiveOptionalInteger(args: {
+  defaultValue: number;
+  max: number;
+  name: string;
+  value: string | undefined;
+}): number {
+  const parsed = args.value === undefined ? undefined : Number.parseInt(args.value, 10);
+  if (parsed !== undefined && !Number.isFinite(parsed)) {
+    throw new ApiError({
+      status: 400,
+      code: "invalid_request",
+      message: `Invalid integer for ${args.name}`,
+    });
+  }
+  const bounded = Math.min(parsed ?? args.defaultValue, args.max);
+  if (bounded <= 0) {
+    throw new ApiError({
+      status: 400,
+      code: "invalid_request",
+      message: `${args.name} must be a positive integer`,
+    });
+  }
+  return bounded;
+}
