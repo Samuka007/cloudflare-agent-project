@@ -5,6 +5,7 @@ import type { ToolRegistryRow } from "./registry.js";
 import { runWaitTool, type WaitToolContext } from "./wait.js";
 import { runTaskTool, type TaskToolContext, type ValidatedSpawnParams } from "./task/executor.js";
 import { runYieldTool, type YieldToolArgs } from "./yield.js";
+import { runAskTool, type AskToolContext } from "./ask.js";
 import { type CheckpointRewindState, type TodoJournalState } from "./session-tree.js";
 import {
   applyParams,
@@ -47,6 +48,9 @@ export interface EdgeToolContext {
   /** Blocking-wait surface — bound only for `wait` (omp WaitTool session
    * deps); the DO owns journal accessors, alarm tables and the wake map. */
   wait?: WaitToolContext;
+  /** Blocking-ask surface — bound only for `ask` (omp AskTool session UI
+   * deps project to the DO-bound pending-interaction channel, M1.5 T4). */
+  ask?: AskToolContext;
   /**
    * Subagent-spawn surface — bound only for `task` (M1.5 T16); the DO owns
    * the journal, the AGENT_DO namespace seam and the wake channel.
@@ -212,6 +216,16 @@ export async function runEdgeTool(
     // the tool.call/tool.result rows ARE the yield record; the child's
     // completion hook projects the last terminal call from the journal.
     return runYieldTool(validated as YieldToolArgs);
+  }
+
+  if (row.name === "ask") {
+    // omp AskTool.execute — registers the pending interaction (bb
+    // interactive-request shape), blocks on the DO wake channel until the
+    // SPA ruling backflows, the turn aborts, or the ask-timeout arm fires.
+    if (ctx.ask === undefined) {
+      return { status: "error", output: "ask requires the DO-bound pending-interaction context." };
+    }
+    return runAskTool(args, ctx.ask);
   }
 
   if (row.name === "checkpoint") {

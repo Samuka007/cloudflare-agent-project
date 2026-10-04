@@ -53,6 +53,13 @@ export interface WatchdogConfig {
   taskMaxOutputLines: number;
   /** omp result-summary.ts:16 inline summary threshold. */
   taskInlineSummaryCapChars: number;
+  /**
+   * Ask cap (M1.5 T4; omp settings `ask.timeout`, docs/tools/ask.md §Limits:
+   * "defaults to 0 seconds (disabled)"). 0 = no cap — a pending interaction
+   * suspends the turn watchdog until resolved or interrupted; a non-zero
+   * value arms the alarm-carried auto-select expiry.
+   */
+  askTimeoutMs: number;
 }
 
 export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
@@ -74,6 +81,7 @@ export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
   taskMaxOutputBytes: 500_000,
   taskMaxOutputLines: 5000,
   taskInlineSummaryCapChars: 5000,
+  askTimeoutMs: 0,
 };
 
 const configPatchSchema = z.object({
@@ -95,6 +103,7 @@ const configPatchSchema = z.object({
   taskMaxOutputBytes: z.number().int().positive().optional(),
   taskMaxOutputLines: z.number().int().positive().optional(),
   taskInlineSummaryCapChars: z.number().int().positive().optional(),
+  askTimeoutMs: z.number().int().nonnegative().optional(),
 });
 
 export type WatchdogConfigPatch = z.infer<typeof configPatchSchema>;

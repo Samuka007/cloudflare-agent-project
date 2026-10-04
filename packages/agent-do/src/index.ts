@@ -54,11 +54,26 @@ export { applyEvent, computeDueWork, emptyReplayState, replayEvents } from "./tu
 export type {
   ExecutionRuntime,
   ExecutionStatus,
+  InteractionRuntime,
   ModelCallRuntime,
   ReplayState,
   TurnFsmStatus,
   TurnRuntime,
 } from "./turn-state.js";
+export {
+  buildAskPayload,
+  interactionForExecution,
+  renderAskOutput,
+  runAskTool,
+  timeoutAutoSelect,
+  validateAskResolution,
+  askOptionValue,
+  RESERVED_OPTION_LABELS,
+  type AskQuestion,
+  type AskToolContext,
+  type AskWake,
+  type InteractionProjection,
+} from "./tools/ask.js";
 export { projectToUxEvents } from "./ux-projection.js";
 export { ProjectionError, modelRequestFromEvents } from "./translate.js";
 export { AnthropicRelayProvider, type RelayConfig } from "./relay/index.js";

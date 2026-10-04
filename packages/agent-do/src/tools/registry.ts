@@ -117,6 +117,28 @@ const findSchema = type({
   grep_keywords: "string[]",
   "path?": "string",
 });
+// omp packages/coding-agent/src/tools/ask.ts:60-83 (AskTool, 18.6.0) — the
+// QuestionItem/OptionItem shape verbatim. omp's reserved-label `.narrow`
+// (options 54-79) is NOT carried here: arktype predicates cannot serialize
+// through toJsonSchema() (the wire renderer), so the gate runs in the
+// executor (tools/ask.ts runAskTool, omp's post-validation fail-closed path)
+// with the same effect and omp's runtime error text.
+const askSchema = type({
+  questions: type({
+    id: type("string"),
+    question: type("string"),
+    "header?": type("string").describe("display chip"),
+    options: type({
+      label: type("string"),
+      "description?": type("string"),
+      "preview?": type("string").describe("rich preview"),
+    }).array(),
+    "multi?": type("boolean"),
+    "recommended?": type("number").describe("0-based default index"),
+  })
+    .array()
+    .atLeastLength(1),
+});
 
 // omp packages/coding-agent/src/edit/schemas.ts:39-41
 // (`hashlineEditParamsSchema`, 18.6.0). The daemon host pins the edit mode
@@ -367,6 +389,15 @@ More globals; \`read\` the linked docs before first use:
 <critical>
 NEVER repeat successful setup. Kernel-loss notice means reload setup.
 </critical>`;
+// omp packages/coding-agent/src/prompts/tools/ask.md verbatim.
+const ASK_DESCRIPTION_TEMPLATE = `Ask only for materially different tradeoffs the user must decide. Default: act using code/config/docs/history and conventions. Several viable choices: pick conservative/standard, proceed, state choice.
+
+<instruction>
+- Batch related questions; 2–5 distinct options each; short labels, tradeoffs in \`description\`.
+- \`recommended\` auto-adds " (Recommended)"; \`multi: true\` permits multiple selections.
+- NEVER supply "Other": UI adds "Other (type your own)". Clarifying custom input? Answer first; re-ask unresolved questions.
+</instruction>
+`;
 
 // omp packages/coding-agent/src/prompts/tools/checkpoint.md
 const CHECKPOINT_DESCRIPTION_TEMPLATE = `Context checkpoint: before exploratory work; later \`rewind\`, retaining only concise report.
@@ -590,6 +621,18 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     descriptionTemplate: GREP_DESCRIPTION_TEMPLATE,
     class: "host",
     backend: { kind: "daemon-dispatch" },
+    intent: "require",
+  },
+  {
+    // omp tools/ask.ts:544-574 — discoverable edge: the model's structured
+    // question rides the DO↔SPA pending-interaction channel (bb
+    // interactive-request shape, M1.5 T4). Executor in tools/ask.ts; omp
+    // declares no `intent` member → resolveIntentMode default "require".
+    name: "ask",
+    schema: askSchema,
+    descriptionTemplate: ASK_DESCRIPTION_TEMPLATE,
+    class: "edge",
+    backend: { kind: "do-local" },
     intent: "require",
   },
   {

@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { promptContentSchema } from "@cap/protocol";
+import {
+  pendingInteractionPayloadSchema,
+  pendingInteractionResolutionSchema,
+  promptContentSchema,
+} from "@cap/protocol";
 
 /**
  * Agent-DO internal event vocabulary (docs/design/unified-turn-state.md §1.1,
@@ -348,6 +352,45 @@ export const agentEventDataSchemas = {
     sourceThreadId: z.string().min(1).nullable(),
     originKind: z.string().min(1).nullable(),
     depth: z.number().int().nonnegative(),
+  }),
+
+  /**
+   * M1.5 T4 pending-interaction journal family (proposal §3 T4): the DO's
+   * projection of bb `/internal/session/interactive-request` — SPA-visible
+   * ask state that survives eviction+replay because it lives in the journal,
+   * not in memory. Thread-scoped like job.*; folded by tools/ask.ts
+   * projectInteractions (and the watchdog's interaction expiry family), not
+   * by the FSM. `executionId` keys re-ask idempotency exactly like
+   * todo_phases: the bb `created|existing` outcome pair comes from this row
+   * (a re-asked blocking execution re-projects its row instead of
+   * re-registering a second interaction).
+   */
+  "interaction.registered": z.object({
+    /** bb id shape (`pi_<n>`); minted once at registration. */
+    interactionId: z.string().min(1),
+    turnId: z.string().min(1),
+    executionId: z.string().min(1),
+    providerId: z.string().min(1),
+    providerThreadId: z.string().min(1),
+    providerRequestId: z.string().min(1),
+    /** Absolute deadline when bounded (omp ask.timeout; 0 = null = no cap). */
+    expiresAt: z.number().int().nonnegative().nullable(),
+    payload: pendingInteractionPayloadSchema,
+  }),
+
+  "interaction.resolved": z.object({
+    interactionId: z.string().min(1),
+    resolution: pendingInteractionResolutionSchema,
+  }),
+
+  /**
+   * bb interrupt semantics (host-daemon-contract session.ts:756-774): mark
+   * the blocked row interrupted when the provider/turn dies; the cancelled
+   * tool.result follows it (journal-before-result ordering).
+   */
+  "interaction.interrupted": z.object({
+    interactionId: z.string().min(1),
+    statusReason: z.string().min(1),
   }),
 } as const;
 
