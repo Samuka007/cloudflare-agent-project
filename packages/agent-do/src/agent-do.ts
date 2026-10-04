@@ -39,6 +39,14 @@ import { getAgentRuntime } from "./injection.js";
 import { modelRequestFromEvents } from "./translate.js";
 import { toolRegistryRow, type ToolRegistryRow } from "./tools/registry.js";
 import { latestContextNotes, runEdgeTool } from "./tools/edge.js";
+import {
+  projectInbox,
+  type JobRegistration,
+  type JobRegistry,
+  type JobSettlement,
+  type PeerInbox,
+} from "./tools/job-registry.js";
+import { WAIT_LIMIT_REACHED, type WaitToolContext, type WaitWake } from "./tools/wait.js";
 
 /**
  * Per-thread bare Durable Object (no Agents SDK — docs/research/cf-agents-sdk.md):
@@ -171,6 +179,17 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     string,
     { turnId: string; wake: (forced: boolean) => void }[]
   >();
+  /**
+   * Blocked edge executors (M1.5 T2: `wait`), keyed by executionId. The wake
+   * channel is one-shot per wait loop iteration: settle/deliver wake
+   * broadcast, cap/window come from the alarm, cancelled from the kill path.
+   * Journal appends always land before the wake fires, so the executor's
+   * re-query sees the change that woke it.
+   */
+  private readonly edgeWaiters = new Map<string, { resolve: (wake: WaitWake) => void }>();
+  /** In-memory message-only ladder windows (executionId → deadlineAt); the
+   * 30-minute cap lives in computeDueWork's journal-derived table instead. */
+  private readonly waitWindows = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: AgentDoBindings) {
     super(ctx, env);
@@ -270,6 +289,62 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     this.activeDrivers.get(request.turnId)?.abort();
     await this.killNonTerminalExecutions(request.turnId);
     return { accepted: true };
+  }
+
+  /**
+   * Peer-message wake source (M1.5 T2, proposal §3: "no cross-DO RPC except
+   * wake sources"). Journal-first: the `peer.message` row lands before any
+   * blocked wait wakes, so a message survives eviction+replay and a replayed
+   * wait re-projects it. Idempotent by messageId (I2 pattern).
+   */
+  async deliverPeerMessage(request: {
+    /** Client-supplied idempotency key; default UUID when omitted. */
+    messageId?: string;
+    ownerId: string;
+    from: string;
+    text: string;
+  }): Promise<{ messageId: string; duplicated: boolean }> {
+    await this.ready();
+    this.requireThread();
+    const messageId = request.messageId ?? crypto.randomUUID();
+    const existing = projectInbox((await this.readAllEvents()).events).message(messageId);
+    if (existing !== undefined) return { messageId, duplicated: true };
+    await this.appendEvent("peer.message", {
+      messageId,
+      ownerId: request.ownerId,
+      from: request.from,
+      text: request.text,
+    });
+    this.wakeAllEdgeWaiters({ kind: "message" });
+    return { messageId, duplicated: false };
+  }
+
+  /**
+   * JobRegistry mutators (M1.5 T2 frozen surface — T16/T18 spawn paths
+   * register background work here, child-completion paths settle it). The
+   * settle broadcast wakes every blocked wait; each re-queries its own
+   * owner-filtered projection, so foreign jobs never sustain a wait.
+   */
+  async registerJob(input: JobRegistration): Promise<void> {
+    await this.ready();
+    this.requireThread();
+    await this.appendEvent("job.registered", {
+      jobId: input.jobId,
+      ownerId: input.ownerId,
+      kind: input.kind,
+      label: input.label,
+    });
+  }
+
+  async settleJob(jobId: string, settlement: JobSettlement): Promise<void> {
+    await this.ready();
+    this.requireThread();
+    await this.appendEvent("job.settled", {
+      jobId,
+      status: settlement.status,
+      output: settlement.output,
+    });
+    this.wakeAllEdgeWaiters({ kind: "job" });
   }
 
   /**
@@ -383,9 +458,22 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     try {
       await this.ready();
       const now = Date.now();
+      // Message-only ladder windows fire first (in-memory table; practice 4:
+      // the DO alarm is the authoritative timer, never setTimeout).
+      for (const [executionId, deadlineAt] of this.waitWindows) {
+        if (now < deadlineAt) continue;
+        this.waitWindows.delete(executionId);
+        this.wakeEdgeWaiter(executionId, { kind: "window" });
+      }
       const due = computeDueWork(this.state, this.cfg, now);
       for (const modelCallId of due.sealedModelCallIds) {
         await this.sealModelCall(modelCallId);
+      }
+      // Wait caps resolve BEFORE re-asks and turn expiry: the cap result is
+      // the terminal promise for the blocked execution (computeDueWork
+      // extended the turn watchdog to the same deadline).
+      for (const executionId of due.waitCapExecutionIds) {
+        await this.resolveWaitCap(executionId);
       }
       for (const executionId of due.reaskExecutionIds) {
         const execution = this.state.executions.get(executionId);
@@ -1020,6 +1108,24 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     args: Record<string, unknown>,
   ): Promise<void> {
     if (executionTerminal(execution)) return;
+    if (row.name === "wait" && this.edgeWaiters.has(execution.executionId)) {
+      // A duplicate dispatch of a still-blocking wait (recovery + watchdog
+      // races) must not fork a second blocked executor; the registered one
+      // owns the result.
+      return;
+    }
+    if (row.name === "wait") {
+      // Blocking marker, same vocabulary as the host path: the wait is about
+      // to park on its wake legs; journal-first keeps observers (and tests)
+      // able to sync on the blocked state.
+      await this.appendEvent("tool.exec_started", {
+        turnId: execution.turnId,
+        executionId: execution.executionId,
+      });
+      // The journal-derived 30-minute cap deadline (computeDueWork) exists
+      // only from this point — (re)arm the alarm to carry it.
+      this.armWatchdog();
+    }
     const result = await runEdgeTool(row, args, {
       appendNotebookRevision: async (text) => {
         await this.appendEvent("experimental_context_notes", { version: 1, text });
@@ -1029,6 +1135,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         const notes = latestContextNotes(events);
         return notes === undefined ? undefined : { text: notes.text };
       },
+      ...(row.name === "wait" ? { wait: this.waitToolContext(execution) } : {}),
+    }).finally(() => {
+      this.edgeWaiters.delete(execution.executionId);
+      this.waitWindows.delete(execution.executionId);
     });
     await this.ingestResult(
       execution,
@@ -1053,6 +1163,11 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       outputTruncated: result.outputTruncated,
     });
     if (!options.ack) {
+      this.waitWindows.delete(execution.executionId);
+      // A terminal result from another path (watchdog seal, cancel) supersedes
+      // a still-blocked executor: wake it so its promise resolves; its own
+      // late result is absorbed by the terminal guard above.
+      this.wakeEdgeWaiter(execution.executionId, { kind: "cancelled" });
       this.wakeExecWaiters(execution.executionId, false);
       return;
     }
@@ -1062,6 +1177,8 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       // Ack loss is survivable: the service keeps the result until a later
       // re-ack (duplicate delivery re-acks — I21 recovery path).
     }
+    this.waitWindows.delete(execution.executionId);
+    this.wakeEdgeWaiter(execution.executionId, { kind: "cancelled" });
     this.wakeExecWaiters(execution.executionId, false);
   }
 
@@ -1137,6 +1254,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     for (const executionId of turn.executionIds) {
       const execution = this.state.executions.get(executionId);
       if (execution === undefined || executionTerminal(execution)) continue;
+      if (toolRegistryRow(execution.tool)?.class === "edge") {
+        // Edge executors never reached the daemon; the blocked wait (the only
+        // blocking edge tool) resolves cancelled in-DO and journals its own
+        // terminal result through the executor path.
+        this.wakeEdgeWaiter(executionId, { kind: "cancelled" });
+        continue;
+      }
       try {
         await this.daemon().kill(executionId);
       } catch {
@@ -1225,6 +1349,8 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     for (const executionId of turn.executionIds) {
       const execution = this.state.executions.get(executionId);
       if (execution === undefined || executionTerminal(execution)) continue;
+      this.waitWindows.delete(executionId);
+      this.wakeEdgeWaiter(executionId, { kind: "cancelled" });
       await this.appendEvent("tool.result", {
         turnId,
         executionId,
@@ -1240,12 +1366,101 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
 
   private armWatchdog(): void {
     if (this.threadId === null) return;
-    const due = computeDueWork(this.state, this.cfg, Date.now());
-    if (due.nextDeadlineAt !== null) {
-      void this.ctx.storage.setAlarm(due.nextDeadlineAt);
+    let next = computeDueWork(this.state, this.cfg, Date.now()).nextDeadlineAt;
+    for (const deadlineAt of this.waitWindows.values()) {
+      if (next === null || deadlineAt < next) next = deadlineAt;
+    }
+    if (next !== null) {
+      void this.ctx.storage.setAlarm(next);
     } else {
       void this.ctx.storage.deleteAlarm().catch(() => undefined);
     }
+  }
+
+  /**
+   * Wait safety cap (M1.5 T2): a live waiter consumes the cap through the
+   * executor (omp "Wait limit reached" snapshot); a waiter lost to eviction
+   * gets the cap text journaled directly — the same single write path, and
+   * re-asking the terminal executionId afterwards answers from the journal.
+   */
+  private async resolveWaitCap(executionId: string): Promise<void> {
+    const execution = this.state.executions.get(executionId);
+    if (execution === undefined || executionTerminal(execution)) return;
+    if (this.edgeWaiters.has(executionId)) {
+      this.wakeEdgeWaiter(executionId, { kind: "cap" });
+      return;
+    }
+    await this.appendEvent("tool.result", {
+      turnId: execution.turnId,
+      executionId,
+      status: "ok",
+      exitCode: null,
+      output: WAIT_LIMIT_REACHED,
+    });
+    this.wakeExecWaiters(executionId, false);
+  }
+
+  private wakeEdgeWaiter(executionId: string, wake: WaitWake): void {
+    const waiter = this.edgeWaiters.get(executionId);
+    if (waiter === undefined) return;
+    this.edgeWaiters.delete(executionId);
+    waiter.resolve(wake);
+  }
+
+  /** Settle/deliver wakes broadcast: every blocked wait re-queries its own
+   * owner-filtered projection (level-triggered; spurious wakes are safe). */
+  private wakeAllEdgeWaiters(wake: WaitWake): void {
+    for (const executionId of [...this.edgeWaiters.keys()]) {
+      this.wakeEdgeWaiter(executionId, wake);
+    }
+  }
+
+  /** DO-bound `wait` context (tools/wait.ts WaitToolContext): journal
+   * accessors + mutator faces + alarm/wake plumbing; the decision logic
+   * stays in the pure executor. */
+  private waitToolContext(execution: ExecutionRuntime): WaitToolContext {
+    const threadId = this.requireThread();
+    const registry: JobRegistry = {
+      register: (input: JobRegistration) => this.registerJob(input),
+      settle: (jobId: string, settlement: JobSettlement) => this.settleJob(jobId, settlement),
+      markDelivered: async (jobId: string, byExecutionId: string) => {
+        await this.appendEvent("job.delivered", { jobId, byExecutionId });
+      },
+    };
+    const inbox: PeerInbox = {
+      deliver: async (message) => this.deliverPeerMessage(message),
+      consume: async (messageId: string, byExecutionId: string) => {
+        await this.appendEvent("peer.message_consumed", { messageId, byExecutionId });
+      },
+    };
+    return {
+      executionId: execution.executionId,
+      threadId,
+      callSeq: execution.callSeq,
+      // The DO's agent identity is its thread (omp session.getAgentId
+      // equivalent at M1.5; T16 subagents run their own DOs).
+      ownerId: threadId,
+      events: async () => (await this.readAllEvents()).events,
+      registry,
+      inbox,
+      // T19 binds the agent registry; M1.5 has no peer registry yet.
+      runningPeers: () => [],
+      registerWindowDeadline: (deadlineAt: number) => {
+        this.waitWindows.set(execution.executionId, deadlineAt);
+        this.armWatchdog();
+      },
+      wake: () => {
+        const { promise, resolve } = Promise.withResolvers<WaitWake>();
+        this.edgeWaiters.set(execution.executionId, { resolve });
+        return promise;
+      },
+      config: {
+        waitMaxMs: this.cfg.waitMaxMs,
+        peerWaitLadderMs: this.cfg.peerWaitLadderMs,
+        peerLadderResetGapMs: this.cfg.peerLadderResetGapMs,
+      },
+      now: () => Date.now(),
+    };
   }
 
   // -------------------------------------------------------------------------

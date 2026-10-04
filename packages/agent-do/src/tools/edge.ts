@@ -2,6 +2,7 @@ import { type } from "arktype";
 import type { AnyAgentEvent } from "../fsm-events.js";
 import { executionIdFor } from "../ids.js";
 import type { ToolRegistryRow } from "./registry.js";
+import { runWaitTool, type WaitToolContext } from "./wait.js";
 
 /**
  * DO-local executors for `edge`-class tools (control-plane-layer.md §1.2,
@@ -16,7 +17,9 @@ import type { ToolRegistryRow } from "./registry.js";
  */
 
 export interface EdgeToolResult {
-  status: "ok" | "error";
+  /** "cancelled" lands when the owning call/turn was cancelled while the
+   * edge executor was blocked (wait); T1 rows only produce ok|error. */
+  status: "ok" | "error" | "cancelled";
   output: string;
 }
 
@@ -26,6 +29,9 @@ export interface EdgeToolContext {
   appendNotebookRevision(text: string): Promise<void>;
   /** Project the latest visible notebook revision from the journal. */
   notebook(): Promise<{ text: string } | undefined>;
+  /** Blocking-wait surface — bound only for `wait` (omp WaitTool session
+   * deps); the DO owns journal accessors, alarm tables and the wake map. */
+  wait?: WaitToolContext;
 }
 
 // omp session/context-notes.ts:5-6 — journal entry type + size cap.
@@ -135,6 +141,16 @@ export async function runEdgeTool(
   if (row.name === "think") {
     // omp think.ts:61-71 — private scratchpad, zero I/O.
     return { status: "ok", output: THINK_ECHO };
+  }
+
+  if (row.name === "wait") {
+    // omp WaitTool.execute — blocks on the DO-bound wake race until an owned
+    // job settles, a peer message arrives, the cap/window elapses, or the
+    // call aborts (see tools/wait.ts for the omp-verbatim structure).
+    if (ctx.wait === undefined) {
+      return { status: "error", output: "wait requires the DO-bound blocking context." };
+    }
+    return runWaitTool(ctx.wait);
   }
 
   return { status: "error", output: `No edge executor for tool ${row.name}.` };

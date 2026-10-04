@@ -175,6 +175,50 @@ export const agentEventDataSchemas = {
     version: z.literal(1),
     text: z.string(),
   }),
+
+  /**
+   * M1.5 T2 JobRegistry journal family (proposal §3 T2: "jobs live in DO
+   * storage (journal)") — thread-scoped like experimental_context_notes:
+   * registered by the T16+ spawn/eval background paths, projected by
+   * tools/job-registry.ts, never FSM state (jobs outlive turns).
+   */
+  "job.registered": z.object({
+    jobId: z.string().min(1),
+    /** Owning agent id (omp AsyncJob ownerId); null = unowned. */
+    ownerId: z.string().min(1).nullable(),
+    kind: z.enum(["job", "service"]),
+    label: z.string(),
+  }),
+
+  "job.settled": z.object({
+    jobId: z.string().min(1),
+    status: z.enum(["ok", "error", "cancelled"]),
+    output: z.string(),
+  }),
+
+  "job.delivered": z.object({
+    jobId: z.string().min(1),
+    /** Wait (or ordinary async-delivery) execution that consumed the result. */
+    byExecutionId: z.string().min(1),
+  }),
+
+  /**
+   * Peer message inbox — the journal-backed wake-source seam (proposal §3 T2:
+   * no cross-DO RPC except wake sources). Delivery appends before any waiter
+   * wakes, so a message survives eviction and replay re-projects it.
+   */
+  "peer.message": z.object({
+    messageId: z.string().min(1),
+    /** Recipient agent id within this DO. */
+    ownerId: z.string().min(1),
+    from: z.string().min(1),
+    text: z.string(),
+  }),
+
+  "peer.message_consumed": z.object({
+    messageId: z.string().min(1),
+    byExecutionId: z.string().min(1),
+  }),
 } as const;
 
 export type AgentEventType = keyof typeof agentEventDataSchemas;

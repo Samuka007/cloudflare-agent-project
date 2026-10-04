@@ -75,6 +75,15 @@ export function modelRequestFromEvents(
 
   for (const event of turnEvents) {
     switch (event.type) {
+      // Thread-scoped journal families that never appear inside a turn slice
+      // (JobRegistry entries, notebook revisions) fall through untouched.
+      case "experimental_context_notes":
+      case "job.delivered":
+      case "job.registered":
+      case "job.settled":
+      case "peer.message":
+      case "peer.message_consumed":
+        break;
       case "turn.steer": {
         steerTexts.set(event.seq, event.data.content.map((part) => part.text).join("\n"));
         break;
