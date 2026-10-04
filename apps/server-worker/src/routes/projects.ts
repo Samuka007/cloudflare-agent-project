@@ -39,7 +39,7 @@ import {
   updateProject,
 } from "../db/control-plane.js";
 import { listProjectSources } from "../db/project-sources.js";
-import { toThreadListEntry } from "../services/runtime-display.js";
+import { resolveHostRuntimeSnapshot, toThreadListEntry } from "../services/runtime-display.js";
 import type { Env, HonoBindings } from "../app-types.js";
 import type { ProjectRow } from "../db/rows.js";
 
@@ -271,11 +271,16 @@ function toPublicProject(row: ProjectRow) {
 
 /** bb buildProjectsWithThreadsResponseFromRows: visible, non-archived threads. */
 async function toProjectWithThreads(env: Env, row: ProjectRow) {
-  const threads = await listThreads(env, { projectId: row.id, archived: false });
+  // One host snapshot per request (#194): every entry's runtime derives from
+  // the same attached host.
+  const [threads, host] = await Promise.all([
+    listThreads(env, { projectId: row.id, archived: false }),
+    resolveHostRuntimeSnapshot(env),
+  ]);
   return {
     ...toPublicProject(row),
     sources: await listProjectSources(env, row.id),
-    threads: threads.map((thread) => threadListEntrySchema.parse(toThreadListEntry(thread))),
+    threads: threads.map((thread) => threadListEntrySchema.parse(toThreadListEntry(thread, host))),
     defaultExecutionOptions: null,
   };
 }
