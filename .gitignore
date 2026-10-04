@@ -5,4 +5,5 @@ dist/
 .dev.vars
 .dev.vars.*
 .staging-daemon.env
+.env.local
 apps/server-worker/public/
