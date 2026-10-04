@@ -3,16 +3,16 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import {
-  threadEventTypeSchema,
-  threadEventTypeValues,
-  type ThreadEventType,
-} from "./provider-event.js";
+import { turnPhaseSchema } from "@cap/protocol";
+import { threadEventTypeValues, type ThreadEventType } from "./provider-event.js";
 
 export const THREAD_CHANGE_KINDS = [
   "thread-created",
   "thread-deleted",
   "events-appended",
+  // #197 D3: turn.phase journal rows surface as a low-frequency change kind
+  // (additive per the streaming contract, spec §6.2; bb clients filter it).
+  "phase-changed",
   "history-rewritten",
   "interactions-changed",
   "status-changed",
@@ -166,10 +166,30 @@ export function realtimeSubscriptionTargetKey(target: RealtimeSubscriptionTarget
 
 export const threadChangeMetadataSchema = z
   .object({
+    /**
+     * #197: thread high-water seq at fan-out time (streaming contract §8.2 —
+     * `changed{events-appended, latestSeq}` feeds the SPA catch-up schedule).
+     * bb's own metadata never carried it; the agent-DO push line does.
+     */
+    latestSeq: z.number().int().min(0).optional(),
     backgroundActivityChanged: z.boolean().optional(),
-    eventTypes: z.array(threadEventTypeSchema).readonly().optional(),
+    /**
+     * #197: widened from the bb provider-event enum to plain strings — the
+     * agent-DO Tier-B notify carries agent journal types (`model.delta`,
+     * `turn.phase`, …). bb lenient clients still filter unknown values.
+     */
+    eventTypes: z.array(z.string()).readonly().optional(),
     hasPendingInteraction: z.boolean().optional(),
     projectId: z.string().optional(),
+    /** #197 D3: payload of a "phase-changed" broadcast (spec §6.2). */
+    phase: z
+      .object({
+        turnId: z.string().min(1),
+        phase: turnPhaseSchema,
+        modelCallId: z.number().int().positive().optional(),
+        reason: z.string().min(1).optional(),
+      })
+      .optional(),
   })
   .strict();
 export type ThreadChangeMetadata = z.infer<typeof threadChangeMetadataSchema>;
@@ -261,6 +281,7 @@ function lenientKinds<TKind extends string>(kinds: readonly TKind[]) {
 const knownThreadEventTypes: ReadonlySet<string> = new Set(threadEventTypeValues);
 
 const threadChangeMetadataLenientSchema = z.object({
+  latestSeq: z.number().int().min(0).optional(),
   backgroundActivityChanged: z.boolean().optional(),
   eventTypes: z
     .array(z.string())
@@ -270,6 +291,14 @@ const threadChangeMetadataLenientSchema = z.object({
     .optional(),
   hasPendingInteraction: z.boolean().optional(),
   projectId: z.string().optional(),
+  phase: z
+    .object({
+      turnId: z.string().min(1),
+      phase: turnPhaseSchema,
+      modelCallId: z.number().int().positive().optional(),
+      reason: z.string().min(1).optional(),
+    })
+    .optional(),
 });
 
 const threadChangedMessageLenientSchema = z.object({

@@ -113,6 +113,7 @@ export function modelRequestFromEvents(
       // ask's model-visible surface is its tool.result) fall through untouched.
       case "experimental_context_notes":
       case "interaction.interrupted":
+      case "turn.phase":
       case "interaction.registered":
       case "interaction.resolved":
       case "job.delivered":
