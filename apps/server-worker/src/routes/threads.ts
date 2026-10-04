@@ -3,6 +3,8 @@ import {
   createThreadRequestSchema,
   deleteThreadRequestSchema,
   sendMessageRequestSchema,
+  threadSearchQuerySchema,
+  threadSearchResponseSchema,
   threadEventsQuerySchema,
   threadGetQuerySchema,
   threadListQuerySchema,
@@ -10,6 +12,11 @@ import {
   updateThreadRequestSchema,
   type ThreadResponse,
 } from "../contract/api/threads.js";
+import { promptHistoryResponseSchema } from "../contract/api/projects.js";
+import {
+  PROMPT_HISTORY_ENTRY_LIMIT,
+  takeVisiblePromptHistoryEntries,
+} from "../contract/domain/index.js";
 import { updateThreadTabsRequestSchema } from "../contract/api/thread-tabs.js";
 /**
  * bb events route responses are ThreadEventRow[]; the M0 log lives in the
@@ -32,7 +39,11 @@ import {
   formatClientTurnRequestIdSuffix,
 } from "../contract/domain/protocol-ids.js";
 import { ApiError } from "../shared/api-error.js";
-import { parseOr422, requireJsonBody } from "../shared/route-utils.js";
+import {
+  parseBoundedPositiveOptionalInteger,
+  parseOr422,
+  requireJsonBody,
+} from "../shared/route-utils.js";
 import { createThreadId } from "../shared/ids.js";
 import {
   createThreadRecord,
@@ -49,6 +60,13 @@ import {
 } from "../db/control-plane.js";
 import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs.js";
 import { toThreadListEntry, toThreadResponseWithSpawnCheck } from "../services/runtime-display.js";
+import {
+  THREAD_SEARCH_LIMIT_PER_GROUP_DEFAULT,
+  THREAD_SEARCH_LIMIT_PER_GROUP_MAX,
+  buildTitleSearchResponse,
+  countNonWhitespaceChars,
+} from "../services/thread-search.js";
+import { deriveTitleFallback } from "../services/title-generation.js";
 import { settleThreadTurnStatus } from "../services/thread-run-settlement.js";
 import {
   buildConversationOutline,
@@ -136,6 +154,66 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     return ctx.json(rows.map(toThreadListEntry));
   });
 
+  // --- search ---------------------------------------------------------------------
+
+  /**
+   * bb routes/threads/base.ts:257-275 registers the literal /threads/search
+   * route in an explicit table, so it cannot be captured by the /threads/:id
+   * param route. Hono resolves in registration order (param-first registration
+   * answers GET /threads/search with thread_not_found — the B4 staging
+   * symptom), so the literal must register BEFORE the :id route below.
+   */
+  routes.get("/threads/search", async (ctx) => {
+    const query = parseOr422(threadSearchQuerySchema, ctx.req.query());
+    const searchQuery = query.query.trim();
+    if (countNonWhitespaceChars(searchQuery) < 2) {
+      throw new ApiError({
+        status: 400,
+        code: "invalid_request",
+        message: "query must contain at least two non-whitespace characters",
+      });
+    }
+    // bb parseSearchLimitPerGroup (base.ts:141-164): default 20, positive,
+    // capped at 50.
+    const limitRaw = query.limitPerGroup === undefined ? undefined : Number(query.limitPerGroup);
+    if (limitRaw !== undefined && limitRaw <= 0) {
+      throw new ApiError({
+        status: 400,
+        code: "invalid_request",
+        message: "limitPerGroup must be positive",
+      });
+    }
+    if (limitRaw !== undefined && limitRaw > THREAD_SEARCH_LIMIT_PER_GROUP_MAX) {
+      throw new ApiError({
+        status: 400,
+        code: "invalid_request",
+        message: `limitPerGroup must be at most ${THREAD_SEARCH_LIMIT_PER_GROUP_MAX}`,
+      });
+    }
+    const limitPerGroup = limitRaw ?? THREAD_SEARCH_LIMIT_PER_GROUP_DEFAULT;
+    // bb searchThreadsWithPendingInteractionState splits the visible,
+    // non-deleted set into an archived and an active group (data/threads.ts:
+    // 1113-1132); the title-level M0 scan serves both from one listing.
+    const rows = await listThreads(ctx.env, {});
+    const response = buildTitleSearchResponse({ rows, query: searchQuery, limitPerGroup });
+    const toResult = (result: (typeof response.active.results)[number]) => ({
+      thread: toThreadListEntry(result.thread),
+      matches: result.matches,
+    });
+    return ctx.json(
+      threadSearchResponseSchema.parse({
+        active: {
+          total: response.active.total,
+          results: response.active.results.map(toResult),
+        },
+        archived: {
+          total: response.archived.total,
+          results: response.archived.results.map(toResult),
+        },
+      }),
+    );
+  });
+
   // --- create -------------------------------------------------------------------
 
   routes.post("/threads", async (ctx) => {
@@ -180,6 +258,9 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       projectId: payload.projectId,
       providerId,
       title: payload.title ?? null,
+      // bb derives the sidebar title fallback from the create input at the
+      // create boundary (thread-create.ts:770-775 → title-generation.ts:53-68).
+      titleFallback: deriveTitleFallback(payload.input),
       sectionId: payload.sectionId ?? null,
       parentThreadId,
       sourceThreadId,
@@ -643,6 +724,25 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // bb listPendingInteractionsByThread with statuses pending|resolving —
     // no pending-interaction producer exists in the M0 control plane.
     return ctx.json([]);
+  });
+
+  // --- prompt history (bb routes/threads/data.ts:462-478) -----------------------------
+
+  routes.get("/threads/:id/prompt-history", async (ctx) => {
+    await requirePublicThread(ctx);
+    const limit = parseBoundedPositiveOptionalInteger({
+      defaultValue: PROMPT_HISTORY_ENTRY_LIMIT,
+      max: PROMPT_HISTORY_ENTRY_LIMIT,
+      name: "limit",
+      value: ctx.req.query("limit"),
+    });
+    // bb listThreadPromptHistory (services/prompt-history.ts:215-247) merges
+    // queued + accepted entries; the port persists neither store yet, so the
+    // visibility pass returns the bb empty list — the same legal-empty shape
+    // the project-level route serves (routes/projects.ts:181-198).
+    return ctx.json(
+      promptHistoryResponseSchema.parse(takeVisiblePromptHistoryEntries({ entries: [], limit })),
+    );
   });
 
   app.route("/api/v1", routes);

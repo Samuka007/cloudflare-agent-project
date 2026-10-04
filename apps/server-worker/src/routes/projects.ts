@@ -19,7 +19,11 @@ import {
 } from "../contract/domain/index.js";
 import { threadListEntrySchema } from "../contract/domain/thread.js";
 import { ApiError } from "../shared/api-error.js";
-import { parseOr422, requireJsonBody } from "../shared/route-utils.js";
+import {
+  parseBoundedPositiveOptionalInteger,
+  parseOr422,
+  requireJsonBody,
+} from "../shared/route-utils.js";
 import { createProjectId, createThreadSectionId } from "../shared/ids.js";
 import {
   createProject,
@@ -274,36 +278,6 @@ async function toProjectWithThreads(env: Env, row: ProjectRow) {
     threads: threads.map((thread) => threadListEntrySchema.parse(toThreadListEntry(thread))),
     defaultExecutionOptions: null,
   };
-}
-
-/**
- * bb services/lib/validation.ts:11-47 (parseOptionalInteger +
- * parseBoundedPositiveOptionalInteger): parseInt, 400 invalid_request on
- * garbage, clamp to max, 400 invalid_request when non-positive.
- */
-function parseBoundedPositiveOptionalInteger(args: {
-  defaultValue: number;
-  max: number;
-  name: string;
-  value: string | undefined;
-}): number {
-  const parsed = args.value === undefined ? undefined : Number.parseInt(args.value, 10);
-  if (parsed !== undefined && !Number.isFinite(parsed)) {
-    throw new ApiError({
-      status: 400,
-      code: "invalid_request",
-      message: `Invalid integer for ${args.name}`,
-    });
-  }
-  const bounded = Math.min(parsed ?? args.defaultValue, args.max);
-  if (bounded <= 0) {
-    throw new ApiError({
-      status: 400,
-      code: "invalid_request",
-      message: `${args.name} must be a positive integer`,
-    });
-  }
-  return bounded;
 }
 
 /**
