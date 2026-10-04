@@ -41,6 +41,30 @@
  *                                      // auto-creates unknown labels — invariant 5);
  *                                      // unregistered label ⇒ hard fail, zero writes.
  *
+ * Explicit spec fields (#151 fix) are authoritative — jev only fills what the
+ * spec leaves undefined, and a post-create failure rolls the filing back
+ * (board item removed, issue closed as not_planned):
+ *
+ *     await AP.file({ title, body, labels: ["type:implementation", "block:agent-harness"],
+ *                     milestone: "M1", priority: "P1" }, { confirm: true });
+ *                                      // exact-milestone match; explicit pins are
+ *                                      // never re-classified or demoted.
+ *
+ * Dispatch gate (#171) — AP.lane: DoR preflight → worktree provision →
+ * isolated spawn. Structure replaces PM recall; a bare spawn of the main
+ * checkout is no longer expressible:
+ *
+ *     const t = AP.dispatchable(snap)[0];
+ *     await AP.lane(t);                   // dry-run: DoR table + spawn plan, zero writes
+ *     await AP.lane(t, { agent: "task" }, { confirm: true });
+ *                                      // runs `git worktree add <herdr path>
+ *                                      // -b lane/<ticket>-<slug> origin/main`, returns
+ *                                      // spawn { agent, isolated: true, task, context }.
+ *                                      // Any unmet DoR item (三问/验收/锚点/预算/往例)
+ *                                      // or a failed board predicate refuses dispatch.
+ *     // then mark In Progress:
+ *     await AP.apply([{ op: "setStatus", number: t.number, value: "In Progress" }], { confirm: true });
+ *
  * Raw-ticket intake (judge-classified via the REAL jev model — #131
  * CRITICAL: the judge layer is a real API call, not the kernel judge):
  *
@@ -68,6 +92,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -290,6 +315,9 @@ export interface APDeps {
   judge?: JudgeFn;
   /** Transport seam — L1 tests inject a canned jev fetch (never hit the wire). */
   fetch?: FetchFn;
+  /** git executor seam — AP.lane worktree provisioning. L1 injects a
+   *  recorder (zero filesystem side effects); default shells out to git. */
+  runGit?: (args: string[], cwd: string) => string;
 }
 
 let injected: Partial<APDeps> | null = null;
@@ -303,6 +331,14 @@ function resolveToken(): string {
   const fromEnv = process.env.GH_TOKEN;
   if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
   return execFileSync("gh", ["auth", "token"], { encoding: "utf8" }).trim();
+}
+
+const defaultRunGit = (args: string[], cwd: string): string =>
+  execFileSync("git", args, { cwd, encoding: "utf8" });
+
+function runGit(args: string[], cwd: string): string {
+  const fn = injected?.runGit ?? defaultRunGit;
+  return fn(args, cwd);
 }
 
 const defaultGql: GqlFn = async (query, variables) => {
@@ -454,6 +490,15 @@ export const TEMPLATES = {
   createIssue: `mutation($repositoryId: ID!, $title: String!, $body: String!, $milestoneId: ID) {
   createIssue(input: { repositoryId: $repositoryId, title: $title, body: $body, milestoneId: $milestoneId }) { issue { id number url } }
 }`,
+  /** #151 rollback: filing is all-or-nothing. GitHub cannot delete issues,
+   *  so a failed post-create write undoes itself by removing the board item
+   *  and closing the issue as not_planned. */
+  deleteProjectItem: `mutation($projectId: ID!, $itemId: ID!) {
+  deleteProjectV2ItemById(input: { projectId: $projectId, itemId: $itemId }) { deletedItemId }
+}`,
+  closeIssue: `mutation($id: ID!, $stateReason: IssueStateReason) {
+  updateIssue(input: { id: $id, state: CLOSED, stateReason: $stateReason }) { issue { number state } }
+}`,
   /** #151 filing preflight: repository id + the FULL registered label
    *  vocabulary (paginated) + the open milestone title → { id, number } map
    *  — the number mapping is resolved at runtime, never hardcoded. */
@@ -597,6 +642,231 @@ export function dispatchPackets(tickets: Ticket[], _snapshot?: Snapshot): Dispat
       budget,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// AP.lane (#171) — the dispatch gate: DoR preflight → worktree provision →
+// isolated spawn packet. Composes dispatchable/dispatchPackets; the only new
+// side effect is `git worktree add` on the confirm path.
+// ---------------------------------------------------------------------------
+
+/** One DoR line printed per dispatch: gate item, pass/fail, body evidence. */
+export interface DorCheck {
+  key: "three-questions" | "acceptance" | "anchors" | "budget" | "precedent";
+  label: string;
+  ok: boolean;
+  /** First body line backing the check (trimmed); null when absent. */
+  evidence: string | null;
+}
+
+const DOR_LINE_ITEMS: readonly {
+  key: DorCheck["key"];
+  label: string;
+  pattern: RegExp;
+}[] = [
+  {
+    key: "three-questions",
+    label: "①复用三问答案引用",
+    pattern: /三问|bb\s*有形状|omp\s*有语义|平台缝|hitl/i,
+  },
+  {
+    key: "acceptance",
+    label: "②验收产品面可观察",
+    pattern: /验收|acceptance/i,
+  },
+  {
+    key: "anchors",
+    label: "③上游锚点",
+    pattern: /锚点|anchor|(?:^|\s)(?:bb|omp)\s*[：:]\s*\S/i,
+  },
+  {
+    key: "precedent",
+    label: "⑤参照往例",
+    pattern: /往例|先例|类比|同类|precedent|参考类|≈/i,
+  },
+];
+
+/**
+ * The five DoR gate items (#171) detected in the ticket body: 复用三问答案
+ * 引用 / 验收面 / 上游锚点 / 预算 / 参照往例. Budget reuses budgetOf's body
+ * pattern (the skeleton fallback = the item is missing). Pure, line-anchored
+ * heuristics — the L1 suite pins them; anything smarter belongs in intake.
+ */
+export function dorChecklist(body: string): DorCheck[] {
+  const lines = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  const firstMatch = (re: RegExp): string | null => lines.find((l) => re.test(l)) ?? null;
+  const budget = budgetOf(body);
+  const checks: DorCheck[] = DOR_LINE_ITEMS.map((item) => {
+    const evidence = firstMatch(item.pattern);
+    return { key: item.key, label: item.label, ok: evidence !== null, evidence };
+  });
+  checks.splice(3, 0, {
+    key: "budget",
+    label: "④预算行",
+    ok: budget.source === "body",
+    evidence: budget.source === "body" ? budget.line : null,
+  });
+  return checks;
+}
+
+/** The spawn packet AP.lane hands back — paste into the omp `task` tool.
+ *  `isolated: true` is structural (#171): the gate never produces a shared-
+ *  worktree spawn, that is the whole point. */
+export interface LaneSpawnSpec {
+  agent: string;
+  isolated: true;
+  /** Shared context (contract/interfaces); null when none supplied. */
+  context: string | null;
+  /** Full lane instructions — the DispatchPacket context. */
+  task: string;
+  model?: string;
+}
+
+export interface LaneDispatchReport {
+  ok: boolean;
+  dryRun: boolean;
+  number: number;
+  title: string;
+  /** Board predicate held (open ∧ Todo ∧ no open blockers ∧ ¬rfh). */
+  dispatchable: boolean;
+  dor: DorCheck[];
+  refused: boolean;
+  refusalReasons: string[];
+  worktree: WorktreePlan;
+  /** True only when the confirm path actually ran `git worktree add`. */
+  worktreeCreated: boolean;
+  /** Null when refused — a refused ticket never yields a spawn packet. */
+  spawn: LaneSpawnSpec | null;
+  errors: string[];
+}
+
+export interface LaneAgentSpec {
+  /** omp agent type (default "task"). */
+  agent?: string;
+  model?: string;
+  /** Shared context — contracts/interfaces lanes must honour. */
+  context?: string;
+}
+
+const expandHome = (p: string): string =>
+  p === "~" || p.startsWith("~/") ? homedir() + p.slice(1) : p;
+
+const truncateLine = (line: string, max: number): string =>
+  line.length > max ? `${line.slice(0, max - 1)}…` : line;
+
+function renderLaneReport(r: LaneDispatchReport): string {
+  const lines = [
+    `== AP.lane ${r.refused ? "REFUSED" : r.dryRun ? "plan (dry-run)" : "dispatched"} #${r.number} ==`,
+    `  TICKET    ${r.title}`,
+    `  BOARD     ${r.dispatchable ? "dispatchable" : "NOT dispatchable (board predicate)"}`,
+  ];
+  for (const c of r.dor) {
+    lines.push(
+      `  DoR ${c.ok ? "✓" : "✗"} ${c.label}` +
+        (c.evidence !== null ? ` — ${truncateLine(c.evidence, 80)}` : " — MISSING"),
+    );
+  }
+  lines.push(
+    `  WORKTREE  ${r.worktree.branch} @ ${r.worktree.path}` +
+      (r.worktreeCreated ? " (created)" : r.dryRun ? " (dry-run)" : ""),
+  );
+  lines.push(`  COMMAND   ${r.worktree.command}`);
+  if (r.spawn !== null) {
+    lines.push(
+      `  SPAWN     agent=${r.spawn.agent} isolated=${String(r.spawn.isolated)}` +
+        (r.spawn.model !== undefined ? ` model=${r.spawn.model}` : "") +
+        " — report.spawn carries the full omp task args",
+    );
+  }
+  for (const e of r.refusalReasons) lines.push(`  REFUSED   ${e}`);
+  for (const e of r.errors) lines.push(`  ERROR     ${e}`);
+  return lines.join("\n");
+}
+
+/**
+ * The dispatch gate (#171): structure replaces PM recall. Given a ticket,
+ * AP.lane (a) preflights the five DoR items and REFUSES — zero side effects
+ * — if any is missing or the board predicate fails; (b) on confirm, runs
+ * `git worktree add <herdr path> -b lane/<ticket>-<slug> origin/main` at the
+ * deterministic herdr path (naming reused from dispatchPackets); (c) always
+ * returns the omp spawn packet with `isolated: true` baked in — a bare
+ * spawn of the main checkout is no longer expressible through this gate.
+ *
+ * DRY-RUN default (consistent with apply/file): prints the DoR table +
+ * worktree/spawn plan, creates nothing. The PM then marks the ticket In
+ * Progress via AP.apply — lane() stays transport-free (only the runGit seam),
+ * hence synchronous; awaiting it at a call site stays legal if a transport
+ * ever grows onto the gate.
+ */
+export function lane(
+  ticket: Ticket,
+  agentSpec: LaneAgentSpec = {},
+  opts: { confirm?: boolean; base?: string; cwd?: string } = {},
+): LaneDispatchReport {
+  const [packet] = dispatchPackets([ticket]);
+  if (packet === undefined) throw new Error("AP.lane: dispatchPackets returned no packet");
+  const dor = dorChecklist(ticket.body);
+  const isDispatchable = dispatchable({ tickets: [ticket] }).length > 0;
+  const refusalReasons: string[] = [];
+  if (!isDispatchable) {
+    refusalReasons.push(
+      "board predicate unmet (open ∧ Todo ∧ no open blockers ∧ ¬ready-for-human) — flip Status via AP.apply first",
+    );
+  }
+  for (const m of dor.filter((c) => !c.ok)) {
+    refusalReasons.push(`DoR ${m.label} missing from ticket body`);
+  }
+  const dryRun = !opts.confirm;
+  const report: LaneDispatchReport = {
+    ok: false,
+    dryRun,
+    number: ticket.number,
+    title: ticket.title,
+    dispatchable: isDispatchable,
+    dor,
+    refused: refusalReasons.length > 0,
+    refusalReasons,
+    worktree: packet.worktree,
+    worktreeCreated: false,
+    spawn: null,
+    errors: [],
+  };
+  if (report.refused) {
+    console.log(renderLaneReport(report));
+    return report;
+  }
+  report.spawn = {
+    agent: agentSpec.agent ?? "task",
+    isolated: true,
+    context: agentSpec.context ?? null,
+    ...(agentSpec.model !== undefined ? { model: agentSpec.model } : {}),
+    task: packet.context,
+  };
+  if (dryRun) {
+    report.ok = true;
+    console.log(renderLaneReport(report) + "\ndry-run: no worktree created (pass { confirm: true })");
+    return report;
+  }
+  const cwd = opts.cwd ?? process.cwd();
+  // no existsSync pre-check: git's own failure ("already exists") is the
+  // explicit signal, surfaced verbatim below — one less filesystem probe.
+  const target = expandHome(packet.worktree.path);
+  try {
+    runGit(["worktree", "add", target, "-b", packet.worktree.branch, opts.base ?? "origin/main"], cwd);
+    report.worktreeCreated = true;
+  } catch (err) {
+    report.errors.push(
+      `git worktree add failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    console.log(renderLaneReport(report));
+    return report;
+  }
+  report.ok = true;
+  console.log(renderLaneReport(report));
+  return report;
 }
 
 interface PlanInput {
@@ -892,12 +1162,28 @@ export function planCascade(
 export const FILE_CONFIDENCE_FLOOR = 0.8;
 
 /** Raw filing request. Everything else derives from intake or resolves live
- *  — the caller never supplies labels/fields (that is how vocabulary drifts). */
+ *  resolves at runtime. Explicit fields (#151 defect 1) are AUTHORITATIVE:
+ *  the judge only fills dimensions the spec leaves undefined — a pinned
+ *  value is never re-classified, re-scored, or demoted by intake. */
 export interface FileSpec {
   title: string;
   body: string;
   /** Issue numbers the new ticket is blocked by (dependency axis only). */
   blockedBy?: number[];
+  /** Explicit label axis. When present, it replaces the derived
+   *  block/type/needs_human label set verbatim and the judge is not asked
+   *  about those dimensions at all (their board effect IS the labels). */
+  labels?: string[];
+  /** Explicit milestone TITLE — exact-matched against the live open
+   *  milestones (no fuzzy rewrite; "M1.5: …" never becomes "M1"). Null pins
+   *  unscheduled; undefined defers to the judge. */
+  milestone?: string | null;
+  /** Explicit classification pins (same undefined = judge rule). */
+  block?: IntakeResult["block"];
+  type?: IntakeResult["type"];
+  priority?: PriorityName | null;
+  /** Explicit ready-for-human pin (question skipped when present). */
+  needsHuman?: boolean;
 }
 
 /** The complete write plan for one filing — every value board-truth. */
@@ -935,6 +1221,8 @@ export interface FileReviewItem {
 export interface FileReport {
   ok: boolean;
   dryRun: boolean;
+  /** Dimensions pinned in the spec — authoritative over the judge (#151). */
+  explicitDims: string[];
   /** Raw judge verdict the plan was derived from (audit trail). */
   intake: IntakeResult;
   plan: FilePlan;
@@ -943,6 +1231,11 @@ export interface FileReport {
   errors: string[];
   /** Set only after a confirmed filing passed post-write verification. */
   created?: { number: number; id: string; url: string | null };
+  /** Set when a confirmed filing failed AFTER creation: the issue was
+   *  rolled back (board item removed + closed as not_planned) — all-or-
+   *  nothing (#151 defect 2). `created` stays unset; the caller only ever
+   *  sees a clean failure. */
+  rolledBack?: { number: number; steps: string[]; failures: string[] };
 }
 
 const FILE_DIMENSIONS = [
@@ -962,30 +1255,89 @@ const FILE_DIMENSIONS = [
  * applied needs_human → Wait for user, else scheduled → Todo, else Backlog.
  */
 export function planFile(
-  spec: Pick<FileSpec, "blockedBy">,
+  spec: Pick<
+    FileSpec,
+    "blockedBy" | "labels" | "milestone" | "block" | "type" | "priority" | "needsHuman"
+  >,
   cls: IntakeResult,
-): { plan: Omit<FilePlan, "milestoneNumber">; pmReview: FileReviewItem[] } {
-  const confident = (d: FileDimension): boolean => cls.confidence[d] >= FILE_CONFIDENCE_FLOOR;
-  const labels: string[] = [];
-  if (cls.block !== null && cls.block !== "none" && confident("block")) labels.push(cls.block);
-  if (cls.type !== null && confident("type")) labels.push(cls.type);
-  if (cls.needs_human && confident("needs_human")) labels.push("ready-for-human");
-  const milestone =
-    cls.milestone !== null && cls.milestone !== "none" && confident("milestone")
+): {
+  plan: Omit<FilePlan, "milestoneNumber">;
+  pmReview: FileReviewItem[];
+  /** Dimensions pinned by the spec (authoritative — never judge-ruled). */
+  explicitDims: string[];
+} {
+  const labelsExplicit = spec.labels !== undefined;
+  const explicit = {
+    milestone: spec.milestone !== undefined,
+    block: spec.block !== undefined,
+    type: spec.type !== undefined,
+    priority: spec.priority !== undefined,
+    needsHuman: spec.needsHuman !== undefined,
+  };
+  /** Was this dimension actually judged? Explicit pins and the label axis
+   *  (when `labels` is explicit) are skipped — their confidence 0 would
+   *  otherwise fake its way into pmReview. */
+  const judged = (d: FileDimension): boolean => {
+    switch (d) {
+      case "milestone":
+        return !explicit.milestone;
+      case "block":
+      case "type":
+        return !labelsExplicit && !explicit[d];
+      case "priority":
+        return !explicit.priority;
+      case "needs_probe":
+        return true;
+      case "needs_human":
+        return !explicit.needsHuman && !labelsExplicit;
+    }
+  };
+  const confident = (d: FileDimension): boolean =>
+    judged(d) && cls.confidence[d] >= FILE_CONFIDENCE_FLOOR;
+
+  // Label axis: explicit labels win verbatim; otherwise derive from the
+  // applied block/type/needs_human (explicit pin first, judged second).
+  const blockApplied =
+    spec.block !== undefined ? spec.block : confident("block") ? cls.block : null;
+  const typeApplied = spec.type !== undefined ? spec.type : confident("type") ? cls.type : null;
+  const needsHuman = explicit.needsHuman
+    ? spec.needsHuman === true
+    : confident("needs_human")
+      ? cls.needs_human
+      : false;
+  const derivedLabels: string[] = [];
+  if (blockApplied !== null && blockApplied !== "none") derivedLabels.push(blockApplied);
+  if (typeApplied !== null) derivedLabels.push(typeApplied);
+  if (needsHuman) derivedLabels.push("ready-for-human");
+  const labels = labelsExplicit ? [...new Set(spec.labels)] : derivedLabels;
+
+  const milestone = spec.milestone !== undefined
+    ? spec.milestone
+    : cls.milestone !== null && cls.milestone !== "none" && confident("milestone")
       ? cls.milestone
       : null;
-  const priority = cls.priority !== null && confident("priority") ? cls.priority : null;
+  const priority = spec.priority !== undefined
+    ? spec.priority
+    : cls.priority !== null && confident("priority")
+      ? cls.priority
+      : null;
   const status: StatusName =
-    cls.needs_human && confident("needs_human") ? "Wait for user" : milestone !== null ? "Todo" : "Backlog";
+    needsHuman ? "Wait for user" : milestone !== null ? "Todo" : "Backlog";
   const suggestedOf = (d: FileDimension): string | null => {
     const v: unknown = cls[d];
     return typeof v === "string" ? v : typeof v === "boolean" ? String(v) : null;
   };
-  const pmReview = FILE_DIMENSIONS.filter((d) => !confident(d)).map((d) => ({
+  const pmReview = FILE_DIMENSIONS.filter(
+    (d) => judged(d) && cls.confidence[d] < FILE_CONFIDENCE_FLOOR,
+  ).map((d) => ({
     dimension: d,
     suggested: suggestedOf(d),
     confidence: cls.confidence[d],
   }));
+  const explicitDims = Object.entries(explicit)
+    .filter(([, v]) => v)
+    .map(([k]) => k);
+  if (labelsExplicit) explicitDims.push("labels");
   return {
     plan: {
       labels,
@@ -995,6 +1347,7 @@ export function planFile(
       blockedBy: [...new Set(spec.blockedBy ?? [])].sort((a, b) => a - b),
     },
     pmReview,
+    explicitDims,
   };
 }
 
@@ -1471,15 +1824,47 @@ interface VocabRepository {
   milestones: { nodes: { id: string; number: number; title: string }[] };
 }
 
+/**
+ * #151 all-or-nothing rollback for a confirmed filing that failed after
+ * creation. GitHub cannot delete issues, so the undo is: remove the board
+ * item (when it landed) and close the issue as not_planned. Both steps are
+ * best-effort — each failure is reported, never thrown, so the caller gets
+ * one complete failure report instead of a half-undone surprise.
+ */
+async function rollbackFiling(
+  issue: { id: string; number: number },
+  itemIds: Map<number, string>,
+): Promise<{ steps: string[]; failures: string[] }> {
+  const steps: string[] = [];
+  const failures: string[] = [];
+  const itemId = itemIds.get(issue.number);
+  if (itemId !== undefined) {
+    try {
+      await gql(TEMPLATES.deleteProjectItem, { projectId: PROJECT_ID, itemId });
+      steps.push(`board item ${itemId} removed`);
+    } catch (err) {
+      failures.push(`board item ${itemId} removal failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  try {
+    await gql(TEMPLATES.closeIssue, { id: issue.id, stateReason: "NOT_PLANNED" });
+    steps.push("issue closed as not_planned");
+  } catch (err) {
+    failures.push(`close failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return { steps, failures };
+}
+
 function renderFileReport(spec: FileSpec, report: FileReport): string {
+  const pinned = (dim: string): string => (report.explicitDims.includes(dim) ? " (explicit)" : "");
   const lines = [
     `== AP.file ${report.dryRun ? "preview (dry-run)" : "filing report"} ==`,
     `  TITLE     ${spec.title}`,
-    `  LABELS    ${report.plan.labels.join(", ") || "(none)"}`,
-    `  MILESTONE ${report.plan.milestone ?? "(none)"}${
+    `  LABELS    ${report.plan.labels.join(", ") || "(none)"}${pinned("labels")}`,
+    `  MILESTONE ${report.plan.milestone ?? "(none)"}${pinned("milestone")}${
       report.plan.milestoneNumber !== null ? ` (#${report.plan.milestoneNumber})` : ""
     }`,
-    `  PRIORITY  ${report.plan.priority ?? "(unset)"}`,
+    `  PRIORITY  ${report.plan.priority ?? "(unset)"}${pinned("priority")}`,
     `  STATUS    ${report.plan.status}`,
     `  EDGES     blockedBy ${report.plan.blockedBy.map((n) => `#${n}`).join(", ") || "(none)"}`,
   ];
@@ -1491,6 +1876,10 @@ function renderFileReport(spec: FileSpec, report: FileReport): string {
   }
   for (const e of report.errors) lines.push(`  ERROR     ${e}`);
   if (report.created !== undefined) lines.push(`  CREATED   #${report.created.number} (${report.created.url ?? "no url"})`);
+  if (report.rolledBack !== undefined) {
+    lines.push(`  ROLLED BACK #${report.rolledBack.number}: ${report.rolledBack.steps.join("; ") || "(no steps)"}`);
+    for (const f of report.rolledBack.failures) lines.push(`  ROLLBACK FAILURE ${f}`);
+  }
   return lines.join("\n");
 }
 
@@ -1556,7 +1945,14 @@ async function verifyFiling(
  * blocking edges → wave Status. DRY-RUN default: `file(spec)` previews the
  * complete plan with zero writes; `file(spec, { confirm: true })` creates.
  *
- * Invariant-5 guard: derived labels must exist in the repository vocabulary
+ * Explicit spec fields (#151 defect 1) are authoritative: the judge is only
+ * asked the dimensions the spec leaves undefined (labels explicit ⇒ the whole
+ * label axis is skipped; a pinned milestone is never re-classified), and a
+ * pinned value is never demoted by intake confidence. Milestone titles are
+ * exact-matched against the live open milestones — "M1.5: …" never rewrites
+ * to "M1" (#151 defect 2).
+ *
+ * Invariant-5 guard: plan labels must exist in the repository vocabulary
  * BEFORE anything is created — the REST create path auto-creates unknown
  * label names, so filing goes GraphQL-only (createIssue carries no labels;
  * addLabels uses pre-resolved ids) and hard-fails (zero writes, even on
@@ -1564,13 +1960,27 @@ async function verifyFiling(
  * FILE_CONFIDENCE_FLOOR never auto-apply: they are demoted to the pmReview
  * list for PM re-ruling. The milestone title → number map is resolved from
  * the live repository at runtime, never hardcoded.
+ *
+ * All-or-nothing (#151 defect 2): once the issue exists, ANY failed write or
+ * failed post-write verification rolls the filing back (board item removed,
+ * issue closed as not_planned) and reports ok:false with `rolledBack` —
+ * `created` is only ever set for a fully verified filing.
  */
 export async function file(
   spec: FileSpec,
   opts: { confirm?: boolean } = {},
 ): Promise<FileReport> {
-  const cls = await intake(spec.body);
-  const { plan: derived, pmReview } = planFile(spec, cls);
+  // Explicit fields skip their judge questions (#151): labels explicit also
+  // skips block/type/needs_human — their only board effect IS the labels.
+  const omit: string[] = [];
+  if (spec.milestone !== undefined) omit.push("milestone");
+  if (spec.labels !== undefined) omit.push("block", "type", "needs_human");
+  if (spec.block !== undefined && !omit.includes("block")) omit.push("block");
+  if (spec.type !== undefined && !omit.includes("type")) omit.push("type");
+  if (spec.priority !== undefined) omit.push("priority");
+  if (spec.needsHuman !== undefined && !omit.includes("needs_human")) omit.push("needs_human");
+  const cls = await intake(spec.body, { omit });
+  const { plan: derived, pmReview, explicitDims } = planFile(spec, cls);
   const errors: string[] = [];
   const plan: FilePlan = { ...derived, milestoneNumber: null };
   const owner = REPO.split("/")[0];
@@ -1603,7 +2013,8 @@ export async function file(
   }
   if (plan.milestone !== null && milestoneRef === null) {
     errors.push(
-      `milestone "${plan.milestone}" not found among open milestones (closed vocabulary)`,
+      `milestone "${plan.milestone}" not found among open milestones (exact title match ` +
+        "required — closed vocabulary; explicit titles are never fuzzy-rewritten, #151)",
     );
   }
   plan.milestoneNumber = milestoneRef?.number ?? null;
@@ -1654,7 +2065,15 @@ export async function file(
     }
   }
 
-  const base: FileReport = { ok: false, dryRun: !opts.confirm, intake: cls, plan, pmReview, errors };
+  const base: FileReport = {
+    ok: false,
+    dryRun: !opts.confirm,
+    explicitDims,
+    intake: cls,
+    plan,
+    pmReview,
+    errors,
+  };
   if (errors.length > 0 || !opts.confirm) {
     console.log(renderFileReport(spec, base));
     if (opts.confirm !== true) {
@@ -1678,61 +2097,88 @@ export async function file(
   const issue = payload?.issue ?? null;
   if (issue === null) throw new Error("AP.file: createIssue returned no issue");
 
-  if (plan.labels.length > 0) {
-    const ids: string[] = [];
-    for (const l of plan.labels) {
-      const id = labelIds[l];
-      if (id === undefined) throw new Error(`AP.file: label ${l} lost between guard and write`);
-      ids.push(id);
+  const itemIds = new Map<number, string>();
+  let writeError: string | null = null;
+  try {
+    if (plan.labels.length > 0) {
+      const ids: string[] = [];
+      for (const l of plan.labels) {
+        const id = labelIds[l];
+        if (id === undefined) throw new Error(`AP.file: label ${l} lost between guard and write`);
+        ids.push(id);
+      }
+      await gql(TEMPLATES.addLabels, { labelableId: issue.id, labelIds: ids });
     }
-    await gql(TEMPLATES.addLabels, { labelableId: issue.id, labelIds: ids });
-  }
 
-  const ops: ResolvedOp[] = [{ kind: "addProjectItem", number: issue.number, issueNodeId: issue.id }];
-  if (priorityWrite !== null) {
+    const ops: ResolvedOp[] = [
+      { kind: "addProjectItem", number: issue.number, issueNodeId: issue.id },
+    ];
+    if (priorityWrite !== null) {
+      ops.push({
+        kind: "setPriority",
+        number: issue.number,
+        itemId: "PENDING_BOARD",
+        fieldId: selects.priorityFieldId,
+        optionId: priorityWrite.optionId,
+        value: priorityWrite.value,
+      });
+    }
+    if (statusWrite === null)
+      throw new Error("AP.file: status option lost between guard and write");
     ops.push({
-      kind: "setPriority",
+      kind: "setStatus",
       number: issue.number,
       itemId: "PENDING_BOARD",
-      fieldId: selects.priorityFieldId,
-      optionId: priorityWrite.optionId,
-      value: priorityWrite.value,
+      fieldId: selects.statusFieldId,
+      optionId: statusWrite.optionId,
+      value: statusWrite.value,
     });
-  }
-  if (statusWrite === null) throw new Error("AP.file: status option lost between guard and write");
-  ops.push({
-    kind: "setStatus",
-    number: issue.number,
-    itemId: "PENDING_BOARD",
-    fieldId: selects.statusFieldId,
-    optionId: statusWrite.optionId,
-    value: statusWrite.value,
-  });
-  for (const n of plan.blockedBy) {
-    const blockerNodeId = blockerIds[n];
-    if (blockerNodeId === undefined) {
-      throw new Error(`AP.file: blocker #${n} lost between guard and write`);
+    for (const n of plan.blockedBy) {
+      const blockerNodeId = blockerIds[n];
+      if (blockerNodeId === undefined) {
+        throw new Error(`AP.file: blocker #${n} lost between guard and write`);
+      }
+      ops.push({
+        kind: "addBlockedBy",
+        number: issue.number,
+        issueNodeId: issue.id,
+        blocker: n,
+        blockerNodeId,
+      });
     }
-    ops.push({
-      kind: "addBlockedBy",
-      number: issue.number,
-      issueNodeId: issue.id,
-      blocker: n,
-      blockerNodeId,
-    });
-  }
-  const itemIds = new Map<number, string>();
-  for (const batch of batchOps(ops)) {
-    for (const op of batch) await execOp(op, itemIds);
+    for (const batch of batchOps(ops)) {
+      for (const op of batch) await execOp(op, itemIds);
+    }
+  } catch (err) {
+    writeError = err instanceof Error ? err.message : String(err);
   }
 
-  const verifyErrors = await verifyFiling(issue.number, plan, vocabulary);
-  const created = { number: issue.number, id: issue.id, url: issue.url };
-  if (verifyErrors.length > 0) {
-    errors.push(...verifyErrors);
-    console.error(`AP.file: post-filing verification FAILED: ${verifyErrors.join("; ")}`);
-    return { ...base, errors, created };
+  const verifyErrors = writeError === null ? await verifyFiling(issue.number, plan, vocabulary) : [];
+  if (writeError !== null) errors.push(`write failed after creation: ${writeError}`);
+  if (verifyErrors.length > 0) errors.push(...verifyErrors);
+
+  if (errors.length > 0) {
+    // All-or-nothing (#151 defect 2): a half-filed issue is worse than no
+    // issue — undo everything the board can see, then report the failure
+    // explicitly (created stays unset; the caller never sees a fake success).
+    const rolledBack = await rollbackFiling(issue, itemIds);
+    const report: FileReport = {
+      ...base,
+      ok: false,
+      errors,
+      rolledBack: { number: issue.number, ...rolledBack },
+    };
+    console.error(
+      `AP.file: filing FAILED after creation — rolled back #${issue.number}: ` +
+        (rolledBack.steps.join("; ") || "no rollback steps succeeded"),
+    );
+    if (rolledBack.failures.length > 0) {
+      console.error(`AP.file: ROLLBACK INCOMPLETE — manual cleanup required: ${rolledBack.failures.join("; ")}`);
+    }
+    console.log(renderFileReport(spec, report));
+    return report;
   }
+  const created = { number: issue.number, id: issue.id, url: issue.url };
   const report: FileReport = { ...base, ok: true, created };
   console.log(renderFileReport(spec, report));
   return report;
@@ -1894,14 +2340,27 @@ export function classifyIntake(reply: JudgeReply): IntakeResult {
 }
 
 /** Judge-classify a raw ticket body against the closed vocabularies: one real
- *  model call, never auto-writes — the gate decides who reads the result. */
-export async function intake(body: string): Promise<IntakeResult> {
+ *  model call, never auto-writes — the gate decides who reads the result.
+ *  `omit` (#151) drops the named questions from the call — explicit spec
+ *  fields skip the judge entirely; the reply classifies with confidence 0
+ *  (→ needs-human gate) for anything omitted, which callers must treat as
+ *  "not asked", never as a bad verdict. */
+export async function intake(
+  body: string,
+  opts: { omit?: readonly string[] } = {},
+): Promise<IntakeResult> {
   const state =
     "Classify this cloudflare-agent-project ticket for the tracker " +
     "(docs/agents/tracker-schema.md axes). Judge by what the body ships, " +
     "not by label mentions alone. Ticket body:\n" +
     body;
-  return classifyIntake(await (injected?.judge ?? defaultJudge)(state, INTAKE_QUESTIONS));
+  const questions =
+    opts.omit === undefined || opts.omit.length === 0
+      ? INTAKE_QUESTIONS
+      : Object.fromEntries(
+          Object.entries(INTAKE_QUESTIONS).filter(([k]) => !opts.omit?.includes(k)),
+        );
+  return classifyIntake(await (injected?.judge ?? defaultJudge)(state, questions));
 }
 
 // ---------------------------------------------------------------------------
@@ -1921,6 +2380,8 @@ export const AP = {
   file,
   planFile,
   dispatchPackets,
+  lane,
+  dorChecklist,
   /** Pure internals, exposed for tests/inspection. */
   pure: { slugify, planDiff, planCascade, budgetOf, FILE_CONFIDENCE_FLOOR },
   /** Judge layer: question oracle + real transport (tests mock via fetch). */
