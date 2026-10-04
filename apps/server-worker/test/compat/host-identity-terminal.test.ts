@@ -201,13 +201,16 @@ describe("protocol upgrade face: lastRejectedProtocolVersion + retry-update (#19
 
 describe("delete terminal (#195 S4, G11) + destroyed 404 shape (G12)", () => {
   // The primary-host cascade reads the WHOLE fleet, so earlier describes'
-  // hosts would defeat the "lone host" setup — start this block from an
-  // empty registry (test rig only; production never wipes).
-  it("wipes the hosts registry for the cascade tests", async () => {
+  // hosts would defeat the "lone host" setup — the two cascade tests wipe
+  // the registry first (test rig only; production never wipes). Each wipe
+  // owns its test: the lone-primary refusal below leaves its host behind,
+  // so the terminal test wipes again before seeding its pair.
+  async function wipeHosts(): Promise<void> {
     await env.DB.prepare("DELETE FROM hosts").run();
-  });
+  }
 
   it("a lone host is the primary and refuses removal (bb routes/hosts.ts:192-198)", async () => {
+    await wipeHosts();
     const hostId = "local-s4-primary";
     expect((await enroll(hostId)).status).toBe(201);
     const refused = await exports.default.fetch(`${BASE}/api/v1/hosts/${hostId}`, {
@@ -222,6 +225,7 @@ describe("delete terminal (#195 S4, G11) + destroyed 404 shape (G12)", () => {
   });
 
   it("delete closes the live DO session, then tombstones", async () => {
+    await wipeHosts();
     const hostId = "local-s4-terminal";
     expect((await enroll(hostId)).status).toBe(201);
     // bb's cascade (primary-host.ts:70-76): with exactly one connected host,
