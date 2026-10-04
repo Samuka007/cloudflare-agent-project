@@ -14,11 +14,13 @@ import {
  * Exec roundtrip over the real WS path (§6.1 normal sequence, service half):
  * journal-first ordering, offset acks, result assembly, agent-sink delivery,
  * execution dedup at the journal (§3.5/E — the service-side half of I16),
- * tombstone + forget closure (§8.4), business cancel (§2.4).
+ * tombstone + forget closure (§8.4), business cancel (§2.4). Since T9 #99
+ * bash rides the tool.exec frame (pid-less ack); the exit half still
+ * exercises the exec.exited projection the exec face keeps for the protocol.
  */
 
 describe("L1 exec roundtrip", () => {
-  test("dispatch → spawn → output → exited lands in journal + agent sink, then tombstone + forget", async () => {
+  test("dispatch → tool.exec → output → exited lands in journal + agent sink, then tombstone + forget", async () => {
     const hostId = uniqueHostId("rt");
     const threadId = `thr_${hostId}`;
     const executionId = `${threadId}:1`;
@@ -32,10 +34,10 @@ describe("L1 exec roundtrip", () => {
       command: "echo poc",
     });
 
-    const spawn = await client.waitForSpawn(executionId);
-    expect(spawn.command).toBe("echo poc");
-    expect(spawn.threadId).toBe(threadId);
-    await client.acknowledgeSpawn(executionId);
+    const toolFrame = await client.acknowledgeToolExec(executionId);
+    expect(toolFrame.tool).toBe("bash");
+    expect(toolFrame.arguments).toEqual({ command: "echo poc" });
+    expect(toolFrame.threadId).toBe(threadId);
     await expect(outcome).resolves.toEqual({ kind: "accepted" });
 
     client.sendOutput(executionId, 0, "poc-output\n");
@@ -101,7 +103,7 @@ describe("L1 exec roundtrip", () => {
     const executionId = `${threadId}:1`;
     const client = new SimulatedClient(hostId);
     await client.dial();
-    await client.acknowledgeSpawnFor(
+    await client.acknowledgeToolExecFor(
       executionId,
       dispatchViaSeam(hostId, { threadId, executionId, machineId: hostId, command: "sleep 60" }),
     );
@@ -134,7 +136,7 @@ describe("L1 exec roundtrip", () => {
     expect(outcome).toEqual({ kind: "host_offline" });
   });
 
-  test("client-refused spawn is journaled spawn_failed and reports host_offline", async () => {
+  test("client-refused dispatch is journaled spawn_failed and reports host_offline", async () => {
     const hostId = uniqueHostId("refuse");
     const threadId = `thr_${hostId}`;
     const executionId = `${threadId}:1`;
@@ -144,10 +146,10 @@ describe("L1 exec roundtrip", () => {
       threadId,
       executionId,
       machineId: hostId,
-      command: "cd /etc && rm -rf /", // cwd outside sandbox → refused below
+      command: "cd /etc && rm -rf /", // refused by the client runtime below
     });
-    await client.waitForSpawn(executionId);
-    await client.refuseSpawn(executionId, "sandbox escape refused");
+    await client.waitForToolExec(executionId);
+    await client.refuseToolExec(executionId, "runtime refused");
     await expect(refused).resolves.toEqual({ kind: "host_offline" });
     const failed = opsOfKind(await journalOf(hostId, executionId), "spawn_failed");
     expect(failed).toHaveLength(1);
