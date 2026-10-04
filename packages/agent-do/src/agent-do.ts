@@ -8,6 +8,7 @@ import {
   realtimeClientMessageSchema,
   type PendingInteractionPayload,
   type PendingInteractionResolution,
+  type PendingInteractionRow,
   type RealtimeThreadDelta,
   type RealtimeSubscriptionTarget,
 } from "@cap/protocol";
@@ -78,6 +79,7 @@ import {
 } from "./tools/task/plan.js";
 import {
   interactionForExecution,
+  projectInteractionRows,
   timeoutAutoSelect,
   renderAskOutput,
   validateAskResolution,
@@ -194,6 +196,7 @@ export interface HubNotifyStub {
     metadata?: {
       latestSeq?: number;
       eventTypes?: string[];
+      hasPendingInteraction?: boolean;
       phase?: {
         turnId: string;
         phase: "stream_started" | "first_token" | "terminal" | "settled" | "host_lost";
@@ -1036,6 +1039,19 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   }
 
   /**
+   * SPA interactions read face (#225): the journal-folded rows the control
+   * plane serves to the bb interactions routes. Journal-first like the
+   * resolve path — the fold IS the replay truth, so a page reload answers
+   * identically after eviction.
+   */
+  async listInteractions(): Promise<{ interactions: PendingInteractionRow[] }> {
+    await this.ready();
+    this.requireThread();
+    const { events } = await this.readAllEvents();
+    return { interactions: projectInteractionRows(events) };
+  }
+
+  /**
    * Callback for ticket #30's daemon service DO (self-routed by the
    * executionId threadId prefix). Duplicates are absorbed here — the log
    * only ever receives well-formed, first-instance events (I6/I7).
@@ -1488,6 +1504,28 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         hub.notifyThread(threadId, frame.changes, frame.metadata).catch((error: unknown) => {
           console.error("hub phase notify failed", error);
         }),
+      );
+      return;
+    }
+    if (
+      event.type === "interaction.registered" ||
+      event.type === "interaction.resolved" ||
+      event.type === "interaction.interrupted"
+    ) {
+      // #225: the SPA's interactions query refetches ONLY on the
+      // `interactions-changed` change kind (bb realtime-cache-registry); the
+      // generic events-appended pointer never reaches it. The metadata patch
+      // (bb buildInteractionChangeMetadata) drives the sidebar badge patch —
+      // true when any folded interaction is still pending after this row.
+      const hasPending = [...this.state.interactions.values()].some(
+        (interaction) => interaction.status === "pending",
+      );
+      this.ctx.waitUntil(
+        hub
+          .notifyThread(threadId, ["interactions-changed"], { latestSeq, hasPendingInteraction: hasPending })
+          .catch((error: unknown) => {
+            console.error("hub interaction notify failed", error);
+          }),
       );
       return;
     }
