@@ -27,9 +27,9 @@ const TOOL_TURN = [
 
 const TEXT = "run it";
 
-async function journal(rig: Rig): Promise<FakeJournalOp[]> {
+function journal(rig: Rig): Promise<FakeJournalOp[]> {
   // The DO RPC returns an unknown[]; the journal is this package's own type.
-  return rig.service.journal();
+  return rig.service.journal() as Promise<FakeJournalOp[]>;
 }
 
 /**

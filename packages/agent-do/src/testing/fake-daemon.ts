@@ -88,7 +88,7 @@ export class FakeHostOS {
   /** Returns true only when pid AND start time match (I22 verification). */
   kill(pid: number, pidStartedAt: number): boolean {
     const process = this.processes.get(pid);
-    if (process === undefined || process.pidStartedAt !== pidStartedAt) return false;
+    if (process?.pidStartedAt !== pidStartedAt) return false;
     process.killed = true;
     return true;
   }
@@ -121,7 +121,7 @@ export class FakeDaemonClient {
     buffer.sentOffset = buffer.bytes.length;
   }
 
-  async exit(executionId: string, result: ToolResultPayload): Promise<void> {
+  exit(executionId: string, result: ToolResultPayload): void {
     if (this.disconnected) return;
     this.service.upstreamExited(executionId, result);
   }
@@ -285,19 +285,19 @@ export class FakeDaemonService implements DaemonServiceClient {
 
   // -- DaemonServiceClient --------------------------------------------------
 
-  async dispatch(request: ToolDispatchRequest): Promise<DispatchOutcome> {
+  dispatch(request: ToolDispatchRequest): Promise<DispatchOutcome> {
     const record = this.derivedOf(request.executionId);
     if (record.state === "COMPLETED" || record.state === "TOMBSTONE") {
-      return {
+      return Promise.resolve({
         kind: "completed_cached",
         result: record.result ?? {
           status: "error",
           exitCode: null,
           output: "cached-result-missing",
         },
-      };
+      });
     }
-    if (!this.hostOnline) return { kind: "host_offline" };
+    if (!this.hostOnline) return Promise.resolve({ kind: "host_offline" });
     this.record({
       op: "dispatch",
       executionId: request.executionId,
@@ -308,24 +308,27 @@ export class FakeDaemonService implements DaemonServiceClient {
       // stale RUNNING from a previous incarnation is re-owned by this boot
       record.bootId = this.client?.bootId ?? "?";
     }
-    if (this.client === null) return { kind: "accepted" };
+    if (this.client === null) return Promise.resolve({ kind: "accepted" });
     if (
       record.state === "RUNNING" &&
       this.journal.some((op) => op.op === "spawn_ack" && op.executionId === request.executionId)
     ) {
-      return { kind: "accepted" }; // re-attach; journal already has the spawn (§3.5)
+      // re-attach; journal already has the spawn (§3.5)
+      return Promise.resolve({ kind: "accepted" });
     }
     this.client.spawnCalls.push(request.executionId);
     const { pid, pidStartedAt } = this.osRef.spawn(request.executionId);
     this.record({ op: "spawn_ack", executionId: request.executionId, pid, pidStartedAt });
-    if (this.silentExecutionIds.has(request.executionId)) return { kind: "accepted" };
+    if (this.silentExecutionIds.has(request.executionId)) {
+      return Promise.resolve({ kind: "accepted" });
+    }
     void this.agent?.onExecutionUpdate({
       kind: "started",
       executionId: request.executionId,
       pid,
       pidStartedAt,
     });
-    return { kind: "accepted" };
+    return Promise.resolve({ kind: "accepted" });
   }
 
   private osRef: FakeHostOS = new FakeHostOS();
@@ -335,22 +338,23 @@ export class FakeDaemonService implements DaemonServiceClient {
     this.osRef = os;
   }
 
-  async kill(executionId: string): Promise<void> {
+  kill(executionId: string): Promise<void> {
     this.record({ op: "cancel_requested", executionId });
-    if (this.client === null || this.client.disconnected) return;
+    if (this.client === null || this.client.disconnected) return Promise.resolve();
     const record = this.derivedOf(executionId);
-    if (record.state !== "RUNNING") return;
-    await this.client.exit(executionId, {
+    if (record.state !== "RUNNING") return Promise.resolve();
+    this.client.exit(executionId, {
       status: "cancelled",
       exitCode: null,
       output: "",
     });
+    return Promise.resolve();
   }
 
-  async ackExecution(executionId: string, resultSeq: number): Promise<void> {
+  ackExecution(executionId: string, resultSeq: number): Promise<void> {
     if (this.failNextAcks > 0) {
       this.failNextAcks -= 1;
-      throw new Error("injected ack failure");
+      return Promise.reject(new Error("injected ack failure"));
     }
     this.record({ op: "ack", executionId, resultSeq });
     const record = this.derivedOf(executionId);
@@ -358,18 +362,21 @@ export class FakeDaemonService implements DaemonServiceClient {
       this.record({ op: "tombstone", executionId });
       record.state = "TOMBSTONE";
     }
+    return Promise.resolve();
   }
 
-  async queryUnacked(
-    threadId: string,
-  ): Promise<{ executionId: string; result: ToolResultPayload }[]> {
-    threadId;
-    return [...this.derived.entries()]
-      .filter(([, record]) => record.state === "COMPLETED" && record.result !== null)
-      .map(([executionId, record]) => ({
-        executionId,
-        result: record.result!,
-      }));
+  queryUnacked(_threadId: string): Promise<{ executionId: string; result: ToolResultPayload }[]> {
+    return Promise.resolve(
+      [...this.derived.entries()]
+        .filter(
+          (entry): entry is [string, DerivedExecution & { result: ToolResultPayload }] =>
+            entry[1].state === "COMPLETED" && entry[1].result !== null,
+        )
+        .map(([executionId, record]) => ({
+          executionId,
+          result: record.result,
+        })),
+    );
   }
 
   // -- I19: eviction + deterministic journal replay -------------------------
@@ -416,7 +423,13 @@ export class FakeDaemonService implements DaemonServiceClient {
           this.derivedOf(op.executionId).orphanSuspect = true;
           break;
         }
-        default:
+        case "ack":
+        case "cancel_requested":
+        case "output_dup_dropped":
+        case "output_gap":
+        case "session_replaced":
+        case "stale_session_rejected":
+          // journal-only markers; nothing to rebuild into derived state
           break;
       }
     }
@@ -440,7 +453,7 @@ export class FakeDaemonService implements DaemonServiceClient {
   /** Rejects messages carried on any non-active sessionId (§5.2.5). */
   clientMessage(hostId: string, sessionId: string): { accepted: boolean } {
     const active = this.sessions.get(hostId);
-    if (active === undefined || active.sessionId !== sessionId) {
+    if (active?.sessionId !== sessionId) {
       this.record({ op: "stale_session_rejected", hostId });
       return { accepted: false };
     }
@@ -507,9 +520,7 @@ export class FakeDaemonService implements DaemonServiceClient {
   }
 
   /** I20: same-boot resume — client resends buffered bytes from ackedOffset. */
-  resumeFromBuffers(observed: { executionId: string }[], client: FakeDaemonClient): void {
-    client;
-    observed;
+  resumeFromBuffers(_observed: { executionId: string }[], _client: FakeDaemonClient): void {
     // Buffered-byte resend is driven directly in tests by calling
     // upstreamOutput with explicit offsets; the journal carries the dedup
     // decisions (output vs output_dup_dropped), which is what I20 asserts.

@@ -66,7 +66,7 @@ export class EventLog {
       this.storage.sql
         .exec<{ version: number }>("SELECT version FROM agent_do_migrations")
         .toArray()
-        .map((row) => Number(row.version)),
+        .map((row) => row.version),
     );
     for (const migration of MIGRATIONS) {
       if (applied.has(migration.version)) continue;
@@ -106,14 +106,12 @@ export class EventLog {
       createdAt: now,
     };
     this.storage.transactionSync(() => {
-      const next = Number(
-        this.storage.sql
-          .exec<{ next: number }>(
-            "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE thread_id = ?",
-            threadId,
-          )
-          .one().next,
-      );
+      const next = this.storage.sql
+        .exec<{ next: number }>(
+          "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE thread_id = ?",
+          threadId,
+        )
+        .one().next;
       record.seq = next;
       this.storage.sql.exec(
         "INSERT INTO events (thread_id, seq, id, type, data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -200,11 +198,11 @@ export class EventLog {
       events.push(
         parseAgentEvent({
           threadId,
-          seq: Number(row.seq),
+          seq: row.seq,
           id: row.id,
           type: row.type,
           data,
-          createdAt: Number(row.created_at),
+          createdAt: row.created_at,
         }),
       );
     }
@@ -218,14 +216,12 @@ export class EventLog {
         threadId,
       )
       .one();
-    return row.max === null ? 0 : Number(row.max);
+    return row.max ?? 0;
   }
 
   count(threadId: string): number {
-    return Number(
-      this.storage.sql
-        .exec<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE thread_id = ?", threadId)
-        .one().n,
-    );
+    return this.storage.sql
+      .exec<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE thread_id = ?", threadId)
+      .one().n;
   }
 }

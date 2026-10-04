@@ -19,7 +19,7 @@ export interface Env extends ManagerDoBindings {
 }
 
 export default {
-  async fetch(): Promise<Response> {
+  fetch(): Response {
     return new Response("cap-provider-app: DO-only worker", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;

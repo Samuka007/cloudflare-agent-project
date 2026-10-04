@@ -107,7 +107,9 @@ function isTrustedOrigin(origin: string, env: Env, targets: RequestTargets): boo
 /** Paths whose routes declare their own auth (bb PLUGIN_WIRE_HTTP_PATH). */
 const GUARD_EXEMPT_PREFIXES: string[] = [];
 
-export async function originGuard(ctx: Context, next: Next): Promise<Response | void> {
+// Inferred Promise<Response | void> — see access.ts for why this is not
+// annotated.
+export async function originGuard(ctx: Context, next: Next) {
   const origin = ctx.req.header("origin");
   if (
     origin !== undefined &&

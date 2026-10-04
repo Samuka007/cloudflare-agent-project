@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { env, runDurableObjectAlarm } from "cloudflare:test";
+import { runDurableObjectAlarm } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 
 /**
  * previewLeases → DO alarm component mapping (port-inventory §5.2): leases
@@ -12,7 +13,7 @@ interface LeaseStub {
 }
 
 function waitFor(ms: number): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
+  const { promise, resolve } = Promise.withResolvers<undefined>();
   setTimeout(resolve, ms);
   return promise;
 }

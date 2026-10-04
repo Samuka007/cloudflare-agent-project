@@ -209,7 +209,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
       }
       if (args.mode === "auto") {
         const steered = await steerTurn();
-        if (steered !== null && steered.ok) {
+        if (steered?.ok) {
           const result = steered.result as { turnId?: string };
           return { turnId: result.turnId ?? "", steer: true, duplicated: false };
         }
@@ -235,7 +235,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
       const session = await manager.providerSessionFor(threadId);
       // The registry mirror must agree with the caller's turn; a mismatch
       // means the turn already settled — nothing to stop.
-      if (session === null || session.activeTurnId !== args.turnId) {
+      if (session?.activeTurnId !== args.turnId) {
         return { accepted: false };
       }
       const outcome = await dispatch({

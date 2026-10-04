@@ -226,7 +226,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
   // Registry-backed command bodies
   // -------------------------------------------------------------------------
 
-  private async initialize(): Promise<AdapterCommandOutcome> {
+  private initialize(): AdapterCommandOutcome {
     const harness = resolveHarness(this.env);
     return {
       ok: true,
@@ -239,13 +239,13 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
     };
   }
 
-  private async configureSkills(rootCount: number): Promise<AdapterCommandOutcome> {
+  private configureSkills(rootCount: number): AdapterCommandOutcome {
     // M0 harness minimal face: the loop ships bash only (ruling 2026-10-03);
     // skill roots are accepted and ignored until the tools ticket lands.
     return { ok: true, result: { configuredRoots: rootCount } };
   }
 
-  private async modelList(): Promise<AdapterCommandOutcome> {
+  private modelList(): AdapterCommandOutcome {
     const harness = resolveHarness(this.env);
     return {
       ok: true,
@@ -304,7 +304,8 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
         `providerThreadId ${providerThreadId} already bound to thread ${clash.threadId}`,
       );
     }
-    const title = firstTextOf(command)?.slice(0, 120) || `thread ${command.threadId}`;
+    const titleRaw = firstTextOf(command)?.slice(0, 120) ?? "";
+    const title = titleRaw === "" ? `thread ${command.threadId}` : titleRaw;
     const machineId = resolveHarness(this.env).hostBinding.machineId;
     const created = await this.agentStub(command.threadId).createThread({
       threadId: command.threadId,
@@ -542,7 +543,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
     return { ok: true, result: { stopped: true, interrupted } };
   }
 
-  private async discardThread(providerThreadId: string): Promise<AdapterCommandOutcome> {
+  private discardThread(providerThreadId: string): AdapterCommandOutcome {
     const row = this.rowByProviderThreadId(providerThreadId);
     if (row === undefined) {
       return errorOutcome("thread_not_found", `unknown provider thread ${providerThreadId}`);
@@ -554,7 +555,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
     return { ok: true, result: { discarded: true } };
   }
 
-  private async setName(providerThreadId: string, title: string): Promise<AdapterCommandOutcome> {
+  private setName(providerThreadId: string, title: string): AdapterCommandOutcome {
     const row = this.rowByProviderThreadId(providerThreadId);
     if (row === undefined) {
       return errorOutcome("thread_not_found", `unknown provider thread ${providerThreadId}`);
@@ -563,10 +564,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
     return { ok: true, result: { title } };
   }
 
-  private async setArchived(
-    providerThreadId: string,
-    archived: boolean,
-  ): Promise<AdapterCommandOutcome> {
+  private setArchived(providerThreadId: string, archived: boolean): AdapterCommandOutcome {
     const row = this.rowByProviderThreadId(providerThreadId);
     if (row === undefined) {
       return errorOutcome("thread_not_found", `unknown provider thread ${providerThreadId}`);
@@ -626,11 +624,11 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
    * builds turn commands against the bb AdapterCommand vocabulary, which
    * addresses the provider session by its id — this is the one lookup.
    */
-  async providerSessionFor(threadId: string): Promise<{
+  providerSessionFor(threadId: string): {
     providerThreadId: string;
     activeTurnId: string | null;
     poisoned: boolean;
-  } | null> {
+  } | null {
     const row = this.rowByThreadId(threadId);
     if (row === undefined) return null;
     return {
@@ -677,7 +675,6 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
     const assignments: string[] = [];
     const values: unknown[] = [];
     for (const [column, value] of Object.entries(patch)) {
-      if (value === undefined) continue;
       assignments.push(`${column} = ?`);
       values.push(value);
     }

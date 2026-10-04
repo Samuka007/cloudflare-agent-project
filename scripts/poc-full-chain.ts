@@ -76,22 +76,39 @@ function note(line: string): void {
 }
 
 function sleep(ms: number): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
+  const { promise, resolve } = Promise.withResolvers<undefined>();
   setTimeout(resolve, ms);
   return promise;
 }
 
-async function waitFor(
-  predicate: () => Promise<boolean>,
+/**
+ * Polls `predicate` until it yields a non-null value (that value is the
+ * result); boolean predicates simply yield `true`. Keeps closure-produced
+ * results in the return channel instead of captured `let` variables, whose
+ * static types the compiler cannot see through.
+ */
+async function waitFor<T>(
+  predicate: () => Promise<T | null>,
   what: string,
   timeoutMs = 120_000,
-): Promise<void> {
+): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    if (await predicate()) return;
+    const result = await predicate();
+    if (result !== null) return result;
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await sleep(300);
   }
+}
+
+/** Auth defaults plus per-call headers, merged without array-index spread. */
+function driveHeaders(extra: RequestInit["headers"]): Headers {
+  const headers = new Headers({
+    "content-type": "application/json",
+    authorization: `Bearer ${HOST_KEY}`,
+  });
+  for (const [name, value] of new Headers(extra)) headers.set(name, value);
+  return headers;
 }
 
 /** Reads repo-root .dev.vars (simple KEY=VALUE lines, comments allowed). */
@@ -115,11 +132,7 @@ async function fetchJson(
   for (let attempt = 0; attempt < 3; attempt++) {
     const response = await fetch(`${baseUrl}${path}`, {
       ...init,
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${HOST_KEY}`,
-        ...init?.headers,
-      },
+      headers: driveHeaders(init?.headers),
     });
     status = response.status;
     text = await response.text();
@@ -230,7 +243,9 @@ function terminalEventOf(slice: AgentEvent[], turnId: string): AgentEvent {
 function finalTextOf(slice: AgentEvent[]): string {
   const completed = slice.filter((event) => event.type === "model.call_completed");
   const last = completed.at(-1);
-  return last === undefined ? "" : String(last.data.text ?? "");
+  if (last === undefined) return "";
+  const text = last.data.text;
+  return typeof text === "string" ? text : "";
 }
 
 function sliceOf(all: AgentEvent[], sinceSeq: number): AgentEvent[] {
@@ -267,7 +282,7 @@ function startWrangler(): ChildProcess {
       },
     },
   );
-  child.stderr?.on("data", (chunk: Buffer) => {
+  child.stderr.on("data", (chunk: Buffer) => {
     const line = chunk.toString("utf8");
     wranglerLines.push(line.trimEnd());
     process.stderr.write(`[wrangler] ${line}`);
@@ -285,10 +300,10 @@ function startClient(base: string, dataDir: string): ChildProcess {
       env: { ...process.env, POC_ENROLL_KEY: ENROLL_KEY },
     },
   );
-  child.stdout?.on("data", (chunk: Buffer) => {
+  child.stdout.on("data", (chunk: Buffer) => {
     captureClient("client", chunk);
   });
-  child.stderr?.on("data", (chunk: Buffer) => {
+  child.stderr.on("data", (chunk: Buffer) => {
     captureClient("client!", chunk);
   });
   return child;
@@ -395,7 +410,8 @@ async function main(): Promise<void> {
   for (const line of renderEvents(turn1Slice)) note(line);
 
   const turn1Result = turn1Slice.find((event) => event.type === "tool.result");
-  const turn1Output = String(turn1Result?.data.output ?? "");
+  const turn1RawOutput = turn1Result?.data.output;
+  const turn1Output = typeof turn1RawOutput === "string" ? turn1RawOutput : "";
   const markerMatch = /poc-(\d+)/.exec(turn1Output);
   if (turn1Result?.data.status !== "ok") {
     throw new Error(`turn 1 tool.result not ok: ${JSON.stringify(turn1Result?.data)}`);
@@ -424,22 +440,16 @@ async function main(): Promise<void> {
     `Use the bash tool to run exactly this command and report its output: ${drillCommand}`,
     "poc-drive-drill",
   );
-  const drillExecId = await (async () => {
-    let executionId: string | null = null;
-    await waitFor(
-      async () => {
-        const page = await events(drillSince);
-        const started = page.events.find((event) => event.type === "tool.exec_started");
-        executionId = started ? String(started.data.executionId) : null;
-        return executionId !== null;
-      },
-      "drill tool.exec_started",
-      60_000,
-    );
-    if (executionId === null) throw new Error("unreachable");
-    return executionId;
-  })();
-  client?.kill("SIGKILL");
+  const drillExecId = await waitFor(
+    async () => {
+      const page = await events(drillSince);
+      const started = page.events.find((event) => event.type === "tool.exec_started");
+      return started ? String(started.data.executionId) : null;
+    },
+    "drill tool.exec_started",
+    60_000,
+  );
+  client.kill("SIGKILL");
   client = null;
   const killAt = Date.now();
   log(
@@ -460,7 +470,7 @@ async function main(): Promise<void> {
   const reasks = drillSlice.filter(
     (event) => event.type === "tool.dispatch" && Number(event.data.attempt ?? 1) > 1,
   );
-  if (drillResult === undefined || drillResult.data.status !== "error") {
+  if (drillResult?.data.status !== "error") {
     throw new Error(
       `drill: expected explicit error tool.result, got ${JSON.stringify(drillResult?.data)}`,
     );
@@ -591,7 +601,8 @@ async function stagingLeg(vars: Record<string, string>, marker: string): Promise
     assertCoreSequence(stagingSlice, "staging turn", true);
     for (const line of renderEvents(stagingSlice)) note(line);
     const stagingResult = stagingSlice.find((event) => event.type === "tool.result");
-    const stagingOutput = String(stagingResult?.data.output ?? "").trim();
+    const stagingRawOutput = stagingResult?.data.output;
+    const stagingOutput = (typeof stagingRawOutput === "string" ? stagingRawOutput : "").trim();
     const stageMarker = /poc-staging-\d+/.exec(stagingOutput)?.[0];
     if (stagingResult?.data.status !== "ok" || stageMarker === undefined) {
       throw new Error(`staging tool.result not ok: ${JSON.stringify(stagingResult?.data)}`);
@@ -669,17 +680,17 @@ async function captureWrangler(
   });
   const { promise, resolve } = Promise.withResolvers<number>();
   let out = "";
-  child.stdout?.on("data", (chunk: Buffer) => {
+  child.stdout.on("data", (chunk: Buffer) => {
     out += chunk.toString("utf8");
   });
-  child.stderr?.on("data", (chunk: Buffer) => {
+  child.stderr.on("data", (chunk: Buffer) => {
     out += chunk.toString("utf8");
   });
   child.on("close", (code) => {
     resolve(code ?? -1);
   });
-  if (stdin !== undefined) child.stdin?.write(stdin);
-  child.stdin?.end();
+  if (stdin !== undefined) child.stdin.write(stdin);
+  child.stdin.end();
   const code = await promise;
   if (code !== 0) throw new Error(`${args[0]} exit ${code}: ${out.slice(-1200)}`);
   return out;
@@ -692,7 +703,7 @@ main()
     teardown();
     process.exit(0);
   })
-  .catch((error) => {
+  .catch((error: unknown) => {
     console.error(`[poc] FAILED: ${error instanceof Error ? error.stack : String(error)}`);
     writeFileSync(TRANSCRIPT_PATH, `${transcript.join("\n")}\n`);
     console.error(`[poc] partial transcript written to ${TRANSCRIPT_PATH}`);

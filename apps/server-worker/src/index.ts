@@ -76,12 +76,19 @@ function isDaemonFace(request: Request, path: string): boolean {
   return path === "/ws" && request.headers.has("authorization");
 }
 
+function requireDaemonService(env: Env): DurableObjectNamespace {
+  if (env.DAEMON_SERVICE === undefined) {
+    throw new Error("DAEMON_SERVICE binding is required to serve the daemon face");
+  }
+  return env.DAEMON_SERVICE;
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const path = new URL(request.url).pathname;
     if (isDaemonFace(request, path)) {
       const serviceEnv: DaemonServiceWorkerEnv = {
-        DAEMON_SERVICE: env.DAEMON_SERVICE!,
+        DAEMON_SERVICE: requireDaemonService(env),
         AGENT_DO: env.AGENT_DO,
         ENROLL_KEY: env.ENROLL_KEY ?? "[REDACTED-staging-secret]",
         DAEMON_HOST_KEY: env.DAEMON_HOST_KEY ?? "[REDACTED-staging-secret]",
@@ -104,11 +111,7 @@ export default {
    * timing. The cron pings the lease store; daemon session sweeps ride DO
    * alarms (#27/#30).
    */
-  async scheduled(
-    _controller: ScheduledController,
-    env: Env,
-    ctx: ExecutionContext,
-  ): Promise<void> {
+  scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
     ctx.waitUntil(
       (async () => {
         const id = env.LEASES.idFromName("leases");

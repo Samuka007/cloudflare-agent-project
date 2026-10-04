@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { ensureMigrations } from "../migrate.js";
-import { SELF } from "cloudflare:test";
 import { threadListEntrySchema } from "../../src/contract/domain/thread.js";
 import { threadListQuerySchema } from "../../src/contract/api/threads.js";
 import { createThread } from "../helpers.js";
+import { exports } from "cloudflare:workers";
 
 /**
  * Criterion 2 (port-inventory §6.2): the thread list response is a bare array
@@ -15,7 +15,7 @@ beforeAll(ensureMigrations);
 describe("criterion 2: thread list bare array", () => {
   it("returns a bare array of valid thread list entries", async () => {
     const created = await createThread({ title: "list-entry" });
-    const response = await SELF.fetch("https://example.com/api/v1/threads?limit=50");
+    const response = await exports.default.fetch("https://example.com/api/v1/threads?limit=50");
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(Array.isArray(body)).toBe(true);
@@ -34,20 +34,20 @@ describe("criterion 2: thread list bare array", () => {
       limit: "10",
       offset: "0",
     });
-    const params = new URLSearchParams(
-      Object.entries(query).map(([key, value]) => [key, String(value)]),
+    const params = new URLSearchParams(Object.entries(query).map(([key, value]) => [key, value]));
+    const response = await exports.default.fetch(
+      `https://example.com/api/v1/threads?${params.toString()}`,
     );
-    const response = await SELF.fetch(`https://example.com/api/v1/threads?${params.toString()}`);
     expect(response.status).toBe(200);
     expect(Array.isArray(await response.json())).toBe(true);
   });
 
   it("rejects conflicting section filters like bb", async () => {
-    const response = await SELF.fetch(
+    const response = await exports.default.fetch(
       "https://example.com/api/v1/threads?sectionId=sec_x&unsectioned=true",
     );
     expect(response.status).toBe(400);
-    const body = (await response.json()) as { code: string };
+    const body = await response.json<{ code: string }>();
     expect(body.code).toBe("invalid_request");
   });
 });

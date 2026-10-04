@@ -67,10 +67,6 @@ export class ZodErrorHolder extends Error {
   }
 }
 
-interface ZodLikeError {
-  issues: unknown;
-}
-
 export function toApiError(error: unknown): Error {
   if (error && typeof error === "object" && "issues" in error && Array.isArray(error.issues)) {
     return new ZodErrorHolder(error.issues);

@@ -85,8 +85,7 @@ export function createTerminalOutputLineReader(): TerminalOutputLineReader {
     },
     push(text: string): string[] {
       const lines: string[] = [];
-      for (let index = 0; index < text.length; index += 1) {
-        const character = text[index];
+      for (const character of text) {
         if (pendingCarriageReturn) {
           pendingCarriageReturn = false;
           if (character === "\n") {

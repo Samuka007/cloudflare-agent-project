@@ -7,7 +7,7 @@ import { setProviderAdapter } from "./injection.js";
  * has no routes. The HTTP face (if any) arrives with the daemon client (#34).
  */
 export default {
-  async fetch(): Promise<Response> {
+  fetch(): Response {
     return new Response("cap-daemon-worker: DO-only worker", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;

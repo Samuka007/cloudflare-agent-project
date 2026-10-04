@@ -151,18 +151,16 @@ export function registerSystemRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     return ctx.json(toAppSettings(await getAppSettingsRow(ctx.env)));
   });
 
-  routes.post("/system/config/reload", async (ctx) => {
+  routes.post("/system/config/reload", (ctx) => {
     // bb reloads the bbAppManagedConfig from disk; the Worker config source is
     // env vars, so there is nothing to reload — success semantics preserved.
     return ctx.json({ ok: true });
   });
 
-  routes.get("/system/version", async (ctx) => {
-    const query = parseOr422(
-      z.object({ force: z.enum(["true", "false"]).optional() }),
-      ctx.req.query(),
-    );
-    query;
+  routes.get("/system/version", (ctx) => {
+    // bb 422s on unknown query params; validate the surface (nothing to
+    // reload/force in the Worker — the flag is accepted and ignored).
+    parseOr422(z.object({ force: z.enum(["true", "false"]).optional() }), ctx.req.query());
     const currentVersion = ctx.env.SERVER_VERSION ?? "0.0.0-dev";
     return ctx.json(
       systemVersionResponseSchema.parse({

@@ -22,6 +22,13 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
     const turnId: string | undefined = "turnId" in event.data ? event.data.turnId : undefined;
     let ux: ThreadEventEnvelope | null = null;
     switch (event.type) {
+      // No UX rendering: the SPA rebuilds these from item lifecycle events.
+      case "thread.created":
+      case "model.call_retry":
+      case "tool.exec_started":
+      case "tool.output":
+      case "turn.cancel_requested":
+        break;
       case "turn.input": {
         ux = buildThreadEvent({
           id: event.id,
@@ -245,8 +252,6 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
         });
         break;
       }
-      default:
-        break;
     }
     if (ux !== null) {
       parseThreadEvent(ux);

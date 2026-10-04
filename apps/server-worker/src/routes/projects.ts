@@ -32,7 +32,6 @@ import { listProjectSources } from "../db/project-sources.js";
 import { toThreadListEntry } from "../services/runtime-display.js";
 import type { Env, HonoBindings } from "../app-types.js";
 import type { ProjectRow } from "../db/rows.js";
-import type { ThreadDbRow } from "../db/rows.js";
 
 /**
  * Projects + sidebar-bootstrap + thread-sections face (bb
@@ -102,7 +101,7 @@ export function registerProjectRoutes(app: Hono<{ Bindings: HonoBindings }>): vo
     // projects with threads, and the personal singleton (500 when absent).
     const sections = await listThreadSections(ctx.env);
     const personal = await getPersonalProject(ctx.env);
-    if (!personal || personal.deletedAt !== null) {
+    if (personal?.deletedAt !== null) {
       throw new ApiError({
         status: 500,
         code: "internal",
@@ -145,7 +144,7 @@ export function registerProjectRoutes(app: Hono<{ Bindings: HonoBindings }>): vo
       id: ctx.req.param("id"),
       ...(payload.name !== undefined ? { name: payload.name } : {}),
     });
-    if (!updated || updated.deletedAt !== null) {
+    if (updated?.deletedAt !== null) {
       throw new ApiError({ status: 404, code: "project_not_found", message: "Project not found" });
     }
     return ctx.json(

@@ -78,7 +78,7 @@ async function fetchJwks(teamDomain: string): Promise<AccessJwk[]> {
       retryable: true,
     });
   }
-  const body = (await response.json()) as { keys?: AccessJwk[] };
+  const body = await response.json<{ keys?: AccessJwk[] }>();
   const keys = body.keys ?? [];
   jwksCache = { keys, fetchedAt: Date.now() };
   return keys;
@@ -125,7 +125,7 @@ export async function verifyAccessToken(
     throw unauthorized();
   }
   const jwk = options.jwks.find((candidate) => candidate.kid === header.kid);
-  if (!jwk || jwk.kty !== "RSA" || jwk.n === undefined || jwk.e === undefined) {
+  if (jwk?.kty !== "RSA" || jwk.n === undefined || jwk.e === undefined) {
     throw unauthorized();
   }
   const key = await crypto.subtle.importKey(
@@ -200,7 +200,10 @@ export function accessGateEnabled(env: Env): boolean {
   return env.ACCESS_CHECK_ENABLED === "true";
 }
 
-export async function accessGate(ctx: Context, next: Next): Promise<Response | void> {
+// Return type is inferred (Promise<Response | void>, hono's own middleware
+// shape): writing `void` in a union trips no-invalid-void-type, and `next()`
+// itself returns Promise<void>, so an `undefined` annotation rejects it.
+export async function accessGate(ctx: Context, next: Next) {
   if (!accessGateEnabled(ctx.env as Env)) {
     return next();
   }
@@ -223,6 +226,6 @@ export async function accessGate(ctx: Context, next: Next): Promise<Response | v
   if (jwk === undefined) {
     throw unauthorized();
   }
-  await verifyAccessToken(token, { jwks: [jwk], audience: ctx.env.ACCESS_AUD ?? "" });
+  await verifyAccessToken(token, { jwks: [jwk], audience: (ctx.env as Env).ACCESS_AUD ?? "" });
   return next();
 }

@@ -38,7 +38,7 @@ export async function replaceStoredThreadTabs(
   )
     .bind(tabsJson, now, args.threadId, args.expectedRevision)
     .run();
-  if ((update.meta.changes ?? 0) > 0) {
+  if (update.meta.changes > 0) {
     const stored = await getStoredThreadTabs(env, args.threadId);
     return { outcome: "stored", stored };
   }

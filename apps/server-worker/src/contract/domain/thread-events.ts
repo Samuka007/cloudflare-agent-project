@@ -170,7 +170,7 @@ export const systemErrorEventDataSchema = z
     const hasReconnectTotal = value.reconnectTotal !== undefined;
     if (hasReconnectAttempt !== hasReconnectTotal) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "system/error reconnectAttempt and reconnectTotal must be provided together",
       });
       return;
@@ -182,7 +182,7 @@ export const systemErrorEventDataSchema = z
       value.reconnectAttempt > value.reconnectTotal
     ) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "system/error reconnectAttempt cannot be greater than reconnectTotal",
       });
     }

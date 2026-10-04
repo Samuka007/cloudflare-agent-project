@@ -1,5 +1,4 @@
-import { SELF } from "cloudflare:test";
-import { env } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "./migrate.js";
 
 /** Base URL for SELF requests; any origin works inside the pool. */
@@ -7,9 +6,9 @@ export const BASE = "https://example.com";
 
 export async function apiGet(path: string, init?: RequestInit): Promise<Response> {
   await ensureMigrations();
-  return SELF.fetch(`${BASE}${path}`, {
+  return exports.default.fetch(`${BASE}${path}`, {
     ...init,
-    headers: { ...(init?.headers ?? {}) },
+    headers: init?.headers ?? {},
   });
 }
 
@@ -25,7 +24,7 @@ export async function createThread(args?: {
   input?: { type: "text"; text: string }[];
 }): Promise<CreatedThread> {
   await ensureMigrations();
-  const response = await SELF.fetch(`${BASE}/api/v1/threads`, {
+  const response = await exports.default.fetch(`${BASE}/api/v1/threads`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -42,12 +41,12 @@ export async function createThread(args?: {
   if (response.status !== 201) {
     throw new Error(`createThread failed: ${response.status} ${await response.text()}`);
   }
-  const body = (await response.json()) as { id: string; projectId: string };
+  const body = await response.json<{ id: string; projectId: string }>();
   return { id: body.id, projectId: body.projectId };
 }
 
 export async function send(threadId: string): Promise<void> {
-  const response = await SELF.fetch(`${BASE}/api/v1/threads/${threadId}/send`, {
+  const response = await exports.default.fetch(`${BASE}/api/v1/threads/${threadId}/send`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -75,7 +74,7 @@ export async function openWebSocket(path: string): Promise<WebSocket> {
   if (response.status !== 101) {
     throw new Error(`websocket upgrade failed: ${response.status}`);
   }
-  if (response.webSocket === null || response.webSocket === undefined) {
+  if (response.webSocket === null) {
     throw new Error("upgrade produced no websocket");
   }
   const socket: WebSocket = response.webSocket;
@@ -84,8 +83,8 @@ export async function openWebSocket(path: string): Promise<WebSocket> {
 }
 
 /** Resolves with the next JSON frame, or null on close. */
-export function nextFrame(socket: WebSocket): Promise<unknown | null> {
-  const { promise, resolve } = Promise.withResolvers<unknown | null>();
+export function nextFrame(socket: WebSocket): Promise<unknown> {
+  const { promise, resolve } = Promise.withResolvers<unknown>();
   const onMessage = (event: MessageEvent): void => {
     cleanup();
     resolve(JSON.parse(String(event.data)));
@@ -103,4 +102,4 @@ export function nextFrame(socket: WebSocket): Promise<unknown | null> {
   return promise;
 }
 
-export { env, SELF, ensureMigrations };
+export { env, ensureMigrations };

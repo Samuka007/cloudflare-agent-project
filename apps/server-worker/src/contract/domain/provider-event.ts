@@ -648,73 +648,73 @@ const unscopedSystemEventSchema = z.union([
       type: z.literal("client/thread/start"),
       threadId: z.string(),
     })
-    .merge(clientTurnLifecycleEventDataSchema),
+    .extend(clientTurnLifecycleEventDataSchema.shape),
   z
     .object({
       type: z.literal("client/turn/requested"),
       threadId: z.string(),
     })
-    .merge(turnRequestEventDataSchema),
+    .extend(turnRequestEventDataSchema.shape),
   z
     .object({
       type: z.literal("client/turn/rejected"),
       threadId: z.string(),
     })
-    .merge(turnRequestRejectedEventDataSchema),
+    .extend(turnRequestRejectedEventDataSchema.shape),
   z
     .object({
       type: z.literal("client/turn/start"),
       threadId: z.string(),
     })
-    .merge(clientTurnLifecycleEventDataSchema),
+    .extend(clientTurnLifecycleEventDataSchema.shape),
   z
     .object({
       type: z.literal("system/error"),
       threadId: z.string(),
     })
-    .merge(systemErrorEventDataSchema),
+    .extend(systemErrorEventDataSchema.shape),
   z
     .object({
       type: z.literal("system/manager/user_message"),
       threadId: z.string(),
     })
-    .merge(systemLegacyUserMessageEventDataSchema),
+    .extend(systemLegacyUserMessageEventDataSchema.shape),
   z
     .object({
       type: z.literal("system/thread/interrupted"),
       threadId: z.string(),
     })
-    .merge(systemThreadInterruptedEventDataSchema),
+    .extend(systemThreadInterruptedEventDataSchema.shape),
   z
     .object({
       type: z.literal("system/operation"),
       threadId: z.string(),
     })
-    .merge(systemOperationEventDataSchema),
+    .extend(systemOperationEventDataSchema.shape),
   z
     .object({
       type: z.literal("system/permissionGrant/lifecycle"),
       threadId: z.string(),
     })
-    .merge(systemPermissionGrantLifecycleEventDataSchema),
+    .extend(systemPermissionGrantLifecycleEventDataSchema.shape),
   z
     .object({
       type: z.literal("system/userQuestion/lifecycle"),
       threadId: z.string(),
     })
-    .merge(systemUserQuestionLifecycleEventDataSchema),
+    .extend(systemUserQuestionLifecycleEventDataSchema.shape),
   z
     .object({
       type: z.literal("system/thread-provisioning"),
       threadId: z.string(),
     })
-    .merge(systemThreadProvisioningEventDataSchema),
+    .extend(systemThreadProvisioningEventDataSchema.shape),
   z
     .object({
       type: z.literal("system/provider-turn-watchdog"),
       threadId: z.string(),
     })
-    .merge(systemProviderTurnWatchdogEventDataSchema),
+    .extend(systemProviderTurnWatchdogEventDataSchema.shape),
 ]);
 export const systemEventSchema = unscopedSystemEventSchema.and(scopedEventDataSchema);
 
@@ -728,7 +728,7 @@ const rejectLegacyClientRequestSequenceSchema = z.unknown().superRefine((value, 
 
   if (Object.hasOwn(eventResult.data, legacyClientRequestKey)) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: "custom",
       message: "legacy request sequence field is no longer accepted",
       path: [legacyClientRequestKey],
     });
@@ -741,7 +741,7 @@ const rejectLegacyClientRequestSequenceSchema = z.unknown().superRefine((value, 
     Object.hasOwn(itemResult.data, legacyClientRequestKey)
   ) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: "custom",
       message: "legacy user-message request sequence field is no longer accepted",
       path: ["item", legacyClientRequestKey],
     });
@@ -757,7 +757,7 @@ export const threadEventSchema = rejectLegacyClientRequestSequenceSchema.pipe(
     });
     if (!result.valid) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: result.message ?? "Invalid thread event scope",
         path: ["scope"],
       });

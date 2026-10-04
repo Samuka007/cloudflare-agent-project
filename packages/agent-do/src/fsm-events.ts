@@ -206,7 +206,12 @@ export function parseAgentEvent(input: {
   createdAt: number;
 }): AnyAgentEvent {
   const type = input.type as AgentEventType;
-  const dataSchema = agentEventDataSchemas[type];
+  // `input.type` is an untrusted storage string; the Partial-record view
+  // keeps the undefined guard meaningful for out-of-vocabulary types.
+  const schemaTable: Partial<
+    Record<AgentEventType, (typeof agentEventDataSchemas)[AgentEventType]>
+  > = agentEventDataSchemas;
+  const dataSchema = schemaTable[type];
   if (dataSchema === undefined) {
     throw new Error(`unknown agent event type ${input.type} (seq ${input.seq})`);
   }

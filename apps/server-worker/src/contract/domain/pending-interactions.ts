@@ -266,7 +266,7 @@ export const pendingInteractionUserQuestionQuestionSchema = z
     question.options?.forEach((option, index) => {
       if (optionValues.has(option.value)) {
         context.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: "custom",
           message: "User question option values must be unique",
           path: ["options", index, "value"],
         });
@@ -299,7 +299,7 @@ export const userQuestionPendingInteractionPayloadSchema = z
     payload.questions.forEach((question, index) => {
       if (questionIds.has(question.id)) {
         context.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: "custom",
           message: "User question ids must be unique",
           path: ["questions", index, "id"],
         });

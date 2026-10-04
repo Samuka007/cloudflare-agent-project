@@ -29,7 +29,8 @@ export function reconcileReasoningLevel(
   previous: ReasoningLevel,
   supported: readonly ReasoningLevel[],
 ): ReasoningLevel {
-  if (supported.length === 0) {
+  const firstSupported = supported[0];
+  if (firstSupported === undefined) {
     throw new Error("reconcileReasoningLevel requires at least one supported level");
   }
   if (supported.includes(previous)) return previous;
@@ -41,9 +42,6 @@ export function reconcileReasoningLevel(
   if (supported.includes(effectivePrevious)) return effectivePrevious;
 
   const previousRank = reasoningRank(effectivePrevious);
-  // Port note: `supported` is non-empty (guarded above); bb's TS6 build
-  // accepts the indexed access, TS 5.9 needs the explicit fallback.
-  const firstSupported = supported[0]!;
   let bestLevel = firstSupported;
   let bestDistance = Math.abs(reasoningRank(firstSupported) - previousRank);
   for (const candidate of supported.slice(1)) {

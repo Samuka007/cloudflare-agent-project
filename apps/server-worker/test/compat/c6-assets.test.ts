@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { ensureMigrations } from "../migrate.js";
-import { SELF } from "cloudflare:test";
+import { exports } from "cloudflare:workers";
 
 /**
  * Criterion 6 (port-inventory §6.6): Workers Assets hosts the SPA dist at the
@@ -12,7 +12,7 @@ beforeAll(ensureMigrations);
 
 describe("criterion 6: SPA fallback + assets 404", () => {
   it("serves index.html at the domain root with no-store", async () => {
-    const response = await SELF.fetch("https://example.com/");
+    const response = await exports.default.fetch("https://example.com/");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/html");
     expect(await response.text()).toContain('<div id="root">');
@@ -20,13 +20,15 @@ describe("criterion 6: SPA fallback + assets 404", () => {
   });
 
   it("falls back to index.html for deep links (SPA routing)", async () => {
-    const response = await SELF.fetch("https://example.com/threads/thr_23456789ab");
+    const response = await exports.default.fetch("https://example.com/threads/thr_23456789ab");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/html");
   });
 
   it("404s a missing /assets/* file instead of serving index.html", async () => {
-    const response = await SELF.fetch("https://example.com/assets/missing-bundle-abc123.js");
+    const response = await exports.default.fetch(
+      "https://example.com/assets/missing-bundle-abc123.js",
+    );
     expect(response.status).toBe(404);
     expect(response.headers.get("content-type")).not.toContain("text/html");
   });
@@ -34,11 +36,11 @@ describe("criterion 6: SPA fallback + assets 404", () => {
   it("serves present /assets/* files as immutable", async () => {
     // The real SPA bundle is content-hashed; discover one entry from the
     // served index.html instead of pinning a filename.
-    const index = await SELF.fetch("https://example.com/");
+    const index = await exports.default.fetch("https://example.com/");
     const html = await index.text();
     const asset = /<script[^>]+src="(\/assets\/[^"]+)"/.exec(html)?.[1];
     expect(asset).toBeTruthy();
-    const response = await SELF.fetch(`https://example.com${asset}`);
+    const response = await exports.default.fetch(`https://example.com${asset}`);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("javascript");
     expect(response.headers.get("cache-control")).toContain("immutable");

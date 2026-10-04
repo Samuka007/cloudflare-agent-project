@@ -73,7 +73,14 @@ async function handleDriveRoute(
   }
   // The composed rig always binds AGENT_DO; namespace.get() drops the class
   // RPC type, so the stub is retyped at this one boundary (rig-only surface).
-  const stub = env.AGENT_DO!.get(env.AGENT_DO!.idFromName(threadId)) as DurableObjectStub<AgentDO>;
+  const agentDo = env.AGENT_DO;
+  if (agentDo === undefined) {
+    return Response.json(
+      { code: "internal_error", message: "AGENT_DO binding missing" },
+      { status: 500 },
+    );
+  }
+  const stub = agentDo.get(agentDo.idFromName(threadId)) as DurableObjectStub<AgentDO>;
   if (request.method === "POST" && leaf === undefined) {
     let raw: unknown;
     try {
@@ -144,9 +151,17 @@ export default {
         return await handleDriveRoute(path, request, env);
       }
       if (DAEMON_ROUTE_PREFIXES.some((prefix) => path === prefix || path.startsWith(prefix))) {
+        const daemonService = env.DAEMON_SERVICE;
+        const agentDo = env.AGENT_DO;
+        if (daemonService === undefined || agentDo === undefined) {
+          return Response.json(
+            { code: "internal_error", message: "daemon bindings missing" },
+            { status: 500 },
+          );
+        }
         const serviceEnv: WorkerEnv = {
-          DAEMON_SERVICE: env.DAEMON_SERVICE!,
-          AGENT_DO: env.AGENT_DO!,
+          DAEMON_SERVICE: daemonService,
+          AGENT_DO: agentDo,
           ENROLL_KEY: env.ENROLL_KEY ?? "[REDACTED-staging-secret]",
           DAEMON_HOST_KEY: env.DAEMON_HOST_KEY ?? "[REDACTED-staging-secret]",
           DAEMON_HOST_ID: env.DAEMON_HOST_ID,
@@ -156,7 +171,7 @@ export default {
           DAEMON_RATE_LIMIT_CAPACITY: env.DAEMON_RATE_LIMIT_CAPACITY,
           DAEMON_RATE_LIMIT_REFILL_PER_SEC: env.DAEMON_RATE_LIMIT_REFILL_PER_SEC,
         };
-        return daemonServiceWorker.fetch(request, serviceEnv);
+        return await daemonServiceWorker.fetch(request, serviceEnv);
       }
     } catch (error) {
       const code = error instanceof AgentRpcError ? error.code : "internal_error";

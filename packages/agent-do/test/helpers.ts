@@ -1,4 +1,4 @@
-import { env } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 import { expect } from "vitest";
 import { newThreadId } from "@cap/protocol";
 import type { AgentDO } from "../src/agent-do.js";
@@ -121,7 +121,7 @@ export async function createRig(options: RigOptions = {}): Promise<Rig> {
           if (attempt === 3) throw error;
           // abortAllDurableObjects poisons calls for a short window; the next
           // attempt lands on the fresh incarnation.
-          const { promise, resolve } = Promise.withResolvers<void>();
+          const { promise, resolve } = Promise.withResolvers<undefined>();
           setTimeout(resolve, 250);
           await promise;
         }

@@ -110,9 +110,8 @@ export class FakeProviderAdapter implements ProviderAdapter {
 
   async handleCommand(
     command: AdapterCommand,
-    options: { timeoutMs: number },
+    _options: { timeoutMs: number },
   ): Promise<AdapterCommandOutcome> {
-    options;
     this.commands.push(command);
     if (this.hangCommandTypes.has(command.type)) {
       return this.hangUntilReleased();
@@ -388,9 +387,9 @@ export class FakeMachineDispatcher {
     this.outcomes.push(outcome);
   }
 
-  async dispatch(request: MachineCommandDispatchRequest): Promise<MachineCommandDispatchOutcome> {
+  dispatch(request: MachineCommandDispatchRequest): Promise<MachineCommandDispatchOutcome> {
     this.requests.push(request);
-    return this.outcomes.shift() ?? { kind: "accepted" };
+    return Promise.resolve(this.outcomes.shift() ?? { kind: "accepted" });
   }
 }
 
@@ -455,7 +454,7 @@ export function fakeExecutionContext(
 }
 
 function delay(ms: number): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
+  const { promise, resolve } = Promise.withResolvers<undefined>();
   setTimeout(resolve, ms);
   return promise;
 }
