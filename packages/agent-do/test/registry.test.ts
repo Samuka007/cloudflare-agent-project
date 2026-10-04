@@ -85,6 +85,10 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
     const tools = wireToolSet(M0_RENDER_FLAGS);
     expect(tools.map((tool) => tool.name)).toEqual([
       "bash",
+      "read",
+      "edit",
+      "glob",
+      "grep",
       // T2/T3 merge — omp builtin-names.ts order: checkpoint/rewind before
       // context_notes; wait between new_context and todo; think (hidden) last.
       "checkpoint",
@@ -94,6 +98,7 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
       "wait",
       "todo",
       "think",
+      "write",
     ]);
 
     const bash = tools[0];
@@ -162,6 +167,11 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
         asyncEnabled: false,
         hasLaunch: false,
         autoBackgroundEnabled: false,
+        IS_HL_MODE: false,
+        hasFind: false,
+        eagerDelegation: false,
+        scoutAvailable: false,
+        BINARY_VIEWS: false,
       }),
     ).toBe("A\nEVAL\nB");
     expect(
@@ -170,8 +180,105 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
         asyncEnabled: true,
         hasLaunch: false,
         autoBackgroundEnabled: false,
+        IS_HL_MODE: false,
+        hasFind: false,
+        eagerDelegation: false,
+        scoutAvailable: false,
+        BINARY_VIEWS: false,
       }),
     ).toBe("A\nNO_EVAL\nB\nASYNC");
+  });
+
+  test("M1.5/T5' — five vendored-runtime rows are host class with daemon routing", () => {
+    // omp builtin-names.ts wire order with the M0 bash anchor hoisted first.
+    for (const name of ["read", "edit", "glob", "grep", "write"]) {
+      const row = toolRegistryRow(name);
+      expect(row?.class).toBe("host");
+      expect(row?.backend).toEqual({ kind: "daemon-dispatch" });
+      expect(row?.intent).toBe("require");
+    }
+    const order = TOOL_REGISTRY.map((row) => row.name);
+    expect(order.indexOf("read")).toBeLessThan(order.indexOf("edit"));
+    expect(order.indexOf("edit")).toBeLessThan(order.indexOf("glob"));
+    expect(order.indexOf("glob")).toBeLessThan(order.indexOf("grep"));
+    expect(order.indexOf("grep")).toBeLessThan(order.indexOf("context_notes"));
+    expect(order.indexOf("write")).toBe(order.length - 1);
+  });
+
+  test("M1.5/T5' — read schema is omp read.ts verbatim (path only)", () => {
+    const tools = wireToolSet(M0_RENDER_FLAGS);
+    const read = tools.find((tool) => tool.name === "read");
+    expect(read?.input_schema).toEqual({
+      type: "object",
+      properties: {
+        i: INTENT_FIELD,
+        path: {
+          type: "string",
+          description: "Local path, internal URI, or URL; selectors inline.",
+        },
+      },
+      required: ["path", "i"],
+    });
+  });
+
+  test("M1.5/T5' — glob/grep schemas are omp 18.6.0 verbatim (unified find surface)", () => {
+    const tools = wireToolSet(M0_RENDER_FLAGS);
+    const glob = tools.find((tool) => tool.name === "glob");
+    expect(glob?.input_schema).toEqual({
+      type: "object",
+      properties: {
+        i: INTENT_FIELD,
+        path: { type: "string" },
+        hidden: { type: "boolean" },
+        gitignore: { type: "boolean" },
+        limit: { type: "number" },
+      },
+      required: ["i"],
+    });
+    const grep = tools.find((tool) => tool.name === "grep");
+    expect(grep?.input_schema).toEqual({
+      type: "object",
+      properties: {
+        i: INTENT_FIELD,
+        pattern: { type: "string" },
+        path: { type: "string" },
+        case: { type: "boolean" },
+        gitignore: { type: "boolean" },
+        skip: { anyOf: [{ type: "number" }, { type: "null" }] },
+      },
+      required: ["pattern", "i"],
+    });
+  });
+
+  test("M1.5/T5' — glob/grep descriptions render empty for absent find/delegation flags", () => {
+    const tools = wireToolSet(M0_RENDER_FLAGS);
+    const glob = tools.find((tool) => tool.name === "glob");
+    expect(glob?.description).toBe(
+      [
+        "Glob files/dirs: `;`-separated paths or internal URLs (`local://*.md`, `omp://**/*.md`); default workspace root.",
+        "`gitignore` and `hidden` default true; ignored dotfiles need `gitignore: false`. Newest-first by directory; dirs end `/`.",
+      ].join("\n"),
+    );
+    const grep = tools.find((tool) => tool.name === "grep");
+    expect(grep?.description).toBe(
+      [
+        "Regex: Rust, then PCRE2. `path`: `;`-separated file/dir/glob/URL; default `.`. Default case-sensitive, gitignore respected; `skip` paginates files.",
+        "File-only selector: `src/foo.ts:50-100`. Literal `\\n`/`\\\\n` enables cross-line.",
+        "Bare glob `*.ts` matches any depth; `dir/*.ts` only `dir`'s direct children (`dir/**/*.ts` recurses).",
+      ].join("\n"),
+    );
+  });
+
+  test("M1.5/T5' — read description renders hashline-anchored source line; blank lines preserved", () => {
+    const tools = wireToolSet(M0_RENDER_FLAGS);
+    const read = tools.find((tool) => tool.name === "read");
+    expect(read?.description).toContain(
+      "- Selected file: `[foo.ts#1A2B]` snapshot+lines. Copy `[FILENAME#TAG]` for anchored edits; NEVER invent tag.",
+    );
+    // The hashline edit template's blank lines survive the renderer.
+    const edit = tools.find((tool) => tool.name === "edit");
+    expect(edit?.description).toContain("</ops>\n\n<rules>");
+    expect(edit?.description).toContain("PUT 1*:");
   });
 });
 

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { evictDurableObject } from "cloudflare:test";
+import type { ToolExecServiceFrame } from "../src/protocol.js";
 import {
   SimulatedClient,
   uniqueHostId,
@@ -81,6 +82,102 @@ describe("L1 I19 journal replay determinism", () => {
       state: "COMPLETED",
       lastOffset: beforeDone.lastOffset,
       result: beforeDone.result,
+    });
+    await client.close();
+  });
+
+  test("structured tool result replays verbatim across a hard kill (T5')", async () => {
+    const hostId = uniqueHostId("i19tool");
+    const threadId = `thr_${hostId}`;
+    const doneId = `${threadId}:1`;
+    const runningId = `${threadId}:2`;
+    const client = new SimulatedClient(hostId);
+    await client.dial();
+
+    const ackTool = async (executionId: string): Promise<ToolExecServiceFrame> => {
+      const frame = await client.waitFor(
+        (candidate): candidate is ToolExecServiceFrame =>
+          candidate.type === "tool.exec" && candidate.executionId === executionId,
+      );
+      client.send({
+        type: "exec.spawn_ack",
+        requestId: frame.requestId,
+        threadId,
+        executionId,
+        ok: true,
+      });
+      return frame;
+    };
+
+    // Completed tool run with a structured (error + truncation) payload.
+    const doneDispatch = dispatchViaSeam(hostId, {
+      threadId,
+      executionId: doneId,
+      machineId: hostId,
+      command: "unused",
+      tool: "edit",
+      toolArguments: { input: "garbage" },
+    });
+    await ackTool(doneId);
+    await doneDispatch;
+    client.sendOutput(doneId, 0, "partial stderr");
+    await client.waitForOutput(doneId);
+    client.send({
+      type: "tool.exited",
+      threadId,
+      executionId: doneId,
+      result: {
+        status: "error",
+        exitCode: null,
+        output: "edit failed: no such hunk",
+        outputTruncated: true,
+      },
+    });
+
+    // Running tool run: dispatched + acked, no exit yet.
+    const runningDispatch = dispatchViaSeam(hostId, {
+      threadId,
+      executionId: runningId,
+      machineId: hostId,
+      command: "unused",
+      tool: "read",
+      toolArguments: { path: "src/alpha.ts" },
+    });
+    await ackTool(runningId);
+    await runningDispatch;
+    client.sendOutput(runningId, 0, "[src/alpha.ts#A1B2]\n1:hello\n");
+    await client.waitForOutput(runningId);
+
+    const beforeDone = await executionViewOf(hostId, doneId);
+    const beforeRunning = await executionViewOf(hostId, runningId);
+    const beforeOps = await journalOf(hostId);
+    expect(beforeDone.state).toBe("COMPLETED");
+    expect(beforeDone.result).toEqual({
+      status: "error",
+      exitCode: null,
+      output: "edit failed: no such hunk",
+      outputTruncated: true,
+    });
+    expect(beforeRunning.state).toBe("RUNNING");
+
+    await evictDurableObject(serviceStub(hostId), { webSockets: "close" });
+
+    const afterOps = await journalOf(hostId);
+    expect(afterOps.map((op) => op.kind)).toEqual(beforeOps.map((op) => op.kind));
+    // The omp projection travels verbatim (§8.3 先落盘后 ack): replayed state
+    // equals live state — no exit-code re-derivation from the bash fold.
+    const afterDone = await executionViewOf(hostId, doneId);
+    expect(afterDone).toMatchObject({
+      state: "COMPLETED",
+      lastOffset: beforeDone.lastOffset,
+      result: beforeDone.result,
+    });
+    const afterRunning = await executionViewOf(hostId, runningId);
+    expect(afterRunning).toMatchObject({
+      state: "RUNNING",
+      lastOffset: beforeRunning.lastOffset,
+      ackedOffset: beforeRunning.ackedOffset,
+      result: null,
     });
     await client.close();
   });

@@ -339,6 +339,9 @@ export interface DispatchArgs {
   machineId: string;
   timeoutMs?: number;
   cwd?: string;
+  /** M1.5/T5': non-bash host tools ride the embedded-runtime path. */
+  tool?: string;
+  toolArguments?: Record<string, unknown>;
 }
 
 export async function dispatchViaSeam(
@@ -350,8 +353,11 @@ export async function dispatchViaSeam(
     turnId: `${args.threadId}-turn`,
     executionId: args.executionId,
     machineId: args.machineId,
-    tool: "bash",
-    arguments: { command: args.command, ...(args.cwd !== undefined ? { cwd: args.cwd } : {}) },
+    tool: args.tool ?? "bash",
+    arguments: args.toolArguments ?? {
+      command: args.command,
+      ...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
+    },
     timeoutMs: args.timeoutMs ?? 600_000,
   });
 }
