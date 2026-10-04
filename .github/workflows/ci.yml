@@ -20,16 +20,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # The composed unit serves the real bb SPA (#31): build the pinned
+      # The composed unit serves the real bb SPA (#31): stage the pinned
       # submodule into apps/server-worker/public before the L1 suites run.
-      # --ignore-scripts: the SPA build needs no native desktop deps (the
-      # node-pty node-gyp build is desktop-only and fails on the runner).
-      - name: Build bb SPA (pinned submodule)
-        run: |
-          pnpm --dir bb install --frozen-lockfile --ignore-scripts
-          pnpm --dir bb --filter @bb/app build
-          mkdir -p apps/server-worker/public
-          (cd bb/apps/app/dist && tar cf - --exclude='*.gz' --exclude='*.br' .) | (cd apps/server-worker/public && tar xf -)
+      # scripts/stage-bb-spa.sh is the single source for the staged SPA set —
+      # the CD workflow and `nix run .#staging-deploy` run the same script, so
+      # the set CI tests cannot drift from the set staging serves (#175).
+      - name: Stage bb SPA (pinned submodule)
+        run: ./scripts/stage-bb-spa.sh
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
