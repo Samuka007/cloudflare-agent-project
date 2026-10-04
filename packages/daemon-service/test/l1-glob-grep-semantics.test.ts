@@ -303,12 +303,23 @@ describe("grep (T7 #97)", () => {
     // no construction override) and its throw branch (grep.ts:637-641,
     // "Grep timed out after 30s; narrow paths or pattern...") is a pure
     // message-match on the engine error. Drive the REAL engine past a 1ms
-    // budget over the multi-thousand-file vendored tree to pin that error
-    // shape; the tool-level 30s text is anchor-pinned here instead of a
-    // 30-second test.
+    // budget over the pnpm store backing the vendored runtime (30k+ real
+    // files) to pin that error shape; the tool-level 30s text is
+    // anchor-pinned here instead of a 30-second test. The tree must be
+    // GENUINELY large: this pin originally grepped this test's own directory
+    // (~26 files) under a ">4k files" premise, and a fast CI runner walked
+    // it in under 1ms — the budget never tripped and the pin failed
+    // (surface running #182).
     try {
-      await Natives.grep({ pattern: "export", path: import.meta.dir, timeoutMs: 1 });
-      // Cannot realistically finish >4k files in 1ms; if it ever does, walk
+      await Natives.grep({
+        pattern: "export",
+        path: join(import.meta.dir, "..", "..", "..", "node_modules", ".pnpm"),
+        timeoutMs: 1,
+        // The store lives under a gitignored node_modules; the walker's
+        // default filter would refuse the ignored root outright.
+        gitignore: false,
+      });
+      // Cannot realistically walk 30k+ files in 1ms; if it ever does, walk
       // budget moved by orders of magnitude and this pin must be revisited.
       throw new Error(
         "native grep finished within 1ms over the vendored tree — engine contract changed",

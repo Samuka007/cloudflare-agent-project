@@ -2,6 +2,23 @@
 
 BoardSmith 章程（board-smith.md）的正本。板面任何结构性变更先改此文档（预检 diff→分批应用→终验），后动板。
 
+## 分类心智模型（2026-10-04 定案，用户裁决——防似是而非）
+
+三个正交轴，各自语义封闭，不互烹：
+
+|轴|载体|语义|寿命|关闭|
+|---|---|---|---|---|
+|批次|milestone（W*；M0/M1.5=历史或在收批次）|交付门：验收面全绿+tag|周-月|走查绿即关|
+|阶段|`phase:m1/m2/m3` label + roadmap 伞 issue（#14/#15/#16）|章程叙事弧|季度+|章程阶段出口|
+|线索|`track:pm-scaffolding/infra-cd/acceptance/research` label|横切连续关切|无限|无（永不成批）|
+
+规则：
+1. milestone 字段只放批次；新票默认入当前批次（W1）。
+2. 阶段不占 milestone（历史 M2/M3 milestone 内开放票已迁 label；M0=冻结历史分组，合法存在）。
+3. 开放票归属=批次 milestone XOR phase/track label；PR 不在管理域（不占 milestone 为规约）。
+4. 无「冻结里程碑收新票」态——批次要么在跑要么是历史；阶段叙事/裁决沉淀在伞 issue，不在 milestone。
+5. 编号陷阱：milestone number 3=M2 存量迁移（勿当 M1.5；M1.5=7，W1=8）。
+
 ## 轴×真相源（每轴恰一）
 
 | 轴          | 真相源                                                                                | 派生/缓存                                                 |
