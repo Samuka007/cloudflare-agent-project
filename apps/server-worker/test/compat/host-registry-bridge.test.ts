@@ -36,7 +36,7 @@ async function openSession(hostId: string): Promise<Response> {
 async function listedHostIds(): Promise<string[]> {
   const response = await apiGet("/api/v1/hosts");
   expect(response.status).toBe(200);
-  const body = (await response.json()) as unknown[];
+  const body = await response.json<unknown[]>();
   return body.map((entry) => hostSchema.parse(entry).id);
 }
 
@@ -47,7 +47,7 @@ describe("daemon attach → /hosts registry bridge (#49)", () => {
     expect(enrollResponse.status).toBe(201);
 
     const response = await apiGet("/api/v1/hosts");
-    const body = (await response.json()) as unknown[];
+    const body = await response.json<unknown[]>();
     const row = body.find((entry) => hostSchema.parse(entry).id === hostId);
     expect(row).toBeDefined();
     const host = hostSchema.parse(row);
@@ -74,7 +74,7 @@ describe("daemon attach → /hosts registry bridge (#49)", () => {
 
     expect((await openSession(hostId)).status).toBe(201);
     const response = await apiGet("/api/v1/hosts");
-    const body = (await response.json()) as unknown[];
+    const body = await response.json<unknown[]>();
     const host = hostSchema.parse(body.find((entry) => hostSchema.parse(entry).id === hostId));
     expect(host.name).toBe("renamed");
     expect(host.maxPermissionMode).toBe("accept-edits");
