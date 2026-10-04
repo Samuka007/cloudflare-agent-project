@@ -37,6 +37,15 @@ export interface WorkerEnv extends DaemonServiceEnv {
   DAEMON_HOST_ID?: string;
   DAEMON_MACHINE_ID?: string;
   /**
+   * Control-plane host-registry bridge (#49): fired after enroll completes
+   * and after each successful session/open, so the control plane's /hosts
+   * registry learns the daemon attachment. Optional — rigs without a
+   * control-plane registry (L1, hookup) omit it. Failures are logged, never
+   * fatal: the next handshake step re-fires the bridge (same self-healing
+   * shape as the auth ladder's KV backfill).
+   */
+  onDaemonAttach?: (hostId: string) => Promise<void>;
+  /**
    * Edge shield (#36): auth-hash cache binding. Optional — deployments that
    * run on the env-key path only (L1 rig, hookup) skip every KV touch.
    */
@@ -131,6 +140,7 @@ async function handleEnroll(request: Request, env: WorkerEnv): Promise<Response>
     return errorResponse("internal", "hostKey mirror registration failed");
   }
   await backfillAuthCache(env.DAEMON_EDGE_KV, keyHash, hostId);
+  await bridgeHostAttach(env, hostId);
   return Response.json({ hostId, hostKey: env.DAEMON_HOST_KEY }, { status: 201 });
 }
 
@@ -188,6 +198,7 @@ async function handleSessionOpen(
       { status: 400 },
     );
   }
+  await bridgeHostAttach(env, hostId);
   return Response.json(
     {
       sessionId: result.sessionId,
@@ -196,6 +207,17 @@ async function handleSessionOpen(
     },
     { status: 201 },
   );
+}
+
+/** #49: auxiliary registry write; best-effort by design — a failed write
+ * only delays visibility until the next handshake step re-fires it. */
+async function bridgeHostAttach(env: WorkerEnv, hostId: string): Promise<void> {
+  if (env.onDaemonAttach === undefined) return;
+  try {
+    await env.onDaemonAttach(hostId);
+  } catch (error) {
+    console.error(`daemon attach bridge failed for host ${hostId}:`, error);
+  }
 }
 
 async function handleWsAttach(request: Request, env: WorkerEnv): Promise<Response> {
