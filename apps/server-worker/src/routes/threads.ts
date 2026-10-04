@@ -58,6 +58,7 @@ import {
   getThreadSection,
   getProject,
 } from "../db/control-plane.js";
+import type { ThreadDbRow } from "../db/rows.js";
 import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs.js";
 import { toThreadListEntry, toThreadResponseWithSpawnCheck } from "../services/runtime-display.js";
 import {
@@ -556,6 +557,21 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     });
   });
 
+  /**
+   * bb GET /threads/:id/child-summary (routes/threads/base.ts:327-339): the
+   * delete-confirm flow fetches this before opening the dialog
+   * (apps/app/src/components/thread/ThreadActionsProvider.tsx:208-237) — a 404
+   * makes requestDelete resolve null and the confirm never opens (#123).
+   * Response shape is contract threadChildSummaryResponseSchema, mirroring bb
+   * server-contract threadChildSummaryResponseSchema
+   * (server-contract/src/api/threads.ts:495-500).
+   */
+  routes.get("/threads/:id/child-summary", async (ctx) => {
+    const row = await requirePublicThread(ctx);
+    const nonDeletedChildCount = await countNonDeletedAssignedChildThreads(ctx.env, row.id);
+    return ctx.json({ nonDeletedChildCount });
+  });
+
   routes.get("/threads/:id/events", async (ctx) => {
     const query = parseOr422(threadEventsQuerySchema, ctx.req.query());
     const row = await requirePublicThread(ctx);
@@ -632,6 +648,47 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       await hub(ctx).notifyThread(row.id, ["archived-changed"]);
     }
     return ctx.json({ ok: true });
+  });
+
+  /**
+   * bb POST /threads/:id/archive-all (routes/threads/actions.ts:706-715): the
+   * SPA Archive menu hits this cascade route — the sdk `archive` itself routes
+   * here to "Match the UI" (packages/sdk/src/areas/threads.ts:894-910) — so a
+   * port exposing only /archive 404s the menu (#122). Cascade per bb
+   * archiveThreadAndChildren (services/threads/thread-archive.ts:140-190):
+   * unarchived assigned children + unarchived hidden source forks, parent last
+   * and only while still live; every cascaded id lands in the response.
+   * bb's per-environment cleanup sweep is family OUT in the Worker port, so
+   * each target transitions via setThreadArchived like /archive.
+   */
+  routes.post("/threads/:id/archive-all", async (ctx) => {
+    const row = await requirePublicThread(ctx);
+    const childThreads = await listThreads(ctx.env, {
+      parentThreadId: row.id,
+      archived: false,
+      includeHidden: true,
+    });
+    const hiddenSourceThreads = await listThreads(ctx.env, {
+      sourceThreadId: row.id,
+      archived: false,
+      visibility: "hidden",
+    });
+    const targets: ThreadDbRow[] = [...childThreads, ...hiddenSourceThreads].filter(
+      (thread) => thread.id !== row.id,
+    );
+    if (row.archivedAt === null) {
+      targets.push(row);
+    }
+    const archivedThreadIds: string[] = [];
+    for (const target of targets) {
+      const updated = await setThreadArchived(ctx.env, target.id, true);
+      if (updated === null || updated.archivedAt === target.archivedAt) {
+        continue;
+      }
+      archivedThreadIds.push(target.id);
+      await hub(ctx).notifyThread(target.id, ["archived-changed"]);
+    }
+    return ctx.json({ ok: true, archivedThreadIds });
   });
 
   routes.post("/threads/:id/unarchive", async (ctx) => {

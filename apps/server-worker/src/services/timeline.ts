@@ -346,13 +346,27 @@ export function buildTimelinePage(
 ): TimelinePage {
   const anchor =
     query.kind === "older" && query.beforeAnchor !== undefined ? query.beforeAnchor : undefined;
+  // bb older windows are strictly-before at the sequence level with only the
+  // anchor row itself excluded (timeline-pagination.ts:193-195 slices the
+  // eligible set; the anchor identity check is timeline.ts:1514-1519). The
+  // previous `seq < anchor || id !== anchorId` let every non-anchor row
+  // through regardless of sequence, so an older page re-served the newest
+  // rows and the cursor ping-ponged forever (#121).
   const eligible =
     anchor !== undefined
-      ? allRows.filter((row) => row.sourceSeqStart < anchor.anchorSeq || row.id !== anchor.anchorId)
+      ? allRows.filter(
+          (row) =>
+            row.sourceSeqStart < anchor.anchorSeq ||
+            (row.sourceSeqStart === anchor.anchorSeq && row.id !== anchor.anchorId),
+        )
       : allRows;
   const start = Math.max(0, eligible.length - query.segmentLimit);
   const rows = eligible.slice(start, start + query.segmentLimit);
-  const hasOlderRows = anchor !== undefined || start > 0;
+  // bb infers hasOlderRows from the slice dropping rows
+  // (timeline-pagination.ts:194-195 `segments.length > selectedSegments.length`)
+  // for BOTH page kinds — an older page touches bottom and returns false, which
+  // is what terminates the SPA's fetch-older loop (#121).
+  const hasOlderRows = start > 0;
   const firstRow = rows[0];
   return {
     rows,
@@ -360,7 +374,7 @@ export function buildTimelinePage(
       kind: query.kind,
       segmentLimit: query.segmentLimit,
       returnedSegmentCount: rows.length,
-      hasOlderRows: anchor !== undefined || eligible.length > query.segmentLimit,
+      hasOlderRows,
       olderCursor:
         hasOlderRows && firstRow
           ? { anchorSeq: firstRow.sourceSeqStart, anchorId: firstRow.id }

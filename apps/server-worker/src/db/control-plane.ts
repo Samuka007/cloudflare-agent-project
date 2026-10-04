@@ -145,6 +145,8 @@ export interface ThreadListFilters {
   hasParent?: boolean;
   originKind?: string;
   originPluginId?: string;
+  /** Exact visibility match; overrides the includeHidden default gate. */
+  visibility?: "visible" | "hidden";
   includeHidden?: boolean;
   limit?: number;
   offset?: number;
@@ -163,7 +165,10 @@ export async function listThreads(
 ): Promise<(ThreadDbRow & { hasPendingInteraction: boolean })[]> {
   const where: string[] = ["t.deleted_at IS NULL"];
   const binds: unknown[] = [];
-  if (!filters.includeHidden) {
+  if (filters.visibility !== undefined) {
+    where.push("t.visibility = ?");
+    binds.push(filters.visibility);
+  } else if (!filters.includeHidden) {
     where.push("t.visibility = 'visible'");
   }
   if (filters.projectId !== undefined) {
