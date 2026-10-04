@@ -127,6 +127,18 @@ const editSchema = type({
   input: "string",
 });
 
+// omp packages/coding-agent/src/tools/eval.ts:119-126 (evalSchema +
+// evalCellCommonFields, 18.6.0 verbatim). The daemon wire keeps the full
+// language union: the vendored runtime enables both backends by default
+// (PI_PY/PI_JS unset in the daemon-private settings profile).
+const evalSchema = type({
+  language: type("'py' | 'js'").describe('"py": IPython; "js": Bun'),
+  code: type("string").describe("Code or standalone % command; top-level await works."),
+  "title?": type("string").describe("Short transcript label."),
+  "timeout?": type("number").describe("Cell deadline in seconds; 0 disables it."),
+  "reset?": type("boolean").describe("Wipe only this kernel."),
+});
+
 // omp packages/coding-agent/src/tools/checkpoint.ts:29-31
 const checkpointSchema = type({
   goal: type("string").describe("investigation goal"),
@@ -322,6 +334,39 @@ const WAIT_DESCRIPTION_TEMPLATE = `Wait only when blocked with nothing else to d
 Blocks on background jobs/services you started; returns on the first result, a message sent to you, or a steering interrupt; a safety cap returns a still-running snapshot.
 Nothing you started running? Errors; NEVER wait on other agents.
 Results and messages auto-deliver. NEVER poll while work remains.`;
+
+// omp prompts/tools/eval.md rendered through the vendored runtime's own
+// getEvalToolDescription at the host render context (T10' #100 — extracted by
+// running @oh-my-pi 18.6.0; re-extract on version bumps): py+js on,
+// spawns/evalTools/eagerDelegation/waitTool/autoBackground off, no preludes.
+// The namespaces/prelude lines advertise omp's in-kernel helper surfaces
+// (xd://eval/judge, tool.<name> from cells) — the kernel-seam boundary for
+// surfaces this host does not yet wire is a clean per-call error, not drift.
+const EVAL_DESCRIPTION = `One cell per call; top-level state persists, including across compaction.
+
+Python: top-level \`await\` works; \`asyncio.run(…)\` fails.
+JS: Bun (\`Bun.file\`, \`Bun.write\`, \`Bun.$\`); top-level \`await\`/\`return\` work.
+On error, retry only the failed step; earlier steps may have taken effect.
+
+<prelude>
+Python helpers: sync, kwargs; JS helpers: async, ONE trailing options object.
+\`\`\`
+display(value)  print(value, ...)  log(message)  phase(title)
+read(path, offset?, limit?)  write(path, content)  env(key?, value?)  output(*ids, format?, query?, offset?, limit?)
+await tool.<name>(args) — session tool; \`args\` is its parameter object
+wait(handles, timeout?=None, raise_errors?=True) — agent/completion barrier, ordered results; JS: wait(handles, { timeout, raiseErrors }); \`raise_errors=False\` retains failures.
+\`\`\`
+</prelude>
+
+<namespaces>
+More globals; \`read\` the linked docs before first use:
+- \`judge\`, \`judge_batch\`, \`completion\`: classification, bulk judgment, model calls → \`xd://eval/judge\`
+- \`%load\`, \`%pip\`, \`%bun add\`, \`budget\`: setup, installs, utilities → \`xd://eval/helpers\`
+</namespaces>
+
+<critical>
+NEVER repeat successful setup. Kernel-loss notice means reload setup.
+</critical>`;
 
 // omp packages/coding-agent/src/prompts/tools/checkpoint.md
 const CHECKPOINT_DESCRIPTION_TEMPLATE = `Context checkpoint: before exploratory work; later \`rewind\`, retaining only concise report.
@@ -654,6 +699,19 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     name: "write",
     schema: writeSchema,
     descriptionTemplate: WRITE_DESCRIPTION_TEMPLATE,
+    class: "host",
+    backend: { kind: "daemon-dispatch" },
+    intent: "require",
+  },
+  {
+    // M1.5/T10' #100: eval executes through the vendored omp kernel seam
+    // (daemon-service client/eval-kernel.ts): py framed-IPC kernel + js
+    // worker VM + IdleTimeout watchdog. Kernels are host-persistent — the DO
+    // holds only the thread-id handle; DO eviction + replay re-attaches to
+    // the live kernel without a second spawn (card T10).
+    name: "eval",
+    schema: evalSchema,
+    descriptionTemplate: EVAL_DESCRIPTION,
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",

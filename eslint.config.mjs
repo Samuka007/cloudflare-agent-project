@@ -29,10 +29,12 @@ export default tseslint.config(
       // runtime: not product source, exempt from the type-aware battery.
       "docs/research/spike/**",
       // Bun-runtime tests (T5' #128 + M1.5 activation lane #95/#97/#98/#101):
-      // run under `bun test` only — the omp runtime needs Bun built-ins, so
+      // run under `bun test` only — the omp runtime + eval kernel library
+      // need Bun built-ins, so
       // they live in no tsc program (excluded from both daemon-service
       // tsconfigs) and the project service cannot type them.
       "packages/daemon-service/test/tool-runtime.test.ts",
+      "packages/daemon-service/test/eval-kernel.test.ts",
       "packages/daemon-service/test/l1-read-semantics.test.ts",
       "packages/daemon-service/test/l1-glob-grep-semantics.test.ts",
       "packages/daemon-service/test/l1-edit-semantics.test.ts",
