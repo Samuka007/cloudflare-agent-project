@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "vitest";
-import { _inject, intake, resolveJeapiKey } from "../pm-autopilot.js";
+import { _inject, intake, lane, resolveJeapiKey } from "../pm-autopilot.js";
 
 /**
  * Real-call jev smoke (#131 CRITICAL: the judge layer is a REAL model call).
@@ -11,6 +11,10 @@ import { _inject, intake, resolveJeapiKey } from "../pm-autopilot.js";
 afterEach(() => {
   _inject(null);
 });
+
+/** omp eval-kernel global view (named per repo cast rule; typeof guards do
+ *  the validation). */
+const kernelScope = globalThis as { agent?: unknown };
 
 const KEY = resolveJeapiKey();
 
@@ -63,5 +67,33 @@ test.skipIf(KEY === null)(
     expect(typeof r.needs_human).toBe("boolean");
     // the judge identifies itself as a jev model
     expect(r.judgeModel).toMatch(/^jev-/);
+  },
+);
+
+/**
+ * #206 real-bridge demo (the ticket's acceptance): lane(confirm) end-to-end
+ * through the LIVE omp kernel transport — real spawn, agent:// handle, then
+ * the guarded board flip. Triple-gated so CI never spawns: a kernel `agent`
+ * global AND AP_LANE_SMOKE=1 AND AP_LANE_TICKET=<dispatchable number>
+ * (open ∧ Todo ∧ no open blockers). In plain vitest/node all three are
+ * absent → skips; inside a kernel-backed runner with the flags set, this is
+ * the "新会话 %load 后 lane(confirm) 端到端真派发" proof.
+ */
+const laneSmokeArmed =
+  typeof kernelScope.agent === "function" &&
+  process.env.AP_LANE_SMOKE === "1" &&
+  Number.isInteger(Number(process.env.AP_LANE_TICKET));
+
+test.skipIf(!laneSmokeArmed)(
+  "smoke: real kernel transport — lane(confirm) spawns end-to-end and flips the board (#206)",
+  { timeout: 600_000 },
+  async () => {
+    if (!laneSmokeArmed) throw new Error("unreachable: skipIf guards the arming flags");
+    const rep = await lane(Number(process.env.AP_LANE_TICKET), {}, { confirm: true });
+    expect(rep.ok).toBe(true);
+    expect(rep.spawned).toBe(true);
+    expect(["default", "registered"]).toContain(rep.transport);
+    expect(rep.agentId ?? rep.agentHandle).toBeTruthy();
+    expect(rep.statusFlipped).toBe(true);
   },
 );

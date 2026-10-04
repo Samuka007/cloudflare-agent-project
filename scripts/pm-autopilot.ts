@@ -65,8 +65,17 @@
  *                                      // A failed board predicate refuses dispatch;
  *                                      // DoR gaps (三问/验收/锚点/预算/往例) are
  *                                      // advisory — they print, never refuse.
- *     // then mark In Progress:
- *     await AP.apply([{ op: "setStatus", number: t.number, value: "In Progress" }], { confirm: true });
+ *     // confirm additionally spawns for real through the transport (#206:
+ *     // default = globalThis.agent(prompt, {isolated: true, label}); the
+ *     // registerSpawn slot overrides for tests/custom weaves) and then owns
+ *     // the board flip (Status → In Progress via the guarded AP.apply write).
+ *     // transport-missing is reported on the report — never silent. Batch:
+ *     await AP.lane([197, 206]);          // one report per ticket
+ *
+ * PM session bootstrap = ONE cell (persistent carrier, #206):
+ *
+ *     %load "scripts/pm-harness.ts"
+ *     // cache-busted AP import → globalThis.AP, transport weave, AP_READY flag
  *
  * Raw-ticket intake (judge-classified via the REAL jev model — #131
  * CRITICAL: the judge layer is a real API call, not the kernel judge):
@@ -654,8 +663,9 @@ export function dispatchPackets(tickets: Ticket[], _snapshot?: Snapshot): Dispat
 
 // ---------------------------------------------------------------------------
 // AP.lane (#171) — the dispatch gate: DoR preflight → worktree provision →
-// isolated spawn packet. Composes dispatchable/dispatchPackets; the only new
-// side effect is `git worktree add` on the confirm path.
+// isolated spawn packet. Composes dispatchable/dispatchPackets; confirm-path
+// side effects: `git worktree add` (#171), the real spawn (#206 transport),
+// and the guarded board Status flip (#206, the pipeline owns it).
 // ---------------------------------------------------------------------------
 
 /** One DoR line printed per dispatch: gate item, pass/fail, body evidence. */
@@ -757,6 +767,26 @@ export interface LaneDispatchReport {
   worktreeCreated: boolean;
   /** Null when refused — a refused ticket never yields a spawn packet. */
   spawn: LaneSpawnSpec | null;
+  /** #206 confirm path: the transport actually spawned. False on dry-run,
+   *  refusal, transport-missing, or a spawn throw. */
+  spawned: boolean;
+  /** Which transport fired: the registerSpawn slot, the default kernel
+   *  global, or "missing" — reported, never silent. Null before spawn. */
+  transport: "registered" | "default" | "missing" | null;
+  /** Raw handle from the transport (omp `agent()` handle); null otherwise. */
+  agentHandle: unknown;
+  /** Roster id extracted from the handle, when it carries one. */
+  agentId: string | null;
+  /** Transport-missing reason or spawn throw message; null on success. */
+  spawnError: string | null;
+  /** #206: the dispatch pipeline owns the board flip — after a successful
+   *  spawn, AP.apply (guarded write) sets Status → In Progress (it verifies,
+   *  so a raced flip would no-op rather than re-write; lane's predicate
+   *  refuses non-Todo tickets anyway). False on dry-run/refusal/spawn
+   *  failure or a failed flip. */
+  statusFlipped: boolean;
+  /** Flip failure detail (preflight errors / verify drift); null on success. */
+  statusError: string | null;
   errors: string[];
 }
 
@@ -766,6 +796,68 @@ export interface LaneAgentSpec {
   model?: string;
   /** Shared context — contracts/interfaces lanes must honour. */
   context?: string;
+}
+
+/** What the gate hands a spawn transport (#206): the full lane task, the
+ *  roster label, and the packet facts. The default transport consumes
+ *  prompt+label; richer weaves (pm-harness, tests) may read the rest. */
+export interface SpawnRequest {
+  /** Full lane context — the DispatchPacket context (worktree + discipline). */
+  prompt: string;
+  /** Roster label, derived from the branch slug: `lane-<number>-<slug>`. */
+  label: string;
+  /** omp agent type from LaneAgentSpec (default "task"). */
+  agent: string;
+  /** Shared context, or null. */
+  context: string | null;
+  model?: string;
+}
+
+/** One isolated subagent spawn. The default impl wraps the omp eval kernel's
+ *  native `agent(prompt, {isolated, label})` — full subagent transport
+ *  (keep-alive, agent:// liveness, history transcript). */
+export type SpawnFn = (p: SpawnRequest) => unknown;
+
+type KernelAgent = (prompt: string, opts: { isolated: boolean; label: string }) => unknown;
+
+let spawnOverride: SpawnFn | null = null;
+
+/** #206 transport override slot: tests inject a recorder mock; custom weaves
+ *  (pm-harness) wrap the kernel agent explicitly. Pass null to restore the
+ *  default globalThis.agent path. */
+export function registerSpawn(fn: SpawnFn | null): void {
+  spawnOverride = fn;
+}
+
+/** Resolves the transport in force at spawn time: registered override →
+ *  default kernel global → "missing" (reported on the report, never a silent
+ *  skip — a confirm run without a transport is an incomplete dispatch). */
+function resolveSpawn():
+  { fn: SpawnFn; transport: "registered" | "default" } | { missing: string } {
+  if (spawnOverride !== null) return { fn: spawnOverride, transport: "registered" };
+  // omp eval-kernel global as a named unchecked view by design: the typeof
+  // guard below is the runtime validation (absent global → transport-missing).
+  const kernelScope = globalThis as { agent?: KernelAgent };
+  if (typeof kernelScope.agent !== "function") {
+    return {
+      missing:
+        "no spawn transport: typeof globalThis.agent !== 'function' — %load scripts/pm-harness.ts in the omp eval kernel, or AP.registerSpawn(fn) (tests/custom weaves)",
+    };
+  }
+  const agent = kernelScope.agent;
+  return { fn: (p) => agent(p.prompt, { isolated: true, label: p.label }), transport: "default" };
+}
+
+/** Best-effort roster id from a transport handle: string handles pass
+ *  through; `{id}`/`{name}` objects unwrap; anything else stays opaque. */
+function agentIdOf(handle: unknown): string | null {
+  if (typeof handle === "string") return handle;
+  if (handle !== null && typeof handle === "object") {
+    const h = handle as { id?: unknown; name?: unknown };
+    if (typeof h.id === "string") return h.id;
+    if (typeof h.name === "string") return h.name;
+  }
+  return null;
 }
 
 const expandHome = (p: string): string =>
@@ -790,7 +882,9 @@ async function ticketOnBoard(number: number): Promise<Ticket> {
 
 function renderLaneReport(r: LaneDispatchReport): string {
   const lines = [
-    `== AP.lane ${r.refused ? "REFUSED" : r.dryRun ? "plan (dry-run)" : "dispatched"} #${r.number} ==`,
+    `== AP.lane ${
+      r.refused ? "REFUSED" : r.dryRun ? "plan (dry-run)" : r.ok ? "dispatched" : "incomplete"
+    } #${r.number} ==`,
     `  TICKET    ${r.title}`,
     `  BOARD     ${r.dispatchable ? "dispatchable" : "NOT dispatchable (board predicate)"}`,
   ];
@@ -815,11 +909,23 @@ function renderLaneReport(r: LaneDispatchReport): string {
         " — report.spawn carries the full omp task args",
     );
   }
+  if (!r.dryRun && !r.refused) {
+    lines.push(
+      r.spawned
+        ? `  SPAWN     transport=${r.transport} → ${r.agentId ?? "(handle returned)"} — live lane`
+        : `  SPAWN     NOT SPAWNED (transport=${r.transport}) — ${r.spawnError}`,
+    );
+    lines.push(
+      r.statusFlipped
+        ? "  STATUS    board → In Progress (guarded write, verified)"
+        : `  STATUS    NOT flipped — ${r.statusError ?? "spawn failed"}`,
+    );
+  }
   for (const e of r.refusalReasons) lines.push(`  REFUSED   ${e}`);
   for (const e of r.errors) lines.push(`  ERROR     ${e}`);
-  if (!r.refused) {
+  if (r.dryRun && !r.refused) {
     lines.push(
-      `  PM        flip Status → In Progress via AP.apply — the gate writes no board fields`,
+      `  PM        confirm spawns the lane for real and flips Status → In Progress (guarded write)`,
     );
   }
   return lines.join("\n");
@@ -832,28 +938,58 @@ function renderLaneReport(r: LaneDispatchReport): string {
  * 假的严谨约束等于真的破坏推进: the first real use rejected #197 four
  * times on word-form checks while the body carried real anchors and budget.
  *
- * Entry is number | Ticket (#199): a number resolves through a fresh
+ * Entry is number | Ticket | Array (#199, batch #206): a number resolves through a fresh
  * snapshot and throws only when it is not on the board. AP.lane (a) refuses
  * — zero side effects — on the ONE structural check, the board predicate
  * (open ∧ Todo ∧ no open blockers ∧ ¬ready-for-human); the five-item DoR
  * table rides along as ADVISORY for the PM and never refuses; (b) on
  * confirm, runs
  * `git worktree add <herdr path> -b lane/<ticket>-<slug> origin/main` at the
- * deterministic herdr path (naming reused from dispatchPackets); (c) always
+ * deterministic herdr path (naming reused from dispatchPackets); (c, #206)
+ * spawns the lane for real through the spawn transport — default
+ * `(p) => globalThis.agent(p.prompt, {isolated: true, label: p.label})`, the
+ * registerSpawn slot overrides (test mock / pm-harness weave) — and then
+ * OWNS the board flip: Status → In Progress via AP.apply's guarded write
+ * (which verifies, so an already-flipped ticket is a no-op, not a race).
+ * Transport-missing and spawn throws mark the report incomplete (ok=false,
+ * spawnError set) — never a silent skip; the flip only follows a successful
+ * spawn (the board must reflect reality). (d) always
  * returns the omp spawn packet with `isolated: true` baked in — a bare
  * spawn of the main checkout is no longer expressible through this gate.
  *
- * The Status → In Progress flip stays with the PM via AP.apply: the gate
- * writes no board fields (its only transport is the number-entry snapshot;
- * the only write it issues is the confirm-path `git worktree add`).
+ * Batch entry (#206): an array dispatches every ticket as one wave (parallel
+ * laneOne runs) and resolves to one report per ticket, input order.
  *
  * DRY-RUN default (consistent with apply/file): prints the DoR table +
  * worktree/spawn plan, creates nothing.
  */
 export async function lane(
   ticket: number | Ticket,
+  agentSpec?: LaneAgentSpec,
+  opts?: { confirm?: boolean; base?: string; cwd?: string },
+): Promise<LaneDispatchReport>;
+
+export async function lane(
+  ticket: (number | Ticket)[],
+  agentSpec?: LaneAgentSpec,
+  opts?: { confirm?: boolean; base?: string; cwd?: string },
+): Promise<LaneDispatchReport[]>;
+
+export async function lane(
+  ticket: number | Ticket | (number | Ticket)[],
   agentSpec: LaneAgentSpec = {},
   opts: { confirm?: boolean; base?: string; cwd?: string } = {},
+): Promise<LaneDispatchReport | LaneDispatchReport[]> {
+  if (Array.isArray(ticket)) {
+    return Promise.all(ticket.map((t) => laneOne(t, agentSpec, opts)));
+  }
+  return laneOne(ticket, agentSpec, opts);
+}
+
+async function laneOne(
+  ticket: number | Ticket,
+  agentSpec: LaneAgentSpec,
+  opts: { confirm?: boolean; base?: string; cwd?: string },
 ): Promise<LaneDispatchReport> {
   const t = typeof ticket === "number" ? await ticketOnBoard(ticket) : ticket;
   const [packet] = dispatchPackets([t]);
@@ -879,6 +1015,13 @@ export async function lane(
     worktree: packet.worktree,
     worktreeCreated: false,
     spawn: null,
+    spawned: false,
+    transport: null,
+    agentHandle: null,
+    agentId: null,
+    spawnError: null,
+    statusFlipped: false,
+    statusError: null,
     errors: [],
   };
   if (report.refused) {
@@ -894,7 +1037,9 @@ export async function lane(
   };
   if (dryRun) {
     report.ok = true;
-    console.log(renderLaneReport(report) + "\ndry-run: no worktree created (pass { confirm: true })");
+    console.log(
+      renderLaneReport(report) + "\ndry-run: no worktree created (pass { confirm: true })",
+    );
     return report;
   }
   const cwd = opts.cwd ?? process.cwd();
@@ -902,7 +1047,10 @@ export async function lane(
   // explicit signal, surfaced verbatim below — one less filesystem probe.
   const target = expandHome(packet.worktree.path);
   try {
-    runGit(["worktree", "add", target, "-b", packet.worktree.branch, opts.base ?? "origin/main"], cwd);
+    runGit(
+      ["worktree", "add", target, "-b", packet.worktree.branch, opts.base ?? "origin/main"],
+      cwd,
+    );
     report.worktreeCreated = true;
   } catch (err) {
     report.errors.push(
@@ -910,6 +1058,43 @@ export async function lane(
     );
     console.log(renderLaneReport(report));
     return report;
+  }
+  // #206: the confirm path spawns for real. No transport → incomplete
+  // dispatch (ok stays false, spawnError explains) — never a silent skip.
+  const spawn = resolveSpawn();
+  if ("missing" in spawn) {
+    report.transport = "missing";
+    report.spawnError = spawn.missing;
+    console.log(renderLaneReport(report));
+    return report;
+  }
+  report.transport = spawn.transport;
+  try {
+    report.agentHandle = await spawn.fn({
+      prompt: packet.context,
+      label: packet.worktree.branch.replaceAll("/", "-"),
+      agent: report.spawn.agent,
+      context: report.spawn.context,
+      ...(report.spawn.model !== undefined ? { model: report.spawn.model } : {}),
+    });
+    report.spawned = true;
+    report.agentId = agentIdOf(report.agentHandle);
+  } catch (err) {
+    report.spawnError = err instanceof Error ? err.message : String(err);
+    console.log(renderLaneReport(report));
+    return report;
+  }
+  // #206: the dispatch pipeline owns the board flip — the PM-recall version
+  // drifted twice (forgot apply; cascade re-flip race). The guarded write
+  // verifies, so an already-In-Progress ticket is a confirmed no-op. Only a
+  // successful spawn may flip: the board must reflect reality.
+  const flip = await apply([{ op: "setStatus", number: t.number, value: "In Progress" }], {
+    confirm: true,
+  });
+  report.statusFlipped = flip.ok;
+  if (!flip.ok) {
+    report.statusError =
+      (flip.verifyFailure?.detail ?? flip.errors.join("; ")) || "status flip failed";
   }
   report.ok = true;
   console.log(renderLaneReport(report));
@@ -1251,12 +1436,7 @@ export interface FilePlan {
 }
 
 export type FileDimension =
-  | "milestone"
-  | "block"
-  | "type"
-  | "priority"
-  | "needs_probe"
-  | "needs_human";
+  "milestone" | "block" | "type" | "priority" | "needs_probe" | "needs_human";
 
 /** A classified dimension below the confidence floor: PM re-rules it. */
 export interface FileReviewItem {
@@ -1358,18 +1538,19 @@ export function planFile(
   if (needsHuman) derivedLabels.push("ready-for-human");
   const labels = labelsExplicit ? [...new Set(spec.labels)] : derivedLabels;
 
-  const milestone = spec.milestone !== undefined
-    ? spec.milestone
-    : cls.milestone !== null && cls.milestone !== "none" && confident("milestone")
-      ? cls.milestone
-      : null;
-  const priority = spec.priority !== undefined
-    ? spec.priority
-    : cls.priority !== null && confident("priority")
-      ? cls.priority
-      : null;
-  const status: StatusName =
-    needsHuman ? "Wait for user" : milestone !== null ? "Todo" : "Backlog";
+  const milestone =
+    spec.milestone !== undefined
+      ? spec.milestone
+      : cls.milestone !== null && cls.milestone !== "none" && confident("milestone")
+        ? cls.milestone
+        : null;
+  const priority =
+    spec.priority !== undefined
+      ? spec.priority
+      : cls.priority !== null && confident("priority")
+        ? cls.priority
+        : null;
+  const status: StatusName = needsHuman ? "Wait for user" : milestone !== null ? "Todo" : "Backlog";
   const suggestedOf = (d: FileDimension): string | null => {
     const v: unknown = cls[d];
     return typeof v === "string" ? v : typeof v === "boolean" ? String(v) : null;
@@ -1890,7 +2071,9 @@ async function rollbackFiling(
       await gql(TEMPLATES.deleteProjectItem, { projectId: PROJECT_ID, itemId });
       steps.push(`board item ${itemId} removed`);
     } catch (err) {
-      failures.push(`board item ${itemId} removal failed: ${err instanceof Error ? err.message : String(err)}`);
+      failures.push(
+        `board item ${itemId} removal failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
   try {
@@ -1922,9 +2105,12 @@ function renderFileReport(spec: FileSpec, report: FileReport): string {
     );
   }
   for (const e of report.errors) lines.push(`  ERROR     ${e}`);
-  if (report.created !== undefined) lines.push(`  CREATED   #${report.created.number} (${report.created.url ?? "no url"})`);
+  if (report.created !== undefined)
+    lines.push(`  CREATED   #${report.created.number} (${report.created.url ?? "no url"})`);
   if (report.rolledBack !== undefined) {
-    lines.push(`  ROLLED BACK #${report.rolledBack.number}: ${report.rolledBack.steps.join("; ") || "(no steps)"}`);
+    lines.push(
+      `  ROLLED BACK #${report.rolledBack.number}: ${report.rolledBack.steps.join("; ") || "(no steps)"}`,
+    );
     for (const f of report.rolledBack.failures) lines.push(`  ROLLBACK FAILURE ${f}`);
   }
   return lines.join("\n");
@@ -1945,7 +2131,9 @@ async function verifyFiling(
   const data = await gql(query, { owner: REPO.split("/")[0], repo: REPO_DIR });
   const repo = (data.repository as RefsShape["repository"] | null) ?? null;
   const issue =
-    repo === null ? null : ((repo as unknown as Record<string, VerifyIssue | null>)[aliases[0] ?? ""] ?? null);
+    repo === null
+      ? null
+      : ((repo as unknown as Record<string, VerifyIssue | null>)[aliases[0] ?? ""] ?? null);
   if (issue === null) return [`#${number}: not readable at post-filing verification`];
   const errors: string[] = [];
   const readLabels = (issue.labels?.nodes ?? []).map((l) => l.name);
@@ -2013,10 +2201,7 @@ async function verifyFiling(
  * issue closed as not_planned) and reports ok:false with `rolledBack` —
  * `created` is only ever set for a fully verified filing.
  */
-export async function file(
-  spec: FileSpec,
-  opts: { confirm?: boolean } = {},
-): Promise<FileReport> {
+export async function file(spec: FileSpec, opts: { confirm?: boolean } = {}): Promise<FileReport> {
   // Explicit fields skip their judge questions (#151): labels explicit also
   // skips block/type/needs_human — their only board effect IS the labels.
   const omit: string[] = [];
@@ -2138,9 +2323,9 @@ export async function file(
     body: spec.body,
     milestoneId: milestoneRef?.id ?? null,
   });
-  const payload = createData.createIssue as
-    | { issue: { id: string; number: number; url: string | null } | null }
-    | null;
+  const payload = createData.createIssue as {
+    issue: { id: string; number: number; url: string | null } | null;
+  } | null;
   const issue = payload?.issue ?? null;
   if (issue === null) throw new Error("AP.file: createIssue returned no issue");
 
@@ -2200,7 +2385,8 @@ export async function file(
     writeError = err instanceof Error ? err.message : String(err);
   }
 
-  const verifyErrors = writeError === null ? await verifyFiling(issue.number, plan, vocabulary) : [];
+  const verifyErrors =
+    writeError === null ? await verifyFiling(issue.number, plan, vocabulary) : [];
   if (writeError !== null) errors.push(`write failed after creation: ${writeError}`);
   if (verifyErrors.length > 0) errors.push(...verifyErrors);
 
@@ -2220,7 +2406,9 @@ export async function file(
         (rolledBack.steps.join("; ") || "no rollback steps succeeded"),
     );
     if (rolledBack.failures.length > 0) {
-      console.error(`AP.file: ROLLBACK INCOMPLETE — manual cleanup required: ${rolledBack.failures.join("; ")}`);
+      console.error(
+        `AP.file: ROLLBACK INCOMPLETE — manual cleanup required: ${rolledBack.failures.join("; ")}`,
+      );
     }
     console.log(renderFileReport(spec, report));
     return report;
@@ -2428,6 +2616,7 @@ export const AP = {
   planFile,
   dispatchPackets,
   lane,
+  registerSpawn,
   dorChecklist,
   /** Pure internals, exposed for tests/inspection. */
   pure: { slugify, planDiff, planCascade, budgetOf, FILE_CONFIDENCE_FLOOR },

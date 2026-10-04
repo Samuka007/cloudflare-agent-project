@@ -17,14 +17,14 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 派单上下文必含：
 
-- **worktree + spawn 经 AP.lane（派发钩子，#171；#199 校准为纯 spawn 脚手架）**：派发 = `AP.lane(number | ticket, agentSpec)`（scripts/pm-autopilot.ts；传数字时自查 snapshot，票不在板上才抛）——唯一硬拒 = board 谓词（open ∧ Todo ∧ 无未关 blocking 边 ∧ ¬rfh）；DoR 五项表（①三问引用②验收面③上游锚点④预算⑤参照往例）降为 **advisory**：表照打、缺项不拒派（假的严谨约束等于真的破坏推进），缺真锚点/预算由 PM 派单前自行拦 → 确认后自动预建 worktree（`git worktree add ~/.herdr/worktrees/<repo>/<branch-as-dash> -b lane/<ticket>-<slug> origin/main`，dry-run 默认零写）→ 产出 `isolated: true` 的 task spawn 包（worktree 命令生成复用 `AP.dispatchPackets`）。lane cd 入内即工作，全程在该树；**主仓 checkout 归 PM 独占**（劫持事故条款：lane 入主仓或自建树 = 违规）。关账后 PM 回收 worktree（`git worktree remove <path>`）；盘点 `git worktree list` / `herdr worktree list`。
+- **worktree + spawn 经 AP.lane（派发钩子，#171；#199 校准为纯 spawn 脚手架）**：派发 = `AP.lane(number | ticket, agentSpec)`（scripts/pm-autopilot.ts；传数字时自查 snapshot，票不在板上才抛）——唯一硬拒 = board 谓词（open ∧ Todo ∧ 无未关 blocking 边 ∧ ¬rfh）；DoR 五项表（①三问引用②验收面③上游锚点④预算⑤参照往例）降为 **advisory**：表照打、缺项不拒派（假的严谨约束等于真的破坏推进），缺真锚点/预算由 PM 派单前自行拦 → 确认后自动预建 worktree（`git worktree add ~/.herdr/worktrees/<repo>/<branch-as-dash> -b lane/<ticket>-<slug> origin/main`，dry-run 默认零写）→ 产出 `isolated: true` 的 task spawn 包（worktree 命令生成复用 `AP.dispatchPackets`）。lane cd 入内即工作，全程在该树；**主仓 checkout 归 PM 独占**（劫持事故条款：lane 入主仓或自建树 = 违规）。关账后 PM 回收 worktree（`git worktree remove <path>`）；盘点 `git worktree list` / `herdr worktree list`。**PM 会话启动 = 一个 cell `%load scripts/pm-harness.ts`（#206 持久装载体：cache-bust 动态 import→globalThis.AP、织入 spawn 传输、AP_READY 标志）**——lane(confirm) 端到端真派发：内建默认 SpawnFn = `globalThis.agent(prompt, {isolated: true, label})` 包一层（#200 内核配方；`registerSpawn` 覆盖槽供测试 mock/自定义织入；无 agent 全局时报告 transport-missing 不静默），支持批量 `AP.lane([a, b])`。
 - **效率预算行**：预期墙钟／资源上限／等待方式（交付即回 or 脚本化监控）；超 50% 须解释。
 - **资源所有权账本**：owned files/dirs + worktree 路径 + owned 外部资源（staging 部署、secret、面板）。PM 派单前做**不相交断言**——两 lane 地盘相交 = 派单错误。
 - **分支纪律**：lane 只推 `lane/<ticket>-<slug>`，PR 由 PM 审后 merge。**main 分支保护=一切经 PR（2026-10-04 起，repo rule 强制）**——PM 文档/热修同样走短命分支 PR；对 main 的 push 非 ff 拒绝=硬停，先 `git status --branch` 看分叉方向，force 类操作仅限事故回滚本身且须 --force-with-lease 钉基线。
 - **POMDP 条款**：根因未证实不动码；60 分钟未定位根因 → 报告而非猜改。
 - **验收 checklist**；lane 报告必带：commit hash、CI run、测试计数、file:line 根因（修 bug 票）。
 
-派发同时把该票 board Status 置 **In Progress**（GraphQL 直写）。
+派发同时把该票 board Status 置 **In Progress**——#206 起 lane(confirm) 自动承担（管道拥有状态生命周期，不靠 PM 记性）：spawn 成功后经 AP.apply 守卫写翻转（带核验，竞态下 no-op 不重写）；dry-run/拒派/spawn 失败不翻（板面反映现实），statusFlipped/statusError 落报告。
 
 **派发谓词与自动清空（用户裁决 2026-10-04）**：dispatchable = open ∧ 无未关 blocking 边 ∧ Status=Todo ∧ ¬ready-for-human（**派生谓词，不是标签**——`ready-for-agent` 已废）。PM 每回合把 dispatchable 集清到并发预算满或空；Todo 非空且预算有余而未派 = PMGuard P1。**并发预算=文件不相交度驱动（硬上限 32，provider 无实测并发约束前不做低于此的手设墙）**：不相交包（bb-ux/agent-do/daemon-service/infra）并行；同包共享文件（registry 尾、wire-order 断言）单 lane 批量承载，防 rebase 轮数吃掉并行收益。Backlog=未排期（PM 调度），blocker 关闭的交付钩子里回调其 Backlog→Todo。语义正本见 [tracker-schema.md](tracker-schema.md)。
 
