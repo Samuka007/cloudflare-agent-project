@@ -20,6 +20,13 @@ export default tseslint.config(
       "**/worker-configuration.d.ts",
       "bb/**",
       "packages/daemon-service/**",
+      // Tool configs, not product source: adding vitest.config.ts to a
+      // package tsconfig program merges @cloudflare/vitest-plugin's bundled
+      // workers-types with the package's own and breaks typecheck of real
+      // source (bisected in #37). They stay prettier-formatted; wrangler.jsonc
+      // is likewise outside the lint surface.
+      "**/vitest.config.ts",
+      "**/vitest.*.config.ts",
     ],
   },
   ...tseslint.configs.strictTypeChecked.map((config) => ({
