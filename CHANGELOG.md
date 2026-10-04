@@ -29,6 +29,13 @@
   providerPendingInteractionSchema 校验出站，resolve 走既有 `resolveInteraction`
   RPC；D1 `pending_interactions` 升级为 thread-list EXISTS 探针的镜像（读面
   自愈）。bb 子模块零改动（fork 消费 hub bb 方言帧 + 上述 REST 面）。
+- **#228 派发链断点**：模型请求投影（translate.ts）按 turn 过滤——同一会话的
+  第二个 turn（子代理 yield 提醒梯的 reminder turn、主线程的用户追发消息）完全
+  丢失此前所有 turn 的上下文，真机上子代理在 reminder turn 里 yield 出"未收到
+  任务内容"。现按 omp §1.5 全日志折叠：每个已完成 turn 的 input + 调用史作为
+  `priorTurns` 进请求（#147 rewind 截断的 pre-boundary turn 仍由 branch summary
+  替代、不回流）；L2 断言钉 child reminder turn 上下文含派发 task 原文
+  （task-chain.test.ts）+ 纯投影四格（translate.test.ts）。
 
 ## [m1.5] — 2026-10-04 · 工具集完备（omp 33 工具面边缘化）
 

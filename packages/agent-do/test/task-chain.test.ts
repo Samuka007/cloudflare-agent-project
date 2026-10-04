@@ -6,6 +6,7 @@ import type { AnyAgentEvent } from "../src/fsm-events.js";
 import { replayEvents } from "../src/turn-state.js";
 import { setAgentRuntime } from "../src/injection.js";
 import { MockModelProvider } from "../src/testing/mock-provider.js";
+import { anthropicRequestBody } from "../src/relay/wire.js";
 import type { AgentDO } from "../src/agent-do.js";
 import {
   BUNDLED_AGENT_DEFINITIONS,
@@ -267,5 +268,68 @@ describe("M1.5 T16 — L1 chain over real child AgentDOs", () => {
     // completeSubagent — same verdict as onExecutionUpdate's unknown
     // executionId. Not asserted through a remote stub: the vitest workers
     // plugin reports remote RPC errors as unhandled rejections.)
+  });
+
+  test("L2 (#228): the child's context keeps the dispatched task across the reminder ladder", async () => {
+    const parentThreadId = newThreadId();
+    const parentMock = new MockModelProvider([
+      { toolCalls: [{ name: "task", arguments: PARENT_TASK_ARGS }] },
+      { deltas: ["spawned"] },
+    ]);
+    // Turn 1: the child answers the assignment with plain text and no yield —
+    // the T17 ladder injects a reminder turn; turn 2: the forced yield; turn 3
+    // closes after the yielded call (mock's last entry would repeat).
+    const childMock = new MockModelProvider([
+      { deltas: ["OK"] },
+      { toolCalls: [{ name: "yield", arguments: { data: { answer: "OK" } } }] },
+      { deltas: ["done"] },
+    ]);
+    setAgentRuntime(parentThreadId, { provider: parentMock });
+    setAgentRuntime("*", { provider: childMock });
+    const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
+
+    const turnId = await driveParentTurn(rig, "in-1");
+    await rig.waitFor((all) => all.some((event) => event.type === "task.spawn_settled"));
+    await rig.waitTurnComplete(turnId);
+
+    // Two turns ran: the assignment turn and the reminder turn.
+    expect(childMock.calls.length).toBeGreaterThanOrEqual(2);
+    const [firstRequest, reminderRequest] = childMock.calls;
+
+    // L2 literal assertion: the child's FIRST turn context carries the
+    // dispatched task 原文 (assignment prompt = opener + task, no context).
+    expect(firstRequest?.input).toBe(
+      `Complete assignment thoroughly:\n\n${PARENT_TASK_ARGS.task}`,
+    );
+
+    // The defect this pins (#228): the reminder turn's request must NOT be a
+    // context reset — the assignment turn rides priorTurns (input + recorded
+    // call history), so the reminder-yield still knows what the run produced.
+    expect(reminderRequest?.input).toContain("Reminder");
+    expect(reminderRequest?.priorTurns).toHaveLength(1);
+    const prior = reminderRequest?.priorTurns?.[0];
+    expect(prior?.input).toBe(firstRequest?.input);
+    expect(prior?.calls).toHaveLength(1);
+    expect(prior?.calls[0]?.text).toBe("OK");
+
+    // Model-visible proof: the wire body of the reminder request carries the
+    // dispatched task text (roles alternate: user → assistant → user).
+    const body = anthropicRequestBody(reminderRequest, {
+      model: "glm-5.3",
+      maxTokens: 8192,
+      thinking: { type: "disabled" },
+    });
+    expect(body.messages.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+    expect(JSON.stringify(body.messages)).toContain(PARENT_TASK_ARGS.task);
+
+    // The yielded run still settles ok at the parent (settlement rides the
+    // yield data, not the "no task" degenerate output the old projection
+    // provoked on live models).
+    const parentEvents = await rig.events();
+    expect(() => replayEvents(parentEvents)).not.toThrow();
+    const plan = parentEvents.find((event) => event.type === "task.spawn_planned");
+    if (plan?.type !== "task.spawn_planned") throw new Error("no spawn plan");
+    const childThreadId = plan.data.childThreadId;
+    expect(settlementForSpawn(parentEvents, childThreadId ?? "")?.status).toBe("ok");
   });
 });
