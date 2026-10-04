@@ -2,12 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   _inject,
   apply,
+  audit,
   classifyIntake,
   defaultJudge,
   dispatchable,
   dispatchPackets,
   dorChecklist,
   FILE_CONFIDENCE_FLOOR,
+  FRONTIER_AGE_DAYS,
   file,
   gateOf,
   intake,
@@ -80,6 +82,7 @@ interface IssueRow {
   title: string;
   state: "OPEN" | "CLOSED";
   bodyText: string | null;
+  updatedAt: string;
   milestone: { title: string } | null;
   labels: { nodes: { name: string }[] };
   blockedBy: { nodes: { number: number; state: "OPEN" | "CLOSED"; title: string }[] };
@@ -107,6 +110,7 @@ class MockBoard {
       id: `I${over.number}`,
       state: "OPEN",
       bodyText: "",
+      updatedAt: "2026-01-01T00:00:00Z",
       milestone: null,
       labels: { nodes: [] },
       blockedBy: { nodes: [] },
@@ -135,6 +139,7 @@ class MockBoard {
         title: i.title,
         body: i.bodyText ?? "",
         state: i.state,
+        updatedAt: i.updatedAt,
         milestone: i.milestone?.title ?? null,
         labels: i.labels.nodes.map((l) => l.name),
         blockedBy: i.blockedBy.nodes,
@@ -202,6 +207,7 @@ class MockBoard {
           title: String(variables.title),
           state: "OPEN",
           bodyText: typeof variables.body === "string" ? variables.body : "",
+          updatedAt: "2026-01-01T00:00:00Z",
           milestone: null,
           labels: { nodes: [] },
           blockedBy: { nodes: [] },
@@ -468,6 +474,7 @@ describe("pure core", () => {
     milestone: "M1",
     labels: [],
     blockedBy: [],
+    updatedAt: "2026-01-01T00:00:00Z",
     itemId: "PVTItem_1",
     status: "Todo",
     priority: null,
@@ -525,6 +532,33 @@ describe("pure core", () => {
       priorityOptions: { P0: "opt_P0", P1: "opt_P1" },
     });
     expect(unknown.errors[0]).toContain("closed vocabulary");
+  });
+
+  it("planDiff: #181 closed-ticket convergence carve-out — Done/Canceled resolve, the rest still refused", () => {
+    const board = new MockBoard();
+    board.addIssue({ number: 7, title: "t", state: "CLOSED" });
+    board.boardIssue(7, "Todo", null);
+    const fix = planDiff([{ op: "setStatus", number: 7, value: "Done" }], board.planInput());
+    expect(fix.errors).toEqual([]);
+    expect(fix.ops).toEqual([
+      {
+        kind: "setStatus",
+        number: 7,
+        itemId: "PVTItem_1",
+        fieldId: STATUS_FIELD_ID,
+        optionId: "opt_Done",
+        value: "Done",
+      },
+    ]);
+    expect(fix.willChange[0]?.sideEffect).toContain("convergence");
+    // non-convergence writes on closed tickets stay refused
+    const stale = planDiff([{ op: "setStatus", number: 7, value: "Backlog" }], board.planInput());
+    expect(stale.errors[0]).toContain("CLOSED");
+    // open tickets still ban Done/Canceled as PM targets (event-derived)
+    board.addIssue({ number: 8, title: "open" });
+    board.boardIssue(8, "Todo", null);
+    const open = planDiff([{ op: "setStatus", number: 8, value: "Done" }], board.planInput());
+    expect(open.errors[0]).toContain("close-event derived");
   });
 
   it("planDiff: milestone set/clear/no-op/unknown; closed ticket rejected", () => {
@@ -624,6 +658,7 @@ describe("pure core", () => {
       milestone: null,
       labels: [],
       blockedBy: [],
+      updatedAt: "2026-01-01T00:00:00Z",
       itemId: null,
       status: null,
       priority: null,
@@ -667,6 +702,7 @@ describe("pure core", () => {
       milestone: "M1",
       labels: ["type:implementation"],
       blockedBy: [],
+      updatedAt: "2026-01-01T00:00:00Z",
       itemId: null,
       status: "Todo",
       priority: "P1",
@@ -696,6 +732,7 @@ describe("pure core", () => {
       milestone: null,
       labels: [],
       blockedBy: [],
+      updatedAt: "2026-01-01T00:00:00Z",
       itemId: null,
       status: null,
       priority: null,
@@ -712,6 +749,215 @@ describe("pure core", () => {
     expect(first[0]?.budget.source).toBe("body");
     expect(second[0]?.budget.source).toBe("body");
     expect(second[0]?.budget.line).toContain("20min");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AP.audit (#181): drift rules + apply-consumable mutations
+// ---------------------------------------------------------------------------
+
+describe("AP.audit drift rules (#181)", () => {
+  const NOW = new Date("2026-10-04T00:00:00Z");
+  const FRESH = "2026-10-03T00:00:00Z"; // 1d before NOW — never rule-4-aged
+  const AGED = "2026-09-24T00:00:00Z"; // 10d before NOW — aged at 7d
+  const mk = (over: Partial<Ticket> & Pick<Ticket, "number">): Ticket => ({
+    id: `I${over.number}`,
+    title: `t${over.number}`,
+    body: "",
+    state: "OPEN",
+    milestone: "M1",
+    labels: [],
+    blockedBy: [],
+    itemId: `PVTItem_${over.number}`,
+    status: "Todo",
+    priority: null,
+    updatedAt: FRESH,
+    ...over,
+  });
+
+  it("rule 1: CLOSED with a stale Status → convergence mutations (wontfix → Canceled)", () => {
+    const rep = audit(
+      {
+        tickets: [
+          mk({ number: 1, state: "CLOSED", status: "Todo" }),
+          mk({ number: 2, state: "CLOSED", status: "Backlog" }),
+          mk({ number: 3, state: "CLOSED", status: "Wait for user" }),
+          mk({ number: 4, state: "CLOSED", status: "Todo", labels: ["wontfix"] }),
+        ],
+      },
+      { now: NOW },
+    );
+    expect(rep.clean).toBe(false);
+    expect(rep.drift.map((d) => [d.rule, d.number])).toEqual([
+      ["staleClosedStatus", 1],
+      ["staleClosedStatus", 2],
+      ["staleClosedStatus", 3],
+      ["staleClosedStatus", 4],
+    ]);
+    expect(rep.mutations).toEqual([
+      { op: "setStatus", number: 1, value: "Done" },
+      { op: "setStatus", number: 2, value: "Done" },
+      { op: "setStatus", number: 3, value: "Done" },
+      { op: "setStatus", number: 4, value: "Canceled" },
+    ]);
+  });
+
+  it("rule 1 silent on converged closed tickets (Done / Canceled / null status)", () => {
+    const rep = audit(
+      {
+        tickets: [
+          mk({ number: 1, state: "CLOSED", status: "Done" }),
+          mk({ number: 2, state: "CLOSED", status: "Canceled" }),
+          mk({ number: 3, state: "CLOSED", status: null }),
+        ],
+      },
+      { now: NOW },
+    );
+    expect(rep.drift).toEqual([]);
+    expect(rep.mutations).toEqual([]);
+    expect(rep.clean).toBe(true);
+  });
+
+  it("rule 2: CLOSED + In Progress is the lane-died drift, reported exactly once", () => {
+    const rep = audit(
+      { tickets: [mk({ number: 9, state: "CLOSED", status: "In Progress" })] },
+      { now: NOW },
+    );
+    expect(rep.drift).toHaveLength(1);
+    expect(rep.drift[0]?.rule).toBe("inProgressOnClosed");
+    expect(rep.drift[0]?.detail).toContain("lane died");
+    expect(rep.mutations).toEqual([{ op: "setStatus", number: 9, value: "Done" }]);
+  });
+
+  it("rule 3: active-lane ticket not In Progress flips; stale roster entries report without mutation", () => {
+    const rep = audit(
+      {
+        tickets: [
+          mk({ number: 10, status: "Todo" }), // live lane, flip lost → repair
+          mk({ number: 11, status: "In Progress" }), // healthy → silent
+          mk({ number: 12, state: "CLOSED", status: "Done" }), // converged → roster stale
+          mk({ number: 13, state: "CLOSED", status: "Todo" }), // rule 1 owns the repair
+        ],
+      },
+      { activeLanes: [10, 11, 12, 13, 99], now: NOW },
+    );
+    const rule3 = rep.drift.filter((f) => f.rule === "laneStatusMismatch");
+    expect(rule3.map((f) => [f.number, f.title, f.mutation])).toEqual([
+      [10, "t10", { op: "setStatus", number: 10, value: "In Progress" }],
+      [12, "t12", null],
+      [99, "(not on board)", null],
+    ]);
+    expect(rule3[0]?.detail).toContain("flip lost");
+    expect(rule3[1]?.detail).toContain("stale roster");
+    expect(rule3[2]?.detail).toContain("missing from the snapshot");
+    // #13 appears exactly once, as the rule-1 convergence finding
+    expect(rep.drift.filter((d) => d.number === 13)).toHaveLength(1);
+    expect(rep.drift.find((d) => d.number === 13)?.rule).toBe("staleClosedStatus");
+  });
+
+  it("rule 4: dispatchable Todo aged past N days is a mutation-free reminder; the rest stay silent", () => {
+    const rep = audit(
+      {
+        tickets: [
+          mk({ number: 20, updatedAt: AGED }), // aged dispatchable → flagged
+          mk({ number: 21, updatedAt: AGED, labels: ["ready-for-human"] }), // user queue
+          mk({
+            number: 22,
+            updatedAt: AGED,
+            blockedBy: [{ number: 5, state: "OPEN", title: "b" }],
+          }), // blocked
+          mk({ number: 23, updatedAt: AGED, status: "Backlog" }), // unscheduled
+          mk({ number: 24 }), // fresh dispatchable
+          mk({ number: 25, updatedAt: AGED, status: "In Progress" }), // aged but on a lane → dispatched
+        ],
+      },
+      { activeLanes: [25], now: NOW },
+    );
+    expect(rep.drift).toHaveLength(1);
+    expect(rep.drift[0]?.rule).toBe("frontierAging");
+    expect(rep.drift[0]?.number).toBe(20);
+    expect(rep.drift[0]?.detail).toContain(`10d > ${FRONTIER_AGE_DAYS}d`);
+    expect(rep.drift[0]?.mutation).toBeNull();
+    expect(rep.mutations).toEqual([]);
+    // strict boundary: exactly N days is not overdue; a tighter threshold is
+    const edge = audit(
+      { tickets: [mk({ number: 26, updatedAt: "2026-09-27T00:00:00Z" })] },
+      { now: NOW },
+    );
+    expect(edge.clean).toBe(true);
+    const tighter = audit(
+      { tickets: [mk({ number: 26, updatedAt: "2026-09-27T00:00:00Z" })] },
+      { now: NOW, frontierAgeDays: 6 },
+    );
+    expect(tighter.drift.map((f) => f.rule)).toEqual(["frontierAging"]);
+  });
+
+  it("mutations are AP.apply-consumable: planDiff resolves every suggestion error-free", () => {
+    const rep = audit(
+      {
+        tickets: [
+          mk({ number: 30, state: "CLOSED", status: "Todo" }), // convergence → Done
+          mk({
+            number: 31,
+            state: "CLOSED",
+            status: "In Progress",
+            labels: ["wontfix"],
+          }), // convergence → Canceled
+          mk({ number: 32, status: "Backlog" }), // active-lane flip
+        ],
+      },
+      { activeLanes: [32], now: NOW },
+    );
+    const board = new MockBoard();
+    board.addIssue({ number: 30, title: "t30", state: "CLOSED" });
+    board.boardIssue(30, "Todo", null);
+    board.addIssue({
+      number: 31,
+      title: "t31",
+      state: "CLOSED",
+      labels: { nodes: [{ name: "wontfix" }] },
+    });
+    board.boardIssue(31, "In Progress", null);
+    board.addIssue({ number: 32, title: "t32" });
+    board.boardIssue(32, "Backlog", null);
+    const res = planDiff(rep.mutations, board.planInput());
+    expect(res.errors).toEqual([]);
+    expect(res.ops.map((o) => ("value" in o ? o.value : null))).toEqual([
+      "Done",
+      "Canceled",
+      "In Progress",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AP.audit → AP.apply one-shot reconcile (#181 acceptance demo)
+// ---------------------------------------------------------------------------
+
+describe("audit → apply one-shot reconcile (#181)", () => {
+  afterEach(() => {
+    _inject(null);
+  });
+
+  it("confirm apply converges the drift; the re-audit reads clean", async () => {
+    const board = new MockBoard();
+    // rule 1: closed, boarded, Status stuck at Todo (sync write went missing)
+    board.addIssue({ number: 40, title: "closed stale", state: "CLOSED" });
+    board.boardIssue(40, "Todo", null);
+    // rule 3: live lane whose In Progress flip never landed
+    board.addIssue({ number: 41, title: "lane flip lost" });
+    board.boardIssue(41, "Todo", null);
+    _inject({ gql: board.gql });
+
+    const rep = audit(await snapshot(), { activeLanes: [41] });
+    expect(rep.drift.map((d) => d.rule)).toEqual(["staleClosedStatus", "laneStatusMismatch"]);
+
+    const applied = await apply(rep.mutations, { confirm: true });
+    expect(applied.ok).toBe(true);
+    expect(applied.verified).toBe(true);
+
+    const after = audit(await snapshot(), { activeLanes: [41] });
+    expect(after.clean).toBe(true);
   });
 });
 
@@ -1403,6 +1649,7 @@ function laneTicket(over: Partial<Ticket> = {}): Ticket {
     milestone: "M1",
     labels: [],
     blockedBy: [],
+    updatedAt: "2026-01-01T00:00:00Z",
     itemId: "PVTItem_9",
     status: "Todo",
     priority: "P1",
