@@ -43,8 +43,8 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 **工作区纪律三条（用户裁决 2026-10-04，herdr 违例编码）**：
 ①**主仓 checkout 钉 main**——主仓 checkout 永远停 main；一切分支工作（含 PM 文档/热修）= 派发 lane 或 herdr worktree，PM 不亲自 `checkout -b`。
-②**PM 零开发零编辑**——需要落盘的改动全部成票派发（复用三问照走）；PM 亲手改文件（决策记录豁免除外）= 违规。
-③**派发契约 isolated worktree**——task spawn 必带 `isolated: true`（独占 worktree）；未隔离的 subagent 共享主 repo，会移动主 HEAD——禁止。
+②**PM 角色边界（内容/机制分离）**——PM 可以起草文档内容（PM 章程类文档如 pm.md/tracker-schema）；但**分支机制**（`checkout -b`/commit/push/PR 流转）一律不得在主 checkout 亲为——要么派发 lane，要么 AP 预建 herdr worktree 后在其中操作。PM 在主 checkout 亲手 `checkout -b` = 违例（2026-10-04 实例：hotfix/lint-filereport 等 4 分支）。
+③**派发契约 isolated worktree**——AP/lane 派发须预建 herdr worktree（早期 lane 模式）或 task spawn 带 `isolated: true`；两者皆无的 subagent 共享主 repo 并移动主 HEAD（实例：R1Units 把主 checkout 停在 `research/deployable-units`）——禁止。
 
 ### 验收关账
 
