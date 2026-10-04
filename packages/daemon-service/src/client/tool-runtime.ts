@@ -6,7 +6,8 @@ import type { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 /**
  * Vendored omp tool runtime (M1.5/T5' #128): host construction, native-addon
  * version gate, and the dispatch-frame adapter. The host tools
- * (read/glob/grep/write/edit + manage_skill, T6 #96) execute through omp's own `execute()` path —
+ * (read/glob/grep/find/write/edit + manage_skill, T6 #96 / T11 #101) execute
+ * through omp's own `execute()` path —
  * spike evidence docs/research/omp-runtime-embedding.md §1–§3; the vendoring
  * mechanism is npm dependency pinning (@oh-my-pi 18.6.0, exact in
  * package.json + pnpm-lock.yaml), so the runtime is the release artifact of
@@ -163,6 +164,7 @@ export async function createToolHost(
   const [
     { Settings },
     { EditTool },
+    { FindTool },
     { GlobTool },
     { GrepTool },
     { ReadTool },
@@ -171,6 +173,7 @@ export async function createToolHost(
   ] = await Promise.all([
     import("@oh-my-pi/pi-coding-agent/config/settings"),
     import("@oh-my-pi/pi-coding-agent/edit"),
+    import("@oh-my-pi/pi-coding-agent/tools/jfind"),
     import("@oh-my-pi/pi-coding-agent/tools/glob"),
     import("@oh-my-pi/pi-coding-agent/tools/grep"),
     import("@oh-my-pi/pi-coding-agent/tools/read"),
@@ -192,6 +195,11 @@ export async function createToolHost(
   const candidates: OmpTool[] = [
     new GlobTool(session),
     new GrepTool(session),
+    // T11 (#101): the judge role resolves through the session's model
+    // registry — absent here, every find degrades with the precise
+    // ToolError ("find has no model registry to resolve a judge from")
+    // until the daemon-side provider channel lands (ticket-large gap).
+    new FindTool(session),
     new ReadTool(session),
     new WriteTool(session),
     new EditTool(session),

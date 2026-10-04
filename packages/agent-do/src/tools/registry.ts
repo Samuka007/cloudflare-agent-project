@@ -110,6 +110,14 @@ const grepSchema = type({
   "skip?": type("number").or("null"),
 });
 
+// omp packages/coding-agent/src/tools/jfind/index.ts:26-30 (`findSchema`,
+// 18.6.0)
+const findSchema = type({
+  query: "string",
+  grep_keywords: "string[]",
+  "path?": "string",
+});
+
 // omp packages/coding-agent/src/edit/schemas.ts:39-41
 // (`hashlineEditParamsSchema`, 18.6.0). The daemon host pins the edit mode
 // via isolated settings (edit.mode default "hashline"; no per-model variant
@@ -247,8 +255,9 @@ const WRITE_DESCRIPTION_TEMPLATE = `SHOULD \`edit\` existing files; \`write\` fo
 \`archive.ext:member\`: ZIP/tar families and \`.asar\` writable, others read-only. \`db.sqlite:table\`: insert; \`db.sqlite:table:key\`: JSON update, empty content deletes.
 `;
 
-// omp packages/coding-agent/src/prompts/tools/glob.md (18.6.0; ifAny block
-// resolves empty — this host has no find tool and no delegation surface).
+// omp packages/coding-agent/src/prompts/tools/glob.md (18.6.0; the ifAny
+// block renders the find hint — the find row is registered, T11 — while
+// delegation stays off for this host).
 const GLOB_DESCRIPTION_TEMPLATE = `Glob files/dirs: \`;\`-separated paths or internal URLs (\`local://*.md\`, \`omp://**/*.md\`); default workspace root.
 \`gitignore\` and \`hidden\` default true; ignored dotfiles need \`gitignore: false\`. Newest-first by directory; dirs end \`/\`.
 {{#ifAny eagerDelegation hasFind}}
@@ -265,6 +274,13 @@ Bare glob \`*.ts\` matches any depth; \`dir/*.ts\` only \`dir\`'s direct childre
 {{#if hasFind}}Behavior/unknown symbol → \`find\`; literals/regex → \`grep\`.{{/if}}
 {{#if eagerDelegation}}Multi-round search MUST use {{#if scoutAvailable}}Task + scout{{else}}Task{{/if}}, not chained calls.{{/if}}
 `;
+
+// omp packages/coding-agent/src/prompts/tools/find.md (18.6.0) — static
+// prose, no render conditionals.
+const FIND_DESCRIPTION_TEMPLATE = `Describe behavior, get implementing files and line ranges. MUST use first for unknown locations; known strings/regex/symbols → \`grep\`, names → \`glob\`.
+\`query\`: plain language, not regex; quoted phrases match whole. \`grep_keywords\`: likely verbatim terms, \`[]\` if unsure.
+\`path\`: one directory or file, host path or internal URL (\`omp://\`, \`omp://<file>.md\`, \`skill://<name>\`, \`local://…\`); omitted = workspace root. Scope known subsystem; batch related questions. Searches live files, no index; no \`:start-end\` selector (judges whole files).
+Hits strongest first: \`path:start-end score snippet\` (workspace-relative, or URL under URL scope); read returned ranges. Scores: absolute comparable 0–1 probability; below ~0.4 = weak evidence, so widen query or use \`grep\` before concluding absence.`;
 
 // Embedded EditTool description for the host-pinned hashline mode: the
 // verbatim output of omp's native `editDescription("hashline")` + render
@@ -403,7 +419,9 @@ export interface ToolRenderFlags {
  * Host rendering policy: bash conditionals false (M0 wire.ts anchor); the
  * host-template conditionals reflect the daemon host's pinned render context
  * — hashline edit mode is pinned by the isolated settings (IS_HL_MODE true),
- * and find/delegation/binary-view surfaces are absent in M1.5.
+ * find is on the registered surface (T11 row → glob/grep.md render the find
+ * hints, omp glob.ts:93 isToolActive semantics), delegation/binary-view stay
+ * absent in M1.5.
  */
 export const M0_RENDER_FLAGS: ToolRenderFlags = {
   hasEval: false,
@@ -411,7 +429,7 @@ export const M0_RENDER_FLAGS: ToolRenderFlags = {
   hasLaunch: false,
   autoBackgroundEnabled: false,
   IS_HL_MODE: true,
-  hasFind: false,
+  hasFind: true,
   eagerDelegation: false,
   scoutAvailable: false,
   BINARY_VIEWS: false,
@@ -525,6 +543,19 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     name: "grep",
     schema: grepSchema,
     descriptionTemplate: GREP_DESCRIPTION_TEMPLATE,
+    class: "host",
+    backend: { kind: "daemon-dispatch" },
+    intent: "require",
+  },
+  {
+    // M1.5/T11 #101: find — jfind cascade executed by the daemon host; the
+    // judge role rides the provider channel (LLM outbound, not the execution
+    // body). omp builtin order: between grep and lsp. FindTool declares no
+    // `intent` member (jfind/index.ts:53-61) → resolveIntentMode default
+    // require, same rule as todo.
+    name: "find",
+    schema: findSchema,
+    descriptionTemplate: FIND_DESCRIPTION_TEMPLATE,
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",
