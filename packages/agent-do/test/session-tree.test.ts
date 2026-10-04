@@ -652,17 +652,19 @@ describe("M1.5 T3 — executor branches (T:checkpoint.ts ToolError paths + crash
 describe("M1.5 T3 — registry rows (control-plane §1.1, classification §2.2)", () => {
   test("the session-tree trio is registered class edge with do-local routing and omp intent modes", () => {
     // omp builtin-names.ts order restricted to the registered set: bash,
-    // the T5'+T11 vendored-runtime host six, checkpoint, rewind,
-    // context_notes, task, wait, todo, think, write, yield (T16 adds
-    // task between new_context and wait); T6 manage_skill is the last
-    // builtin (#30), the T10' eval kernel-seam row rides after the T5'
-    // write row, and the T16 hidden yield closes the wire.
+    // the T5' vendored-runtime host five, ask (T4, builtin #6), find (T11),
+    // checkpoint, rewind, context_notes, task, wait, todo,
+    // think, write, eval, manage_skill, yield (T16 adds task between
+    // new_context and wait; T6 manage_skill is the last builtin #30, the
+    // T10' eval row rides after the T5' write row, and the T16 hidden yield
+    // closes the wire).
     expect(TOOL_REGISTRY.map((row) => row.name)).toEqual([
       "bash",
       "read",
       "edit",
       "glob",
       "grep",
+      "ask",
       "find",
       "checkpoint",
       "rewind",

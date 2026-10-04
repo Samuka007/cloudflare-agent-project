@@ -2,7 +2,10 @@ import { DurableObject } from "cloudflare:workers";
 import { Cause, Effect, Exit } from "effect";
 import {
   threadEventsAppendedMessage,
+  pendingInteractionChangedMessage,
   realtimeClientMessageSchema,
+  type PendingInteractionPayload,
+  type PendingInteractionResolution,
   type RealtimeSubscriptionTarget,
 } from "@cap/protocol";
 import { EventLog } from "./event-log.js";
@@ -62,6 +65,14 @@ import {
 } from "./tools/task/types.js";
 import { childAssignment } from "./tools/task/plan.js";
 import { renderYieldOutput } from "./tools/yield.js";
+import {
+  interactionForExecution,
+  timeoutAutoSelect,
+  renderAskOutput,
+  validateAskResolution,
+  type AskToolContext,
+  type AskWake,
+} from "./tools/ask.js";
 import { checkpointRewindState, todoJournalState } from "./tools/session-tree.js";
 
 /**
@@ -220,6 +231,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * re-query sees the change that woke it.
    */
   private readonly edgeWaiters = new Map<string, { resolve: (wake: WaitWake) => void }>();
+  /**
+   * Blocked ask executors (M1.5 T4), keyed by executionId. Wakes: the
+   * resolveInteraction ruling backflow, the turn kill path (interrupt), or
+   * the alarm-carried ask-timeout expiry. Journal appends always land before
+   * the wake fires, so the executor's re-query sees the change that woke it.
+   */
+  private readonly askWaiters = new Map<string, { resolve: (wake: AskWake) => void }>();
   /** In-memory message-only ladder windows (executionId → deadlineAt); the
    * 30-minute cap lives in computeDueWork's journal-derived table instead. */
   private readonly waitWindows = new Map<string, number>();
@@ -517,6 +535,58 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   }
 
   /**
+   * Ruling backflow (M1.5 T4; the SPA's resolve action, bb `interactive.resolve`
+   * command shape): the resolution is validated against the registered
+   * questions BEFORE the journal row, so only valid rulings exist in the log
+   * and an executor re-ask after eviction renders the same answer. Invalid or
+   * late backflow never disturbs the pending row; a duplicate ruling is
+   * absorbed (resolutions are at-most-once, I6 pattern).
+   */
+  async resolveInteraction(request: {
+    interactionId: string;
+    resolution: PendingInteractionResolution;
+  }): Promise<{ accepted: boolean; duplicated: boolean }> {
+    await this.ready();
+    this.requireThread();
+    const interaction = this.state.interactions.get(request.interactionId);
+    if (interaction === undefined) {
+      throw new AgentRpcError("not_found", `unknown interaction ${request.interactionId}`);
+    }
+    if (interaction.status === "resolved") return { accepted: false, duplicated: true };
+    if (interaction.status === "interrupted") {
+      throw new AgentRpcError("invalid", `interaction ${request.interactionId} was interrupted`);
+    }
+    const { events } = await this.readAllEvents();
+    const projection = interactionForExecution(events, interaction.executionId);
+    if (projection === undefined) {
+      throw new AgentRpcError(
+        "not_found",
+        `interaction ${request.interactionId} has no registered questions`,
+      );
+    }
+    const validated = validateAskResolution(projection.payload, request.resolution);
+    if (!validated.ok) {
+      throw new AgentRpcError("invalid", validated.reason);
+    }
+    try {
+      await this.appendEvent("interaction.resolved", {
+        interactionId: request.interactionId,
+        resolution: request.resolution,
+      });
+    } catch (error) {
+      // Lost the journal race against a concurrent resolve: at-most-once row
+      // wins, the loser reports duplicate instead of surfacing an FSM error.
+      if (this.state.interactions.get(request.interactionId)?.status === "resolved") {
+        return { accepted: false, duplicated: true };
+      }
+      throw error;
+    }
+    const resolution = request.resolution;
+    this.wakeAskWaiter(interaction.executionId, { kind: "resolved", resolution });
+    return { accepted: true, duplicated: false };
+  }
+
+  /**
    * Callback for ticket #30's daemon service DO (self-routed by the
    * executionId threadId prefix). Duplicates are absorbed here — the log
    * only ever receives well-formed, first-instance events (I6/I7).
@@ -644,6 +714,12 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       for (const executionId of due.waitCapExecutionIds) {
         await this.resolveWaitCap(executionId);
       }
+      // Ask expiry (M1.5 T4) resolves BEFORE re-asks and turn expiry: the
+      // auto-selected ruling is the terminal promise for the blocked ask
+      // (computeDueWork extended the turn watchdog to the same deadline).
+      for (const executionId of due.interactionExpiryExecutionIds) {
+        await this.resolveInteractionExpiry(executionId);
+      }
       for (const executionId of due.reaskExecutionIds) {
         const execution = this.state.executions.get(executionId);
         if (execution === undefined || executionTerminal(execution)) continue;
@@ -724,6 +800,18 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     for (const execution of [...this.state.executions.values()]) {
       if (executionTerminal(execution)) continue;
       if (execution.attempts >= this.cfg.maxDispatchAttempts) continue;
+      if (execution.tool === "wait" || execution.tool === "ask") {
+        // Blocking edge executors park on their wake channels — awaiting them
+        // here would deadlock recovery itself (every RPC gates on ready()).
+        // Start detached: a lost run stays non-terminal and the next
+        // recovery re-asks again (same at-least-once dispatch as ever).
+        void this.dispatchExecution(execution.turnId, execution.executionId).catch(
+          (error: unknown) => {
+            console.error(`recovery dispatch of ${execution.executionId} failed`, error);
+          },
+        );
+        continue;
+      }
       await this.dispatchExecution(execution.turnId, execution.executionId);
     }
     // 4. Ruling F closure: results journaled by the service but not acked
@@ -770,6 +858,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     applyEvent(this.state, validated);
     this.knownEventCount += 1;
     this.pushToSubscribers();
+    if (validated.type === "interaction.registered") {
+      this.pushInteractionToSubscribers(validated.data.interactionId, "pending");
+    } else if (validated.type === "interaction.resolved") {
+      this.pushInteractionToSubscribers(validated.data.interactionId, "resolved");
+    } else if (validated.type === "interaction.interrupted") {
+      this.pushInteractionToSubscribers(validated.data.interactionId, "interrupted");
+    }
     return record;
   }
 
@@ -788,6 +883,37 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       } catch {
         // hibernation API drops dead sockets automatically; never fail an
         // append because a subscriber went away
+      }
+    }
+  }
+
+  /**
+   * Interaction lifecycle push (M1.5 T4): the `changed` frame carries the
+   * pending-interaction kind + the state patch (bb patchThreadListPending
+   * InteractionState shape). The question body itself is NOT socket payload —
+   * the SPA refetches it through the existing journal read (no new DO read
+   * path, proposal §3 T4).
+   */
+  private pushInteractionToSubscribers(
+    interactionId: string,
+    status: "pending" | "resolved" | "interrupted",
+  ): void {
+    if (this.threadId === null) return;
+    const sockets = this.ctx.getWebSockets();
+    if (sockets.length === 0) return;
+    const frame = JSON.stringify(
+      pendingInteractionChangedMessage({
+        threadId: this.threadId,
+        latestSeq: this.state.latestSeq,
+        interactionId,
+        status,
+      }),
+    );
+    for (const socket of sockets) {
+      try {
+        socket.send(frame);
+      } catch {
+        // hibernation API drops dead sockets automatically
       }
     }
   }
@@ -1307,6 +1433,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       // eviction re-enters here sequentially and re-adopts via the journal.
       return;
     }
+    if (row.name === "ask" && this.askWaiters.has(execution.executionId)) {
+      // A duplicate dispatch of a still-blocking ask (recovery + watchdog
+      // races) must not fork a second blocked executor; the registered one
+      // owns the result — and a journal re-ask would re-register nothing
+      // either way (bb created|existing is projection-derived).
+      return;
+    }
     if (row.name === "wait") {
       // Blocking marker, same vocabulary as the host path: the wait is about
       // to park on its wake legs; journal-first keeps observers (and tests)
@@ -1369,8 +1502,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     const result = await runEdgeTool(row, args, {
       ...baseContext,
       ...(row.name === "wait" ? { wait: this.waitToolContext(execution) } : {}),
+      ...(row.name === "ask" ? { ask: this.askToolContext(execution) } : {}),
     }).finally(() => {
       this.edgeWaiters.delete(execution.executionId);
+      this.askWaiters.delete(execution.executionId);
       this.waitWindows.delete(execution.executionId);
     });
     await this.ingestResult(
@@ -1378,6 +1513,76 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       { status: result.status, exitCode: null, output: result.output },
       { ack: false },
     );
+  }
+
+  /** DO-bound `ask` context (tools/ask.ts AskToolContext): journal
+   * accessors + registration/interrupt mutators + wake/expiry plumbing. */
+  private askToolContext(execution: ExecutionRuntime): AskToolContext {
+    const threadId = this.requireThread();
+    return {
+      executionId: execution.executionId,
+      threadId,
+      turnId: execution.turnId,
+      owningTurnStatus: () => this.state.turns.get(execution.turnId)?.status,
+      interactionForExecution: async () =>
+        interactionForExecution((await this.readAllEvents()).events, execution.executionId),
+      registerInteraction: async (input: {
+        interactionId: string;
+        payload: PendingInteractionPayload;
+        expiresAt: number | null;
+      }) => {
+        await this.appendEvent("interaction.registered", {
+          interactionId: input.interactionId,
+          turnId: execution.turnId,
+          executionId: execution.executionId,
+          providerId: "omp",
+          // The DO thread IS the provider thread; the execution IS the
+          // provider request (bb scopes both per bridge — M1.5 has one DO).
+          providerThreadId: threadId,
+          providerRequestId: execution.executionId,
+          expiresAt: input.expiresAt,
+          payload: input.payload,
+        });
+        // The expiry deadline (ask.timeout arm) exists only from this point —
+        // (re)arm the alarm to carry it (practice 4: authoritative timers are
+        // alarms, never setTimeout; same shape as wait's cap arming).
+        this.armWatchdog();
+      },
+      interruptInteraction: async (statusReason: string) => {
+        const { events } = await this.readAllEvents();
+        const pending = interactionForExecution(events, execution.executionId);
+        if (pending?.status !== "pending") return;
+        await this.appendEvent("interaction.interrupted", {
+          interactionId: pending.interactionId,
+          statusReason,
+        });
+      },
+      wake: () => {
+        const { promise, resolve } = Promise.withResolvers<AskWake>();
+        this.askWaiters.set(execution.executionId, { resolve });
+        // Photo-finish re-check (journal-before-wake makes this sound): a
+        // ruling/interrupt that landed between the executor's projection
+        // query and this registration is visible to the re-query and wakes
+        // immediately — a wake fired before registration is never lost.
+        void (async () => {
+          const { events } = await this.readAllEvents();
+          const settled = interactionForExecution(events, execution.executionId);
+          if (settled === undefined || this.askWaiters.get(execution.executionId) === undefined)
+            return;
+          if (settled.status === "resolved" && settled.resolution !== undefined) {
+            this.wakeAskWaiter(execution.executionId, {
+              kind: "resolved",
+              resolution: settled.resolution,
+            });
+          } else if (settled.status === "interrupted") {
+            this.wakeAskWaiter(execution.executionId, { kind: "cancelled" });
+          }
+        })();
+        return promise;
+      },
+      askTimeoutMs: this.cfg.askTimeoutMs,
+      now: () => Date.now(),
+    };
   }
 
   /** Persist the terminal result, then (and only then) ack the service (I21). */
@@ -1401,6 +1606,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       // a still-blocked executor: wake it so its promise resolves; its own
       // late result is absorbed by the terminal guard above.
       this.wakeEdgeWaiter(execution.executionId, { kind: "cancelled" });
+      this.wakeAskWaiter(execution.executionId, { kind: "cancelled" });
       this.wakeExecWaiters(execution.executionId, false);
       return;
     }
@@ -1412,6 +1618,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     }
     this.waitWindows.delete(execution.executionId);
     this.wakeEdgeWaiter(execution.executionId, { kind: "cancelled" });
+    this.wakeAskWaiter(execution.executionId, { kind: "cancelled" });
     this.wakeExecWaiters(execution.executionId, false);
   }
 
@@ -1492,6 +1699,22 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         // blocking edge tool) resolves cancelled in-DO and journals its own
         // terminal result through the executor path.
         this.wakeEdgeWaiter(executionId, { kind: "cancelled" });
+        if (execution.tool === "ask") {
+          if (!this.askWaiters.has(executionId)) {
+            // Evicted executor: journal the interrupt here (bb interrupted row)
+            // so the recovery re-dispatch converges on a dying turn instead of
+            // re-blocking; a live executor journals it itself on the wake.
+            const { events } = await this.readAllEvents();
+            const pending = interactionForExecution(events, executionId);
+            if (pending?.status === "pending") {
+              await this.appendEvent("interaction.interrupted", {
+                interactionId: pending.interactionId,
+                statusReason: "turn cancelled while ask was pending",
+              });
+            }
+          }
+          this.wakeAskWaiter(executionId, { kind: "cancelled" });
+        }
         continue;
       }
       try {
@@ -1584,6 +1807,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       if (execution === undefined || executionTerminal(execution)) continue;
       this.waitWindows.delete(executionId);
       this.wakeEdgeWaiter(executionId, { kind: "cancelled" });
+      this.wakeAskWaiter(executionId, { kind: "cancelled" });
       await this.appendEvent("tool.result", {
         turnId,
         executionId,
@@ -1633,10 +1857,48 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     this.wakeExecWaiters(executionId, false);
   }
 
+  /**
+   * Ask-timeout arm (M1.5 T4, omp ask.timeout): a live waiter consumes the
+   * expiry through the executor (auto-selected ruling rendered omp-verbatim);
+   * a waiter lost to eviction gets the ruling journaled directly — the same
+   * single write path, and the re-asked executionId afterwards answers from
+   * the journal.
+   */
+  private async resolveInteractionExpiry(executionId: string): Promise<void> {
+    const execution = this.state.executions.get(executionId);
+    if (execution === undefined || executionTerminal(execution)) return;
+    if (this.askWaiters.has(executionId)) {
+      this.wakeAskWaiter(executionId, { kind: "expiry" });
+      return;
+    }
+    const { events } = await this.readAllEvents();
+    const pending = interactionForExecution(events, executionId);
+    if (pending === undefined) return;
+    const answers: Record<string, { selected: string[]; freeText?: string }> = {};
+    for (const question of pending.payload.questions) {
+      answers[question.id] = timeoutAutoSelect(question);
+    }
+    await this.appendEvent("tool.result", {
+      turnId: execution.turnId,
+      executionId,
+      status: "ok",
+      exitCode: null,
+      output: renderAskOutput(pending.payload, answers, true),
+    });
+    this.wakeExecWaiters(executionId, false);
+  }
+
   private wakeEdgeWaiter(executionId: string, wake: WaitWake): void {
     const waiter = this.edgeWaiters.get(executionId);
     if (waiter === undefined) return;
     this.edgeWaiters.delete(executionId);
+    waiter.resolve(wake);
+  }
+
+  private wakeAskWaiter(executionId: string, wake: AskWake): void {
+    const waiter = this.askWaiters.get(executionId);
+    if (waiter === undefined) return;
+    this.askWaiters.delete(executionId);
     waiter.resolve(wake);
   }
 

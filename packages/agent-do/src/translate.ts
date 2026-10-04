@@ -109,8 +109,12 @@ export function modelRequestFromEvents(
   for (const event of turnEvents) {
     switch (event.type) {
       // Thread-scoped journal families that never appear inside a turn slice
-      // (JobRegistry entries, notebook revisions) fall through untouched.
+      // (JobRegistry entries, notebook revisions, interaction rows — the
+      // ask's model-visible surface is its tool.result) fall through untouched.
       case "experimental_context_notes":
+      case "interaction.interrupted":
+      case "interaction.registered":
+      case "interaction.resolved":
       case "job.delivered":
       case "job.registered":
       case "job.settled":
