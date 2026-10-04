@@ -2,9 +2,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as natives from "@oh-my-pi/pi-natives";
-import { GlobTool } from "@oh-my-pi/pi-coding-agent/tools/glob";
-import { GrepTool } from "@oh-my-pi/pi-coding-agent/tools/grep";
+import type * as natives from "@oh-my-pi/pi-natives";
+import type { GlobTool } from "@oh-my-pi/pi-coding-agent/tools/glob";
+import type { GrepTool } from "@oh-my-pi/pi-coding-agent/tools/grep";
 import {
   createToolHost,
   executeDispatch,
@@ -27,6 +27,13 @@ const MACHINE = "machine-l1-glob-grep";
 let root: string;
 let fixture: string;
 let host: ToolHost;
+// omp/natives load lazily — the FIRST omp import in the bun process freezes
+// the agent-dir resolver, so every VALUE import here stays dynamic and runs
+// after createToolHost has pinned PI_CODING_AGENT_DIR (tool-runtime.ts
+// runtime discipline; a static import breaks the T6 isolation tests).
+let GlobToolClass: typeof GlobTool;
+let GrepToolClass: typeof GrepTool;
+let Natives: typeof natives;
 
 function frameOf(
   tool: string,
@@ -62,6 +69,9 @@ beforeAll(async () => {
   const big = Array.from({ length: SINGLE_LINES }, (_, i) => `SingleNeedle ${i + 1}`).join("\n");
   writeFileSync(join(fixture, "big.txt"), `${big}\n`);
   host = await createToolHost(fixture, join(root, "omp-agent"), MACHINE);
+  ({ GlobTool: GlobToolClass } = await import("@oh-my-pi/pi-coding-agent/tools/glob"));
+  ({ GrepTool: GrepToolClass } = await import("@oh-my-pi/pi-coding-agent/tools/grep"));
+  Natives = await import("@oh-my-pi/pi-natives");
 });
 
 afterAll(() => {
@@ -85,7 +95,7 @@ describe("glob (T7 #97)", () => {
 
   test("limit caps the page and reports resultLimitReached", async () => {
     // detail-level assertion: direct tool call keeps GlobToolDetails typed
-    const glob = new GlobTool(host.session as never);
+    const glob = new GlobToolClass(host.session as never);
     const result = await glob.execute("gl-3", { path: join(fixture, "pag"), limit: 5 });
     expect(result.isError).toBeFalsy();
     const text = result.content
@@ -139,9 +149,9 @@ describe("glob (T7 #97)", () => {
           { once: true },
         );
       });
-    const glob = new GlobTool(host.session as never, {
+    const glob = new GlobToolClass(host.session as never, {
       timeoutMs: 30,
-      nativeGlob: slowGlob as unknown as typeof natives.glob,
+      nativeGlob: slowGlob as unknown as Natives.glob,
     });
     const result = await glob.execute("gl-timeout", { path: fixture });
     expect(result.isError).toBeFalsy();
@@ -171,9 +181,9 @@ describe("glob (T7 #97)", () => {
           { once: true },
         );
       });
-    const glob = new GlobTool(host.session as never, {
+    const glob = new GlobToolClass(host.session as never, {
       timeoutMs: 30,
-      nativeGlob: silentGlob as unknown as typeof natives.glob,
+      nativeGlob: silentGlob as unknown as Natives.glob,
     });
     const result = await glob.execute("gl-timeout-empty", { path: fixture });
     expect(result.isError).toBeFalsy();
@@ -227,7 +237,7 @@ describe("grep (T7 #97)", () => {
 
   test("multi-file per-file match cap keeps a hot file at 20", async () => {
     // detail-level assertion: direct tool call keeps GrepToolDetails typed
-    const grep = new GrepTool(host.session as never);
+    const grep = new GrepToolClass(host.session as never);
     const result = await grep.execute("gr-5", {
       pattern: "HotNeedle",
       path: join(fixture, "caps"),
@@ -242,7 +252,7 @@ describe("grep (T7 #97)", () => {
   });
 
   test("single-file scope raises the per-file cap to 200", async () => {
-    const grep = new GrepTool(host.session as never);
+    const grep = new GrepToolClass(host.session as never);
     const result = await grep.execute("gr-6", {
       pattern: "SingleNeedle",
       path: join(fixture, "big.txt"),
@@ -297,7 +307,7 @@ describe("grep (T7 #97)", () => {
     // shape; the tool-level 30s text is anchor-pinned here instead of a
     // 30-second test.
     try {
-      await natives.grep({ pattern: "export", path: import.meta.dir, timeoutMs: 1 });
+      await Natives.grep({ pattern: "export", path: import.meta.dir, timeoutMs: 1 });
       // Cannot realistically finish >4k files in 1ms; if it ever does, walk
       // budget moved by orders of magnitude and this pin must be revisited.
       throw new Error(

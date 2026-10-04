@@ -2,11 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FindTool } from "@oh-my-pi/pi-coding-agent/tools/jfind";
-import { runCascade } from "@oh-my-pi/pi-coding-agent/tools/jfind/cascade";
-import { resolveSearchRoot } from "@oh-my-pi/pi-coding-agent/tools/jfind/tree";
-import { InternalUrlFilesystem } from "@oh-my-pi/pi-coding-agent/internal-urls/url-filesystem";
-import { sessionResolveContext } from "@oh-my-pi/pi-coding-agent/internal-urls/context";
+import type { FindTool } from "@oh-my-pi/pi-coding-agent/tools/jfind";
+import type { runCascade } from "@oh-my-pi/pi-coding-agent/tools/jfind/cascade";
+import type { resolveSearchRoot } from "@oh-my-pi/pi-coding-agent/tools/jfind/tree";
+import type { InternalUrlFilesystem } from "@oh-my-pi/pi-coding-agent/internal-urls/url-filesystem";
+import type { sessionResolveContext } from "@oh-my-pi/pi-coding-agent/internal-urls/context";
 import {
   createToolHost,
   executeDispatch,
@@ -32,6 +32,15 @@ const MACHINE = "machine-l1-find";
 let root: string;
 let fixture: string;
 let host: ToolHost;
+// omp loads lazily — the FIRST omp import in the bun process freezes the
+// agent-dir resolver, so every VALUE import here stays dynamic and runs after
+// createToolHost has pinned PI_CODING_AGENT_DIR (tool-runtime.ts runtime
+// discipline; a static import breaks the T6 isolation tests).
+let FindToolClass: typeof FindTool;
+let RunCascade: typeof runCascade;
+let ResolveSearchRoot: typeof resolveSearchRoot;
+let InternalUrlFilesystemClass: typeof InternalUrlFilesystem;
+let SessionResolveContext: typeof sessionResolveContext;
 
 function frameOf(
   tool: string,
@@ -58,6 +67,14 @@ beforeAll(async () => {
   );
   writeFileSync(join(fixture, "notes.md"), "plain documentation, no code\n");
   host = await createToolHost(fixture, join(root, "omp-agent"), MACHINE);
+  ({ FindTool: FindToolClass } = await import("@oh-my-pi/pi-coding-agent/tools/jfind"));
+  ({ runCascade: RunCascade } = await import("@oh-my-pi/pi-coding-agent/tools/jfind/cascade"));
+  ({ resolveSearchRoot: ResolveSearchRoot } =
+    await import("@oh-my-pi/pi-coding-agent/tools/jfind/tree"));
+  ({ InternalUrlFilesystem: InternalUrlFilesystemClass } =
+    await import("@oh-my-pi/pi-coding-agent/internal-urls/url-filesystem"));
+  ({ sessionResolveContext: SessionResolveContext } =
+    await import("@oh-my-pi/pi-coding-agent/internal-urls/context"));
 });
 
 afterAll(() => {
@@ -80,7 +97,7 @@ describe("judge failure degradation through the real chain (T11 #101)", () => {
   /** Real Settings + a registry whose judge role resolves to zero candidates. */
   function judgelessTool(): FindTool {
     const session = { ...host.session, modelRegistry: { getAvailable: () => [] } };
-    return new FindTool(session as never);
+    return new FindToolClass(session as never);
   }
 
   test("zero judge candidates: cascade completes unjudged, footer reports every failure, all-failed marks isError", async () => {
@@ -128,7 +145,7 @@ describe("judge failure degradation through the real chain (T11 #101)", () => {
     const emptyRoot = join(root, "empty");
     mkdirSync(emptyRoot, { recursive: true });
     const session = { ...host.session, cwd: emptyRoot, modelRegistry: { getAvailable: () => [] } };
-    const result = await new FindTool(session as never).execute("fd-4", {
+    const result = await new FindToolClass(session as never).execute("fd-4", {
       query: "anything",
       grep_keywords: [],
     });
@@ -148,11 +165,11 @@ describe("budget timeout propagation (T11 #101)", () => {
     // an aborted caller signal surfaces as a thrown abort — never as a
     // partial "successful" result (cascade.ts:149 throwIfAborted in #ask).
     const budget = AbortSignal.timeout(40);
-    const filesystem = new InternalUrlFilesystem({
-      context: sessionResolveContext(host.session as never, { signal: budget }),
+    const filesystem = new InternalUrlFilesystemClass({
+      context: SessionResolveContext(host.session as never, { signal: budget }),
       tier: "read",
     });
-    const judgeRoot = await resolveSearchRoot(filesystem, fixture, fixture);
+    const judgeRoot = await ResolveSearchRoot(filesystem, fixture, fixture);
     let hangReleased = false;
     const hangingJudge = {
       label: "l1-hanging-judge",
@@ -170,7 +187,7 @@ describe("budget timeout propagation (T11 #101)", () => {
     };
     let caught: unknown;
     try {
-      await runCascade({
+      await RunCascade({
         root: judgeRoot,
         filesystem,
         query: "login flow",

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EditTool } from "@oh-my-pi/pi-coding-agent/edit";
+import type { EditTool } from "@oh-my-pi/pi-coding-agent/edit";
 import {
   createToolHost,
   executeDispatch,
@@ -29,6 +29,11 @@ const MACHINE = "machine-l1-edit";
 let root: string;
 let fixture: string;
 let host: ToolHost;
+// omp loads lazily — the FIRST omp import in the bun process freezes the
+// agent-dir resolver, so the VALUE import stays dynamic after createToolHost
+// pins PI_CODING_AGENT_DIR (tool-runtime.ts runtime discipline; a static
+// import breaks the T6 isolation tests).
+let EditToolClass: typeof EditTool;
 
 function frameOf(
   tool: string,
@@ -71,6 +76,7 @@ beforeAll(async () => {
   writeFileSync(join(fixture, "seg-a.txt"), ["a1", "a2"].join("\n"));
   writeFileSync(join(fixture, "seg-b.txt"), ["b1", "b2"].join("\n"));
   host = await createToolHost(fixture, join(root, "omp-agent"), MACHINE);
+  ({ EditTool: EditToolClass } = await import("@oh-my-pi/pi-coding-agent/edit"));
 });
 
 afterAll(() => {
@@ -239,7 +245,7 @@ describe("exclusive batch contract (T8 #98)", () => {
     // omp has no lock and no "concurrent edit" error: exclusivity is the
     // agent-loop scheduler running edit as a SOLO batch (index.ts:328). Pin
     // the contract surface; serialization is upstream's tested behavior.
-    const edit = new EditTool(host.session as never, "hashline");
+    const edit = new EditToolClass(host.session as never, "hashline");
     expect(edit.concurrency).toBe("exclusive");
   });
 });

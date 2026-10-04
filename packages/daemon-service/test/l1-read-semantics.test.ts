@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ReadTool } from "@oh-my-pi/pi-coding-agent/tools/read";
+import type { ReadTool } from "@oh-my-pi/pi-coding-agent/tools/read";
 import {
   ToolRuntime,
   createToolHost,
@@ -30,6 +30,11 @@ let root: string;
 let fixture: string;
 let host: ToolHost;
 let db: Database;
+// omp loads lazily — the FIRST omp import in the bun process freezes the
+// agent-dir resolver, so every omp VALUE import here stays dynamic and runs
+// after createToolHost has pinned PI_CODING_AGENT_DIR (runtime discipline of
+// tool-runtime.ts; a static import would break the T6 isolation tests).
+let ReadToolClass: typeof ReadTool;
 
 function frameOf(
   tool: string,
@@ -93,6 +98,7 @@ beforeAll(async () => {
   db.close();
 
   host = await createToolHost(fixture, agentDir, MACHINE);
+  ({ ReadTool: ReadToolClass } = await import("@oh-my-pi/pi-coding-agent/tools/read"));
 });
 
 afterAll(() => {
@@ -133,7 +139,7 @@ describe("read truncation semantics (T5 #95)", () => {
     // The "[Showing lines … Use :N to continue]" tail is TUI-rendered from
     // details.meta.truncation (output-meta.ts:253-254) — the tool result
     // itself carries the meta; the adapter maps it to outputTruncated.
-    const tool = host.tools.read as ReadTool;
+    const tool = host.tools.read as ReadToolClass;
     const direct = await tool.execute("rd-3b", { path: "big.txt" });
     expect(direct.details?.truncation).toMatchObject({
       truncated: true,
@@ -150,7 +156,7 @@ describe("read truncation semantics (T5 #95)", () => {
   test("byte budget max(50 KiB, lines×512) truncates by bytes with typed details", async () => {
     // omp structural bridge: the host registry stores the same instance the
     // adapter dispatches to; this cast only recovers the concrete omp type.
-    const tool = host.tools.read as ReadTool;
+    const tool = host.tools.read as ReadToolClass;
     const result = await tool.execute("rd-4", { path: "wide.txt" });
     expect(result.isError).toBeFalsy();
     expect(result.details?.truncation?.truncatedBy).toBe("bytes");
