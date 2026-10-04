@@ -298,6 +298,12 @@ export const agentEventDataSchemas = {
      */
     outputSchemaJson: z.string().min(1).optional(),
     schemaMode: z.enum(["permissive", "strict"]).optional(),
+    /**
+     * T20 #110: present iff the spawn prepared a daemon-side isolated
+     * workspace. JSON-encoded `SpawnIsolationInfo` — same serialization
+     * rule as outputSchemaJson (RPC-serializable event data only).
+     */
+    isolationJson: z.string().min(1).optional(),
     depth: z.number().int().nonnegative(),
   }),
 

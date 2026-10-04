@@ -283,6 +283,7 @@ describe("M1.5 T16 — executionId re-adopt (recovery, never a second spawn)", (
         createThread: (request) => Promise.resolve({ threadId: request.threadId, duplicated: false }),
         runSubagent: () => Promise.resolve({ turnId: "t-child", duplicated: false }),
       },
+      isolationOp: undefined,
       wake: () => Promise.resolve("cancelled" as const),
       config: DEFAULT_TASK_TOOL_CONFIG,
     };

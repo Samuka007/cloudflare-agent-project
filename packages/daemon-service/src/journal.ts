@@ -50,6 +50,28 @@ export type JournalOp =
   | { kind: "spawn_forwarded"; at: number; executionId: string; requestId: string }
   | { kind: "spawn_ack"; at: number; executionId: string; pid: number; pidStartedAt: number }
   | { kind: "spawn_failed"; at: number; executionId: string; error: string }
+  /**
+   * T20 #110 task-isolation op audit (M1.5/T20). No ExecutionRecord: the
+   * op is a synchronous DO RPC (never re-forwarded, never kill-listed, and
+   * invisible to the agent DO's execution state) — the rows exist purely
+   * for the journal audit trail the ticket requires.
+   */
+  | {
+      kind: "isolation_op";
+      at: number;
+      executionId: string;
+      threadId: string;
+      op: "prepare" | "release";
+      argumentsJson: string;
+    }
+  | {
+      kind: "isolation_result";
+      at: number;
+      executionId: string;
+      op: "prepare" | "release";
+      status: ToolResultPayload["status"];
+      output: string;
+    }
   | { kind: "output"; at: number; executionId: string; offset: number; text: string }
   | { kind: "output_dup_dropped"; at: number; executionId: string; offset: number }
   | { kind: "output_gap"; at: number; executionId: string; from: number; to: number }
@@ -222,6 +244,10 @@ export function foldOp(state: ServiceStateData, op: JournalOp): void {
       return;
     }
     case "spawn_forwarded":
+      return;
+    case "isolation_op":
+      return;
+    case "isolation_result":
       return;
     case "spawn_ack": {
       const record = recordOf(state, op);

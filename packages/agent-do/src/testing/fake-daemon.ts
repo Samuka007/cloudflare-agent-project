@@ -2,6 +2,7 @@ import type {
   DaemonServiceClient,
   DispatchOutcome,
   ExecutionUpdate,
+  IsolationOpOutcome,
   ToolDispatchRequest,
   ToolResultPayload,
 } from "../daemon.js";
@@ -35,7 +36,15 @@ export type FakeJournalOp =
   | { op: "tombstone"; executionId: string }
   | { op: "orphan_suspect"; executionId: string }
   | { op: "session_replaced"; hostId: string; oldSessionId: string }
-  | { op: "stale_session_rejected"; hostId: string };
+  | { op: "stale_session_rejected"; hostId: string }
+  | {
+      op: "isolation_op";
+      executionId: string;
+      threadId: string;
+      isolationOp: "prepare" | "release";
+      argumentsJson: string;
+      at: number;
+    };
 
 interface DerivedExecution {
   state: "RUNNING" | "COMPLETED" | "UNKNOWN" | "TOMBSTONE";
@@ -379,6 +388,47 @@ export class FakeDaemonService implements DaemonServiceClient {
     );
   }
 
+  /**
+   * T20 isolation-op echo: the fake has no isolation body, so `prepare`
+   * resolves a minimal workspace-info payload and `release` a no-changes
+   * summary. Offline hosts fail like the real DO. Tests assert the SEAM
+   * (journal rows, arguments, error propagation), not isolation itself.
+   */
+  isolationOp(request: {
+    machineId: string;
+    threadId: string;
+    op: "prepare" | "release";
+    arguments: Record<string, unknown>;
+    timeoutMs: number;
+  }): Promise<IsolationOpOutcome> {
+    if (!this.hostOnline) return Promise.resolve({ kind: "host_offline" });
+    const childThreadId = request.arguments.threadId;
+    const agentId = request.arguments.agentId;
+    this.record({
+      op: "isolation_op",
+      at: Date.now(),
+      executionId: `${request.threadId}:iso-${crypto.randomUUID()}`,
+      threadId: request.threadId,
+      isolationOp: request.op,
+      argumentsJson: JSON.stringify(request.arguments),
+    });
+    const output =
+      request.op === "prepare"
+        ? JSON.stringify({
+            workspaceDir: `/tmp/fake-isolation/${String(agentId)}`,
+            backend: "rcopy",
+            fellBack: false,
+            fallbackReason: null,
+            mergeMode: "patch",
+            applyGate: true,
+          })
+        : `No changes to apply. (child ${String(childThreadId)})`;
+    return Promise.resolve({
+      kind: "ok",
+      result: { status: "ok", exitCode: 0, output },
+    });
+  }
+
   // -- I19: eviction + deterministic journal replay -------------------------
 
   evict(): void {
@@ -429,6 +479,7 @@ export class FakeDaemonService implements DaemonServiceClient {
         case "output_gap":
         case "session_replaced":
         case "stale_session_rejected":
+        case "isolation_op":
           // journal-only markers; nothing to rebuild into derived state
           break;
       }

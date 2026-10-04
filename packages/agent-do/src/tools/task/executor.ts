@@ -1,4 +1,6 @@
 import type { EdgeToolResult } from "../edge.js";
+import type { IsolationOpOutcome } from "../../daemon.js";
+import { z } from "zod";
 import type { JobRegistration, JobRegistry } from "../job-registry.js";
 import type { WaitWake } from "../wait.js";
 import { newThreadId } from "@cap/protocol";
@@ -24,6 +26,7 @@ import {
   truncateDeliveryOutput,
   uniquifyAgentName,
 } from "./plan.js";
+import type { SpawnIsolationInfo } from "./types.js";
 
 /**
  * M1.5 T16 task edge executor (proposal §3 T16): same-host single dispatch,
@@ -77,7 +80,7 @@ export interface RunSubagentRequest {
   schemaMode?: "permissive" | "strict";
 }
 
-/** Validated flat spawn parameters (omp taskSchemaNoIsolation T16 slice). */
+/** Validated flat spawn parameters (omp task schema, T16 slice + T20 isolated). */
 export interface ValidatedSpawnParams {
   name?: string;
   agent?: string;
@@ -86,6 +89,8 @@ export interface ValidatedSpawnParams {
   model?: string;
   outputSchema?: unknown;
   schemaMode?: "permissive" | "strict";
+  /** T20 #110: run the child against a daemon-side isolated workspace. */
+  isolated?: boolean;
 }
 
 export interface TaskToolConfig {
@@ -96,6 +101,8 @@ export interface TaskToolConfig {
   maxOutputBytes: number;
   maxOutputLines: number;
   inlineSummaryCapChars: number;
+  /** T20 #110: prepare/release RPC deadline (deployment execTimeoutMs). */
+  isolationOpTimeoutMs: number;
 }
 
 export const DEFAULT_TASK_TOOL_CONFIG: TaskToolConfig = {
@@ -104,6 +111,7 @@ export const DEFAULT_TASK_TOOL_CONFIG: TaskToolConfig = {
   maxOutputBytes: MAX_OUTPUT_BYTES,
   maxOutputLines: MAX_OUTPUT_LINES,
   inlineSummaryCapChars: INLINE_SUMMARY_CAP_CHARS,
+  isolationOpTimeoutMs: 600_000,
 };
 
 /**
@@ -138,6 +146,17 @@ export interface TaskToolContext {
   registry: Pick<JobRegistry, "register" | "settle">;
   /** Child DO seam; undefined = no AGENT_DO binding (spawn fails loudly). */
   subagentHost: SubagentSpawnHost | undefined;
+  /** T20 #110 daemon isolation seam; undefined = DAEMON_SERVICE unbound —
+   * isolated spawns fail loudly instead of silently running unisolated. */
+  isolationOp:
+    | ((request: {
+        machineId: string;
+        threadId: string;
+        op: "prepare" | "release";
+        arguments: Record<string, unknown>;
+        timeoutMs: number;
+      }) => Promise<IsolationOpOutcome>)
+    | undefined;
   /** DO wake channel (edgeWaiters): resolves on settle/message/cap/cancel. */
   wake(): Promise<WaitWake["kind"]>;
   config: TaskToolConfig;
@@ -150,6 +169,32 @@ const DEPTH_CAP_BLOCKED =
 
 const NO_SUBAGENT_HOST =
   "Task spawn failed: no subagent host bound on this deployment (missing AGENT_DO namespace).";
+
+const ISOLATION_UNAVAILABLE =
+  "Task spawn failed: isolated execution requires a daemon binding (missing DAEMON_SERVICE) on this deployment.";
+
+/** Boundary schema over the daemon's prepare payload (IsolationPrepareInfo JSON). */
+const isolationPrepareSchema = z.object({
+  workspaceDir: z.string().min(1),
+  backend: z.string().min(1),
+  fellBack: z.boolean(),
+  fallbackReason: z.string().nullable(),
+  mergeMode: z.enum(["patch", "branch"]),
+  applyGate: z.boolean(),
+});
+
+/** Parse the daemon's prepare payload (IsolationPrepareInfo JSON). */
+export function parseIsolationPrepare(output: string): SpawnIsolationInfo {
+  return isolationPrepareSchema.parse(JSON.parse(output)) satisfies SpawnIsolationInfo;
+}
+
+/** The settlement suffix describing an isolation session's fate (keep-alive). */
+export function isolationRetainedNote(info: { workspaceDir: string; applyGate: boolean }): string {
+  const fate = info.applyGate
+    ? "an explicit release captures and merges its changes"
+    : "an explicit release captures its delta without applying (apply gate closed)";
+  return `[isolated workspace retained at ${info.workspaceDir} — revive via \`write agent://<id>\` to keep working there; ${fate}]`;
+}
 
 /** Registration output for a background spawn — the omp "ID returns
  * immediately" surface (P:task.md line 1) with the §2.4 follow-up rule. */
@@ -229,7 +274,50 @@ export async function runTaskTool(
 
   if (ctx.subagentHost === undefined) return { status: "error", output: NO_SUBAGENT_HOST };
 
-  // Journal-first (iron rule 1): the plan row lands before any cross-DO RPC.
+  // T20 #110: isolation prepare runs BEFORE the plan row and the child —
+  // a failure here (no daemon binding, backend chain exhausted, baseline
+  // over the snapshot budget) settles the spawn failed with the child never
+  // driven (fail-before-spawn). Crash-safety: a crash between prepare and
+  // the plan row leaves an orphan workspace that the recovery re-dispatch's
+  // prepare destroys deterministically (omp ensureIsolation wipes the
+  // (repoRoot, agentId) slot) — the plan row stays the spawn-dedup
+  // authority for createThread/runSubagent below.
+  let isolation: {
+    workspaceDir: string;
+    backend: string;
+    fellBack: boolean;
+    fallbackReason: string | null;
+    mergeMode: "patch" | "branch";
+    applyGate: boolean;
+  } | null = null;
+  if (params.isolated === true) {
+    if (ctx.isolationOp === undefined) {
+      return {
+        status: "error",
+        output: `Task ${agentId} failed to start: ${ISOLATION_UNAVAILABLE}`,
+      };
+    }
+    const outcome = await ctx.isolationOp({
+      machineId: ctx.machineId,
+      threadId: ctx.threadId,
+      op: "prepare",
+      arguments: { threadId: spawnId, agentId, description: params.task },
+      timeoutMs: ctx.config.isolationOpTimeoutMs,
+    });
+    if (outcome.kind !== "ok") {
+      const detail =
+        outcome.kind === "error" ? outcome.error : "daemon host offline (no live client session)";
+      return {
+        status: "error",
+        output: `Task ${agentId} failed to start: isolation prepare failed — ${detail}`,
+      };
+    }
+    isolation = parseIsolationPrepare(outcome.result.output);
+  }
+
+  // Journal-first (iron rule 1): the plan row (with the prepare outcome
+  // JSON-encoded, same rule as outputSchemaJson) lands before the child DO
+  // RPCs — the spawn-dedup authority for everything below.
   await ctx.recordSpawnPlan({
     seq: 0,
     executionId: ctx.executionId,
@@ -246,6 +334,7 @@ export async function runTaskTool(
     ...(params.model === undefined ? {} : { model: params.model }),
     ...(params.outputSchema === undefined ? {} : { outputSchema: params.outputSchema }),
     ...(params.schemaMode === undefined ? {} : { schemaMode: params.schemaMode }),
+    ...(isolation === null ? {} : { isolation }),
     depth: ctx.depth + 1,
   });
 
@@ -270,6 +359,19 @@ export async function runTaskTool(
     // Child bring-up failed before any turn ran: settle the spawn as failed so
     // neither the journal (plan without settlement) nor a blocking waiter
     // dangles. omp keeps failed spawn records — so does the plan row above.
+    // The just-prepared workspace is released (omp failed-startup cleanup);
+    // best-effort — the failure text stays the bring-up error.
+    if (isolation !== null && ctx.isolationOp !== undefined) {
+      await ctx
+        .isolationOp({
+          machineId: ctx.machineId,
+          threadId: ctx.threadId,
+          op: "release",
+          arguments: { threadId: spawnId },
+          timeoutMs: ctx.config.isolationOpTimeoutMs,
+        })
+        .catch(() => undefined);
+    }
     const output = `Task ${agentId} failed to start: ${error instanceof Error ? error.message : String(error)}`;
     await settleSpawn(ctx, {
       spawnId,
