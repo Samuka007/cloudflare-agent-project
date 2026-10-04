@@ -163,6 +163,43 @@ const manageSkillSchema = type({
   ),
 });
 
+// omp task/types.ts:81-90 (`taskSchemaNoIsolation`, the T16 flat slice:
+// batch/isolation/effort/eval-tools flags all off) plus the ticket §3 T16
+// `model` ordered-preference field (docs/tools/task.md:47). `outputSchema`/
+// `schemaMode` are accepted and journaled; their validation machinery is
+// T17 (yield full semantics) — recorded, not yet enforced.
+const taskSchema = type({
+  "name?": type("string").describe(
+    "CamelCase ≤32, auto-generated if omitted; address agent by name",
+  ),
+  "agent?": type("string").describe("agent type; omit for the default (`task`)"),
+  task: type("string").describe(
+    "self-contained assignment (# Target files/non-goals, # Change steps/APIs, # Acceptance observable result)",
+  ),
+  solutionSpace: type("string").describe(
+    "how open-ended the child's problem is; the only input to the child's auto thinking tier",
+  ),
+  "model?": type("string").describe(
+    "ordered model preference; explicit selectors never fall back to the parent model",
+  ),
+  "outputSchema?": type("unknown").describe(
+    "structured contract for the child's terminal yield (validated by T17)",
+  ),
+  "schemaMode?": type("'permissive' | 'strict'").describe(
+    "default permissive warns after retries; strict fails",
+  ),
+});
+
+// omp yield.ts:262-269 (buildYieldParameters base, no outputSchema): the
+// loose-record `data`, optional `error`, optional `type` labels.
+const yieldSchema = type({
+  "type?": type("string | string[]").describe(
+    "Optional result type. A non-empty string array is incremental; a string is terminal.",
+  ),
+  "data?": type("unknown").describe("Structured JSON output (no schema specified)"),
+  "error?": type("string").describe("Failure reason; mutually exclusive with data"),
+});
+
 // ---------------------------------------------------------------------------
 // Description templates — omp prompts/tools/*.md verbatim
 // ---------------------------------------------------------------------------
@@ -311,6 +348,38 @@ User-authored skills separate; tool NEVER edits them.
 \`name\`: kebab-case (lowercase letters, digits, hyphens).
 \`description\`: specific; drives discovery.
 No frontmatter in \`body\`; generated from \`name\` and \`description\`.`;
+// omp prompts/tools/task.md rendered at the M1.5 fixed policy: asyncEnabled,
+// batch/isolation/effort/evalTools/scout/IRC off, no model mentions, bundled
+// `task` agent only. The template's nested/`unless` conditionals exceed the
+// single-level {{#if}} resolver, so the resolved text is stored directly —
+// every clause is verbatim from the source template at that policy.
+const TASK_DESCRIPTION_TEMPLATE = `Spawn one agent; ID returns immediately.
+
+# Results
+\`outputSchema\` parsed payload, even invalid: \`agent://<id>\` (field \`/<field>\`, nested \`/reports/0/data\`); invalid preview inline.
+
+# Delegation
+Use most specific agent. Prefer one agent to investigate + edit. Omit \`agent\` only for default (\`task\`); NEVER specify it.
+Shared edits need one integration owner. Set interfaces in the task. Every task MUST skip build/lint/tests/formatters mid-flight; run once afterward.
+
+# Inputs
+\`name\`: CamelCase ≤32, auto-generated if omitted; address agent by name. \`outputSchema\` overrides agent/session schemas.
+\`solutionSpace\`: describe how open-ended the child's problem is: whether the fix or design is given, or which causes or designs remain open. Volume of work does not widen it; NEVER mention sibling agents or coordination. (\`one fix: rename, names given\`; \`one fix: slice end in paginate\`; \`single-flight cache load; races easy to miss\`; \`several retry API shapes; error classes to choose\`; \`deadlock cause open, no repro\`)
+\`schemaMode\`: default permissive warns after retries; strict fails.
+Children start blank; large payloads via \`local://<path>\`, NEVER inline.
+
+# Format
+\`task\`: self-contained (\`# Target\` files/non-goals, \`# Change\` steps/APIs, \`# Acceptance\` observable result).
+
+# Available Agents
+- \`task\`: General-purpose subagent with full capabilities for delegated multi-step tasks.`;
+
+// omp prompts/tools/yield.md at the M1.5 fixed policy (no workpool items, no
+// outputSchema): lines 2, 4 and 10 verbatim, resolved from their conditionals.
+const YIELD_DESCRIPTION_TEMPLATE = `Submit subagent output: \`{ data: <your output> }\` for success, \`{ error: "message" }\` for failure. Never both; never a bare payload outside \`data\`.
+
+Omit \`type\` for the usual single terminal structured result. Pass \`type: ["section"]\` to submit an incremental, non-terminal section that accumulates.
+Pass \`type: "result"\` to finalize; when \`data\` is omitted, your last assistant turn becomes the raw final result.`;
 
 /** Conditional flags the bash template resolves against (omp render context). */
 export interface ToolRenderFlags {
@@ -502,6 +571,20 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     intent: "require",
   },
   {
+    // omp task/index.ts — essential hybrid `task`, edge half (M1.5 T16):
+    // same-host single dispatch + journal-first spawn plan + child AgentDO
+    // bring-up + result backflow; executor in tools/task/executor.ts.
+    // Wire order per omp builtin-names.ts: between security_scan and wait —
+    // security_scan is unregistered at M1.5, so `task` slots before `wait`.
+    // Orchestration face only: `isolated` execution is the daemon half (T20).
+    name: "task",
+    schema: taskSchema,
+    descriptionTemplate: TASK_DESCRIPTION_TEMPLATE,
+    class: "edge",
+    backend: { kind: "do-local" },
+    intent: "require",
+  },
+  {
     // omp tools/wait.ts:49-59 — blocking wait over owned jobs + peer messages;
     // executor in tools/wait.ts, journal-backed JobRegistry (M1.5 T2).
     // omp declares `intent = "optional"` (wait.ts:59).
@@ -557,6 +640,19 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",
+  },
+  {
+    // omp tools/yield.ts:289-293 — the subagent terminal channel (M1.5 T16
+    // minimal gate: one terminal yield per child run; ladder/supersession/
+    // artifacts are T17). Hidden tool: never on the main wire (omp
+    // builtin-names.ts HIDDEN_TOOL_NAMES); after the last builtin
+    // (manage_skill, #30), closing the wire order.
+    name: "yield",
+    schema: yieldSchema,
+    descriptionTemplate: YIELD_DESCRIPTION_TEMPLATE,
+    class: "edge",
+    backend: { kind: "do-local" },
+    intent: "omit",
   },
 ];
 
@@ -650,4 +746,33 @@ export function wireToolSet(
   return TOOL_REGISTRY.filter((row) => enabled.includes(row.name)).map((row) =>
     toolWireDefinition(row, flags),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Wire surfaces (M1.5 T16) — omp builtin-names.ts:15-21 main list vs
+// HIDDEN_TOOL_NAMES. `yield` is the subagent-only hidden tool: the Main wire
+// never renders it, the subagent surface does. `think` stays on both (T1
+// decision: rendered with intent omit). Enablement remains deployment-time
+// input per control-plane §1.2 — the surfaces are static projections of the
+// compile-time registry, never runtime settings.
+// ---------------------------------------------------------------------------
+
+/** Hidden rows: subagent surface only (omp HIDDEN_TOOL_NAMES ∩ registry). */
+export const SUBAGENT_ONLY_TOOLS: readonly string[] = ["yield"];
+
+/** The Main-thread wire names: every registered row minus the hidden tail. */
+export const MAIN_WIRE_TOOLS: readonly string[] = TOOL_REGISTRY.filter(
+  (row) => !SUBAGENT_ONLY_TOOLS.includes(row.name),
+).map((row) => row.name);
+
+/**
+ * The subagent wire names: full registry including the hidden tail. The
+ * spawning-DO computes the depth verdict (canSpawnAtDepth over its
+ * task.subagent_identity depth + config) and strips `task` past the cap —
+ * omp strips the tool at maxRecursionDepth (task/types.ts:217-224), which is
+ * also the PI_BLOCKED_AGENT analog for process-hosted children.
+ */
+export function subagentWireTools(spawnPolicyBlocked: boolean): readonly string[] {
+  const names = TOOL_REGISTRY.map((row) => row.name);
+  return spawnPolicyBlocked ? names.filter((name) => name !== "task") : names;
 }

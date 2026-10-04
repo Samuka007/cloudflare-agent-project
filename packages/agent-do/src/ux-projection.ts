@@ -33,6 +33,12 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       case "job.settled":
       case "peer.message":
       case "peer.message_consumed":
+      // M1.5 T16 task/subagent journal family: projected by tools/task/*,
+      // not part of the UX envelope (same rule as the JobRegistry family).
+      case "task.spawn_planned":
+      case "task.spawn_settled":
+      case "task.async_result":
+      case "task.subagent_identity":
       case "todo_phases":
       case "tool.exec_started":
       case "tool.output":

@@ -41,6 +41,18 @@ export interface WatchdogConfig {
   peerWaitLadderMs: number[];
   /** Consecutive-wait gap that resets the ladder (omp wait.md:17, ≥60s). */
   peerLadderResetGapMs: number;
+  /**
+   * Task-cluster knobs (M1.5 T16; omp task/settings.ts anchors). Depth cap
+   * mirrors omp task.maxRecursionDepth (default 2, <0 disables); async
+   * mirrors omp async.enabled (non-blocking spawns go background when on).
+   */
+  taskMaxRecursionDepth: number;
+  taskAsyncEnabled: boolean;
+  /** omp task/types.ts:29-32 delivery caps (PI_TASK_MAX_OUTPUT_*). */
+  taskMaxOutputBytes: number;
+  taskMaxOutputLines: number;
+  /** omp result-summary.ts:16 inline summary threshold. */
+  taskInlineSummaryCapChars: number;
 }
 
 export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
@@ -57,6 +69,11 @@ export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
   waitMaxMs: 30 * 60_000,
   peerWaitLadderMs: [5_000, 10_000, 30_000, 60_000, 300_000],
   peerLadderResetGapMs: 60_000,
+  taskMaxRecursionDepth: 2,
+  taskAsyncEnabled: true,
+  taskMaxOutputBytes: 500_000,
+  taskMaxOutputLines: 5000,
+  taskInlineSummaryCapChars: 5000,
 };
 
 const configPatchSchema = z.object({
@@ -73,6 +90,11 @@ const configPatchSchema = z.object({
   waitMaxMs: z.number().int().positive().optional(),
   peerWaitLadderMs: z.array(z.number().int().positive()).min(1).optional(),
   peerLadderResetGapMs: z.number().int().positive().optional(),
+  taskMaxRecursionDepth: z.number().int().optional(),
+  taskAsyncEnabled: z.boolean().optional(),
+  taskMaxOutputBytes: z.number().int().positive().optional(),
+  taskMaxOutputLines: z.number().int().positive().optional(),
+  taskInlineSummaryCapChars: z.number().int().positive().optional(),
 });
 
 export type WatchdogConfigPatch = z.infer<typeof configPatchSchema>;

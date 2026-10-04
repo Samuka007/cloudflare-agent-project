@@ -35,6 +35,8 @@ export interface PriorModelCall {
    * its tool_result ever reaches the wire.
    */
   toolResults: ToolResultContribution[];
+  /** Async results that rode this call's boundary (permanent history). */
+  asyncResults: AsyncResultContribution[];
 }
 
 export interface ToolResultContribution {
@@ -42,6 +44,21 @@ export interface ToolResultContribution {
   tool: string;
   status: "ok" | "error" | "timeout" | "cancelled" | "outcome_unknown";
   output: string;
+}
+
+/**
+ * One background-task completion injected at a call boundary (M1.5 T16
+ * async-result follow-up, omp ASYNC_RESULT_MESSAGE_TYPE "async-result").
+ * `text` is the delivery-formatted rendering ("Background task <id>
+ * complete/failed." + summary-capped output).
+ */
+export interface AsyncResultContribution {
+  /** The `task.async_result` journal seq — boundary attribution key. */
+  seq: number;
+  spawnId: string;
+  agentId: string;
+  status: "ok" | "error";
+  text: string;
 }
 
 export interface ModelRequest {
@@ -64,6 +81,24 @@ export interface ModelRequest {
    * projects the same request.
    */
   priorCalls: PriorModelCall[];
+  /**
+   * Wire surface (M1.5 T16): the Main thread renders MAIN_WIRE_TOOLS; a
+   * subagent renders the subagent surface (hidden `yield` included). Absent
+   * = Main. Purely additive — the mock provider and tests may ignore it.
+   */
+  toolSurface?: "main" | "subagent";
+  /**
+   * Subagent-only: the spawning DO's depth verdict (canSpawnAtDepth) — the
+   * wire strips `task` past the recursion cap. Ignored off the subagent
+   * surface.
+   */
+  spawnPolicyBlocked?: boolean;
+  /**
+   * Async results riding THIS call's boundary — the pending follow-ups that
+   * landed after the previous call started. They enter the context here and
+   * stay in every later call's history via the prior-call slices.
+   */
+  asyncResults: AsyncResultContribution[];
 }
 
 export type ModelStreamChunk =

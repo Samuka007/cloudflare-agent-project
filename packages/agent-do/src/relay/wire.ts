@@ -1,5 +1,11 @@
 import type { ModelRequest, PriorModelCall, SteerContribution } from "../provider.js";
-import { M0_RENDER_FLAGS, wireToolSet } from "../tools/registry.js";
+import {
+  MAIN_WIRE_TOOLS,
+  M0_RENDER_FLAGS,
+  subagentWireTools,
+  wireToolSet,
+} from "../tools/registry.js";
+import type { AsyncResultContribution } from "../provider.js";
 
 /**
  * Anthropic Message wire assembly (#28 ruling ③ translation layer, omp §1.5
@@ -123,6 +129,19 @@ export function anthropicRequestBody(
     }
   };
 
+  /**
+   * M1.5 T16 async-result follow-ups ride the same boundary position as
+   * steers — the user-side material of the call they attribute to (omp
+   * injects them as follow-up messages into the run; the boundary merge is
+   * our alternation-safe shape). Each result renders as one tagged text
+   * block, prefixed `[async-result]` for model-side recognition.
+   */
+  const appendAsyncResults = (results: readonly AsyncResultContribution[]): void => {
+    for (const result of results) {
+      pendingUserBlocks.push({ type: "text", text: `[async-result] ${result.text}` });
+    }
+  };
+
   const assistantOf = (call: PriorModelCall): AnthropicMessage => {
     const content: AnthropicAssistantBlock[] = [];
     if (call.text !== "") {
@@ -152,6 +171,7 @@ export function anthropicRequestBody(
   pendingUserBlocks.push({ type: "text", text: request.input });
 
   for (const call of request.priorCalls) {
+    appendAsyncResults(call.asyncResults);
     // This call's boundary steers merge into the user message that the API
     // positionally places right before its assistant response.
     appendSteers(call.steers);
@@ -172,6 +192,7 @@ export function anthropicRequestBody(
   // positionally-last user turn the model reads before this response (a
   // steer placed earlier would retroactively re-context prior turns).
   appendSteers(request.steers);
+  appendAsyncResults(request.asyncResults);
   flushUser();
 
   const firstMessage = messages[0];
@@ -198,8 +219,13 @@ export function anthropicRequestBody(
     thinking: options.thinking ?? { type: "disabled" },
     system: SYSTEM_PROMPT_BLOCKS.map((block) => ({ type: "text", text: block })),
     // The tool surface renders from the compile-time registry only — the
-    // single schema authority (control-plane-layer.md §1.1, M1.5 T1).
-    tools: wireToolSet(M0_RENDER_FLAGS),
+    // single schema authority (control-plane-layer.md §1.1, M1.5 T1). The
+    // surface (M1.5 T16) picks main vs subagent names; the subagent surface
+    // carries the hidden `yield` and strips `task` past the depth cap.
+    tools:
+      request.toolSurface === "subagent"
+        ? wireToolSet(M0_RENDER_FLAGS, subagentWireTools(request.spawnPolicyBlocked === true))
+        : wireToolSet(M0_RENDER_FLAGS, MAIN_WIRE_TOOLS),
     messages,
   };
 }
