@@ -38,7 +38,8 @@
 1. 干净 worktree（非 lane 工作树）复跑关键测试/命令
 2. 七条反模式清单过一遍（慢通道/重做/串行化/闲置占用/无账保守/轮询/retry-and-hope）
 3. 关票评论必附证据（测试数、部署 URL、run 链接、file:line）；无证据不关票
-4. staging 验证（若票面涉及）只经 `nix run .#staging-deploy`，只从 origin/main HEAD
+4. **验收标准必须是产品面可观察的**（"视图显示 Priority 列且按其分组"），不是存在性的（"视图已创建"）——#53 反例：板面字段/视图全部"就位"但 Priority 列在五个视图里全部不可见，验收却已通过。UI/板/文档类交付，验收标准写成用户打开能看到什么。
+5. staging 验证（若票面涉及）只经 `nix run .#staging-deploy`，只从 origin/main HEAD
 
 ## 5. 里程碑交付
 
