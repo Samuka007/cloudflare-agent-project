@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import {
   assertNativeAddonCurrent,
   createToolHost,
@@ -16,6 +18,9 @@ import {
  * daemon host runtime; omp ships raw TS + `bun` built-ins). Covers the spike
  * harness replay (five tools through real omp execute()), the native-addon
  * version gate, and the adapter's full projection matrix.
+ * T6 #96 adds the write-semantics anchors (overwrite idempotent, archive
+ * whole-rewrite, SQLite row insert) and the manage_skill lifecycle
+ * (SKILL.md exclusive management + symlink escape refusals).
  */
 
 const ALPHA = [
@@ -34,6 +39,7 @@ let root: string;
 let fixture: string;
 let agentDir: string;
 let host: ToolHost;
+let managedSkillsDir: string;
 const MACHINE = "machine-l1-runtime";
 
 function frameOf(
@@ -52,6 +58,20 @@ beforeAll(async () => {
   mkdirSync(join(fixture, "src"), { recursive: true });
   mkdirSync(join(fixture, "out"), { recursive: true });
   writeFileSync(join(fixture, "src", "alpha.ts"), ALPHA);
+  // T6 archive fixture: a real uncompressed tar with two members — the
+  // write tool rewrites the whole archive through a temp sibling + rename.
+  mkdirSync(join(fixture, "arch", "members"), { recursive: true });
+  writeFileSync(join(fixture, "arch", "members", "keep.txt"), "keep-me\n");
+  writeFileSync(join(fixture, "arch", "members", "edit.txt"), "before-archive-edit\n");
+  await Bun.$`tar -cf ${join(fixture, "arch", "bundle.tar")} -C ${join(fixture, "arch", "members")} keep.txt edit.txt`.quiet();
+  // T6 SQLite fixture: a real database with one table for the insert target.
+  mkdirSync(join(fixture, "data"), { recursive: true });
+  const db = new Database(join(fixture, "data", "ledger.db"), { create: true });
+  db.exec("CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+  db.close();
+  // Agent-dir isolation (T6): the client pins PI_CODING_AGENT_DIR before omp
+  // loads; the managed-skills store must land under the test agentDir.
+  managedSkillsDir = join(agentDir, "managed-skills");
   // The version gate is the refuse-start precondition — run it here so a
   // broken addon fails the suite before any tool call.
   assertNativeAddonCurrent(await readNativeAddonStatus());
@@ -126,6 +146,176 @@ describe("five host tools through real omp execute() (spike replay)", () => {
     const result = await executeDispatch(host, frameOf("edit", "e1", { input }));
     expect(result.status).toBe("ok");
     expect(readFileSync(join(fixture, "src", "alpha.ts"), "utf8")).toContain("const value = 43;");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T6 #96 — write semantics + manage_skill (SKILL.md exclusive management).
+// ---------------------------------------------------------------------------
+
+describe("T6 #96 — write semantics through real omp execute()", () => {
+  test("overwrite write is idempotent: same content twice, byte-identical file, no temp leftovers", async () => {
+    const args = { path: "out/twice.md", content: "# idempotent\nsame bytes\n" };
+    const first = await executeDispatch(host, frameOf("write", "t6-w1", args));
+    expect(first.status).toBe("ok");
+    const second = await executeDispatch(host, frameOf("write", "t6-w2", args));
+    expect(second.status).toBe("ok");
+    expect(readFileSync(join(fixture, "out", "twice.md"), "utf8")).toBe(args.content);
+    // The omp write path stages nothing for plain files: no temp sibling remains.
+    const siblings = Array.from(new Bun.Glob("out/twice.md.tmp*").scanSync({ cwd: fixture }));
+    expect(siblings).toEqual([]);
+  });
+
+  test("archive member write rewrites the whole tar via temp sibling + rename (atomic, sibling preserved)", async () => {
+    const result = await executeDispatch(
+      host,
+      frameOf("write", "t6-w3", {
+        path: "arch/bundle.tar:edit.txt",
+        content: "after-archive-edit\n",
+      }),
+    );
+    expect(result.status).toBe("ok");
+    // The untouched member survives the whole-archive rewrite; the target
+    // member carries the new bytes (uncompressed tar = plain concatenation).
+    const listing = await Bun.$`tar -tf ${join(fixture, "arch", "bundle.tar")}`.text();
+    expect(listing.split("\n").filter(Boolean).sort()).toEqual(["edit.txt", "keep.txt"]);
+    const keep = await Bun.$`tar -xOf ${join(fixture, "arch", "bundle.tar")} keep.txt`.text();
+    const edited = await Bun.$`tar -xOf ${join(fixture, "arch", "bundle.tar")} edit.txt`.text();
+    expect(keep).toBe("keep-me\n");
+    expect(edited).toBe("after-archive-edit\n");
+    // The atomic swap leaves no temp sibling behind.
+    const leftovers = Array.from(new Bun.Glob("arch/bundle.tar.tmp*").scanSync({ cwd: fixture }));
+    expect(leftovers).toEqual([]);
+  });
+
+  test("SQLite target insert lands a row; the tool is NOT idempotent (dedup is executionId-level)", async () => {
+    const dbPath = join(fixture, "data", "ledger.db");
+    const insert = await executeDispatch(
+      host,
+      frameOf("write", "t6-w4", { path: "data/ledger.db:items", content: '{"name": "row-one"}' }),
+    );
+    expect(insert.status).toBe("ok");
+    expect(insert.output).toContain("Inserted row into items");
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      expect(db.query("SELECT name FROM items ORDER BY id").all()).toEqual([{ name: "row-one" }]);
+    } finally {
+      db.close();
+    }
+    // A second, DIFFERENT execution inserts again — the tool itself is not
+    // idempotent; dedup rides the service journal (same executionId replays
+    // the journaled result, l1-i19-replay.test.ts), never the tool.
+    const repeat = await executeDispatch(
+      host,
+      frameOf("write", "t6-w5", { path: "data/ledger.db:items", content: '{"name": "row-one"}' }),
+    );
+    expect(repeat.status).toBe("ok");
+    const db2 = new Database(dbPath, { readonly: true });
+    try {
+      expect(db2.query("SELECT count(*) AS n FROM items").get()).toEqual({ n: 2 });
+    } finally {
+      db2.close();
+    }
+  });
+});
+
+describe("T6 #96 — manage_skill: SKILL.md exclusive management", () => {
+  const skillArgs = (name: string, body = "step one\nstep two\n") => ({
+    action: "create",
+    name,
+    description: "demo skill for the daemon host anchor",
+    body,
+  });
+
+  test("create/update/delete lifecycle writes SKILL.md under the daemon-private managed root", async () => {
+    const created = await executeDispatch(
+      host,
+      frameOf("manage_skill", "t6-m1", skillArgs("deploy-demo")),
+    );
+    expect(created.status).toBe("ok");
+    expect(created.output).toContain('Created managed skill "deploy-demo"');
+    const skillFile = join(managedSkillsDir, "deploy-demo", "SKILL.md");
+    const onDisk = readFileSync(skillFile, "utf8");
+    expect(onDisk).toContain("name: deploy-demo");
+    expect(onDisk).toContain("demo skill for the daemon host anchor");
+    expect(onDisk).toContain("step one");
+
+    const updated = await executeDispatch(
+      host,
+      frameOf("manage_skill", "t6-m2", {
+        ...skillArgs("deploy-demo"),
+        action: "update",
+        body: "step one only\n",
+      }),
+    );
+    expect(updated.status).toBe("ok");
+    expect(readFileSync(skillFile, "utf8")).toContain("step one only");
+
+    const removed = await executeDispatch(
+      host,
+      frameOf("manage_skill", "t6-m3", { action: "delete", name: "deploy-demo" }),
+    );
+    expect(removed.status).toBe("ok");
+    expect(Array.from(new Bun.Glob("deploy-demo/**").scanSync({ cwd: managedSkillsDir }))).toEqual(
+      [],
+    );
+  });
+
+  test("create refuses an existing skill; update/delete refuse an absent one (omp lifecycle contract)", async () => {
+    const first = await executeDispatch(
+      host,
+      frameOf("manage_skill", "t6-m4", skillArgs("once-only")),
+    );
+    expect(first.status).toBe("ok");
+    const duplicate = await executeDispatch(
+      host,
+      frameOf("manage_skill", "t6-m5", skillArgs("once-only")),
+    );
+    expect(duplicate.status).toBe("error");
+    expect(duplicate.output).toContain('already exists. Use action "update"');
+    const updateAbsent = await executeDispatch(
+      host,
+      frameOf("manage_skill", "t6-m6", { ...skillArgs("never-was"), action: "update" }),
+    );
+    expect(updateAbsent.status).toBe("error");
+    expect(updateAbsent.output).toContain('does not exist. Use action "create"');
+    const deleteAbsent = await executeDispatch(
+      host,
+      frameOf("manage_skill", "t6-m7", { action: "delete", name: "never-was" }),
+    );
+    expect(deleteAbsent.status).toBe("error");
+    expect(deleteAbsent.output).toContain("does not exist");
+  });
+
+  test("symlinked skill directory is refused on write and delete — the escape target stays untouched", async () => {
+    const escapeTarget = join(root, "escape-victim");
+    mkdirSync(escapeTarget, { recursive: true });
+    writeFileSync(join(escapeTarget, "SKILL.md"), "authored\n");
+    mkdirSync(managedSkillsDir, { recursive: true });
+    symlinkSync(escapeTarget, join(managedSkillsDir, "escapee"));
+    const writeEscape = await executeDispatch(
+      host,
+      frameOf("manage_skill", "t6-m8", skillArgs("escapee")),
+    );
+    expect(writeEscape.status).toBe("error");
+    expect(writeEscape.output).toContain("resolves through a symlink");
+    const deleteEscape = await executeDispatch(
+      host,
+      frameOf("manage_skill", "t6-m9", { action: "delete", name: "escapee" }),
+    );
+    expect(deleteEscape.status).toBe("error");
+    expect(deleteEscape.output).toContain("is a symlink");
+    // The victim content is intact — nothing followed the link.
+    expect(readFileSync(join(escapeTarget, "SKILL.md"), "utf8")).toBe("authored\n");
+  });
+
+  test("create without description/body is a structured error (omp execute-time narrow)", async () => {
+    const incomplete = await executeDispatch(
+      host,
+      frameOf("manage_skill", "t6-m10", { action: "create", name: "headless" }),
+    );
+    expect(incomplete.status).toBe("error");
+    expect(incomplete.output).toContain('requires both "description" and "body"');
   });
 });
 
