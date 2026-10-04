@@ -182,12 +182,12 @@ export type RuntimeThreadExecutionOptions = RuntimeThreadExecutionBaseOptions &
 
 // JSON-facing vocabulary uses type aliases (not interfaces) so result
 // payloads satisfy the AdapterCommandResultValue index-signature union.
-export interface ModelReasoningEffort {
+export type ModelReasoningEffort = {
   reasoningEffort: ReasoningLevel;
   description: string;
-}
+};
 
-export interface AvailableModel {
+export type AvailableModel = {
   id: string;
   model: string;
   displayName: string;
@@ -197,7 +197,7 @@ export interface AvailableModel {
   supportedReasoningEfforts: ModelReasoningEffort[];
   defaultReasoningEffort: ReasoningLevel;
   isDefault: boolean;
-}
+};
 
 export interface ProviderCapabilities {
   supportsArchive: boolean;
@@ -230,7 +230,7 @@ export type AgentRuntimeSkillRoot =
  * the descriptor is bb-authored, not omp-native; the stable recovery order is
  * switch_session(sessionFile) → open_session(sessionDir) → get_entries{since}).
  */
-export interface OmpSessionRecoveryDescriptor {
+export type OmpSessionRecoveryDescriptor = {
   sessionId: string;
   sessionFile: string;
-}
+};

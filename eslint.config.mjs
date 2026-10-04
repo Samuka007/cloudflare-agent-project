@@ -65,4 +65,21 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Object TYPE ALIASES are load-bearing in these files: type aliases (not
+    // interfaces) carry implicit index signatures, required to satisfy
+    // Record<string, SqlStorageValue> (daemon-worker Sql rows), the
+    // AdapterCommandResultValue index-signature union (provider JSON
+    // vocabulary) and Hono's Schema constraint (hdc Endpoint descriptors).
+    // See the comments at each declaration. #37 sweep lesson: a mechanical
+    // type→interface fix here breaks typecheck.
+    files: [
+      "apps/daemon-worker/src/host-orchestrator-do.ts",
+      "apps/daemon-worker/src/provider-types.ts",
+      "apps/server-worker/src/contract/hdc/common.ts",
+    ],
+    rules: {
+      "@typescript-eslint/consistent-type-definitions": "off",
+    },
+  },
 );
