@@ -261,3 +261,212 @@ describe("translation: event log → model request", () => {
     });
   });
 });
+
+// #147 — the context assembly consumes the checkpoint/rewind boundary
+// (decomposition.md 上下文装配 row; omp session-context.ts:339-343): after a
+// completed rewind the next turn's request truncates at the checkpoint
+// boundary and the report rides as the prefix overlay.
+describe("translation: rewind boundary cut (#147)", () => {
+  /** Long hidden-span material — must never reach a post-cut request. */
+  const EXPLORATION = "instrumentation drill: pump the loop, trace the drain manifold, ".repeat(20);
+  const SUMMARY = "leak is in the drain path";
+
+  /**
+   * t1: checkpoint (boundary = seq 6) → think exploration → rewind (seq 14)
+   * → turn end (seq 16); t2 starts post-cut at seq 17.
+   */
+  function rewindJournal(): AnyAgentEvent[] {
+    return [
+      event(1, "thread.created", { title: "t", machineId: "local" }),
+      event(2, "turn.input", {
+        turnId: "t1",
+        inputId: "i1",
+        content: [{ type: "text", text: "find the leak" }],
+      }),
+      event(3, "model.call_started", { turnId: "t1", consumedSteerSeqs: [] }),
+      event(4, "model.call_completed", {
+        turnId: "t1",
+        modelCallId: 3,
+        text: "",
+        toolCalls: [{ name: "checkpoint", arguments: { goal: "find the leak" } }],
+      }),
+      event(5, "tool.call", {
+        turnId: "t1",
+        modelCallId: 3,
+        tool: "checkpoint",
+        arguments: { goal: "find the leak" },
+        timeoutMs: 600_000,
+      }),
+      event(6, "tool.result", {
+        turnId: "t1",
+        executionId: `${THREAD}:5`,
+        status: "ok",
+        exitCode: 0,
+        output: "Checkpoint: find the leak",
+      }),
+      event(7, "model.call_started", { turnId: "t1", consumedSteerSeqs: [] }),
+      event(8, "model.call_completed", {
+        turnId: "t1",
+        modelCallId: 7,
+        text: "",
+        toolCalls: [{ name: "think", arguments: { thoughts: EXPLORATION } }],
+      }),
+      event(9, "tool.call", {
+        turnId: "t1",
+        modelCallId: 7,
+        tool: "think",
+        arguments: { thoughts: EXPLORATION },
+        timeoutMs: 600_000,
+      }),
+      event(10, "tool.result", {
+        turnId: "t1",
+        executionId: `${THREAD}:9`,
+        status: "ok",
+        exitCode: 0,
+        output: "",
+      }),
+      event(11, "model.call_started", { turnId: "t1", consumedSteerSeqs: [] }),
+      event(12, "model.call_completed", {
+        turnId: "t1",
+        modelCallId: 11,
+        text: "",
+        toolCalls: [{ name: "rewind", arguments: { report: `  ${SUMMARY}  ` } }],
+      }),
+      event(13, "tool.call", {
+        turnId: "t1",
+        modelCallId: 11,
+        tool: "rewind",
+        arguments: { report: `  ${SUMMARY}  ` },
+        timeoutMs: 600_000,
+      }),
+      event(14, "tool.result", {
+        turnId: "t1",
+        executionId: `${THREAD}:13`,
+        status: "ok",
+        exitCode: 0,
+        output: "Rewind requested.",
+      }),
+      // A hidden-span async follow-up: without the cut its boundary owner is
+      // the post-cut call (seq 18) and it re-injects after the rewind.
+      event(15, "task.async_result", {
+        spawnId: "spawn-1",
+        agentId: "Task-1",
+        jobId: "job-1",
+        status: "ok",
+        output: "stale pre-boundary completion",
+      }),
+      event(16, "turn.completed", { turnId: "t1" }),
+      event(17, "turn.input", {
+        turnId: "t2",
+        inputId: "i2",
+        content: [{ type: "text", text: "continue" }],
+      }),
+      event(18, "model.call_started", { turnId: "t2", consumedSteerSeqs: [] }),
+      event(19, "model.call_completed", {
+        turnId: "t2",
+        modelCallId: 18,
+        text: "checking the drain first",
+        toolCalls: [{ name: "think", arguments: { thoughts: "post-cut scratch" } }],
+      }),
+      event(20, "tool.call", {
+        turnId: "t2",
+        modelCallId: 18,
+        tool: "think",
+        arguments: { thoughts: "post-cut scratch" },
+        timeoutMs: 600_000,
+      }),
+      event(21, "tool.result", {
+        turnId: "t2",
+        executionId: `${THREAD}:20`,
+        status: "ok",
+        exitCode: 0,
+        output: "",
+      }),
+      event(22, "model.call_started", { turnId: "t2", consumedSteerSeqs: [] }),
+    ];
+  }
+
+  const tokens = (text: string): number => Math.ceil(text.length / 4);
+
+  test("post-rewind turn: summary overlay rides the request, hidden span sealed (token-count bound)", () => {
+    const request = modelRequestFromEvents(rewindJournal(), "t2", 18);
+    expect(request.branchCut).toEqual({
+      checkpointResultSeq: 6,
+      rewindResultSeq: 14,
+      summary: SUMMARY,
+    });
+    // The hidden-span async row's boundary owner would be this call — the
+    // cut seals it; the summary is the only pre-boundary survivor.
+    expect(request.asyncResults).toEqual([]);
+
+    const body = anthropicRequestBody(request, WIRE_OPTS);
+    expect(body.messages[0]).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: `[branch-summary] ${SUMMARY}` },
+        { type: "text", text: "continue" },
+      ],
+    });
+    const wire = JSON.stringify(body.messages);
+    expect(wire).not.toContain("instrumentation drill");
+    expect(wire).not.toContain("Rewind requested.");
+    expect(wire).not.toContain("stale pre-boundary completion");
+    // Acceptance (token 计数断言): the post-rewind wire request is bounded
+    // by overlay + input (+ JSON scaffolding slack) — the KB-scale hidden
+    // span (~360 estimated tokens) cannot be inside.
+    expect(tokens(wire)).toBeLessThanOrEqual(
+      tokens(`[branch-summary] ${SUMMARY}`) + tokens("continue") + 40,
+    );
+  });
+
+  test("the overlay persists across the turn's calls; prior-call slices stay post-cut", () => {
+    const request = modelRequestFromEvents(rewindJournal(), "t2", 22);
+    expect(request.branchCut).toEqual({
+      checkpointResultSeq: 6,
+      rewindResultSeq: 14,
+      summary: SUMMARY,
+    });
+    expect(request.priorCalls).toHaveLength(1);
+    expect(request.priorCalls[0]?.modelCallId).toBe(18);
+    const body = anthropicRequestBody(request, WIRE_OPTS);
+    expect(JSON.stringify(body.messages)).toContain(`[branch-summary] ${SUMMARY}`);
+  });
+
+  test("the rewind turn's own calls replay uncut (omp: cut applies at turn end)", () => {
+    const log = rewindJournal();
+    for (const callId of [3, 7, 11]) {
+      expect(modelRequestFromEvents(log, "t1", callId).branchCut).toBeUndefined();
+    }
+    // By the rewind call, the exploration rides the turn's own prior-call
+    // slices — the cut has not consumed anything inside this turn.
+    const atExploration = modelRequestFromEvents(log, "t1", 11);
+    expect(JSON.stringify(anthropicRequestBody(atExploration, WIRE_OPTS))).toContain(
+      "instrumentation drill",
+    );
+  });
+
+  test("un-terminaled rewind turn (crash window) leaves every projection uncut", () => {
+    const log = rewindJournal().filter((e) => e.seq !== 16);
+    const request = modelRequestFromEvents(log, "t2", 18);
+    expect(request.branchCut).toBeUndefined();
+  });
+
+  test("root fallback (null boundary) hides the whole pre-cut span", () => {
+    // Strip the checkpoint pair (seqs 3-6): the rewind then has no boundary
+    // to point at — omp branchWithSummary(null) branches from the root.
+    const log = rewindJournal().filter((e) => e.seq < 3 || e.seq > 6);
+    const request = modelRequestFromEvents(log, "t2", 18);
+    expect(request.branchCut).toEqual({
+      checkpointResultSeq: null,
+      rewindResultSeq: 14,
+      summary: SUMMARY,
+    });
+    const wire = JSON.stringify(anthropicRequestBody(request, WIRE_OPTS).messages);
+    // Fallback with no kept prefix: no t1 material at all reaches the wire.
+    expect(wire).not.toContain("find the leak");
+    expect(wire).not.toContain("instrumentation drill");
+    expect(tokens(wire)).toBeLessThanOrEqual(
+      tokens(`[branch-summary] ${SUMMARY}`) + tokens("continue") + 40,
+    );
+  });
+});
