@@ -623,8 +623,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     await this.ready();
     const session = this.state.session;
     return {
-      connected:
-        session !== null && session.hostId === args.hostId && this.liveSocket() !== null,
+      connected: session !== null && session.hostId === args.hostId && this.liveSocket() !== null,
     };
   }
 
@@ -985,16 +984,6 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
   private async handleToolExited(frame: ToolExitedFrame): Promise<void> {
     const record = this.state.executions.get(frame.executionId);
     if (record?.state !== "RUNNING") return;
-    if (frame.result.exitCode !== null) {
-      // Contract violation of the tool payload shape — never silently accept.
-      this.journal({
-        kind: "spawn_failed",
-        at: Date.now(),
-        executionId: frame.executionId,
-        error: "tool_result_exit_code",
-      });
-      return;
-    }
     this.journal({
       kind: "exited",
       at: Date.now(),

@@ -36,7 +36,12 @@ let agentDir: string;
 let host: ToolHost;
 const MACHINE = "machine-l1-runtime";
 
-function frameOf(tool: string, executionId: string, args: Record<string, unknown>, timeoutMs = 10_000): ToolDispatchFrame {
+function frameOf(
+  tool: string,
+  executionId: string,
+  args: Record<string, unknown>,
+  timeoutMs = 10_000,
+): ToolDispatchFrame {
   return { tool, arguments: args, executionId, machineId: MACHINE, timeoutMs };
 }
 
@@ -85,7 +90,10 @@ describe("five host tools through real omp execute() (spike replay)", () => {
   });
 
   test("grep finds the needle with hashline addressing", async () => {
-    const result = await executeDispatch(host, frameOf("grep", "g2", { pattern: "GrepNeedle", path: fixture }));
+    const result = await executeDispatch(
+      host,
+      frameOf("grep", "g2", { pattern: "GrepNeedle", path: fixture }),
+    );
     expect(result.status).toBe("ok");
     expect(result.output).toContain("GrepNeedle");
     expect(result.output).toContain("alpha.ts");
@@ -99,10 +107,13 @@ describe("five host tools through real omp execute() (spike replay)", () => {
   });
 
   test("write lands the file and reports resolvedPath", async () => {
-    const result = await executeDispatch(host, frameOf("write", "w1", {
-      path: "out/draft.md",
-      content: "# draft\nvendored runtime\n",
-    }));
+    const result = await executeDispatch(
+      host,
+      frameOf("write", "w1", {
+        path: "out/draft.md",
+        content: "# draft\nvendored runtime\n",
+      }),
+    );
     expect(result.status).toBe("ok");
     expect(readFileSync(join(fixture, "out", "draft.md"), "utf8")).toContain("vendored runtime");
   });
@@ -128,7 +139,10 @@ describe("adapter projection matrix (spike §3)", () => {
 
   test("wrong machine is rejected before any execution", async () => {
     const result = await executeDispatch(host, frameOf("read", "x2", { path: "src/alpha.ts" }));
-    const misrouted = { ...frameOf("read", "x2", { path: "src/alpha.ts" }), machineId: "machine-other" };
+    const misrouted = {
+      ...frameOf("read", "x2", { path: "src/alpha.ts" }),
+      machineId: "machine-other",
+    };
     const rejected = await executeDispatch(host, misrouted);
     expect(rejected.status).toBe("error");
     expect(rejected.output).toContain("machine machine-other");
@@ -136,7 +150,10 @@ describe("adapter projection matrix (spike §3)", () => {
   });
 
   test("omp structured tool failure projects to status=error with precise copy", async () => {
-    const result = await executeDispatch(host, frameOf("edit", "x3", { input: "not a hashline patch" }));
+    const result = await executeDispatch(
+      host,
+      frameOf("edit", "x3", { input: "not a hashline patch" }),
+    );
     expect(result.status).toBe("error");
     expect(result.output).toContain("[PATH#HASH]");
   });

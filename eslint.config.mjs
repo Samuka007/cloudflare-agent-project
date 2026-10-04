@@ -28,6 +28,11 @@ export default tseslint.config(
       // evidence (omp-runtime spike #125), dynamically importing an external
       // runtime: not product source, exempt from the type-aware battery.
       "docs/research/spike/**",
+      // Bun-runtime test (T5' #128): runs under `bun test` only — the omp
+      // runtime needs Bun built-ins, so the file lives in no tsc program
+      // (excluded from both daemon-service tsconfigs) and the project service
+      // cannot type it.
+      "packages/daemon-service/test/tool-runtime.test.ts",
     ],
   },
   ...tseslint.configs.strictTypeChecked.map((config) => ({

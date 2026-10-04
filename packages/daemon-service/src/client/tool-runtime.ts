@@ -97,9 +97,13 @@ export interface NativeAddonIdentity {
 export async function readNativeAddonStatus(): Promise<NativeAddonIdentity> {
   const require = createRequire(import.meta.url);
   const nativesEntry = require.resolve("@oh-my-pi/pi-natives");
-  const loaderState = (await import(
+  // unknown boundary: the computed specifier resolves to `any` (no static
+  // d.ts), and `any as T` trips no-unnecessary-type-assertion while a bare
+  // typed assignment trips no-unsafe-assignment.
+  const loaded: unknown = await import(
     pathToFileURL(join(dirname(nativesEntry), "loader-state.js")).href
-  )) as { nativeAddonStatus: () => NativeAddonIdentity | null };
+  );
+  const loaderState = loaded as { nativeAddonStatus: () => NativeAddonIdentity | null };
   const status = loaderState.nativeAddonStatus();
   if (status === null) {
     throw new Error("pi-natives addon did not load — nativeAddonStatus() returned null");
@@ -128,7 +132,11 @@ export function assertNativeAddonCurrent(status: NativeAddonIdentity): void {
  * `<agentDir>/config.yml` + agent.db, so a developer's `~/.omp` would
  * silently drift the host's tool schemas/behavior (edit.mode included).
  */
-export async function createToolHost(cwd: string, agentDir: string, machineId: string): Promise<ToolHost> {
+export async function createToolHost(
+  cwd: string,
+  agentDir: string,
+  machineId: string,
+): Promise<ToolHost> {
   const settings = await Settings.loadIsolated({ cwd, agentDir });
   const session = {
     cwd,
@@ -142,7 +150,7 @@ export async function createToolHost(cwd: string, agentDir: string, machineId: s
     new GrepTool(session),
     new ReadTool(session),
     new WriteTool(session),
-    new EditTool(session) as unknown as OmpTool,
+    new EditTool(session),
   ];
   const tools: Record<string, OmpTool> = {};
   for (const tool of candidates) tools[tool.name] = tool;
@@ -182,7 +190,13 @@ export async function executeDispatch(
   }
   const controller = new AbortController();
   const timedOut = { value: false };
-  options.cancelSignal?.addEventListener("abort", () => controller.abort(), { once: true });
+  options.cancelSignal?.addEventListener(
+    "abort",
+    () => {
+      controller.abort();
+    },
+    { once: true },
+  );
   const timer =
     frame.timeoutMs > 0
       ? setTimeout(() => {
@@ -190,15 +204,13 @@ export async function executeDispatch(
           controller.abort(new Error(`timeout after ${frame.timeoutMs}ms`));
         }, frame.timeoutMs)
       : undefined;
-  timer?.unref?.();
+  timer?.unref();
   try {
     const result = await tool.execute(
       frame.executionId,
       frame.arguments,
       controller.signal,
-      options.onOutput
-        ? (partial) => options.onOutput?.(contentText(partial))
-        : undefined,
+      options.onOutput ? (partial) => options.onOutput?.(contentText(partial)) : undefined,
     );
     const truncation = (result.details as { meta?: { truncation?: unknown } } | undefined)?.meta
       ?.truncation;
@@ -263,7 +275,10 @@ export class ToolRuntime {
    * re-forward while the same run is live resolves against the SAME run —
    * never a second execution (I16 client half).
    */
-  execute(frame: ToolDispatchFrame, onOutput?: (chunk: string) => void): Promise<ToolExecutionResult> {
+  execute(
+    frame: ToolDispatchFrame,
+    onOutput?: (chunk: string) => void,
+  ): Promise<ToolExecutionResult> {
     const live = this.running.get(frame.executionId);
     if (live !== undefined) return live.done;
     const controller = new AbortController();
@@ -274,7 +289,8 @@ export class ToolRuntime {
     void done
       .catch(() => undefined)
       .finally(() => {
-        if (this.running.get(frame.executionId)?.done === done) this.running.delete(frame.executionId);
+        if (this.running.get(frame.executionId)?.done === done)
+          this.running.delete(frame.executionId);
       });
     return done;
   }
@@ -286,5 +302,4 @@ export class ToolRuntime {
     live.controller.abort();
     return true;
   }
-
 }

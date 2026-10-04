@@ -354,8 +354,10 @@ export async function dispatchViaSeam(
     executionId: args.executionId,
     machineId: args.machineId,
     tool: args.tool ?? "bash",
-    arguments:
-      args.toolArguments ?? { command: args.command, ...(args.cwd !== undefined ? { cwd: args.cwd } : {}) },
+    arguments: args.toolArguments ?? {
+      command: args.command,
+      ...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
+    },
     timeoutMs: args.timeoutMs ?? 600_000,
   });
 }

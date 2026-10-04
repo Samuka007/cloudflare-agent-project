@@ -254,14 +254,12 @@ export function foldOp(state: ServiceStateData, op: JournalOp): void {
     case "exited": {
       const record = recordOf(state, op);
       record.state = "COMPLETED";
-      record.result =
-        op.toolResult ??
-        {
-          status: op.status,
-          exitCode: op.exitCode,
-          output: record.outputText,
-          ...(record.outputTruncated ? { outputTruncated: true } : {}),
-        };
+      record.result = op.toolResult ?? {
+        status: op.status,
+        exitCode: op.exitCode,
+        output: record.outputText,
+        ...(record.outputTruncated ? { outputTruncated: true } : {}),
+      };
       return;
     }
     case "cancel_requested": {

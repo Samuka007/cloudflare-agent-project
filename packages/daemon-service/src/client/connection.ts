@@ -389,7 +389,9 @@ function dispatchToolExec(
     timeoutMs: frame.timeoutMs,
   };
   if (!toolRuntime.running.has(frame.executionId)) {
-    const execution = toolRuntime.execute(dispatchFrame_, (chunk) => existing.append(chunk));
+    const execution = toolRuntime.execute(dispatchFrame_, (chunk) => {
+      existing.append(chunk);
+    });
     void execution
       .then((result) => {
         existing.exited = { exitCode: null, signal: null, finalOffset: existing.end };

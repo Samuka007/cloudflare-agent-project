@@ -18,7 +18,11 @@ import {
  * bash routing untouched.
  */
 
-function ackToolExec(client: SimulatedClient, executionId: string, frame: ToolExecServiceFrame): void {
+function ackToolExec(
+  client: SimulatedClient,
+  executionId: string,
+  frame: ToolExecServiceFrame,
+): void {
   client.send({
     type: "exec.spawn_ack",
     requestId: frame.requestId,

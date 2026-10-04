@@ -288,12 +288,12 @@ export function renderToolDescription(template: string, flags: ToolRenderFlags):
         hadTag = true;
         if (token.startsWith("#if ")) {
           const flag = token.slice(4);
-          const value = enclosingActive() && flags[flag as keyof ToolRenderFlags] === true;
+          const value = enclosingActive() && flags[flag as keyof ToolRenderFlags];
           stack.push({ active: value, satisfied: value });
         } else if (token.startsWith("#ifAny ")) {
           const names = token.slice(7).trim().split(/\s+/);
           const value =
-            enclosingActive() && names.some((name) => flags[name as keyof ToolRenderFlags] === true);
+            enclosingActive() && names.some((name) => flags[name as keyof ToolRenderFlags]);
           stack.push({ active: value, satisfied: value });
         } else if (token === "else") {
           const frame = stack[stack.length - 1];
