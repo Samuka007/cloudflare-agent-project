@@ -63,6 +63,9 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
     if (!updated) {
       throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
     }
+    // bb routes/hosts.ts:144-145: host metadata shares the connection-change
+    // invalidation path, so a rename rides host-connected.
+    await hub(ctx.env).notifyHost(updated.id, ["host-connected"]);
     return ctx.json(await toHostRecord(ctx.env, updated));
   });
 
@@ -75,6 +78,9 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
     if (!updated) {
       throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
     }
+    // bb routes/hosts.ts:161-162: same connection-change invalidation path
+    // for the permission ceiling.
+    await hub(ctx.env).notifyHost(updated.id, ["host-connected"]);
     return ctx.json(await toHostRecord(ctx.env, updated));
   });
 
@@ -82,6 +88,10 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
     await requireHost(ctx.env, ctx.req.param("id"));
     // bb delete marks destroyedAt (soft destroy), it does not hard-delete.
     await updateHostRow(ctx.env, ctx.req.param("id"), { destroyedAt: Date.now() });
+    // bb destroyHost broadcasts host-disconnected (data/hosts.ts:229-230).
+    // The daemon-session shutdown terminal (closeSession + key revocation)
+    // is S4's scope and stays out here.
+    await hub(ctx.env).notifyHost(ctx.req.param("id"), ["host-disconnected"]);
     return ctx.json({ ok: true });
   });
 
@@ -126,4 +136,12 @@ async function daemonConnected(env: Env, hostId: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** Realtime hub fan-out (threads.ts hub idiom): host changed frames. */
+function hub(env: Env) {
+  const stub = env.HUB.get(env.HUB.idFromName("hub"));
+  return stub as DurableObjectStub & {
+    notifyHost(hostId: string, changes: string[]): Promise<{ delivered: number }>;
+  };
 }
