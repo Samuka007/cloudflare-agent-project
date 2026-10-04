@@ -69,10 +69,14 @@ export interface ExecutionRuntime {
   executionId: string;
   callSeq: number;
   turnId: string;
+  /** Registry tool name from the tool.call row (edge routing + wait caps). */
+  tool: string;
   status: ExecutionStatus;
   attempts: number;
   dispatchSeqs: number[];
   lastDispatchAt: number | null;
+  /** tool.call journal timestamp — wait-cap deadlines derive from it. */
+  callCreatedAt: number;
   timeoutMs: number;
   execStarted: boolean;
   lastOutputOffset: number;
@@ -302,10 +306,12 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
         executionId,
         callSeq: event.seq,
         turnId: runtime.turnId,
+        tool: event.data.tool,
         status: "called",
         attempts: 0,
         dispatchSeqs: [],
         lastDispatchAt: null,
+        callCreatedAt: event.createdAt,
         timeoutMs,
         execStarted: false,
         lastOutputOffset: 0,
@@ -422,6 +428,16 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       // (tools/edge.ts latestContextNotes) folds it from the log.
       return;
     }
+    case "job.registered":
+    case "job.settled":
+    case "job.delivered":
+    case "peer.message":
+    case "peer.message_consumed": {
+      // Thread-scoped JobRegistry journal data, not FSM state (proposal §3 T2:
+      // jobs outlive turns); the projections in tools/job-registry.ts fold
+      // them from the log.
+      return;
+    }
   }
 }
 
@@ -436,6 +452,8 @@ export function executionTerminal(execution: ExecutionRuntime): boolean {
 export interface DueWork {
   sealedModelCallIds: number[];
   reaskExecutionIds: string[];
+  /** Non-terminal wait executions past their WAIT_MAX_MS cap (§3 T2). */
+  waitCapExecutionIds: string[];
   turnWatchdogExpiredTurnIds: string[];
   nextDeadlineAt: number | null;
 }
@@ -445,15 +463,26 @@ export interface DueWork {
  * calls, re-asks overdue executions with the same executionId, and explicitly
  * fails turns that outlive the total backstop. Everything is recomputed from
  * replayed state; the alarm itself carries no state.
+ *
+ * Wait executions (M1.5 T2) add two deadline families:
+ * - the per-wait 30-minute safety cap (`waitMaxMs` from the tool.call's
+ *   journal timestamp — replay-derivable, alarm-carried, practice 4);
+ * - a turn-watchdog extension: a turn blocked in a wait is not stuck until
+ *   the wait cap passes, so the active turn's backstop deadline moves out to
+ *   cover it. The alarm handler resolves wait caps BEFORE turn expiry, so the
+ *   cap result lands and the turn proceeds (omp semantics: wait returns a
+ *   still-running snapshot at the cap, never a failed turn).
  */
 export function computeDueWork(state: ReplayState, config: WatchdogConfig, now: number): DueWork {
   const due: DueWork = {
     sealedModelCallIds: [],
     reaskExecutionIds: [],
+    waitCapExecutionIds: [],
     turnWatchdogExpiredTurnIds: [],
     nextDeadlineAt: null,
   };
   const deadlines: number[] = [];
+  let waitCapDeadline: number | null = null;
   for (const call of state.modelCalls.values()) {
     if (call.status !== "running") continue;
     const deadline = call.startedAt + config.modelCallCapMs;
@@ -472,9 +501,31 @@ export function computeDueWork(state: ReplayState, config: WatchdogConfig, now: 
       deadlines.push(deadline);
     }
   }
+  for (const execution of state.executions.values()) {
+    if (executionTerminal(execution) || execution.tool !== "wait") continue;
+    const deadline = execution.callCreatedAt + config.waitMaxMs;
+    if (now >= deadline) {
+      due.waitCapExecutionIds.push(execution.executionId);
+      // Retry backstop in case the cap resolution failed to terminalize it.
+      deadlines.push(now + config.execGraceMs);
+    } else {
+      deadlines.push(deadline);
+      if (waitCapDeadline === null || deadline > waitCapDeadline) waitCapDeadline = deadline;
+    }
+  }
   const activeTurn = state.activeTurnId === null ? undefined : state.turns.get(state.activeTurnId);
   if (activeTurn !== undefined && !turnTerminal(activeTurn)) {
-    const deadline = activeTurn.inputCreatedAt + config.turnWatchdogMs;
+    // Extend the turn watchdog to cover its blocking waits (see docstring):
+    // the wait cap is the terminal promise for that execution, so the
+    // backstop moves out to it instead of preempting a legitimate wait.
+    const base = activeTurn.inputCreatedAt + config.turnWatchdogMs;
+    const deadline =
+      waitCapDeadline !== null
+        ? Math.max(base, waitCapDeadline)
+        : due.waitCapExecutionIds.length > 0
+          ? // Cap due this tick: the handler resolves it before expiry.
+            now + config.execGraceMs
+          : base;
     if (now >= deadline) due.turnWatchdogExpiredTurnIds.push(activeTurn.turnId);
     else deadlines.push(deadline);
   }

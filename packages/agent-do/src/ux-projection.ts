@@ -26,6 +26,13 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       case "thread.created":
       case "model.call_retry":
       case "experimental_context_notes":
+      // M1.5 T2 JobRegistry journal family: projected by tools/job-registry,
+      // not part of the UX envelope (same rule as experimental_context_notes).
+      case "job.delivered":
+      case "job.registered":
+      case "job.settled":
+      case "peer.message":
+      case "peer.message_consumed":
       case "tool.exec_started":
       case "tool.output":
       case "turn.cancel_requested":
