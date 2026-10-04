@@ -35,6 +35,8 @@
 
 派单上下文必含：
 
+**隔离强制（2026-10-04 劫持事故后立）**：每个写 lane 必须在独立 worktree 工作——`git worktree add /tmp/lane-<slug> -b <branch> origin/main`，首步即建、全程不换。主仓 checkout（/home/nixos/workspace/cloudflare-agent-project）仅 PM 使用，lane 禁入；PM 的一切提交/推送也须在钉住 origin/main 的净树（如 /tmp/verify-main detached）进行并在推送后核对 origin/main 实际移动。读 lane（research/verify）默认无写面，不适用。违反=提交落错谱系，事故实例：v3/v4 分解文档提交落 sibling 分支被清理，main 从未收到。
+
 1. **效率预算行**：预期墙钟 / 资源占用上限 / 等待方式（交付即回 or 脚本化监控）。超预算 50% 要解释。
 2. **资源所有权账本**：owned files/dirs + owned worktree 路径 + owned 外部资源（staging 部署、secret 注入、newapi 面板等）。PM 派单前做**不相交断言**——两 lane 地盘相交 = 派单错误。
 3. **分支纪律**：lane 只推 `lane/<ticket>-<slug>`，PR 由 PM 审后 merge（origin/main 唯一写者 = PR 合并）。事故热修直推豁免须票面留 PM 亲验。
