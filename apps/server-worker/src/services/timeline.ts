@@ -24,6 +24,55 @@ const PREVIEW_MAX_CHARS = 512;
  */
 const MAX_ERROR_TITLE_LENGTH = 80;
 
+/**
+ * bb titles provider-unhandled rows `Unhandled <provider> event` with the
+ * projected provider display name (thread-view parse-operation-message.ts:452).
+ * This stack's journal has no per-thread providerId — the model relay is the
+ * single provider — so the display name is the fixed runtime identity.
+ */
+const UNHANDLED_PROVIDER_ROW_TITLE = "Unhandled agent event";
+
+/** bb thread-view provider-unhandled-detail.ts HUMANIZED_EVENT_TOKEN_MAP port. */
+const HUMANIZED_EVENT_TOKEN_MAP: Record<string, string> = {
+  api: "API",
+  chatgpt: "ChatGPT",
+  id: "ID",
+  mcp: "MCP",
+  oauth: "OAuth",
+  sdk: "SDK",
+  ui: "UI",
+  url: "URL",
+};
+
+/** bb thread-view provider-unhandled-detail.ts humanizeRawType port. */
+function humanizeRawType(rawType: string): string {
+  return rawType
+    .split(/[:/._-]+/u)
+    .flatMap((token) => token.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(" "))
+    .filter((token) => token.length > 0)
+    .map((token) => {
+      const normalized = token.toLowerCase();
+      return (
+        HUMANIZED_EVENT_TOKEN_MAP[normalized] ??
+        normalized.charAt(0).toUpperCase() + normalized.slice(1)
+      );
+    })
+    .join(" ");
+}
+
+/**
+ * bb buildProviderUnhandledDetail (provider-unhandled-detail.ts:38-46):
+ * humanized raw type, the raw type token, then the byte-transparent payload.
+ */
+function providerUnhandledDetail(event: UxThreadEvent): string {
+  return [
+    humanizeRawType(event.type),
+    `Raw event: ${event.type}`,
+    "Payload:",
+    JSON.stringify(event, null, 2),
+  ].join("\n");
+}
+
 type RowDraft = TimelineRow & { __order: number };
 
 type EventData = Record<string, unknown>;
@@ -318,6 +367,79 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
     a.__order === b.__order ? a.id.localeCompare(b.id) : a.__order - b.__order,
   );
   return ordered.map(({ __order: _, ...row }) => timelineRowSchema.parse(row));
+}
+
+// --- debug toggle (bb showUnhandledProviderEvents, data.ts:331-334) --------------
+
+/**
+ * bb gates the provider-unhandled diagnostic rows on the Debug settings
+ * toggle: `deps.config.isDevelopment ||
+ * getAppSettings(db).showUnhandledProviderEvents` (routes/threads/data.ts:
+ * 331-334). The Worker has no dev-build term, so the flag alone decides —
+ * staging is the packaged-build equivalent.
+ *
+ * bb surfaces provider events the adapter persisted but could not classify
+ * (domain ProviderUnhandledEvent → thread-view parse-operation-message.ts:
+ * 447-461). This stack's raw journal lives on the agent DO with the FSM
+ * vocabulary, and the UX projection (packages/agent-do ux-projection.ts) is
+ * the authoritative "what the SPA can see" fold: every raw row it omits
+ * (thread.created, model.call_retry, tool.output, tool.exec_started,
+ * turn.cancel_requested, the job/task/interaction/peer journal families,
+ * secondary model.call_started within a turn) is a raw event the runtime
+ * persisted but no timeline row renders. That set-difference is this stack's
+ * provider-unhandled population — computed from the projection itself so the
+ * FSM vocabulary can grow without a second hand-maintained list here.
+ */
+export function projectUnhandledProviderRows(
+  uxEvents: readonly UxThreadEvent[],
+  rawEvents: readonly UxThreadEvent[],
+): TimelineRow[] {
+  const renderedIds = new Set(uxEvents.map((event) => event.id));
+  const rows: TimelineRow[] = [];
+  for (const event of rawEvents) {
+    if (renderedIds.has(event.id)) {
+      continue;
+    }
+    const raw: EventData =
+      event.data !== null && typeof event.data === "object" ? (event.data as EventData) : {};
+    rows.push(
+      timelineRowSchema.parse({
+        kind: "system",
+        systemKind: "operation",
+        operationKind: "provider-unhandled",
+        // bb operation message ids (format-helpers.ts:72-74) —
+        // `${threadId}:op:provider-unhandled:${seq}` (parse-operation-message.ts:393).
+        id: `${event.threadId}:op:provider-unhandled:${event.seq}`,
+        threadId: event.threadId,
+        turnId: pickTurnId(raw),
+        sourceSeqStart: event.seq,
+        sourceSeqEnd: event.seq,
+        startedAt: event.createdAt,
+        createdAt: event.createdAt,
+        title: UNHANDLED_PROVIDER_ROW_TITLE,
+        detail: providerUnhandledDetail(event),
+        status: "completed",
+        completedAt: event.createdAt,
+      }),
+    );
+  }
+  return rows;
+}
+
+/**
+ * Merge the diagnostic rows into the UX-projected rows in source order —
+ * bb projects everything in one pass over the seq-ordered events, so the
+ * merged list is seq-ordered with the projection's id tie-break.
+ */
+export function mergeTimelineRows(
+  base: readonly TimelineRow[],
+  extra: readonly TimelineRow[],
+): TimelineRow[] {
+  return [...base, ...extra].sort((a, b) =>
+    a.sourceSeqStart === b.sourceSeqStart
+      ? a.id.localeCompare(b.id)
+      : a.sourceSeqStart - b.sourceSeqStart,
+  );
 }
 
 // --- paging (bb parseThreadTimelinePage + assembly, data.ts:151-187/2068-2104) --
