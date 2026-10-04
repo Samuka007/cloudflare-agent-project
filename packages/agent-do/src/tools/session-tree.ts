@@ -1,0 +1,207 @@
+import type { AnyAgentEvent } from "../fsm-events.js";
+import { executionIdFor } from "../ids.js";
+import type { TodoPhase } from "./todo-state.js";
+
+/**
+ * Session-tree projections over the event journal (M1.5 T3, #93) — the DO
+ * storage equivalent of omp's session-entry model for the checkpoint/rewind
+ * pair and the todo list. Like `rolloverRequestedInTurn` (T1), every state
+ * here is the durable tool.call/tool.result pair or a typed journal entry —
+ * replay-derivable, no second authority. The turn-lifecycle consumption
+ * (the actual `branchWithSummary` cut at turn end) is the rollover tickets'
+ * commit; these functions are the freeze surface they consume.
+ */
+
+/** Journal entry type carrying one canonical todo snapshot (see fsm-events). */
+export const TODO_PHASES_ENTRY_TYPE = "todo_phases";
+
+// ---------------------------------------------------------------------------
+// checkpoint / rewind state — omp agent-session.ts rehydrate/apply semantics
+// ---------------------------------------------------------------------------
+
+/** No checkpoint has terminalized on this journal, or the last one was rewound then superseded. */
+export interface CheckpointRewindIdle {
+  phase: "idle";
+}
+
+/**
+ * Active checkpoint (omp `#checkpointState`): the latest ok checkpoint result
+ * has no later ok rewind — `checkpointResultSeq` is the branchWithSummary
+ * target, the DO shape of omp `checkpointEntryId` (the checkpoint tool-result
+ * entry, agent-session.ts capture at checkpoint time).
+ */
+export interface CheckpointRewindActive {
+  phase: "active";
+  checkpointResultSeq: number;
+}
+
+/**
+ * Completed rewind (omp `#lastCompletedRewind` + `#pendingRewindReport`): an
+ * ok rewind with no later ok checkpoint (a checkpoint clears the retained
+ * rewind — agent-session.ts capture step 5). `checkpointResultSeq` null is
+ * the root-fallback shape (omp falls back to `branchWithSummary(null, …)` at
+ * agent-session.ts:9721); executor-produced journals always resolve one.
+ */
+export interface CheckpointRewindCompleted {
+  phase: "completed";
+  checkpointResultSeq: number | null;
+  rewindResultSeq: number;
+  /** RewindTool-trimmed report — the branch summary payload (omp details.report). */
+  report: string;
+}
+
+export type CheckpointRewindState =
+  | CheckpointRewindIdle
+  | CheckpointRewindActive
+  | CheckpointRewindCompleted;
+
+interface TreeCallRow {
+  tool: "checkpoint" | "rewind";
+  /** Raw `report` argument for rewind calls (trimmed at projection). */
+  report?: unknown;
+}
+
+/** executionId → checkpoint/rewind call row, in one pass (reverse lookup for result rows). */
+function treeCallIndex(events: readonly AnyAgentEvent[], threadId: string): Map<string, TreeCallRow> {
+  const calls = new Map<string, TreeCallRow>();
+  for (const event of events) {
+    if (event.type !== "tool.call") continue;
+    if (event.data.tool !== "checkpoint" && event.data.tool !== "rewind") continue;
+    calls.set(executionIdFor(threadId, event.seq), {
+      tool: event.data.tool,
+      report: event.data.arguments.report,
+    });
+  }
+  return calls;
+}
+
+/**
+ * Latest ok tool.result at or before `beforeSeq` whose execution belongs to a
+ * `checkpoint` call — the branch point of the rewind (omp checkpointEntryId).
+ */
+function latestCheckpointResultSeq(
+  events: readonly AnyAgentEvent[],
+  calls: Map<string, TreeCallRow>,
+  beforeSeq: number,
+): number | null {
+  for (let index = beforeSeq - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event === undefined) continue;
+    if (event.type !== "tool.result" || event.data.status !== "ok") continue;
+    const call = calls.get(event.data.executionId);
+    if (call?.tool === "checkpoint") return event.seq;
+  }
+  return null;
+}
+
+/**
+ * Project the single checkpoint/rewind state from the journal. omp rehydration
+ * (agent-session.ts `#rehydrateCheckpointRewindState`): a most-recent
+ * successful checkpoint without a later retained rewind reconstructs the
+ * active checkpoint; otherwise the retained report marks the completed pair.
+ * One backward scan: whichever of (ok checkpoint, ok rewind) terminalized
+ * last decides the phase.
+ */
+export function checkpointRewindState(events: readonly AnyAgentEvent[], threadId: string): CheckpointRewindState {
+  const calls = treeCallIndex(events, threadId);
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event === undefined) continue;
+    if (event.type !== "tool.result" || event.data.status !== "ok") continue;
+    const call = calls.get(event.data.executionId);
+    if (call === undefined) continue;
+    if (call.tool === "checkpoint") {
+      return { phase: "active", checkpointResultSeq: event.seq };
+    }
+    const raw = typeof call.report === "string" ? call.report : "";
+    return {
+      phase: "completed",
+      checkpointResultSeq: latestCheckpointResultSeq(events, calls, event.seq),
+      rewindResultSeq: event.seq,
+      // RewindTool trims before storing details.report (checkpoint.ts:123).
+      report: raw.trim(),
+    };
+  }
+  return { phase: "idle" };
+}
+
+export interface ActiveBranchProjection {
+  /**
+   * Journal prefix kept on the active branch — through the checkpoint
+   * tool.result row (omp checkpointMessageCount counts messages AFTER the
+   * checkpoint result is appended; checkpointEntryId IS that result row).
+   * Empty only for the root fallback.
+   */
+  kept: readonly AnyAgentEvent[];
+  /** Rows the cut hides: the exploration span plus the rewind execution. */
+  hidden: readonly AnyAgentEvent[];
+  /** `branchWithSummary` summary payload (the retained rewind report). */
+  summary: string;
+}
+
+/**
+ * The turn-end rewind cut as a pure projection (omp `#applyRewind` →
+ * `branchWithSummary(checkpointEntryId, report)`): the leaf moves to the
+ * checkpoint boundary, the exploration span leaves the active branch, and
+ * the report becomes the branch summary the next provider turn sees. The
+ * journal itself stays append-only (omp: "abandoned entries remain in the
+ * .jsonl log but leave the active branch") — the rollover tickets commit
+ * this boundary; L1 asserts the kept/hidden partition here.
+ */
+export function activeBranchAfterRewind(
+  events: readonly AnyAgentEvent[],
+  threadId: string,
+): ActiveBranchProjection | undefined {
+  const state = checkpointRewindState(events, threadId);
+  if (state.phase !== "completed") return undefined;
+  const boundary = state.checkpointResultSeq;
+  const kept = boundary === null ? [] : events.filter((event) => event.seq <= boundary);
+  const hidden = events.filter((event) => boundary === null || event.seq > boundary);
+  return { kept, hidden, summary: state.report };
+}
+
+// ---------------------------------------------------------------------------
+// todo journal — omp getLatestTodoPhasesFromEntries / details.phases recovery
+// ---------------------------------------------------------------------------
+
+export interface TodoJournalState {
+  /** Latest canonical snapshot, ignoring this execution's own entries ([] when none). */
+  previous: TodoPhase[];
+  /**
+   * Snapshot this execution already committed — present only when the crash
+   * window between the journal append and the tool.result append swallowed
+   * the result row (execution non-terminal, executor re-asked). The re-run
+   * completes from this snapshot instead of re-applying a non-idempotent op.
+   */
+  interrupted: TodoPhase[] | undefined;
+}
+
+/**
+ * Fold the latest canonical todo snapshot from the journal (omp
+ * `getLatestTodoPhasesFromEntries` over tool-result details, projected to the
+ * DO's typed `todo_phases` entries — only successful mutations write one, so
+ * every entry is canonical; omp skips view/error details, which never land
+ * here by construction).
+ */
+export function todoJournalState(events: readonly AnyAgentEvent[], executionId: string): TodoJournalState {
+  let interrupted: TodoPhase[] | undefined;
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event?.type !== TODO_PHASES_ENTRY_TYPE) continue;
+    if (event.data.executionId === executionId) {
+      interrupted = event.data.phases;
+      continue;
+    }
+    return { previous: event.data.phases, interrupted };
+  }
+  return { previous: [], interrupted };
+}
+
+/** Latest canonical todo snapshot regardless of execution (tests/UX consumers). */
+export function latestTodoPhases(events: readonly AnyAgentEvent[]): TodoPhase[] {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event?.type === TODO_PHASES_ENTRY_TYPE) return event.data.phases;
+  }
+  return [];
+}
