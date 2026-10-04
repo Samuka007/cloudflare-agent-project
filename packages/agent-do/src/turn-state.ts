@@ -587,6 +587,44 @@ export function executionTerminal(execution: ExecutionRuntime): boolean {
   return TERMINAL_EXECUTION_STATUSES.includes(execution.status);
 }
 
+/**
+ * Last-writer-wins fold behind the control-plane stop face (#226): the raw
+ * journal rows alone decide which turn a Stop request must cancel.
+ * `turn.input`/`turn.steer` (re)assert the active turn; a terminal row
+ * (`turn.completed`/`turn.failed`/`turn.cancelled`) clears the pointer when
+ * it names the current turn. A turn parked on a pending ask stays non-terminal
+ * here — the user IS the deadline (computeDueWork suspends the watchdog), so
+ * the stop face must still see ask-pending as a cancellable turn.
+ *
+ * Deliberately NOT `replayEvents`: that fold enforces every FSM guard and
+ * throws on the out-of-order rows a recovery replay tolerates (watchdog
+ * terminal ordering, I10 echo rows), while the stop face needs only the
+ * active-turn pointer and must stay total over any persisted order. Takes a
+ * structural event view so control-plane readers (raw `getEvents` envelopes)
+ * can call it without importing the typed journal union.
+ */
+export function activeTurnIdFromEvents(
+  events: readonly { type: string; data: unknown }[],
+): string | null {
+  let active: string | null = null;
+  for (const event of events) {
+    if (event.type === "turn.input" || event.type === "turn.steer") {
+      const data = event.data as { turnId?: unknown };
+      if (typeof data.turnId === "string") active = data.turnId;
+      continue;
+    }
+    if (
+      event.type === "turn.completed" ||
+      event.type === "turn.failed" ||
+      event.type === "turn.cancelled"
+    ) {
+      const data = event.data as { turnId?: unknown };
+      if (active !== null && data.turnId === active) active = null;
+    }
+  }
+  return active;
+}
+
 export interface DueWork {
   sealedModelCallIds: number[];
   reaskExecutionIds: string[];

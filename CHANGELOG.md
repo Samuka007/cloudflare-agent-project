@@ -3,6 +3,21 @@
 本仓以 GitHub milestone + 票面验收为里程碑权威记录；本文件是人类可读摘要。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+
+### Fixed
+
+- **#226 (P0) Stop request 无效**：`POST /threads/:id/stop` 是 no-op 存根——SPA
+  Stop 打进死路由，turn 永不落终态；ask pending（DO 有意挂起看门狗的「用户即
+  deadline」态）彻底挂死。路由现在从 agent DO 原始 journal 折出活动 turn
+  （`activeTurnIdFromEvents`：input/steer 立指针、终态行清指针，ask pending 保持
+  可取消），直连 DO `cancelTurn` 完成取消（T19 面：`turn.cancel_requested` →
+  abort driver → kill 非终态执行，含 ask interrupt）；不走 orchestrator
+  thread/stop——该面会毒化 provider session 注册表，而 composed edge-agent 的
+  journal 折叠本就干净、无恢复消费者。L2：agent-do ask.test.ts 停止路由 fold
+  断言（ask pending = 可取消活动 turn，cancel 落 `turn.cancelled` 后清空）；
+  L1：server-worker thread-stop.test.ts（静默 no-op、完成后 no-op、404）。
+
 ## [m1.5] — 2026-10-04 · 工具集完备（omp 33 工具面边缘化）
 
 Milestone `M1.5` 收官（票集 #91–#116，正本 docs/proposals/m15-ticket-set.md 六波次；
