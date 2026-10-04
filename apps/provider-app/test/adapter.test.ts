@@ -255,7 +255,7 @@ test("handleCommand settles inside the budget with deadline_exceeded", async () 
   // A manager facade that never settles — the adapter's own budget must fire.
   const hanging: ManagerFacade = {
     handleAdapterCommand: (): Promise<AdapterCommandOutcome> =>
-      new Promise<AdapterCommandOutcome>(() => {}),
+      new Promise<AdapterCommandOutcome>(() => undefined),
   };
   const hungAdapter = new EdgeAgentProviderAdapter(hanging, resolveHarness({}));
   const outcome = await hungAdapter.handleCommand(

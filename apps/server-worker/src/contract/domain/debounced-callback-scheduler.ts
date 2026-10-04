@@ -41,9 +41,7 @@ export function createDebouncedCallbackScheduler(
       clearTimeout(debounceTimer);
     }
     debounceTimer = setTimeout(flush, args.debounceMs);
-    if (maxWaitTimer === null) {
-      maxWaitTimer = setTimeout(flush, args.maxWaitMs);
-    }
+    maxWaitTimer ??= setTimeout(flush, args.maxWaitMs);
   }
 
   return {

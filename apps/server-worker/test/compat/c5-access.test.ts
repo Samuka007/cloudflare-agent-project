@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { ensureMigrations } from "../migrate.js";
-import { SELF } from "cloudflare:test";
 import { accessGate } from "../../src/middleware/access.js";
 import { verifyAccessToken } from "../../src/middleware/access.js";
 import { ApiError } from "../../src/shared/api-error.js";
+import { exports } from "cloudflare:workers";
 
 /**
  * Criterion 5 (port-inventory §6.5): Access rejects unauthorized callers; the
@@ -21,13 +21,13 @@ function fakeContext(headers: Record<string, string>, env: Record<string, string
   } as unknown as Parameters<typeof accessGate>[0];
 }
 
-async function next(): Promise<void> {}
+const next = (): Promise<void> => Promise.resolve(undefined);
 
 beforeAll(ensureMigrations);
 
 describe("criterion 5: Access gate", () => {
   it("leaves the API open while the staging flag is off (default vars)", async () => {
-    const response = await SELF.fetch("https://example.com/api/v1/threads");
+    const response = await exports.default.fetch("https://example.com/api/v1/threads");
     expect(response.status).toBe(200);
   });
 
@@ -75,7 +75,10 @@ describe("criterion 5: Access gate", () => {
       .replaceAll("+", "-")
       .replaceAll("/", "_")
       .replaceAll("=", "")}`;
-    const jwks = [{ kid, kty: "RSA", n: jwk.n!, e: jwk.e! }];
+    if (jwk.n === undefined || jwk.e === undefined) {
+      throw new Error("generated RSA JWK is missing modulus/exponent");
+    }
+    const jwks = [{ kid, kty: "RSA", n: jwk.n, e: jwk.e }];
 
     const verified = await verifyAccessToken(token, { jwks, audience: "test-aud" });
     expect(verified.aud).toBe("test-aud");
@@ -121,7 +124,10 @@ describe("criterion 5: Access gate", () => {
       .replaceAll("+", "-")
       .replaceAll("/", "_")
       .replaceAll("=", "")}`;
-    const jwks = [{ kid, kty: "RSA", n: jwk.n!, e: jwk.e! }];
+    if (jwk.n === undefined || jwk.e === undefined) {
+      throw new Error("generated RSA JWK is missing modulus/exponent");
+    }
+    const jwks = [{ kid, kty: "RSA", n: jwk.n, e: jwk.e }];
     const verified = await verifyAccessToken(token, { jwks, audience: "aud-cookie" });
     expect(verified.aud).toBe("aud-cookie");
   });

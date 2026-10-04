@@ -84,6 +84,6 @@ export const pluginPackageJsonSchema = z
       .optional(),
     bb: pluginBbManifestSchema,
   })
-  .passthrough();
+  .loose();
 
 export type PluginPackageJson = z.infer<typeof pluginPackageJsonSchema>;

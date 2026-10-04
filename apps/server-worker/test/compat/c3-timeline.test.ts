@@ -1,12 +1,12 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { ensureMigrations } from "../migrate.js";
-import { SELF } from "cloudflare:test";
 import {
   threadTimelineResponseSchema,
   threadEventsQuerySchema,
 } from "../../src/contract/api/threads.js";
 import { timelineRowSchema } from "../../src/contract/thread-timeline.js";
 import { createThread, send } from "../helpers.js";
+import { exports } from "cloudflare:workers";
 
 /**
  * Criterion 3 (port-inventory §6.3): timeline contract — `rows` + monotonic
@@ -19,7 +19,7 @@ describe("criterion 3: timeline contract", () => {
   it("serves rows + maxSeq + page metadata for the latest window", async () => {
     const thread = await createThread();
     await send(thread.id);
-    const response = await SELF.fetch(
+    const response = await exports.default.fetch(
       "https://example.com/api/v1/threads/:id/timeline".replace(":id", thread.id) +
         "?segmentLimit=20&includeNestedRows=true",
     );
@@ -40,13 +40,17 @@ describe("criterion 3: timeline contract", () => {
     const thread = await createThread();
     const first = threadTimelineResponseSchema.parse(
       await (
-        await SELF.fetch(`https://example.com/api/v1/threads/${thread.id}/timeline?segmentLimit=20`)
+        await exports.default.fetch(
+          `https://example.com/api/v1/threads/${thread.id}/timeline?segmentLimit=20`,
+        )
       ).json(),
     );
     await send(thread.id);
     const second = threadTimelineResponseSchema.parse(
       await (
-        await SELF.fetch(`https://example.com/api/v1/threads/${thread.id}/timeline?segmentLimit=20`)
+        await exports.default.fetch(
+          `https://example.com/api/v1/threads/${thread.id}/timeline?segmentLimit=20`,
+        )
       ).json(),
     );
     expect(second.maxSeq).toBeGreaterThanOrEqual(first.maxSeq);
@@ -57,23 +61,25 @@ describe("criterion 3: timeline contract", () => {
     await send(thread.id);
     // Settle the turn first: the warm-cache window must be stable across the
     // fetches below (a mid-flight turn would append rows between them).
-    const settled = await SELF.fetch(
+    const settled = await exports.default.fetch(
       `https://example.com/api/v1/threads/${thread.id}/events/wait?type=turn/completed&afterSeq=0&waitMs=10000`,
     );
     expect(settled.status).toBe(200);
     const url = `https://example.com/api/v1/threads/${thread.id}/timeline?segmentLimit=20`;
-    const full = threadTimelineResponseSchema.parse(await (await SELF.fetch(url)).json());
+    const full = threadTimelineResponseSchema.parse(
+      await (await exports.default.fetch(url)).json(),
+    );
     // The projection materializes the user-message row from the turn input.
     expect(full.rows.length).toBeGreaterThan(0);
     // Warm-cache delta: same params + afterSequence = current maxSeq.
-    const deltaResponse = await SELF.fetch(`${url}&afterSequence=${full.maxSeq}`);
+    const deltaResponse = await exports.default.fetch(`${url}&afterSequence=${full.maxSeq}`);
     const delta = threadTimelineResponseSchema.parse(await deltaResponse.json());
     expect(delta.rows).toEqual(full.rows);
     expect(delta.delta).toBeDefined();
     expect(delta.delta?.upsertRows).toEqual([]);
     // Cold cache: a different paramsKey must serve full rows again.
     const other = threadTimelineResponseSchema.parse(
-      await (await SELF.fetch(`${url}&summaryOnly=true`)).json(),
+      await (await exports.default.fetch(`${url}&summaryOnly=true`)).json(),
     );
     // summaryOnly omits rows by contract (bb summary face); the miss must
     // still serve no delta and the same high-water mark.
@@ -87,11 +93,11 @@ describe("criterion 3: timeline contract", () => {
     await send(thread.id);
     await send(thread.id);
     const query = threadEventsQuerySchema.parse({ afterSeq: "0", limit: "500" });
-    const response = await SELF.fetch(
+    const response = await exports.default.fetch(
       `https://example.com/api/v1/threads/${thread.id}/events?afterSeq=${query.afterSeq}&limit=${query.limit}`,
     );
     expect(response.status).toBe(200);
-    const rows = (await response.json()) as { seq: number; id: string }[];
+    const rows = await response.json<{ seq: number; id: string }[]>();
     const seqs = rows.map((row) => row.seq);
     for (let index = 1; index < seqs.length; index += 1) {
       const previous = seqs[index - 1];
@@ -106,7 +112,7 @@ describe("criterion 3: timeline contract", () => {
 
   it("responds 204 when /events/wait times out without a matching event", async () => {
     const thread = await createThread();
-    const response = await SELF.fetch(
+    const response = await exports.default.fetch(
       `https://example.com/api/v1/threads/${thread.id}/events/wait?type=system/error&afterSeq=0&waitMs=250`,
     );
     expect(response.status).toBe(204);

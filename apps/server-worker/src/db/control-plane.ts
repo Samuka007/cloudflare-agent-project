@@ -130,7 +130,7 @@ export async function deleteThreadSection(env: Env, sectionId: string): Promise<
   const result = await env.DB.prepare("DELETE FROM thread_sections WHERE id = ?")
     .bind(sectionId)
     .run();
-  return (result.meta.changes ?? 0) > 0;
+  return result.meta.changes > 0;
 }
 
 // --- threads ----------------------------------------------------------------------
@@ -329,7 +329,11 @@ export async function createThreadRecord(
       now,
     )
     .run();
-  return (await getThreadRow(env, args.id))!;
+  const row = await getThreadRow(env, args.id);
+  if (!row) {
+    throw new Error(`thread ${args.id} missing after insert`);
+  }
+  return row;
 }
 
 const THREAD_COLUMNS_PLACEHOLDER = THREAD_COLUMN_SQL.split(", ")
@@ -399,13 +403,16 @@ export async function updateThreadRecord(
   await env.DB.prepare(`UPDATE threads SET ${sets.join(", ")} WHERE id = ?`)
     .bind(...binds, threadId)
     .run();
-  const row = (await getThreadRow(env, threadId))!;
+  const row = await getThreadRow(env, threadId);
+  if (!row) {
+    throw new Error(`thread ${threadId} missing after update`);
+  }
   return { row, changedKinds };
 }
 
 export async function markThreadDeleted(env: Env, threadId: string): Promise<ThreadDbRow | null> {
   const current = await getThreadRow(env, threadId);
-  if (!current || current.deletedAt !== null) {
+  if (current?.deletedAt !== null) {
     return null;
   }
   await env.DB.prepare("UPDATE threads SET deleted_at = ?, updated_at = ? WHERE id = ?")

@@ -3,7 +3,6 @@ import {
   changedMessageSchema,
   clientMessageSchema,
   realtimeSubscriptionTargetKey,
-  type RealtimeSubscriptionTarget,
   type ThreadChangeMetadata,
 } from "../contract/domain/change-kinds.js";
 
@@ -30,7 +29,7 @@ export class NotificationHubDO extends DurableObject {
 
   // --- public /ws endpoint ---------------------------------------------------
 
-  async fetch(request: Request): Promise<Response> {
+  fetch(request: Request): Response {
     const upgrade = request.headers.get("upgrade");
     if (upgrade?.toLowerCase() !== "websocket") {
       return new Response("expected websocket upgrade", { status: 426 });
@@ -77,11 +76,11 @@ export class NotificationHubDO extends DurableObject {
 
   // --- fan-out (RPC surface used by the control plane) ------------------------
 
-  async notifyThread(
+  notifyThread(
     threadId: string,
     changes: string[],
     metadata?: ThreadChangeMetadata,
-  ): Promise<{ delivered: number }> {
+  ): { delivered: number } {
     const message = {
       type: "changed" as const,
       entity: "thread" as const,
@@ -95,7 +94,7 @@ export class NotificationHubDO extends DurableObject {
     return { delivered };
   }
 
-  async notifyProject(projectId: string, changes: string[]): Promise<{ delivered: number }> {
+  notifyProject(projectId: string, changes: string[]): { delivered: number } {
     return {
       delivered: this.broadcastChanged({
         type: "changed",
@@ -106,10 +105,7 @@ export class NotificationHubDO extends DurableObject {
     };
   }
 
-  async notifyEnvironment(
-    environmentId: string,
-    changes: string[],
-  ): Promise<{ delivered: number }> {
+  notifyEnvironment(environmentId: string, changes: string[]): { delivered: number } {
     return {
       delivered: this.broadcastChanged({
         type: "changed",
@@ -120,7 +116,7 @@ export class NotificationHubDO extends DurableObject {
     };
   }
 
-  async notifyHost(hostId: string, changes: string[]): Promise<{ delivered: number }> {
+  notifyHost(hostId: string, changes: string[]): { delivered: number } {
     return {
       delivered: this.broadcastChanged({
         type: "changed",
@@ -131,7 +127,7 @@ export class NotificationHubDO extends DurableObject {
     };
   }
 
-  async notifySystem(changes: string[]): Promise<{ delivered: number }> {
+  notifySystem(changes: string[]): { delivered: number } {
     return {
       delivered: this.broadcastChanged({
         type: "changed",
@@ -142,7 +138,7 @@ export class NotificationHubDO extends DurableObject {
   }
 
   /** Transient, unpersisted frames → every registered client (bb hub.ts:741-808). */
-  async broadcastSignal(frame: Record<string, unknown>): Promise<{ delivered: number }> {
+  broadcastSignal(frame: Record<string, unknown>): { delivered: number } {
     const payload = JSON.stringify(frame);
     const sockets = this.ctx.getWebSockets();
     for (const socket of sockets) {
@@ -207,14 +203,15 @@ export class NotificationHubDO extends DurableObject {
     return { ok: true };
   }
 
-  async markDaemonConnected(args: { hostId: string }): Promise<{ ok: true }> {
+  markDaemonConnected(args: { hostId: string }): { ok: true } {
     this.daemonDisconnects = this.daemonDisconnects.filter((entry) => entry.hostId !== args.hostId);
     return { ok: true };
   }
 
-  async getDaemonDisconnectState(args: {
-    hostId: string;
-  }): Promise<{ inGrace: boolean; graceExpiresAt: number | null }> {
+  getDaemonDisconnectState(args: { hostId: string }): {
+    inGrace: boolean;
+    graceExpiresAt: number | null;
+  } {
     const entry = this.daemonDisconnects.find((candidate) => candidate.hostId === args.hostId);
     if (!entry) {
       return { inGrace: false, graceExpiresAt: null };
@@ -229,7 +226,7 @@ export class NotificationHubDO extends DurableObject {
     return { inGrace: true, graceExpiresAt: expiresAt };
   }
 
-  async alarm(): Promise<void> {
+  alarm(): void {
     const now = Date.now();
     this.daemonDisconnects = this.daemonDisconnects.filter(
       (entry) => entry.atMs + DAEMON_ACTIVE_WORK_DISCONNECT_GRACE_MS > now,

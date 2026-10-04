@@ -99,7 +99,7 @@ export const openInTargetLocalContextSchema = z
 export const openInTargetRemoteSshContextSchema = z
   .object({
     kind: z.literal("remote-ssh"),
-    serverOrigin: z.string().url(),
+    serverOrigin: z.url(),
     hostId: z.string().min(1),
   })
   .strict();
@@ -263,7 +263,7 @@ export type ProviderCliInstallEvent = z.infer<typeof providerCliInstallEventSche
  * exposed through server routes and forwarded to the connected daemon over
  * WebSocket RPC.
  */
-export interface HostDaemonLocalSchema {
+export type HostDaemonLocalSchema = {
   [DEFAULT_HOST_DAEMON_LOCAL_HEALTH_PATH]: {
     $get: Endpoint<EmptyInput, HealthResponse>;
   };
@@ -279,7 +279,7 @@ export interface HostDaemonLocalSchema {
   "/status": {
     $get: Endpoint<EmptyInput, StatusResponse>;
   };
-}
+};
 
 // Verbatim bb type: Hono's blank env for the daemon-local app. The `{}` is
 // Hono's own API shape here, not a loose object type.

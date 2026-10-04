@@ -108,6 +108,9 @@ export class AnthropicRelayProvider implements ModelProvider {
         afterFirstByte: false,
       });
     }
+    // The platform types the body element-generically; on the wire it is the
+    // UTF-8 SSE byte stream — re-typed at this one boundary.
+    const bodyStream = response.body as unknown as ReadableStream<Uint8Array>;
 
     let sawStreamBytes = false;
     let sawMessageStop = false;
@@ -120,7 +123,7 @@ export class AnthropicRelayProvider implements ModelProvider {
       // HTTP 200 with a body is the commitment point: any failure from here
       // on is post-first-byte (upstream accepted — and billed — the call).
       sawStreamBytes = true;
-      for await (const message of parseSseStream(response.body)) {
+      for await (const message of parseSseStream(bodyStream)) {
         let payload: SseEventPayload;
         try {
           payload = JSON.parse(message.data) as SseEventPayload;

@@ -168,7 +168,9 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
             status: "pending",
             callId: item.id,
             toolName: item.tool,
-            toolArgs: (item.arguments ?? null) as Record<string, JsonValue> | null,
+            // The protocol item schema requires `arguments`, so the value is
+            // always a record after the safeParse gate above.
+            toolArgs: item.arguments as Record<string, JsonValue> | null,
             output: item.output,
             completedAt: item.completedAt,
             approvalStatus: null,
@@ -194,7 +196,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
           event.createdAt,
         );
         const row = rowId ? rows.get(rowId) : undefined;
-        if (row && row.kind === "conversation" && row.role === "assistant") {
+        if (row?.kind === "conversation" && row.role === "assistant") {
           row.text += parsed.data.delta;
           row.sourceSeqEnd = event.seq;
         }
@@ -217,7 +219,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
               )
             : assistantByItemId.get(item.id);
         const assistantRow = assistantRowId ? rows.get(assistantRowId) : undefined;
-        if (assistantRow && assistantRow.kind === "conversation") {
+        if (assistantRow?.kind === "conversation") {
           if (item.type === "agentMessage" && item.text.length > 0) {
             assistantRow.text = item.text;
           }
@@ -225,7 +227,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
           break;
         }
         const workRow = rows.get(item.id);
-        if (workRow && workRow.kind === "work" && workRow.workKind === "tool") {
+        if (workRow?.kind === "work" && workRow.workKind === "tool") {
           if (item.type === "toolCall") {
             workRow.output = item.output;
             workRow.completedAt = item.completedAt ?? event.createdAt;
@@ -295,10 +297,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
   const ordered = [...rows.values()].sort((a, b) =>
     a.__order === b.__order ? a.id.localeCompare(b.id) : a.__order - b.__order,
   );
-  return ordered.map(({ __order, ...row }) => {
-    __order;
-    return timelineRowSchema.parse(row);
-  });
+  return ordered.map(({ __order: _, ...row }) => timelineRowSchema.parse(row));
 }
 
 // --- paging (bb parseThreadTimelinePage + assembly, data.ts:151-187/2068-2104) --

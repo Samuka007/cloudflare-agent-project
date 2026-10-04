@@ -107,13 +107,18 @@ function executionOptionsOf(
 
 /** Key 1+2+3 in one total resolution. Never throws on env content. */
 export function resolveHarness(env: HarnessEnv): ResolvedHarness {
-  const model = env.MODEL_RELAY_MODEL?.trim() || HARNESS_DEFAULTS.model;
-  const baseUrl = env.MODEL_RELAY_BASE_URL_ANTHROPIC?.trim() || HARNESS_DEFAULTS.baseUrl;
+  // Empty-after-trim counts as unset (same fallback `||` gave, kept explicit
+  // because `??` alone would let an empty string through).
+  const modelRaw = env.MODEL_RELAY_MODEL?.trim() ?? "";
+  const model = modelRaw === "" ? HARNESS_DEFAULTS.model : modelRaw;
+  const baseUrlRaw = env.MODEL_RELAY_BASE_URL_ANTHROPIC?.trim() ?? "";
+  const baseUrl = baseUrlRaw === "" ? HARNESS_DEFAULTS.baseUrl : baseUrlRaw;
   const apiKey = env.MODEL_RELAY_API_KEY?.trim() ?? "";
   const maxTokensRaw = Number.parseInt(env.MODEL_RELAY_MAX_TOKENS ?? "", 10);
   const maxTokens =
     Number.isFinite(maxTokensRaw) && maxTokensRaw > 0 ? maxTokensRaw : HARNESS_DEFAULTS.maxTokens;
   const budgetRaw = Number.parseInt(env.MODEL_RELAY_THINKING_BUDGET_TOKENS ?? "", 10);
+  const machineIdRaw = env.DAEMON_MACHINE_ID?.trim() ?? "";
   const thinking: ThinkingConfig =
     Number.isFinite(budgetRaw) && budgetRaw > 0
       ? { type: "enabled", budget_tokens: budgetRaw }
@@ -128,7 +133,7 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
       thinking,
     },
     hostBinding: {
-      machineId: env.DAEMON_MACHINE_ID?.trim() || HARNESS_DEFAULTS.machineId,
+      machineId: machineIdRaw === "" ? HARNESS_DEFAULTS.machineId : machineIdRaw,
     },
     // M0 deterministic budget (relay thinking defaults off — glm-5.3 burns
     // completion budget on reasoning; re-enable via the thinking env only).
@@ -147,12 +152,26 @@ export class FixedReplyProvider implements ModelProvider {
 
   constructor(private readonly reply: string) {}
 
-  async *streamTurn(
+  streamTurn(
     request: ModelRequest,
     _options: { signal: AbortSignal },
   ): AsyncIterable<ModelStreamChunk> {
+    // Hand-rolled single-chunk async iterator: the ModelProvider signature
+    // demands AsyncIterable, but `async *` with no await trips require-await.
     this.calls.push(request);
-    yield { kind: "text-delta", text: this.reply };
+    const reply = this.reply;
+    let yielded = false;
+    return {
+      [Symbol.asyncIterator](): AsyncIterator<ModelStreamChunk> {
+        return {
+          next: (): Promise<IteratorResult<ModelStreamChunk>> => {
+            if (yielded) return Promise.resolve({ done: true, value: undefined });
+            yielded = true;
+            return Promise.resolve({ done: false, value: { kind: "text-delta", text: reply } });
+          },
+        };
+      },
+    };
   }
 }
 

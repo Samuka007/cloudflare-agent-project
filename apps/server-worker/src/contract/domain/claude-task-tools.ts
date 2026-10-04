@@ -30,14 +30,14 @@ export const claudeTaskCreateArgsSchema = z
     activeForm: z.string().optional(),
     subject: z.string(),
   })
-  .passthrough();
+  .loose();
 export type ClaudeTaskCreateArgs = z.infer<typeof claudeTaskCreateArgsSchema>;
 
 export const claudeTaskGetArgsSchema = z
   .object({
     taskId: z.string(),
   })
-  .passthrough();
+  .loose();
 export type ClaudeTaskGetArgs = z.infer<typeof claudeTaskGetArgsSchema>;
 
 export const claudeTaskUpdateArgsSchema = z
@@ -47,7 +47,7 @@ export const claudeTaskUpdateArgsSchema = z
     subject: z.string().optional(),
     taskId: z.string(),
   })
-  .passthrough();
+  .loose();
 export type ClaudeTaskUpdateArgs = z.infer<typeof claudeTaskUpdateArgsSchema>;
 
 export const claudeTaskCreateOutputSchema = z
@@ -57,9 +57,9 @@ export const claudeTaskCreateOutputSchema = z
         id: z.string(),
         subject: z.string(),
       })
-      .passthrough(),
+      .loose(),
   })
-  .passthrough();
+  .loose();
 export type ClaudeTaskCreateOutput = z.infer<typeof claudeTaskCreateOutputSchema>;
 
 export const claudeTaskGetOutputTaskSchema = z
@@ -68,14 +68,14 @@ export const claudeTaskGetOutputTaskSchema = z
     status: claudeTaskStatusSchema,
     subject: z.string(),
   })
-  .passthrough();
+  .loose();
 export type ClaudeTaskGetOutputTask = z.infer<typeof claudeTaskGetOutputTaskSchema>;
 
 export const claudeTaskGetOutputSchema = z
   .object({
     task: claudeTaskGetOutputTaskSchema.nullable(),
   })
-  .passthrough();
+  .loose();
 export type ClaudeTaskGetOutput = z.infer<typeof claudeTaskGetOutputSchema>;
 
 export const claudeTaskUpdateOutputSchema = z
@@ -83,7 +83,7 @@ export const claudeTaskUpdateOutputSchema = z
     success: z.boolean(),
     taskId: z.string(),
   })
-  .passthrough();
+  .loose();
 export type ClaudeTaskUpdateOutput = z.infer<typeof claudeTaskUpdateOutputSchema>;
 
 export const claudeTaskListItemSchema = z
@@ -92,14 +92,14 @@ export const claudeTaskListItemSchema = z
     status: claudeTaskListStatusSchema,
     subject: z.string(),
   })
-  .passthrough();
+  .loose();
 export type ClaudeTaskListItem = z.infer<typeof claudeTaskListItemSchema>;
 
 export const claudeTaskListOutputSchema = z
   .object({
     tasks: z.array(z.unknown()),
   })
-  .passthrough();
+  .loose();
 export type ClaudeTaskListOutput = z.infer<typeof claudeTaskListOutputSchema>;
 
 export const claudeTaskToolOutputSchema = z.union([

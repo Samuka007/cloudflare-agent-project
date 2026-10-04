@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { ensureMigrations } from "../migrate.js";
-import { SELF } from "cloudflare:test";
+import { exports } from "cloudflare:workers";
 
 /**
  * Criterion 7 (port-inventory §6.7): SDK fetches carry
@@ -11,7 +11,7 @@ beforeAll(ensureMigrations);
 
 describe("criterion 7: x-bb-app-surface passthrough", () => {
   it("serves API reads with the surface header present", async () => {
-    const response = await SELF.fetch("https://example.com/api/v1/threads", {
+    const response = await exports.default.fetch("https://example.com/api/v1/threads", {
       headers: { "x-bb-app-surface": "web" },
     });
     expect(response.status).toBe(200);
@@ -19,7 +19,7 @@ describe("criterion 7: x-bb-app-surface passthrough", () => {
   });
 
   it("serves mutations with the surface header present", async () => {
-    const response = await SELF.fetch("https://example.com/api/v1/threads", {
+    const response = await exports.default.fetch("https://example.com/api/v1/threads", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -36,7 +36,7 @@ describe("criterion 7: x-bb-app-surface passthrough", () => {
   });
 
   it("keeps /health open for liveness probes", async () => {
-    const response = await SELF.fetch("https://example.com/health");
+    const response = await exports.default.fetch("https://example.com/health");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
   });

@@ -134,7 +134,9 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
 function assertUnhandledRealtimeSubscriptionTarget(target: never): never {
-  throw new Error(`Unhandled realtime subscription target: ${target}`);
+  // Unreachable when the discriminated union is handled exhaustively; the
+  // `never` parameter keeps the compiler enforcing that. Format defensively.
+  throw new Error(`Unhandled realtime subscription target: ${JSON.stringify(target)}`);
 }
 
 export function realtimeSubscriptionTargetKey(target: RealtimeSubscriptionTarget): string {

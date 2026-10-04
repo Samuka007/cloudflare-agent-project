@@ -111,19 +111,19 @@ export class TestDaemonServiceDO extends DurableObject<TestDaemonEnv> {
 
   // -- client simulation (tests drive the machine side through here) --------
 
-  async clientEmitOutput(executionId: string, text: string): Promise<void> {
+  clientEmitOutput(executionId: string, text: string): void {
     this.client().emitOutput(executionId, text);
   }
 
-  async clientExit(executionId: string, result: ToolResultPayload): Promise<void> {
-    await this.client().exit(executionId, result);
+  clientExit(executionId: string, result: ToolResultPayload): void {
+    this.client().exit(executionId, result);
   }
 
-  async clientDisconnect(): Promise<void> {
+  clientDisconnect(): void {
     this.client().disconnect();
   }
 
-  async clientReconnectSameBoot(): Promise<void> {
+  clientReconnectSameBoot(): void {
     this.client().reconnectSameBoot();
   }
 
@@ -131,87 +131,85 @@ export class TestDaemonServiceDO extends DurableObject<TestDaemonEnv> {
     await this.client().restartNewBoot();
   }
 
-  async clientResendFrom(executionId: string, offset: number, text: string): Promise<void> {
+  clientResendFrom(executionId: string, offset: number, text: string): void {
     this.client().resendFrom(executionId, offset, text);
   }
 
-  async clientReportGap(executionId: string, from: number, to: number): Promise<void> {
+  clientReportGap(executionId: string, from: number, to: number): void {
     this.client().reportGap(executionId, from, to);
   }
 
-  async clientAddForeignProcess(): Promise<{ pid: number; pidStartedAt: number }> {
+  clientAddForeignProcess(): { pid: number; pidStartedAt: number } {
     return this.os.addForeignProcess();
   }
 
-  async clientReusePid(pid: number): Promise<{ pid: number; pidStartedAt: number }> {
+  clientReusePid(pid: number): { pid: number; pidStartedAt: number } {
     return this.os.reusePid(pid);
   }
 
   // -- scenario switches ------------------------------------------------------
 
-  async setHostOnline(online: boolean): Promise<void> {
+  setHostOnline(online: boolean): void {
     this.service.hostOnline = online;
   }
 
-  async setSilentExecutionIds(executionIds: string[]): Promise<void> {
+  setSilentExecutionIds(executionIds: string[]): void {
     this.service.silentExecutionIds.clear();
     for (const id of executionIds) this.service.silentExecutionIds.add(id);
   }
 
-  async setFailNextAcks(count: number): Promise<void> {
+  setFailNextAcks(count: number): void {
     this.service.failNextAcks = count;
   }
 
-  async dial(hostId: string): Promise<{ sessionId: string; replaced: boolean }> {
+  dial(hostId: string): { sessionId: string; replaced: boolean } {
     return this.service.dial(hostId, this.client().bootId);
   }
 
-  async lapseLease(hostId: string): Promise<string[]> {
+  lapseLease(hostId: string): string[] {
     return this.service.lapseLease(hostId);
   }
 
-  async clientMessage(hostId: string, sessionId: string): Promise<{ accepted: boolean }> {
+  clientMessage(hostId: string, sessionId: string): { accepted: boolean } {
     return this.service.clientMessage(hostId, sessionId);
   }
 
   // -- observability ----------------------------------------------------------
 
-  async journal(): Promise<unknown[]> {
+  journal(): unknown[] {
     return [...this.service.journal];
   }
 
-  async spawnAckCount(executionId: string): Promise<number> {
+  spawnAckCount(executionId: string): number {
     return this.service.spawnAckCount(executionId);
   }
 
-  async tombstoned(executionId: string): Promise<boolean> {
+  tombstoned(executionId: string): boolean {
     return this.service.tombstoned(executionId);
   }
 
-  async derivedState(executionId: string): Promise<string> {
+  derivedState(executionId: string): string {
     return this.service.derivedStateOf(executionId);
   }
 
-  async clientSpawnCalls(): Promise<string[]> {
+  clientSpawnCalls(): string[] {
     return [...this.client().spawnCalls];
   }
 
-  async clientKills(): Promise<
-    { executionId: string; pid: number; pidStartedAt: number; verified: boolean }[]
-  > {
+  clientKills(): { executionId: string; pid: number; pidStartedAt: number; verified: boolean }[] {
     return [...this.client().kills];
   }
 
-  async clientBootId(): Promise<string> {
+  clientBootId(): string {
     return this.client().bootId;
   }
 
-  async evictAndReplayState(executionIds: string[]): Promise<{
+  evictAndReplayState(executionIds: string[]): {
     statesBefore: Record<string, string>;
     statesAfter: Record<string, string>;
     offsetsBefore: Record<string, number>;
     offsetsAfter: Record<string, number>;
-  }> {
+  } {
     const statesBefore: Record<string, string> = {};
     const offsetsBefore: Record<string, number> = {};
     for (const id of executionIds) {

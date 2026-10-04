@@ -212,22 +212,19 @@ export function anthropicRequestBody(
   flushUser();
 
   const firstMessage = messages[0];
-  if (firstMessage === undefined || firstMessage.role !== "user") {
+  if (firstMessage?.role !== "user") {
     throw new WireAssemblyError("request must open with a user message");
   }
   for (let index = 1; index < messages.length; index++) {
     const currentMessage = messages[index];
     const previousMessage = messages[index - 1];
-    if (
-      currentMessage !== undefined &&
-      previousMessage !== undefined &&
-      currentMessage.role === previousMessage.role
-    ) {
+    if (currentMessage === undefined || previousMessage === undefined) continue;
+    if (currentMessage.role === previousMessage.role) {
       throw new WireAssemblyError(`roles must alternate (index ${index})`);
     }
   }
   const last = messages[messages.length - 1];
-  if (last === undefined || last.role !== "user") {
+  if (last?.role !== "user") {
     throw new WireAssemblyError("request must end with a user message");
   }
 

@@ -1,4 +1,4 @@
-import { env } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 import { expect } from "vitest";
 import {
   clearAgentRuntimes,
@@ -54,10 +54,13 @@ export function adapterFor(
 }
 
 export function managerFacadeByName(name: string): ManagerFacade {
-  // DurableObjectStub's conditional RPC typing explodes when checked for
-  // structural assignability against ManagerFacade; at runtime the stub IS
-  // the facade, so the cast skips the check instead of running it.
-  return managerStubByName(name);
+  // tsc and eslint's type program disagree on this assignment: checking the
+  // raw RPC stub against ManagerFacade exceeds TS's instantiation depth
+  // (TS2589), while eslint's no-unnecessary-type-assertion calls the same
+  // cast redundant. Keep the cast; suppress the false positive.
+  const stub = managerStubByName(name);
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- TS2589 without it; see above
+  return stub as unknown as ManagerFacade;
 }
 
 /** Exact-key mock above the manager's `*` fallback — returns the provider. */
@@ -186,7 +189,7 @@ export async function afterAbort<T>(operation: () => Promise<T>): Promise<T> {
       return await operation();
     } catch (error) {
       if (attempt === 3) throw error;
-      const { promise, resolve } = Promise.withResolvers<void>();
+      const { promise, resolve } = Promise.withResolvers<undefined>();
       setTimeout(resolve, 250);
       await promise;
     }

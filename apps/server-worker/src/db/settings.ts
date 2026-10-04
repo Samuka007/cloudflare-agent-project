@@ -123,11 +123,11 @@ export interface StoredAppearance {
 export async function getStoredAppearance(env: Env): Promise<StoredAppearance | null> {
   const row = await env.DB.prepare(
     "SELECT theme_id, favicon_color FROM app_theme WHERE id = 'app_theme'",
-  ).first();
+  ).first<{ theme_id: string; favicon_color: string | null }>();
   return row
     ? {
-        themeId: String(row.theme_id),
-        faviconColor: row.favicon_color === null ? null : String(row.favicon_color),
+        themeId: row.theme_id,
+        faviconColor: row.favicon_color,
       }
     : null;
 }

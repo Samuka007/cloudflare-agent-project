@@ -139,8 +139,22 @@ export function modelRequestFromEvents(
         });
         break;
       }
-      default:
-        // thread lifecycle + state events are context-invisible (ruling ③).
+      case "turn.input":
+        // Captured before the walk (exactly-one invariant above).
+        break;
+      // Thread lifecycle + state events are context-invisible (ruling ③).
+      case "thread.created":
+      case "model.call_failed":
+      case "model.call_retry":
+      case "model.call_sealed":
+      case "model.delta":
+      case "tool.dispatch":
+      case "tool.exec_started":
+      case "tool.output":
+      case "turn.cancel_requested":
+      case "turn.cancelled":
+      case "turn.completed":
+      case "turn.failed":
         break;
     }
   }
@@ -173,7 +187,10 @@ export function modelRequestFromEvents(
   }
   const priorCalls: PriorModelCall[] = [];
   for (const callId of callOrder.slice(0, currentIndex)) {
-    const slice = slices.get(callId)!;
+    const slice = slices.get(callId);
+    if (slice === undefined) {
+      throw new ProjectionError(`call ${callId} in call order but missing from slices`);
+    }
     if (!slice.completed) {
       // Pre-first-byte failed attempt on the retry path: zero wire content
       // (no deltas, no tool calls) — the retry replaces it in history. A

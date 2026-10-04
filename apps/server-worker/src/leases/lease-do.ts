@@ -55,7 +55,7 @@ export class LeaseStoreDO extends DurableObject {
   }
 
   async alarm(): Promise<void> {
-    const result = await this.evictExpired();
+    await this.evictExpired();
     const remaining = await this.ctx.storage.list({
       prefix: LEASE_KEY_PREFIX,
       limit: 1,
@@ -63,7 +63,6 @@ export class LeaseStoreDO extends DurableObject {
     if (remaining.size > 0) {
       await this.scheduleEvictionAlarm();
     }
-    result;
   }
 
   private async scheduleEvictionAlarm(): Promise<void> {

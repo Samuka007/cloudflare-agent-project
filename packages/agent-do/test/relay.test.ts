@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { AnthropicRelayProvider, type RelayConfig } from "../src/relay/anthropic-provider.js";
-import type { ModelRequest } from "../src/provider.js";
+import type { ModelRequest, ModelStreamChunk } from "../src/provider.js";
 
 /**
  * Real-client behavior against scripted SSE streams: happy path assembly,
@@ -115,19 +115,25 @@ describe("relay client: happy paths", () => {
       ]) + "\n";
     const provider = new AnthropicRelayProvider({
       ...CONFIG,
-      fetchImpl: async () => streamResponse(sse, 40),
+      fetchImpl: () => Promise.resolve(streamResponse(sse, 40)),
     });
     const { texts, toolCalls } = await collect(provider);
     expect(texts).toEqual(["Hel", "lo"]);
     expect(toolCalls).toEqual([[{ name: "bash", arguments: { command: "echo hi" } }]]);
     const recordedBody = provider.bodies[0];
     if (recordedBody === undefined) throw new Error("provider recorded no request body");
-    const body = JSON.parse(recordedBody);
+    const body = JSON.parse(recordedBody) as {
+      stream: unknown;
+      thinking: unknown;
+      model: unknown;
+      tools: { name: unknown }[];
+      messages: { content: { text: unknown }[] }[];
+    };
     expect(body.stream).toBe(true);
     expect(body.thinking).toEqual({ type: "disabled" });
     expect(body.model).toBe("glm-5.3");
     expect(body.tools[0]?.name).toBe("bash");
-    expect(body.messages[0].content[0].text).toBe("hi");
+    expect(body.messages[0]?.content[0]?.text).toBe("hi");
   });
 
   test("thinking deltas never surface as answer text", async () => {
@@ -169,7 +175,7 @@ describe("relay client: happy paths", () => {
       ]) + "\n";
     const provider = new AnthropicRelayProvider({
       ...CONFIG,
-      fetchImpl: async () => streamResponse(sse),
+      fetchImpl: () => Promise.resolve(streamResponse(sse)),
     });
     const { texts } = await collect(provider);
     expect(texts).toEqual(["answer"]);
@@ -205,7 +211,7 @@ describe("relay client: seal semantics (post-first-byte, never re-called)", () =
     });
     const provider = new AnthropicRelayProvider({
       ...CONFIG,
-      fetchImpl: async () => new Response(body, { status: 200 }),
+      fetchImpl: () => Promise.resolve(new Response(body, { status: 200 })),
     });
     await expect(collect(provider)).rejects.toMatchObject({
       name: "ModelProviderError",
@@ -228,13 +234,13 @@ describe("relay client: seal semantics (post-first-byte, never re-called)", () =
     ]);
     const provider = new AnthropicRelayProvider({
       ...CONFIG,
-      fetchImpl: async () => streamResponse(sse),
+      fetchImpl: () => Promise.resolve(streamResponse(sse)),
     });
     await expect(collect(provider)).rejects.toMatchObject({
       message: expect.stringContaining("without message_stop"),
       afterFirstByte: true,
       retryable: false,
-    });
+    } satisfies Record<string, unknown>);
   });
 
   test("stop_reason=max_tokens seals (length truncation never continues)", async () => {
@@ -258,12 +264,12 @@ describe("relay client: seal semantics (post-first-byte, never re-called)", () =
       ]) + "\n";
     const provider = new AnthropicRelayProvider({
       ...CONFIG,
-      fetchImpl: async () => streamResponse(sse),
+      fetchImpl: () => Promise.resolve(streamResponse(sse)),
     });
     await expect(collect(provider)).rejects.toMatchObject({
       message: expect.stringContaining("max_tokens"),
       afterFirstByte: true,
-    });
+    } satisfies Record<string, unknown>);
   });
 
   test("truncated tool arguments seal at content_block_stop", async () => {
@@ -292,12 +298,12 @@ describe("relay client: seal semantics (post-first-byte, never re-called)", () =
       ]) + "\n";
     const provider = new AnthropicRelayProvider({
       ...CONFIG,
-      fetchImpl: async () => streamResponse(sse),
+      fetchImpl: () => Promise.resolve(streamResponse(sse)),
     });
     await expect(collect(provider)).rejects.toMatchObject({
       message: expect.stringContaining("incomplete arguments"),
       afterFirstByte: true,
-    });
+    } satisfies Record<string, unknown>);
   });
 
   test("in-band SSE error event seals", async () => {
@@ -308,12 +314,12 @@ describe("relay client: seal semantics (post-first-byte, never re-called)", () =
       ]) + "\n";
     const provider = new AnthropicRelayProvider({
       ...CONFIG,
-      fetchImpl: async () => streamResponse(sse),
+      fetchImpl: () => Promise.resolve(streamResponse(sse)),
     });
     await expect(collect(provider)).rejects.toMatchObject({
       message: expect.stringContaining("overloaded_error"),
       afterFirstByte: true,
-    });
+    } satisfies Record<string, unknown>);
   });
 });
 
@@ -321,7 +327,7 @@ describe("relay client: pre-first-byte classification", () => {
   function statusProvider(status: number, payload: unknown): AnthropicRelayProvider {
     return new AnthropicRelayProvider({
       ...CONFIG,
-      fetchImpl: async () => new Response(JSON.stringify(payload), { status }),
+      fetchImpl: () => Promise.resolve(new Response(JSON.stringify(payload), { status })),
     });
   }
 
@@ -343,7 +349,7 @@ describe("relay client: pre-first-byte classification", () => {
       retryable: false,
       afterFirstByte: false,
       message: expect.stringContaining("401"),
-    });
+    } satisfies Record<string, unknown>);
   });
 
   test("5xx → retryable", async () => {
@@ -354,7 +360,7 @@ describe("relay client: pre-first-byte classification", () => {
   test("connect failure → retryable, pre-first-byte", async () => {
     const provider = new AnthropicRelayProvider({
       ...CONFIG,
-      fetchImpl: async () => {
+      fetchImpl: () => {
         throw new TypeError("fetch failed");
       },
     });
@@ -395,18 +401,19 @@ describe("relay client: abort", () => {
     });
     const provider = new AnthropicRelayProvider({
       ...CONFIG,
-      fetchImpl: async () => new Response(body, { status: 200 }),
+      fetchImpl: () => Promise.resolve(new Response(body, { status: 200 })),
     });
     const iterator = provider
       .streamTurn(REQUEST, { signal: controller.signal })
-      [Symbol.asyncIterator]();
+      [Symbol.asyncIterator]() as AsyncIterator<ModelStreamChunk, undefined>;
     const first = await iterator.next();
+    if (first.done) throw new Error("expected a first chunk before abort");
     expect(first.value.kind).toBe("text-delta");
     controller.abort();
     await expect(iterator.next()).rejects.toMatchObject({
       message: expect.stringContaining("abort"),
       retryable: false,
       afterFirstByte: true,
-    });
+    } satisfies Record<string, unknown>);
   });
 });

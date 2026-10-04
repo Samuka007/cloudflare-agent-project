@@ -25,7 +25,7 @@ export interface Endpoint<
   outputFormat: Format;
   status: Status;
 }
-export type EmptyInput = Record<never, never>;
+export type EmptyInput = Record<string, never>;
 
 export interface PathId {
   param: { id: string };

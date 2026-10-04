@@ -38,9 +38,12 @@ test.skipIf(relayKey === undefined || relayKey === "" || relayBase === undefined
   "poc smoke: real glm-5.3 turn induces a bash roundtrip via the mock daemon seam",
   { timeout: 180_000 },
   async () => {
+    if (relayBase === undefined || relayBase === "" || relayKey === undefined || relayKey === "") {
+      throw new Error("live relay env missing (MODEL_RELAY_* in .dev.vars)");
+    }
     const provider = new AnthropicRelayProvider({
-      baseUrl: relayBase!,
-      apiKey: relayKey!,
+      baseUrl: relayBase,
+      apiKey: relayKey,
       model: relayModel,
       maxTokens: 8192,
       thinking: { type: "disabled" },
@@ -59,8 +62,8 @@ test.skipIf(relayKey === undefined || relayKey === "" || relayBase === undefined
     // stands in: emit the canned bash output, then the exit.
     const snapshot = await rig.waitFor((all) => all.some((event) => event.type === "tool.call"));
     const toolCall = snapshot.find((event) => event.type === "tool.call");
-    expect(toolCall).toBeDefined();
-    const executionId = `${rig.threadId}:${toolCall!.seq}`;
+    if (toolCall === undefined) throw new Error("missing tool.call event");
+    const executionId = `${rig.threadId}:${toolCall.seq}`;
     const canned = `${marker}\n`;
     await rig.service.clientEmitOutput(executionId, canned);
     await rig.service.clientExit(executionId, { status: "ok", exitCode: 0, output: canned });

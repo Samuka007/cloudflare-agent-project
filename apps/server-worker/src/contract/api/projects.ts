@@ -33,7 +33,7 @@ const localProjectPathRequestSchema = z
     }
 
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: "custom",
       message: validationMessage,
     });
   });

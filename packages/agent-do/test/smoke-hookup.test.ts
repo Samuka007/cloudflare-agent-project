@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { SELF } from "cloudflare:test";
+import { exports } from "cloudflare:workers";
 import {
   DAEMON_PROTOCOL_VERSION,
   serviceFrameSchema,
@@ -37,7 +37,7 @@ class HookupClient {
   ) {}
 
   async dial(): Promise<void> {
-    const open = await SELF.fetch("https://hookup.test/session/open", {
+    const open = await exports.default.fetch("https://hookup.test/session/open", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${HOST_KEY}` },
       body: JSON.stringify({
@@ -47,9 +47,9 @@ class HookupClient {
       }),
     });
     expect(open.status).toBe(201);
-    const session = (await open.json()) as { sessionId: string };
+    const session = await open.json<{ sessionId: string }>();
 
-    const upgrade = await SELF.fetch(
+    const upgrade = await exports.default.fetch(
       `https://hookup.test/ws?hostId=${encodeURIComponent(this.hostId)}&sessionId=${encodeURIComponent(session.sessionId)}`,
       { headers: { Upgrade: "websocket", authorization: `Bearer ${HOST_KEY}` } },
     );
@@ -213,9 +213,12 @@ test.skipIf(relayKey === undefined || relayKey === "" || relayBase === undefined
   "hookup: live glm-5.3 turn through the real DaemonServiceDO",
   { timeout: 180_000 },
   async () => {
+    if (relayBase === undefined || relayBase === "" || relayKey === undefined || relayKey === "") {
+      throw new Error("live relay env missing (MODEL_RELAY_* in .dev.vars)");
+    }
     const provider = new AnthropicRelayProvider({
-      baseUrl: relayBase!,
-      apiKey: relayKey!,
+      baseUrl: relayBase,
+      apiKey: relayKey,
       model: relayModel,
       maxTokens: 8192,
       thinking: { type: "disabled" },

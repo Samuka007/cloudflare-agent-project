@@ -1,4 +1,5 @@
-import { env, runDurableObjectAlarm } from "cloudflare:test";
+import { runDurableObjectAlarm } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 import { expect } from "vitest";
 import type {
   AdapterCommand,
@@ -100,7 +101,13 @@ function testScopedName(name?: string): string {
 }
 
 export function orchestratorFor(name?: string): OrchestratorStub {
-  return env.ORCHESTRATOR.get(env.ORCHESTRATOR.idFromName(testScopedName(name)));
+  // tsc and eslint's type program disagree on this assignment: checking the
+  // raw RPC stub against OrchestratorStub exceeds TS's instantiation depth
+  // (TS2589), while eslint's no-unnecessary-type-assertion calls the same
+  // cast redundant. Keep the cast; suppress the false positive.
+  const stub = env.ORCHESTRATOR.get(env.ORCHESTRATOR.idFromName(testScopedName(name)));
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- TS2589 without it; see above
+  return stub as unknown as OrchestratorStub;
 }
 
 /**

@@ -8,6 +8,7 @@ import { registerSystemRoutes } from "./routes/system.js";
 import { registerProjectRoutes, registerThreadSectionRoutes } from "./routes/projects.js";
 import { registerHostRoutes } from "./routes/hosts.js";
 import type { AppEnv, Env } from "./app-types.js";
+import type { Context, Next } from "hono";
 
 /**
  * Hono assembly, ported from bb apps/server/src/server.ts (commit 8473d8c33)
@@ -21,10 +22,10 @@ export function createApp(env: Env): Hono<AppEnv> {
   app.get("/health", (ctx) => ctx.json({ ok: true }));
 
   // Guarded surface: /api/v1/* + /ws (bb guards both, server.ts:490-499).
-  app.use("/api/v1/*", async (ctx, next) => {
+  app.use("/api/v1/*", async (ctx: Context, next: Next) => {
     await originGuard(ctx, next);
   });
-  app.use("/api/v1/*", async (ctx, next) => {
+  app.use("/api/v1/*", async (ctx: Context, next: Next) => {
     await accessGate(ctx, next);
   });
   app.use(
@@ -40,10 +41,10 @@ export function createApp(env: Env): Hono<AppEnv> {
       },
     }),
   );
-  app.use("/ws", async (ctx, next) => {
+  app.use("/ws", async (ctx: Context, next: Next) => {
     await originGuard(ctx, next);
   });
-  app.use("/ws", async (ctx, next) => {
+  app.use("/ws", async (ctx: Context, next: Next) => {
     await accessGate(ctx, next);
   });
 

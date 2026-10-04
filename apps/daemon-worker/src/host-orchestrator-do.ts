@@ -423,7 +423,7 @@ export class HostOrchestratorDO extends DurableObject {
    * instance, full session-close notification otherwise), then the new
    * active session is inserted with a fresh lease.
    */
-  openSession(
+  async openSession(
     args: HostDaemonSessionOpenRequest & {
       heartbeatIntervalMs?: number;
       leaseTimeoutMs?: number;
@@ -573,10 +573,10 @@ export class HostOrchestratorDO extends DurableObject {
    * window for a reconnect and is skipped entirely when any socket is
    * attached for the host when it fires.
    */
-  detachSocket(args: {
+  async detachSocket(args: {
     sessionId: string;
     graceMs?: number;
-  }): { closed: boolean; graceDeadlineAt: number | null } {
+  }): Promise<{ closed: boolean; graceDeadlineAt: number | null }> {
     const session = this.getSessionRow(args.sessionId);
     if (session?.status !== "active") {
       return { closed: false, graceDeadlineAt: null };
@@ -604,7 +604,7 @@ export class HostOrchestratorDO extends DurableObject {
    * already-expired sessions answer `inactive` — the WS layer closes 1008
    * "inactive-session".
    */
-  recordDaemonMessage(args: { sessionId: string }): Promise<DaemonMessageReceipt> {
+  async recordDaemonMessage(args: { sessionId: string }): Promise<DaemonMessageReceipt> {
     const session = this.getSessionRow(args.sessionId);
     if (session?.status !== "active") {
       return { kind: "inactive" };
@@ -709,11 +709,10 @@ export class HostOrchestratorDO extends DurableObject {
   // Command journal (host_daemon_commands / host_daemon_command_attempts).
   // ===========================================================================
 
-  enqueueCommand(args: {
-    type: AdapterCommandType;
-    command: AdapterCommand;
-    threadId?: string;
-  }): { commandId: string; cursor: number } {
+  enqueueCommand(args: { type: AdapterCommandType; command: AdapterCommand; threadId?: string }): {
+    commandId: string;
+    cursor: number;
+  } {
     // The journal is host-scoped: openSession binds the host first (bb wrote
     // host_daemon_commands rows only for enrolled hosts).
     if (this.metaGet("host_id") === undefined) {

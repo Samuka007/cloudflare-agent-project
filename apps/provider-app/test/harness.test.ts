@@ -81,7 +81,7 @@ describe("harness: three-key resolution", () => {
 
 describe("classifyExecutionSettingsChange (bb face)", () => {
   const adapter = new EdgeAgentProviderAdapter(
-    { handleAdapterCommand: async () => ({ ok: true, result: null }) },
+    { handleAdapterCommand: () => Promise.resolve({ ok: true, result: null }) },
     resolveHarness({}),
   );
 
@@ -134,7 +134,7 @@ describe("classifyExecutionSettingsChange (bb face)", () => {
 
 describe("classifyHarnessChange (three-key face)", () => {
   const adapter = new EdgeAgentProviderAdapter(
-    { handleAdapterCommand: async () => ({ ok: true, result: null }) },
+    { handleAdapterCommand: () => Promise.resolve({ ok: true, result: null }) },
     resolveHarness({}),
   );
 
@@ -173,9 +173,9 @@ describe("adapter direct answers", () => {
   test("initialize and model/list never reach the manager", async () => {
     const seen: AdapterCommand[] = [];
     const manager: ManagerFacade = {
-      async handleAdapterCommand(command: AdapterCommand): Promise<AdapterCommandOutcome> {
+      handleAdapterCommand(command: AdapterCommand): Promise<AdapterCommandOutcome> {
         seen.push(command);
-        return { ok: true, result: null };
+        return Promise.resolve({ ok: true, result: null });
       },
     };
     const adapter = new EdgeAgentProviderAdapter(manager, resolveHarness({}));

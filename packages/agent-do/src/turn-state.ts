@@ -140,7 +140,7 @@ function requireNonTerminal(runtime: TurnRuntime): void {
 
 function requireCall(state: ReplayState, turnId: string, modelCallId: number): ModelCallRuntime {
   const call = state.modelCalls.get(modelCallId);
-  if (call === undefined || call.turnId !== turnId) {
+  if (call?.turnId !== turnId) {
     throw new FsmViolationError(`unknown modelCallId ${modelCallId} for turn ${turnId}`);
   }
   return call;
@@ -293,7 +293,7 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       }
       const lastCallId = runtime.modelCallIds[runtime.modelCallIds.length - 1];
       const call = lastCallId === undefined ? undefined : state.modelCalls.get(lastCallId);
-      if (call === undefined || call.status !== "completed") {
+      if (call?.status !== "completed") {
         throw new FsmViolationError("tool.call without a completed model call");
       }
       const { timeoutMs } = event.data;
@@ -320,7 +320,7 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       requireNonTerminal(runtime);
       const executionId = event.data.executionId;
       const execution = state.executions.get(executionId);
-      if (execution === undefined || execution.turnId !== runtime.turnId) {
+      if (execution?.turnId !== runtime.turnId) {
         throw new FsmViolationError(`tool.dispatch for unknown ${executionId}`);
       }
       if (TERMINAL_EXECUTION_STATUSES.includes(execution.status)) {

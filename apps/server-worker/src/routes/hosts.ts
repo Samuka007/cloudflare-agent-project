@@ -58,7 +58,7 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
     const payload = await requireJsonBody(ctx, updateHostRequestSchema);
     await requireHost(ctx.env, ctx.req.param("id"));
     const updated = await updateHostRow(ctx.env, ctx.req.param("id"), {
-      ...(payload.name !== undefined ? { name: payload.name } : {}),
+      name: payload.name,
     });
     if (!updated) {
       throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
@@ -114,7 +114,7 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
 
 async function requireHost(env: Env, hostId: string) {
   const row = await getHostRow(env, hostId);
-  if (!row || row.destroyedAt !== null) {
+  if (row?.destroyedAt !== null) {
     throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
   }
   return row;

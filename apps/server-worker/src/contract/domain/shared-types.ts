@@ -131,7 +131,6 @@ export function isClaudeCodeMockCliTrafficEndpoint(value: string): boolean {
 }
 
 export const claudeCodeMockCliTrafficEndpointSchema = z
-  .string()
   .url()
   .refine(
     isClaudeCodeMockCliTrafficEndpoint,
@@ -270,7 +269,7 @@ export const promptInputSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("image"),
-    url: z.string().url(),
+    url: z.url(),
     ...promptInputVisibilityFields,
   }),
   z.object({
@@ -315,11 +314,7 @@ function isSelectedPromptCommandMention(
   mention: PromptTextMention,
   selector: PromptCommandSelector,
 ): boolean {
-  return (
-    mention.resource.kind === "command" &&
-    mention.resource.trigger === selector.trigger &&
-    mention.resource.name === selector.name
-  );
+  return mention.resource.kind === "command" && mention.resource.name === selector.name;
 }
 
 const BUILTIN_COMPACT_COMMAND = { trigger: "/", name: "compact" } as const;

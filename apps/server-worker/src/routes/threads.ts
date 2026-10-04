@@ -96,7 +96,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     }
     if (query.projectId !== undefined) {
       const project = await getProject(ctx.env, query.projectId);
-      if (!project || project.deletedAt !== null) {
+      if (project?.deletedAt !== null) {
         throw new ApiError({
           status: 404,
           code: "project_not_found",
@@ -140,7 +140,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
   routes.post("/threads", async (ctx) => {
     const payload = await requireJsonBody(ctx, createThreadRequestSchema);
     const project = await getProject(ctx.env, payload.projectId);
-    if (!project || project.deletedAt !== null) {
+    if (project?.deletedAt !== null) {
       throw new ApiError({ status: 404, code: "project_not_found", message: "Project not found" });
     }
     if (payload.sectionId !== null && payload.sectionId !== undefined) {
@@ -156,7 +156,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     let sourceThreadId: string | null = null;
     if (payload.parentThreadId !== undefined) {
       const parent = await getThreadRow(ctx.env, payload.parentThreadId);
-      if (!parent || parent.deletedAt !== null) {
+      if (parent?.deletedAt !== null) {
         throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
       }
       if (payload.originKind === null) {
@@ -200,17 +200,17 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
   // --- get / update / delete ------------------------------------------------------
 
   routes.get("/threads/:id", async (ctx) => {
-    const query = parseOr422(threadGetQuerySchema, ctx.req.query());
+    // bb 422s on unknown query params even when the M0 include face resolves
+    // them to null, so validate the surface without binding the result.
+    parseOr422(threadGetQuerySchema, ctx.req.query());
     const row = await requirePublicThread(ctx);
     const response = (await toThreadResponseWithSpawnCheck(ctx.env, row)) as ThreadResponse & {
       environment?: unknown;
       host?: unknown;
     };
-    const includes = (query.include ?? "").split(",").filter(Boolean);
     // M0: environment/host includes resolve to null — the environment family
     // is OUT (ruling #7); the response fields exist and are nullable (bb
     // threadWithIncludesResponseSchema).
-    includes;
     return ctx.json(response);
   });
 
@@ -311,11 +311,10 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
   });
 
   routes.post("/threads/:id/stop", async (ctx) => {
-    const row = await requirePublicThread(ctx);
     // bb stopThreadForCurrentState (thread-lifecycle.ts:1470-1522): with no
     // attached environment the stop is a no-op release — M0 threads have no
     // environment (family OUT), so the route is exactly that path.
-    row;
+    await requirePublicThread(ctx);
     return ctx.json({ ok: true });
   });
 
@@ -377,7 +376,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     let delta;
     if (query.afterSequence !== undefined && kind === "latest") {
       const cached = timelineLatestRowsCache.get(paramsKey);
-      if (cached && cached.maxSeq === Number(query.afterSequence)) {
+      if (cached?.maxSeq === Number(query.afterSequence)) {
         delta = computeTimelineRowDelta(cached.rows, page.rows);
       }
     }
@@ -634,7 +633,7 @@ export function resolveSendMode(
 /** bb requirePublicThread (entity-lookup.ts): 404 on missing or deleted. */
 async function requirePublicThread(ctx: { env: Env; req: { param(name: string): string } }) {
   const thread = await getThreadRow(ctx.env, ctx.req.param("id"));
-  if (!thread || thread.deletedAt !== null) {
+  if (thread?.deletedAt !== null) {
     throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
   }
   const project = await getProject(ctx.env, thread.projectId);

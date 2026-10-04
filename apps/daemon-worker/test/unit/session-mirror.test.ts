@@ -148,8 +148,9 @@ describe("heartbeat and lease (bb §2.1)", () => {
     const expiry1 = opened.session.leaseExpiresAt;
 
     const renewed = await orch.heartbeat({ sessionId });
-    expect(renewed).toEqual({ kind: "renewed", leaseExpiresAt: expect.any(Number) });
+    expect(renewed.kind).toBe("renewed");
     if (renewed.kind !== "renewed") return;
+    expect(renewed.leaseExpiresAt).toBeTypeOf("number");
     // Second renewal inside the same window: now+300 wins over expiry1+1.
     expect(renewed.leaseExpiresAt).toBeGreaterThanOrEqual(expiry1);
 

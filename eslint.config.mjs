@@ -77,6 +77,7 @@ export default tseslint.config(
       "apps/daemon-worker/src/host-orchestrator-do.ts",
       "apps/daemon-worker/src/provider-types.ts",
       "apps/server-worker/src/contract/hdc/common.ts",
+      "apps/server-worker/src/contract/hdc/local.ts",
     ],
     rules: {
       "@typescript-eslint/consistent-type-definitions": "off",

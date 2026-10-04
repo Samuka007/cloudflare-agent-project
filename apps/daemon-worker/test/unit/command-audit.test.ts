@@ -23,7 +23,7 @@ import {
 let fakes: InstalledFakes;
 const orchestrator = (): OrchestratorStub => orchestratorFor();
 
-beforeEach(async () => {
+beforeEach(() => {
   fakes = installFakes();
 });
 
@@ -53,7 +53,7 @@ async function waitUntil(condition: () => Promise<boolean>, label: string): Prom
     if (Date.now() > deadline) {
       throw new Error(`condition not met in time: ${label}`);
     }
-    const { promise, resolve } = Promise.withResolvers<void>();
+    const { promise, resolve } = Promise.withResolvers<undefined>();
     setTimeout(resolve, 5);
     await promise;
   }
@@ -87,10 +87,8 @@ describe("command lifecycle and audit rows", () => {
     });
     const attempts = await orch.listAttempts({ commandId: first.commandId });
     expect(attempts).toHaveLength(1);
-    expect(attempts[0]).toMatchObject({
-      status: "ok",
-      settledAt: expect.any(Number),
-    });
+    expect(attempts[0]).toMatchObject({ status: "ok" });
+    expect(attempts[0]?.settledAt).toBeTypeOf("number");
   });
 
   it("records provider failures with errorCode and a failed attempt", async () => {
