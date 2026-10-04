@@ -548,7 +548,9 @@ describe("M1.5 T2 — wait DO integration (journal-backed JobRegistry)", () => {
       from: "PeerA",
       text: "steer: check the logs",
     });
-    expect(first).toEqual({ messageId: "m-1", duplicated: false });
+    // T19: the receipt gained `revived` (this Main-thread delivery revives
+    // nothing — no subagent identity on the DO).
+    expect(first).toEqual({ messageId: "m-1", duplicated: false, revived: false });
     const events = await rig.waitTurnComplete(turnId);
     const results = waitResults(events, rig.threadId);
     expect(results).toHaveLength(1);

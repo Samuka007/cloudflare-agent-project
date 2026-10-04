@@ -437,6 +437,49 @@ export const agentEventDataSchemas = {
   }),
 
   /**
+   * M1.5 T19 lifecycle journal family (proposal §3 T19) — the four-state
+   * registry's rows (tools/task/lifecycle.ts folds them; thread-scoped like
+   * the rest of the task family, never FSM state).
+   *
+   * `task.subagent_parked` is the TTL-park row (omp agentIdleTtlMs, default
+   * 420_000, ≤0 off): appended by the CHILD DO's alarm — park is a local DO
+   * state write (ticket DO budget). Ref (agentId) + sessionFile (the
+   * journal) survive; only the live session releases.
+   */
+  "task.subagent_parked": z.object({
+    spawnId: z.string().min(1),
+    agentId: z.string().min(1),
+  }),
+
+  /**
+   * Revival receipt (omp irc/bus.ts:139-143): `write agent://<id>` on a
+   * parked agent revives it from the transcript, then delivers. `inputId`
+   * joins the follow-up turn input (deterministic join, yield_reminder
+   * precedent).
+   */
+  "task.subagent_revived": z.object({
+    spawnId: z.string().min(1),
+    agentId: z.string().min(1),
+    /** The follow-up message's turn inputId (revive-<messageId>). */
+    inputId: z.string().min(1),
+    /** Who revived it (the `write agent://` sender). */
+    from: z.string().min(1),
+  }),
+
+  /**
+   * Abort row. reason="kill" rides the `proc://<jobId>/kill` face (cancel
+   * entry 1). The asymmetry (omp executor.ts:2144-2147): "budget" is the
+   * ONLY revivable abort — the lifecycle fold maps it to `idle`; every
+   * other reason lands the terminal tombstone (irreversible; late
+   * callbacks confirm, never flip).
+   */
+  "task.subagent_aborted": z.object({
+    spawnId: z.string().min(1),
+    agentId: z.string().min(1),
+    reason: z.enum(["budget", "call_signal", "wall_clock", "kill", "internal"]),
+  }),
+
+  /**
    * M1.5 T4 pending-interaction journal family (proposal §3 T4): the DO's
    * projection of bb `/internal/session/interactive-request` — SPA-visible
    * ask state that survives eviction+replay because it lives in the journal,
