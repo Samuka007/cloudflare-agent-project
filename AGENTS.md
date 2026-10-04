@@ -24,6 +24,16 @@ No leading marker. When only reviewing or commenting on agent-authored work, do 
 
 - Do not assume. Inspect logs, query state, or call APIs to observe real behavior.
 
+## Shell Output Discipline
+
+- NEVER suffix commands with `| head`, `| tail`, or `2>&1 | tail`. Tooling
+  merges stdout/stderr automatically and spills long output to recoverable
+  artifacts (`read artifact://<id>`); manual truncation is permanent loss.
+- Side-effect commands (deploy, merge, create, migrate) always run bare —
+  their output is the only audit trail and cannot be re-run to regenerate.
+- If output is long, let the tool spill it, then query the artifact with
+  reads/grep. No one-shot pipeline filtering.
+
 ## Observation discipline (POMDP)
 
 Your training memory is a **stale belief state**, not the world. Treat it accordingly:
