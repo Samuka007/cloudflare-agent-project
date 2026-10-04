@@ -14,6 +14,15 @@ export default defineConfig({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
         modulesRules: [{ type: "Text", include: ["**/*.sql"], fallThrough: true }],
+        // Ticket #47: the L1 suite must be green on a clean checkout. public/
+        // is gitignored build output (staged by CI / nix run .#staging-deploy),
+        // so tests serve a committed minimal SPA fixture instead: the plugin
+        // passes miniflare.assets to wrangler as an overrides.assets merge, so
+        // only the directory changes; binding, not_found_handling and
+        // run_worker_first stay as wrangler.jsonc declares them. The asset
+        // manifest is snapshotted when miniflare boots, which is also why
+        // fixtures cannot be written from inside a running test.
+        assets: { directory: "./test/fixtures/spa-root" },
       },
     }),
   ],
