@@ -37,6 +37,8 @@ import { ModelProviderError, type ModelRequest, type ModelStreamChunk } from "./
 import { projectToUxEvents } from "./ux-projection.js";
 import { getAgentRuntime } from "./injection.js";
 import { modelRequestFromEvents } from "./translate.js";
+import { toolRegistryRow, type ToolRegistryRow } from "./tools/registry.js";
+import { latestContextNotes, runEdgeTool } from "./tools/edge.js";
 
 /**
  * Per-thread bare Durable Object (no Agents SDK — docs/research/cf-agents-sdk.md):
@@ -958,6 +960,16 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     if (execution === undefined || executionTerminal(execution)) return;
     const threadId = this.requireThread();
     const callData = this.eventData(execution.callSeq);
+    const toolName = callData?.type === "tool.call" ? callData.data.tool : "unknown";
+    const row = toolRegistryRow(toolName);
+    if (row?.class === "edge") {
+      // Edge routing (control-plane §1.2): registry row's do-local backend
+      // executes here — journal appends are DO storage writes, never daemon RPC.
+      if (callData?.type === "tool.call") {
+        await this.executeEdgeLocal(execution, row, callData.data.arguments);
+      }
+      return;
+    }
     let outcome: DispatchOutcome;
     try {
       outcome = await this.daemon().dispatch({
@@ -965,7 +977,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         turnId,
         executionId,
         machineId: this.state.machineId ?? "local",
-        tool: callData?.type === "tool.call" ? callData.data.tool : "unknown",
+        tool: toolName,
         arguments: callData?.type === "tool.call" ? callData.data.arguments : {},
         timeoutMs: execution.timeoutMs,
       });
@@ -995,10 +1007,41 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     }
   }
 
+  /**
+   * Edge-class execution: same iron rules as the daemon path, zero daemon
+   * involvement. executionId dedup guards re-asks (dispatch is at-least-once;
+   * a terminal execution re-asked after eviction answers from the journal —
+   * never a second execution); the result persists as `tool.result` before
+   * any waiter wakes; there is no service-side result to ack.
+   */
+  private async executeEdgeLocal(
+    execution: ExecutionRuntime,
+    row: ToolRegistryRow,
+    args: Record<string, unknown>,
+  ): Promise<void> {
+    if (executionTerminal(execution)) return;
+    const result = await runEdgeTool(row, args, {
+      appendNotebookRevision: async (text) => {
+        await this.appendEvent("experimental_context_notes", { version: 1, text });
+      },
+      notebook: async () => {
+        const { events } = await this.readAllEvents();
+        const notes = latestContextNotes(events);
+        return notes === undefined ? undefined : { text: notes.text };
+      },
+    });
+    await this.ingestResult(
+      execution,
+      { status: result.status, exitCode: null, output: result.output },
+      { ack: false },
+    );
+  }
+
   /** Persist the terminal result, then (and only then) ack the service (I21). */
   private async ingestResult(
     execution: ExecutionRuntime,
     result: ToolResultPayload,
+    options: { ack: boolean } = { ack: true },
   ): Promise<void> {
     if (executionTerminal(execution)) return;
     const record = await this.appendEvent("tool.result", {
@@ -1009,6 +1052,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       output: result.output,
       outputTruncated: result.outputTruncated,
     });
+    if (!options.ack) {
+      this.wakeExecWaiters(execution.executionId, false);
+      return;
+    }
     try {
       await this.daemon().ackExecution(execution.executionId, record.seq);
     } catch {

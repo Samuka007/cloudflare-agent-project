@@ -1,4 +1,5 @@
 import type { ModelRequest, PriorModelCall, SteerContribution } from "../provider.js";
+import { M0_RENDER_FLAGS, wireToolSet } from "../tools/registry.js";
 
 /**
  * Anthropic Message wire assembly (#28 ruling ③ translation layer, omp §1.5
@@ -58,44 +59,6 @@ export class WireAssemblyError extends Error {
     this.name = "WireAssemblyError";
   }
 }
-
-// ---------------------------------------------------------------------------
-// bash tool — omp verbatim (anchored at omp d4d49e71: schema from
-// packages/coding-agent/src/tools/bash.ts:330-337, description template from
-// prompts/tools/bash.md rendered with M0 conditionals all false: no eval, no
-// async, no long-lived services, no auto-background). Per omp agent-loop.ts
-// normalizeTools (:916-998) the runtime injects the `i` intent field into
-// every tool: required, first, 200-char cap — it is loop-level injection, not
-// part of the tool author's schema.
-// ---------------------------------------------------------------------------
-
-const BASH_TIMEOUT_DESCRIPTION =
-  "timeout in seconds; 0 disables the command deadline; nonzero values are clamped to 1-600";
-
-const INTENT_FIELD_DESCRIPTION = "concise intent";
-
-export const BASH_TOOL: AnthropicToolDefinition = {
-  name: "bash",
-  description: [
-    "Persistent shell: one fact command/pipeline; dependencies use `&&`.",
-    "Scripts/heredocs/`$(…)`/complex flow → dedicated tool or checked-in script.",
-    "`cwd`, not `cd`; `pty` only interactive.",
-    "Internal URIs work as paths for builtins/coreutils, redirects, globs.",
-    "No `head`/`tail`/redirection; output trunc by default, full result at `artifact://<id>`.",
-  ].join("\n"),
-  input_schema: {
-    type: "object",
-    properties: {
-      i: { type: "string", description: INTENT_FIELD_DESCRIPTION, maxLength: 200 },
-      command: { type: "string" },
-      timeout: { type: "number", description: BASH_TIMEOUT_DESCRIPTION },
-      cwd: { type: "string" },
-      pty: { type: "boolean" },
-    },
-    required: ["i", "command"],
-    additionalProperties: false,
-  },
-};
 
 // ---------------------------------------------------------------------------
 // System prompt — minimal M0 placeholder (#28 ruling 1: content is a future
@@ -234,7 +197,9 @@ export function anthropicRequestBody(
     stream: true,
     thinking: options.thinking ?? { type: "disabled" },
     system: SYSTEM_PROMPT_BLOCKS.map((block) => ({ type: "text", text: block })),
-    tools: [BASH_TOOL],
+    // The tool surface renders from the compile-time registry only — the
+    // single schema authority (control-plane-layer.md §1.1, M1.5 T1).
+    tools: wireToolSet(M0_RENDER_FLAGS),
     messages,
   };
 }
