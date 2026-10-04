@@ -8,6 +8,7 @@ import type {
   ToolResultContribution,
 } from "./provider.js";
 import { boundaryOwnerSeqs, renderAsyncResultText } from "./tools/task/plan.js";
+import { rewindContextCut } from "./tools/session-tree.js";
 
 /**
  * Event log → model request projection (#28 ruling ③ translation layer).
@@ -52,15 +53,35 @@ export function modelRequestFromEvents(
   turnId: string,
   modelCallId: number,
 ): ModelRequest {
-  // M1.5 T16 async-result attribution runs over the FULL log — background
+  const firstRow = events[0];
+  if (firstRow === undefined) {
+    throw new ProjectionError("cannot project a request from an empty log");
+  }
+  // #147: the assembly truncates at the checkpoint boundary — an armed
+  // rewind cut hides the exploration span from every fold below (omp
+  // session-context.ts:339-343: summary first, then kept rows, then rows
+  // after the cut). All folds (async attribution, steer ledger, turn slices)
+  // see only the active branch; the summary rides the request as the overlay.
+  const cut = rewindContextCut(events, firstRow.threadId, turnId);
+  const activeEvents =
+    cut === undefined
+      ? events
+      : events.filter(
+          (event) =>
+            event.seq > cut.hideThroughSeq ||
+            (cut.checkpointResultSeq !== null && event.seq <= cut.checkpointResultSeq),
+        );
+
+  // M1.5 T16 async-result attribution runs over the whole active branch
+  // (#147: hidden-span rows never re-inject post-cut) — background
   // completions land between turns, so the per-turn filter below never sees
   // them. Boundary rule (boundaryOwnerSeqs): a result rides the first call
   // that starts after it; it then stays in that call's slice forever.
-  const asyncRows = events.filter(
+  const asyncRows = activeEvents.filter(
     (event): event is Extract<AnyAgentEvent, { type: "task.async_result" }> =>
       event.type === "task.async_result",
   );
-  const callStartSeqs = events
+  const callStartSeqs = activeEvents
     .filter((event) => event.type === "model.call_started")
     .map((event) => event.seq);
   const asyncResultsByCall = new Map<number, AsyncResultContribution[]>();
@@ -83,7 +104,7 @@ export function modelRequestFromEvents(
     else bucket.push(contribution);
   }
 
-  const turnEvents = events.filter(
+  const turnEvents = activeEvents.filter(
     (event) => "turnId" in event.data && event.data.turnId === turnId,
   );
   const inputEvents = turnEvents.filter((event) => event.type === "turn.input");
@@ -283,12 +304,8 @@ export function modelRequestFromEvents(
     });
   }
 
-  const firstEvent = events[0];
-  if (firstEvent === undefined) {
-    throw new ProjectionError("cannot project a request from an empty log");
-  }
   return {
-    threadId: firstEvent.threadId,
+    threadId: firstRow.threadId,
     turnId,
     modelCallId,
     input,
@@ -302,7 +319,7 @@ export function modelRequestFromEvents(
     // the tool choice for every model call of that turn. Only the 3rd-tier
     // marker carries forced=true (the verdict that appended it — every
     // reminder turn has a marker, so the join alone cannot tier them).
-    ...(events.some(
+    ...(activeEvents.some(
       (event) =>
         event.type === "task.yield_reminder" &&
         event.data.forced &&
@@ -310,5 +327,16 @@ export function modelRequestFromEvents(
     )
       ? { toolChoice: { name: "yield" } }
       : {}),
+    // The armed rewind cut rides every post-cut request of the turn (omp:
+    // the report is the branch summary the next provider turn sees).
+    ...(cut === undefined
+      ? {}
+      : {
+          branchCut: {
+            checkpointResultSeq: cut.checkpointResultSeq,
+            rewindResultSeq: cut.rewindResultSeq,
+            summary: cut.summary,
+          },
+        }),
   };
 }
