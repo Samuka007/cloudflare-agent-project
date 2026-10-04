@@ -1,66 +1,72 @@
 # 项目管理操作手册（PM manual）
 
-本文回答"如何管理项目管理"：角色、tracker 模型、派单与集成纪律、验收义务。
-机械操作（gh 命令、wayfinding）见 [issue-tracker.md](issue-tracker.md)；工程宪法见 [../engineering.md](../engineering.md)（第 12 条与本手册互为表里：宪法管交付纪律，本手册管过程纪律）。
+PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关账**。每步有完成判据；判据未满足，步就没走完。
+机械操作见 [issue-tracker.md](issue-tracker.md)；工程纪律的定义（复用三问／DoR／spike 风险退役／参考类预测／倒查义务）见 [AGENTS.md](../../AGENTS.md) Engineering Doctrine——本手册只写 PM 操作面，不重述定义。
 
-## 1. 角色
+## 1. PM 循环
 
-| 角色 | 职责 | 红线 |
-|---|---|---|
-| **用户** | 路线与范围裁决（phase 排期、窄化/扩围、流程制度） | — |
-| **PM**（主会话） | 拆票、派单、集成（PR merge）、验收、infra 应急、决策记录（docs） | 不亲手修码/配置（docs 决策记录除外）；已决事项不再请示 |
-| **lane**（subagent） | 单票端到端：隔离 worktree 实现 → 分支推送 → 报证据 | 永不推 origin/main；只碰派单声明的文件地盘与外部资源 |
-| **PMGuard**（独立 subagent） | 纪委：只读巡检 lane 与 **PM 本身**，违规清单（七条反模式 + PM 协议五条） | 只读不干预；成本估算随附；≥2 重 lane 并行时常驻（45min 节拍） |
-| **调研/普查 agent** | 只产出文档/排序表，零修复零 tracker 变更 | 主源引用 |
+### 立项
 
-## 2. Tracker 模型（三正交轴，勿混）
+- **症状复现即立项**：根因发掘是票的内容。PM 调查写到"够写一张好票"为止——复现步骤、表面证据、已知/未知清单；票面假设标注"线索非结论"（反例 #52：票面假设被 lane 证伪）。先解决一半再立项 = 带宽错配 + 假设灌输 + 看板滞后。
+- **HITL 三问**：bb 有形状？omp 有语义？平台缝有证据？任一为是 → 先立 research 票榨干真理源；grilling 只裁残余 delta（经验 <1/3）。每张 HITL 票附一句"为什么必须是你裁"；写不出 → grill agent 代言正反 + 推荐，用户只批注（反例 #73/#74/#75 出生即 HITL）。
 
-依据 docs/research/tracker-structure-linear-mapping.md（Linear 官方实践映射）：
+### 派单
 
-- **phase 轴 = milestone**：M0–M3 = 阶段承诺。**只承载"何时/哪期"，与重要性无关**（P0 可在 backlog，P2 可在 M0）。伞票/spec 票挂所属阶段。
-- **重要性轴 = Priority**：board 单选字段 P0/P1/P2（排序/过滤/视图用），`priority:p*` 标签作为 issue 页可见的输入面，workflow 单向镜像（标签→字段）。P0=放行/阻止/资损级；P1=核心语义或可见损伤、可绕但必须还；P2=卫生/瑕疵。
-- **生命周期轴 = board Status**：Backlog/Todo/In Progress/Done/Canceled，由 project-board-sync workflow 从 issue 事件推导（closed→Done/Canceled(wontfix)；milestoned→Todo；无 milestone→Backlog）。
-- **triage 五标签**（needs-triage/needs-info/ready-for-agent/ready-for-human/wontfix）是收件箱轴，**独立保留**，不并入 Status。
-- **futurework**（明确不承诺）：无 milestone 是有意语义，与 backlog（承诺未排期）的区别在此成文。
-
-## 3. 派单协议（v2，2026-10-04 起强制）
-
-**立项时点（用户裁决 2026-10-04）：症状复现即立项，根因发掘是票的内容，不是立项前置。** PM 的调查止于"够写一张好票"（复现步骤 + 表面证据 + 已知/未知清单）；代码级根因分析、假设证实/证伪全部是 lane 工单内容。票面假设一律标注为"线索非结论"（反例：#52 票面假设被 lane 证伪——侥幸没白费，但流程本身错误；#61 起按本条执行）。"先解决一半再立项"= PM 带宽错配 + 假设偏见灌输 + 看板状态滞后三重罪。
-
-**HITL 准入门槛（用户裁决 2026-10-04，反"用待决策项规避推进"）：任何拟标 grilling/HITL 的票，先过三问——bb 有形状吗？omp 有语义吗？平台缝有事故/证据可循吗？** 三者任一为是，先立 research 前置票（AFK）榨干真理源；grilling 只裁真正的残余 delta（经验值 <1/3）。每张 HITL 票必须附带一句"为什么这必须是你裁"（写不出 → 自动降级：grill agent 代言正反 + 给推荐，用户只批注不开放讨论）。反例：#73/#74/#75 出生即 HITL，被用户以分层抄袭总纲反问后修正——三票大头均为可考古的 bb/omp 现成语义。
-
-**交付钩子协议（用户裁决 2026-10-04，反"spawn→wait→转录→停下问下一步"）：每次 lane 交付，PM 必须在同一回合内完成四步——①亲验 ②集成 ③解锁枚举（列出此交付新解锁的一切，可派者立即派、待批者明示等待条件与时长）④向用户汇报时以"在跑 N 项；等你的仅 M 项（各自为什么只能是你）"收尾。** "转录结论+更新索引"不算推进——解锁枚举里空手而归才是合规的停。PMGuard 巡检加流转审计：对照 history:// 中每次 lane 交付后的 PM 回合，无派单/无枚举记录 = P1 违规（标签自证不算数）。
-
-**宣布即做（2026-10-04 二次犯后补）：PM 回报文本只允许陈述已完成的派发/集成/裁决，禁止出现"我即刻/下一步将派 X"这类未执行意图——意图写入报告=违规本身。** 被确定性结论支撑的预裁（技术事实已唯一决定推荐项）按推荐即决并标 overridable，不设"等你 OK"停靠站；真口味项才停。
-
-**用户队列走 tracker（2026-10-04 用户裁决）**：待用户决策项一律落 issue 语义——决策票本体挂 `ready-for-human` + 决策评论内含预裁与批准方式；聊天回报**禁止枚举待决项**（那是二次账本，必然漂移），只指向"Project view 按 ready-for-human 过滤"。对用户提到票一律用 `#编号`，禁用提案局部编号（T13 这类黑话）。确定性预裁即决的 overridable 点：关账评论留翻转指引即可，**不入用户队列**（已决事项不制造噪音）；真未决才挂标签。
-
-**派发就绪定义 DoR（2026-10-04 用户裁决，反 NIH/未证实自信）**：lane 派发前票面必须五项齐——①**复用三问有字面答案**（上游有整库吗/环境同构吗/适配垫比重写薄吗——手工移植须给出三问否定论证，缺论证=NIH 违例不许派）②**未证实的自信已被 spike 退役**（任何"我能实现得特别好"的自信，无运行证据即不成立；spike 结论引用进票面）③验收产品面可观察④bb/omp 锚点⑤预算行。**估算纪律=参考类预测**：工期锚同类已完成票的实测基率（如"bb 路由移植 ≈ FixUxBatch 单项 ≈ 1h"），禁内部视角乐观估算。倒查义务：复用观/纪律升级时，存量 open 票全部重审（gated 注记或重构），不许"以后不再犯"式口头改进。
+票面五项齐才派（DoR，定义见 AGENTS.md）：①复用三问字面答案（手写票含三问否定论证）②不确定性已 spike 退役（票面引用探针结论）③验收产品面可观察 ④bb/omp 锚点 ⑤预算行——估算锚同类往例实测（参考类预测，如"bb 路由移植 ≈ FixUxBatch 单项 ≈ 1h"）。
 
 派单上下文必含：
 
-**隔离强制（2026-10-04 劫持事故后立；同日升级为 herdr 托管；所有权再修正）**：写 lane 的 worktree 由 **PM 经 herdr 预建**——`herdr worktree create --cwd <repo> --branch lane/<slug> --base origin/main --label <slug> --no-focus`，取 `.result.worktree.path`（确定性路径 `~/.herdr/worktrees/<repo>/<branch-as-dash>`，在 herdr 注册表可查），lane 只 cd 入内、禁自建/禁换/禁入主仓。lane 关账后 PM `herdr worktree remove --workspace <其 workspace>`（含 --force 可清未净树）；存量盘点 `herdr worktree list`。lane 自建 worktree=违规（命名漂移/无注册/难回收是旧 /tmp 时代的三个病）。**主仓 checkout 归 PM 独占**——PM 的一切读写/提交/推送都在主仓 main 上直接进行（不再使用任何临时净树；劫持时代已由本条款终结），推送后必核对 origin/main 实际移动。读 lane 默认无写面不适用。事故实例：v3/v4 分解文档提交落 sibling 分支被清理，main 从未收到；后续矫枉过正期 PM 流放自己在 /tmp 净树写作（2026-10-04 已废）。
+- **worktree**：PM 经 herdr 预建——`herdr worktree create --cwd <repo> --branch lane/<slug> --base origin/main --label <slug> --no-focus`，取 `.result.worktree.path`（确定性路径 `~/.herdr/worktrees/<repo>/<branch-as-dash>`，注册表可查）。lane cd 入内即工作，全程在该树；**主仓 checkout 归 PM 独占**（劫持事故条款：lane 入主仓或自建树 = 违规）。关账后 PM `herdr worktree remove --workspace <id>`；盘点 `herdr worktree list`。
+- **效率预算行**：预期墙钟／资源上限／等待方式（交付即回 or 脚本化监控）；超 50% 须解释。
+- **资源所有权账本**：owned files/dirs + worktree 路径 + owned 外部资源（staging 部署、secret、面板）。PM 派单前做**不相交断言**——两 lane 地盘相交 = 派单错误。
+- **分支纪律**：lane 只推 `lane/<ticket>-<slug>`，PR 由 PM 审后 merge（origin/main 唯一写者 = PR 合并）；事故热修直推豁免须票面留 PM 亲验证据。
+- **POMDP 条款**：根因未证实不动码；60 分钟未定位根因 → 报告而非猜改。
+- **验收 checklist**；lane 报告必带：commit hash、CI run、测试计数、file:line 根因（修 bug 票）。
 
-1. **效率预算行**：预期墙钟 / 资源占用上限 / 等待方式（交付即回 or 脚本化监控）。超预算 50% 要解释。
-2. **资源所有权账本**：owned files/dirs + owned worktree 路径 + owned 外部资源（staging 部署、secret 注入、newapi 面板等）。PM 派单前做**不相交断言**——两 lane 地盘相交 = 派单错误。
-3. **分支纪律**：lane 只推 `lane/<ticket>-<slug>`，PR 由 PM 审后 merge（origin/main 唯一写者 = PR 合并）。事故热修直推豁免须票面留 PM 亲验。
-4. **POMDP 条款**：根因未证实不写码；先证据后动作（60 分钟未定位根因 → 报告而非猜改）。
-5. 验收标准 = 票面 checklist，lane 报告必须带：commit hash、分支 CI run、测试计数、file:line 级根因（若是修 bug）。
+派发同时把该票 board Status 置 **In Progress**（GraphQL 直写）。
 
-## 4. PM 验收义务（收货先验再落盘）
+### 交付处理（交付钩子——同回合四步，判据在每步末尾）
 
-1. 干净 worktree（非 lane 工作树）复跑关键测试/命令
-2. 七条反模式清单过一遍（慢通道/重做/串行化/闲置占用/无账保守/轮询/retry-and-hope）
-3. 关票评论必附证据（测试数、部署 URL、run 链接、file:line）；无证据不关票
-4. **验收标准必须是产品面可观察的**（"视图显示 Priority 列且按其分组"），不是存在性的（"视图已创建"）——#53 反例：板面字段/视图全部"就位"但 Priority 列在五个视图里全部不可见，验收却已通过。UI/板/文档类交付，验收标准写成用户打开能看到什么。
-5. staging 验证（若票面涉及）只经 `nix run .#staging-deploy`，只从 origin/main HEAD
+1. **亲验**：diff 对照 bb/omp 锚点抽查；lane 的指控类结论先在源头核实再立案。判据：关键主张逐条有"属实"判定。
+2. **集成**：PR merge → **核对 origin/main 实际移动**（"Everything up-to-date" 输出不可作准）→ 回收 lane worktree。判据：origin/main HEAD = 预期 commit。
+3. **解锁枚举**：列出此交付新解锁的一切；过 DoR 闸者本回合派出，gated 者注记等待条件。判据：枚举非空，或写明唯一等待条件——"转录结论+更新索引"不算推进（spawn→wait→转录→停 = PMGuard P1 违规）。
+4. **汇报**：只陈述已执行事实，收尾"在跑 N 项；待决见 board"。待决项在聊天里枚举 = 违规（二次账本必漂移）。
 
-## 5. 里程碑交付
+**宣布即做**：回报文本只含已执行动作；"我即刻／下一步将派 X"写入报告 = 违规本身。确定性预裁按推荐即决并标 overridable（关账评论留翻转指引）；真口味项才挂 `ready-for-human`（决策评论含预裁与批准方式）——用户队列 = board 按 `ready-for-human`／Status `Wait for user` 过滤。
 
-- milestone 关闭 = tag `m<N>` + CHANGELOG.md 转正（Unreleased→版本段）
-- infra 漂移（面板/渠道等无 git 面）当日入 `docs/ops/`
-- 部署版本溯源：SERVER_VERSION=commit SHA（部署脚本注入，/api/v1/system/version 可查）
+### 验收关账
 
-## 6. 制度变更流程
+1. 干净树复跑关键测试/命令。
+2. 七反模式过一遍：慢通道／重做／串行化／闲置占用／无账保守／轮询／retry-and-hope。
+3. 关票评论附证据（测试数、部署 URL、run 链接、file:line）；**无证据不关票**。
+4. 验收判据 = 用户打开能看到什么（反例 #53：字段全部"就位"但 Priority 列五个视图全不可见，验收却已通过）。
+5. staging 验证只经 `nix run .#staging-deploy`，从 origin/main HEAD。
 
-本手册改动 = PM 提案 + 用户裁决 + docs commit（决策记录豁免）。制度先于行为：新裁决生效即改本手册或 engineering.md 对应条目，不留在会话记忆里。
+## 2. 角色
+
+| 角色 | 职责 | 红线 |
+|---|---|---|
+| **用户** | 路线与范围裁决（排期、窄化/扩围、流程制度） | — |
+| **PM**（主会话） | 拆票、派单、集成、验收、infra 应急、决策记录（docs） | 不亲手修码/配置（docs 决策记录除外）；已决事项不再请示 |
+| **lane**（subagent） | 单票端到端：worktree 内实现 → 分支推送 → 报证据 | 永不推 origin/main；只碰派单声明的地盘与外部资源 |
+| **PMGuard**（独立 subagent） | 纪委：只读巡检 lane 与 PM（七反模式 + 本手册协议），45min 节拍，≥2 lane 并行时常驻 | 只读不干预；成本估算随附 |
+| **调研/普查 agent** | 只产出文档/排序表 | 零修复、零 tracker 变更、主源引用 |
+
+## 3. Tracker 模型（三正交轴）
+
+依据 [tracker-structure-linear-mapping.md](../research/tracker-structure-linear-mapping.md)：
+
+- **phase 轴 = milestone**（M0–M3）：只承载"何时/哪期"，与重要性无关。伞票/spec 票挂所属阶段。
+- **重要性轴 = Priority**：board 单选字段（P0=放行/阻止/资损；P1=核心语义或可见损伤；P2=卫生），`priority:p*` 标签为输入面，workflow 单向镜像（标签→字段）。
+- **生命周期轴 = Status**：project-board-sync 从 issue 事件推导——closed+wontfix→Canceled；closed→Done；open+`ready-for-human`→**Wait for user**；open+milestone→Todo；open 无 milestone→Backlog。**In Progress 由 PM 派发时直写**，PR 合并关票后自然收敛 Done。
+- triage 五标签是收件箱轴，独立保留；**futurework**（无 milestone）与 backlog（承诺未排期）的区别在此成文。
+
+## 4. 里程碑交付
+
+- milestone 关闭 = tag `m<N>` + CHANGELOG.md 转正（Unreleased→版本段）。
+- infra 漂移（面板/渠道等无 git 面）当日入 `docs/ops/`。
+- 部署版本溯源：SERVER_VERSION=commit SHA，`/api/v1/system/version` 可查。
+
+## 5. 制度变更
+
+本手册改动 = PM 提案 + 用户裁决 + docs commit（决策记录豁免）。新裁决生效即改本手册或 engineering.md 对应条目，不留在会话记忆里。
