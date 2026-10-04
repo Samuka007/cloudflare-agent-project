@@ -64,6 +64,5 @@
     "ORCHESTRATOR_HOST_ID": "local",
     "DAEMON_HOST_ID": "local",
     "DAEMON_MACHINE_ID": "local",
-    "SERVER_VERSION": "staging-#31",
   },
 }
