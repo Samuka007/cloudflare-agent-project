@@ -111,9 +111,6 @@ export function modelRequestFromEvents(
     else bucket.push(contribution);
   }
 
-  const turnEvents = activeEvents.filter(
-    (event) => "turnId" in event.data && event.data.turnId === turnId,
-  );
   const steerTexts = new Map<number, string>();
   const slices = new Map<number, CallSlice>();
   const callOrder: number[] = [];

@@ -331,6 +331,6 @@ describe("M1.5 T16 — L1 chain over real child AgentDOs", () => {
     const plan = parentEvents.find((event) => event.type === "task.spawn_planned");
     if (plan?.type !== "task.spawn_planned") throw new Error("no spawn plan");
     const childThreadId = plan.data.childThreadId;
-    expect(settlementForSpawn(parentEvents, childThreadId ?? "")?.status).toBe("ok");
+    expect(settlementForSpawn(parentEvents, childThreadId)?.status).toBe("ok");
   });
 });
