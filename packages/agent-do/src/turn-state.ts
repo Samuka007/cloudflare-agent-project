@@ -501,6 +501,13 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
     case "task.budget_notice": {
       return;
     }
+    case "task.subagent_parked":
+    case "task.subagent_revived":
+    case "task.subagent_aborted": {
+      // T19 lifecycle rows — folded by tools/task/lifecycle.ts (four-state
+      // registry), never FSM state (same rule as the task family above).
+      return;
+    }
     case "task.subagent_identity": {
       // Exactly one identity row per child DO: runSubagent dedups by the
       // identity projection before appending, so a second row is a spawn bug.

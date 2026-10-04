@@ -49,6 +49,7 @@ import { modelRequestFromEvents } from "./translate.js";
 import { toolRegistryRow, type ToolRegistryRow } from "./tools/registry.js";
 import { latestContextNotes, runEdgeTool, type EdgeToolContext } from "./tools/edge.js";
 import {
+  projectJobs,
   projectInbox,
   type JobRegistration,
   type JobRegistry,
@@ -96,6 +97,14 @@ import {
   type ChildBudgetPolicy,
 } from "./tools/task/child-run.js";
 import { SpawnSemaphore } from "./tools/task/semaphore.js";
+import {
+  decideKill,
+  parseProcKillUri,
+  projectLifecycle,
+  registerIfAvailable,
+  type LifecycleRecord,
+  type SubagentLifecycleState,
+} from "./tools/task/lifecycle.js";
 import { checkpointRewindState, todoJournalState } from "./tools/session-tree.js";
 import {
   DEFAULT_WEB_SEARCH_CONFIG,
@@ -236,12 +245,22 @@ interface SubagentDoStub {
   }): Promise<{ duplicated: boolean }>;
   /** T17 agent:// hop: serve this DO's own artifacts or forward deeper. */
   readAgentArtifact(request: AgentArtifactRequest): Promise<AgentArtifactResult>;
-  /** T17 agent:// write face: land a peer message on this DO's thread. */
+  /** T17 agent:// write face: land a peer message on this DO's thread. T19:
+   * a parked recipient revives first (receipt `revived`), an idle one adopts
+   * the message as a follow-up turn. */
   deliverPeerMessage(request: {
     ownerId: string;
     from: string;
     text: string;
-  }): Promise<{ messageId: string; duplicated: boolean }>;
+    messageId?: string;
+  }): Promise<{ messageId: string; duplicated: boolean; revived: boolean }>;
+  /** T19 kill half (cancel entry 1): land the child-journal tombstone and
+   * cancel the live turn so the session releases. Idempotent. */
+  abortSubagent(request: {
+    spawnId: string;
+    agentId: string;
+    reason: "kill" | "call_signal" | "wall_clock" | "internal";
+  }): Promise<{ state: SubagentLifecycleState; alreadyAborted: boolean }>;
 }
 
 export interface CreateThreadRequest {
@@ -483,12 +502,12 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     ownerId: string;
     from: string;
     text: string;
-  }): Promise<{ messageId: string; duplicated: boolean }> {
+  }): Promise<{ messageId: string; duplicated: boolean; revived: boolean }> {
     await this.ready();
     this.requireThread();
     const messageId = request.messageId ?? crypto.randomUUID();
     const existing = projectInbox((await this.readAllEvents()).events).message(messageId);
-    if (existing !== undefined) return { messageId, duplicated: true };
+    if (existing !== undefined) return { messageId, duplicated: true, revived: false };
     await this.appendEvent("peer.message", {
       messageId,
       ownerId: request.ownerId,
@@ -496,7 +515,109 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       text: request.text,
     });
     this.wakeAllEdgeWaiters({ kind: "message" });
-    return { messageId, duplicated: false };
+    const revived = await this.reviveOrFollowUp(messageId, request.from, request.text);
+    return { messageId, duplicated: false, revived };
+  }
+
+  /**
+   * T19 lifecycle delivery (omp bus.ts:139-143 + agent-lifecycle.ts:341+):
+   * a PARKED recipient revives — transcript rebuild (this DO's session state
+   * is the journal fold, so the revived run keeps its full history), receipt
+   * row, then a follow-up turn with the message. An IDLE one adopts the
+   * message as a follow-up turn (omp "finished and failed subagents both
+   * stay interrogable"). RUNNING/aborted recipients stay queued (T17 rule:
+   * delivery never starts their turns); Main queues too. Returns whether
+   * this delivery REVIVED a parked agent.
+   */
+  private async reviveOrFollowUp(
+    messageId: string,
+    from: string,
+    text: string,
+  ): Promise<boolean> {
+    const identity = this.state.subagentIdentity;
+    if (identity === null) return false;
+    const view = projectLifecycle((await this.readAllEvents()).events);
+    const record: LifecycleRecord | undefined = view.record(identity.agentId);
+    if (record?.state !== "parked" && record?.state !== "idle") return false;
+    // Registration CAS (omp agent-registry.ts:161-170): adopting the parked
+    // ref is the revive path's claim; on the self-view the ref always
+    // matches, but the CAS discipline stays explicit.
+    const registration = registerIfAvailable(view, {
+      agentId: identity.agentId,
+      spawnId: identity.spawnId,
+    });
+    if (!registration.ok) return false;
+    const content = [{ type: "text", text: `${from}: ${text}` }] as [
+      { type: "text"; text: string },
+    ];
+    if (record.state === "parked") {
+      await this.appendEvent("task.subagent_revived", {
+        spawnId: identity.spawnId,
+        agentId: identity.agentId,
+        inputId: `revive-${messageId}`,
+        from,
+      });
+    }
+    try {
+      // mode auto: a turn that raced in between fold and send gets the
+      // message steered instead of a conflict.
+      await this.sendMessage({
+        clientRequestId: `followup-${messageId}`,
+        content,
+        mode: "auto",
+      });
+    } catch {
+      // Terminal-active race (steer refused): start a fresh turn. The I2
+      // inputId dedup makes a partially-landed first attempt a no-op.
+      await this.sendMessage({
+        clientRequestId: `followup-${messageId}`,
+        content,
+        mode: "start",
+      }).catch(() => undefined);
+    }
+    return record.state === "parked";
+  }
+
+  /**
+   * T19 cancel entry 1, child half: the kill RPC lands the CHILD-journal
+   * tombstone (irreversible — the gate fold turns confirm-only) and cancels
+   * the live turn so the session releases (omp: "the owned running subagent
+   * is aborted and its session released"). Idempotent: an already-aborted DO
+   * confirms with `alreadyAborted` and appends nothing. Journal-first: the
+   * tombstone precedes the cancel row, so a replayed fold sees the abort
+   * before the cancelled turn either way (first abort wins in the fold).
+   */
+  async abortSubagent(request: {
+    spawnId: string;
+    agentId: string;
+    reason: "kill" | "call_signal" | "wall_clock" | "internal";
+  }): Promise<{ state: SubagentLifecycleState; alreadyAborted: boolean }> {
+    await this.ready();
+    this.requireThread();
+    const identity = this.state.subagentIdentity;
+    if (
+      identity?.spawnId !== request.spawnId ||
+      identity.agentId !== request.agentId
+    ) {
+      throw new AgentRpcError(
+        "not_found",
+        `no subagent ${request.agentId} (${request.spawnId}) on this DO`,
+      );
+    }
+    const record = projectLifecycle((await this.readAllEvents()).events).record(
+      identity.agentId,
+    );
+    if (record?.state === "aborted") return { state: "aborted", alreadyAborted: true };
+    await this.appendEvent("task.subagent_aborted", {
+      spawnId: identity.spawnId,
+      agentId: identity.agentId,
+      reason: request.reason,
+    });
+    const active = this.activeTurn();
+    if (active !== undefined && !turnTerminal(active)) {
+      await this.cancelTurn({ turnId: active.turnId });
+    }
+    return { state: "aborted", alreadyAborted: false };
   }
 
   /**
@@ -688,6 +809,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       throw new AgentRpcError("not_found", `no spawn plan for ${request.spawnId}`);
     }
     if (settlementForSpawn(events, request.spawnId) !== undefined) {
+      return { duplicated: true };
+    }
+    // T19 tombstone resistance (omp agent-registry.ts:190-193 — "delayed
+    // revives/progress never flip a tombstone"): a killed spawn's late
+    // completion confirms only. The kill already settled the job cancelled;
+    // no settlement, no async-result, no wake may follow.
+    if (projectLifecycle(events).record(plan.agentId)?.state === "aborted") {
       return { duplicated: true };
     }
     // T20 #110 isolation closure rides the settlement (journal-first: the
@@ -1049,6 +1177,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       for (const turnId of due.turnWatchdogExpiredTurnIds) {
         await this.expireTurnWatchdog(turnId);
       }
+      // T19 TTL park tick: the idle deadline passed — park the self record
+      // (guarded: Main/running/aborted/already-parked never re-park), then
+      // re-derive; a revive that raced in clears the deadline instead.
+      await this.sweepLifecycle(now);
       this.armWatchdog();
     } catch (error) {
       // Alarms retry at most 6 times platform-side, then vanish forever —
@@ -1167,6 +1299,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       const live = [...this.state.turns.values()].some((turn) => !turnTerminal(turn));
       if (!live) this.ctx.waitUntil(this.advanceChildRun());
     }
+    // 7. M1.5 T19: re-derive the park deadline from the journal — the alarm
+    // table carries no state, so an eviction must not strand an idle agent
+    // unparked (or park a revived one).
+    await this.refreshLifecycleAlarms();
     this.armWatchdog();
   }
 
@@ -1186,6 +1322,20 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     applyEvent(this.state, validated);
     this.knownEventCount += 1;
     this.pushToSubscribers();
+    if (
+      validated.type === "turn.input" ||
+      validated.type === "turn.completed" ||
+      validated.type === "turn.failed" ||
+      validated.type === "turn.cancelled" ||
+      validated.type === "task.yield_completed" ||
+      validated.type === "task.subagent_revived" ||
+      validated.type === "task.subagent_parked" ||
+      validated.type === "task.subagent_aborted"
+    ) {
+      // T19: these rows move an agent between lifecycle states (or mark
+      // activity that restarts the idle TTL) — re-derive the park deadline.
+      void this.refreshLifecycleAlarms();
+    }
     if (validated.type === "interaction.registered") {
       this.pushInteractionToSubscribers(validated.data.interactionId, "pending");
     } else if (validated.type === "interaction.resolved") {
@@ -1887,6 +2037,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         await this.executeAgentUriRead(execution, uri);
         return;
       }
+      if (toolName === "write" && typeof uri === "string" && uri.startsWith("proc://")) {
+        // M1.5 T19 cancel entry 1: `write proc://<jobId>/kill` — in-DO
+        // business cancellation (omp docs/tools/task.md:26/:158), no daemon
+        // involvement; the T6 unknown-target refusal is superseded here.
+        await this.executeProcUriWrite(execution, uri, callData.data.arguments.content);
+        return;
+      }
     }
     if (row?.class === "edge") {
       // Edge routing (control-plane §1.2): registry row's do-local backend
@@ -1998,10 +2155,22 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     try {
       const target = await this.resolveArtifactTarget(parsed.agentId);
       const from = this.state.subagentIdentity?.agentId ?? "Main";
-      await target.stub.deliverPeerMessage({ ownerId: target.childThreadId, from, text });
+      const delivered = await target.stub.deliverPeerMessage({
+        ownerId: target.childThreadId,
+        from,
+        text,
+      });
+      // T19 revival receipt: a parked recipient answers `revived` (the
+      // durable row is task.subagent_revived on the child journal).
       await this.ingestResult(
         execution,
-        { status: "ok", exitCode: null, output: `Delivered to ${parsed.agentId}.` },
+        {
+          status: "ok",
+          exitCode: null,
+          output: delivered.revived
+            ? `Delivered to ${parsed.agentId} (revived — session rebuilt from transcript).`
+            : `Delivered to ${parsed.agentId}.`,
+        },
         { ack: false },
       );
     } catch (error) {
@@ -2033,6 +2202,117 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       console.error(`agent://all delivery to ${childThreadId} failed`, error);
       return false;
     }
+  }
+
+  /** `write proc://<jobId>/kill` edge-local execution (T19 cancel entry 1).
+   * Everything here is business-cancel semantics (matrix §2.4): unknown or
+   * foreign jobs are error OUTPUTS (never thrown), an already-settled job
+   * answers an idempotent receipt with zero rows, and only a running owned
+   * job kills. */
+  private async executeProcUriWrite(
+    execution: ExecutionRuntime,
+    uri: string,
+    content: unknown,
+  ): Promise<void> {
+    let result: { status: "ok" | "error"; output: string };
+    try {
+      result = await this.killByProcUri(uri, content);
+    } catch (error) {
+      result = {
+        status: "error",
+        output:
+          error instanceof AgentRpcError ? error.message : `Kill failed: ${String(error)}`,
+      };
+    }
+    await this.ingestResult(
+      execution,
+      { status: result.status, exitCode: null, output: result.output },
+      { ack: false },
+    );
+  }
+
+  private async killByProcUri(
+    uri: string,
+    content: unknown,
+  ): Promise<{ status: "ok" | "error"; output: string }> {
+    const parsed = parseProcKillUri(uri);
+    if (parsed === null) {
+      return {
+        status: "error",
+        output: `Unknown proc target: ${uri} — only proc://<jobId>/kill is supported.`,
+      };
+    }
+    // omp docs/tools/task.md:26 — the kill form carries no content.
+    if (typeof content === "string" && content !== "") {
+      return {
+        status: "error",
+        output: "kill takes no content — `write proc://<jobId>/kill` with empty content.",
+      };
+    }
+    const callerOwnerId = this.requireThread();
+    const { events } = await this.readAllEvents();
+    const jobs = projectJobs(events);
+    const decision = decideKill(
+      parsed.jobId,
+      jobs.job(parsed.jobId),
+      callerOwnerId,
+      (jobId) => projectSpawnPlans(events).find((record) => record.jobId === jobId),
+    );
+    switch (decision.kind) {
+      case "unknown_job":
+        return { status: "error", output: `Unknown job ${decision.jobId} — nothing to kill.` };
+      case "forbidden":
+        return {
+          status: "error",
+          output: `Job ${decision.jobId} is not yours — kill is owner-scoped (omp visibleJobs).`,
+        };
+      case "already_settled":
+        return {
+          status: "ok",
+          output: `Job ${decision.jobId} already settled (${decision.settlementStatus}); kill is a no-op.`,
+        };
+      case "kill":
+        break;
+    }
+    const plan = decision.plan;
+    // Journal-first: the parent-side tombstone lands BEFORE the child RPC
+    // and the cancelled settle — a child completion that raced the kill is
+    // confirm-only from here on (tombstone resistance), and the settle below
+    // is the only waiter wake.
+    if (plan !== null) {
+      await this.appendEvent("task.subagent_aborted", {
+        spawnId: plan.spawnId,
+        agentId: plan.agentId,
+        reason: "kill",
+      });
+      const namespace = this.env.AGENT_DO;
+      if (namespace !== undefined) {
+        const stub = namespace.get(
+          namespace.idFromName(plan.childThreadId),
+        ) as unknown as SubagentDoStub;
+        await stub
+          .abortSubagent({ spawnId: plan.spawnId, agentId: plan.agentId, reason: "kill" })
+          .catch((error: unknown) => {
+            // The child tombstone is availability, not truth: the parent
+            // tombstone above already closed the parent-side semantics.
+            console.error(`kill ${plan.agentId}: child abort failed`, error);
+          });
+      }
+    }
+    await this.settleJob(parsed.jobId, {
+      status: "cancelled",
+      output:
+        plan === null
+          ? "service cancelled via proc:// kill"
+          : `subagent ${plan.agentId} killed via proc:// kill`,
+    });
+    return {
+      status: "ok",
+      output:
+        plan === null
+          ? `Killed ${parsed.jobId}; waiters settle cancelled.`
+          : `Killed ${plan.agentId} (${parsed.jobId}); session released, waiters settle cancelled.`,
+    };
   }
 
   /** `agent://<id>[/<json path>]` — sidecar-first extraction matrix. */
@@ -2546,11 +2826,92 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     for (const deadlineAt of this.waitWindows.values()) {
       if (next === null || deadlineAt < next) next = deadlineAt;
     }
+    // T19 TTL park deadline rides the single alarm (practice 4 — the alarm
+    // table carries no park state; refreshLifecycleAlarms recomputes it).
+    if (this.lifecycleParkDeadline !== null && (next === null || this.lifecycleParkDeadline < next)) {
+      next = this.lifecycleParkDeadline;
+    }
     if (next !== null) {
       void this.ctx.storage.setAlarm(next);
     } else {
       void this.ctx.storage.deleteAlarm().catch(() => undefined);
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // T19 subagent lifecycle timer (proposal §3 T19): idle → TTL park, via the
+  // CHILD DO's alarm. Park is a local DO state write (ticket DO budget);
+  // revival is message-triggered (deliverPeerMessage), zero polling.
+  // -------------------------------------------------------------------------
+
+  /** The armed park deadline (idleSince + TTL), or null when nothing arms. */
+  private lifecycleParkDeadline: number | null = null;
+
+  /** Re-derive the park deadline from the journal, then re-arm the alarm. */
+  private async refreshLifecycleAlarms(): Promise<void> {
+    try {
+      this.lifecycleParkDeadline = await this.computeParkDeadline();
+      this.armWatchdog();
+    } catch (error) {
+      console.error("lifecycle alarm refresh failed", error);
+    }
+  }
+
+  /**
+   * omp task.agentIdleTtlMs (default 420_000; ≤0 disables): an IDLE self
+   * record parks when the TTL elapses from its idle moment. Main never parks
+   * (identity null); a live turn means the agent is running, not idle.
+   */
+  private async computeParkDeadline(): Promise<number | null> {
+    const identity = this.state.subagentIdentity;
+    if (identity === null) return null;
+    if (this.cfg.taskAgentIdleTtlMs <= 0) return null;
+    const active = this.activeTurn();
+    if (active !== undefined && !turnTerminal(active)) return null;
+    const record = projectLifecycle((await this.readAllEvents()).events).record(
+      identity.agentId,
+    );
+    if (record?.state !== "idle" || record.idleSince === null) {
+      return null;
+    }
+    return record.idleSince + this.cfg.taskAgentIdleTtlMs;
+  }
+
+  /** The alarm's park tick: fold-fresh and guarded — running / parked /
+   * aborted / revived agents never (re-)park, and neither does Main. */
+  private async parkIdleSelf(): Promise<void> {
+    const identity = this.state.subagentIdentity;
+    if (identity === null) return;
+    const active = this.activeTurn();
+    if (active !== undefined && !turnTerminal(active)) return;
+    const record = projectLifecycle((await this.readAllEvents()).events).record(
+      identity.agentId,
+    );
+    if (record?.state !== "idle") return;
+    await this.appendEvent("task.subagent_parked", {
+      spawnId: identity.spawnId,
+      agentId: identity.agentId,
+    });
+  }
+
+  /**
+   * Lifecycle maintenance tick (the alarm's park branch, also the ops/test
+   * face where the platform alarm cannot fire — vitest-pool-workers never
+   * triggers DO alarms): park an idle-past-TTL self record, then re-derive
+   * the deadline (a revive that raced in clears it).
+   */
+  async sweepLifecycle(now: number = Date.now()): Promise<{ parked: boolean }> {
+    if (this.lifecycleParkDeadline !== null && now >= this.lifecycleParkDeadline) {
+      this.lifecycleParkDeadline = null;
+      await this.parkIdleSelf();
+    }
+    await this.refreshLifecycleAlarms();
+    const record = this.state.subagentIdentity
+      ? projectLifecycle((await this.readAllEvents()).events).record(
+          this.state.subagentIdentity.agentId,
+        )
+      : undefined;
+    return { parked: record?.state === "parked" };
   }
 
   /**
@@ -3015,6 +3376,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     // T18 in-place semaphore resize (task/index.ts:639-643): applies to
     // already-queued spawns; unset instance defers to first-use config read.
     this.spawnSemaphoreInstance?.resize(merged.taskMaxConcurrency);
+    // T19: a taskAgentIdleTtlMs patch re-derives the park deadline (a child
+    // DO configured after its run settled must pick the new TTL up too).
+    void this.refreshLifecycleAlarms();
     this.ctx.storage.kv.put(WATCHDOG_CONFIG_KV_KEY, JSON.stringify(patch));
     this.armWatchdog();
     return { config: merged as unknown as Record<string, number> };
