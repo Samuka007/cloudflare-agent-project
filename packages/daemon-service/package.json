@@ -9,7 +9,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json",
     "test": "vitest run",
-    "test:runtime": "bun test test/tool-runtime.test.ts"
+    "test:runtime": "bun test test/tool-runtime.test.ts && bun test test/l1-read-semantics.test.ts test/l1-glob-grep-semantics.test.ts test/l1-edit-semantics.test.ts test/l1-find-semantics.test.ts"
   },
   "dependencies": {
     "@cap/agent-do": "workspace:*",

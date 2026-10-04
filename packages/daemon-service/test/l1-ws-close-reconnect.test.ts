@@ -81,7 +81,14 @@ class FakeSocket extends EventTarget {
 interface SessionRecord {
   session: WSSession;
   socket: FakeSocket;
-  timerState: { heartbeatTimer: number | null; flushTimer: number | null };
+  // The src/client imports put this program on the @types/node ambient set
+  // (tsconfig.client.json), whose setInterval yields NodeJS.Timeout.
+  // Undefined (not null) is the unarmed state — node's clearInterval accepts
+  // it, so the clear sites stay guard-free.
+  timerState: {
+    heartbeatTimer: NodeJS.Timeout | number | undefined;
+    flushTimer: NodeJS.Timeout | number | undefined;
+  };
 }
 
 interface CloseScenarioOptions {
@@ -113,7 +120,10 @@ async function runCloseScenario(options: CloseScenarioOptions): Promise<CloseSce
     openCalls += 1;
     const socket = new FakeSocket();
     const session = (current = new WSSession());
-    const timerState: SessionRecord["timerState"] = { heartbeatTimer: null, flushTimer: null };
+    const timerState: SessionRecord["timerState"] = {
+      heartbeatTimer: undefined,
+      flushTimer: undefined,
+    };
     records.push({ session, socket, timerState });
     // The exact production wiring (connection.ts): the close event clears
     // the per-session timers and rejects the latch; the loop consumes the
@@ -125,8 +135,8 @@ async function runCloseScenario(options: CloseScenarioOptions): Promise<CloseSce
       () => {
         clearInterval(timerState.heartbeatTimer);
         clearInterval(timerState.flushTimer);
-        timerState.heartbeatTimer = null;
-        timerState.flushTimer = null;
+        timerState.heartbeatTimer = undefined;
+        timerState.flushTimer = undefined;
       },
     );
     socket.open();
@@ -207,9 +217,9 @@ describe("L1 server-initiated WS close (issue #38)", () => {
     if (first === undefined || second === undefined) throw new Error("expected two sessions");
     expect(first.socket.sent.filter((frame) => frame.type === "heartbeat")).toHaveLength(0);
     // The close — not teardown — actively cleared the live session's timers.
-    expect(first.timerState.heartbeatTimer).toBeNull();
-    expect(first.timerState.flushTimer).toBeNull();
-    expect(second.timerState.heartbeatTimer).toBeNull();
+    expect(first.timerState.heartbeatTimer).toBeUndefined();
+    expect(first.timerState.flushTimer).toBeUndefined();
+    expect(second.timerState.heartbeatTimer).toBeUndefined();
     // The latch carried the close reason into the loop's failure path.
     const loss = await first.session.ended.promise.then(
       () => "unexpectedly resolved",
@@ -239,8 +249,8 @@ describe("L1 server-initiated WS close (issue #38)", () => {
     // The session really lived across two beats before the hang-up.
     expect(first.socket.sent.filter((frame) => frame.type === "heartbeat")).toHaveLength(2);
     // Cleared mid-interval by the close event, not by a natural timer path.
-    expect(first.timerState.heartbeatTimer).toBeNull();
-    expect(first.timerState.flushTimer).toBeNull();
+    expect(first.timerState.heartbeatTimer).toBeUndefined();
+    expect(first.timerState.flushTimer).toBeUndefined();
     expect(vi.getTimerCount()).toBe(0);
     vi.advanceTimersByTime(200);
   });

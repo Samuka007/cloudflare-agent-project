@@ -8,5 +8,13 @@
   // typechecked against Node types separately (tsconfig.client.json) — the
   // Workers and Node ambient type sets overlap-and-conflict.
   "include": ["src/**/*.ts", "test/**/*.ts"],
-  "exclude": ["src/client/**", "test/tool-runtime.test.ts"]
+  "exclude": [
+    "src/client/**",
+    "test/tool-runtime.test.ts",
+    "test/l1-ws-close-reconnect.test.ts",
+    "test/l1-read-semantics.test.ts",
+    "test/l1-glob-grep-semantics.test.ts",
+    "test/l1-edit-semantics.test.ts",
+    "test/l1-find-semantics.test.ts"
+  ]
 }

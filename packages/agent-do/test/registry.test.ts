@@ -93,6 +93,11 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
       "edit",
       "glob",
       "grep",
+      // T11 — omp builtin-names.ts order: find between grep and lsp (lsp
+      // unregistered; checkpoint is the next registered row).
+      "find",
+      // T2/T3 merge — omp builtin-names.ts order: checkpoint/rewind before
+      // context_notes; wait between new_context and todo; think (hidden) last.
       "checkpoint",
       "rewind",
       "context_notes",
@@ -196,9 +201,9 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
     ).toBe("A\nNO_EVAL\nB\nASYNC");
   });
 
-  test("M1.5/T5' — five vendored-runtime rows are host class with daemon routing", () => {
+  test("M1.5/T5'+T11 — vendored-runtime host rows are host class with daemon routing", () => {
     // omp builtin-names.ts wire order with the M0 bash anchor hoisted first.
-    for (const name of ["read", "edit", "glob", "grep", "write"]) {
+    for (const name of ["read", "edit", "glob", "grep", "find", "write"]) {
       const row = toolRegistryRow(name);
       expect(row?.class).toBe("host");
       expect(row?.backend).toEqual({ kind: "daemon-dispatch" });
@@ -208,7 +213,8 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
     expect(order.indexOf("read")).toBeLessThan(order.indexOf("edit"));
     expect(order.indexOf("edit")).toBeLessThan(order.indexOf("glob"));
     expect(order.indexOf("glob")).toBeLessThan(order.indexOf("grep"));
-    expect(order.indexOf("grep")).toBeLessThan(order.indexOf("context_notes"));
+    expect(order.indexOf("grep")).toBeLessThan(order.indexOf("find"));
+    expect(order.indexOf("find")).toBeLessThan(order.indexOf("context_notes"));
     // omp: write is the last of the host/builtin five; manage_skill (T6 #96)
     // is the last BUILTIN row after it; the T16 hidden `yield`
     // (HIDDEN_TOOL_NAMES) closes the wire.
@@ -306,13 +312,14 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
     });
   });
 
-  test("M1.5/T5' — glob/grep descriptions render empty for absent find/delegation flags", () => {
+  test("M1.5/T11 — glob/grep render the find hint; delegation stays absent", () => {
     const tools = wireToolSet(M0_RENDER_FLAGS);
     const glob = tools.find((tool) => tool.name === "glob");
     expect(glob?.description).toBe(
       [
         "Glob files/dirs: `;`-separated paths or internal URLs (`local://*.md`, `omp://**/*.md`); default workspace root.",
         "`gitignore` and `hidden` default true; ignored dotfiles need `gitignore: false`. Newest-first by directory; dirs end `/`.",
+        "Behavior search → `find`.",
       ].join("\n"),
     );
     const grep = tools.find((tool) => tool.name === "grep");
@@ -321,8 +328,36 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
         "Regex: Rust, then PCRE2. `path`: `;`-separated file/dir/glob/URL; default `.`. Default case-sensitive, gitignore respected; `skip` paginates files.",
         "File-only selector: `src/foo.ts:50-100`. Literal `\\n`/`\\\\n` enables cross-line.",
         "Bare glob `*.ts` matches any depth; `dir/*.ts` only `dir`'s direct children (`dir/**/*.ts` recurses).",
+        "Behavior/unknown symbol → `find`; literals/regex → `grep`.",
       ].join("\n"),
     );
+  });
+
+  test("M1.5/T11 — find row is host class with omp jfind schema and description verbatim", () => {
+    const row = toolRegistryRow("find");
+    expect(row?.class).toBe("host");
+    expect(row?.backend).toEqual({ kind: "daemon-dispatch" });
+    expect(row?.intent).toBe("require");
+    const tools = wireToolSet(M0_RENDER_FLAGS);
+    const find = tools.find((tool) => tool.name === "find");
+    expect(find?.description).toBe(
+      [
+        "Describe behavior, get implementing files and line ranges. MUST use first for unknown locations; known strings/regex/symbols → `grep`, names → `glob`.",
+        "`query`: plain language, not regex; quoted phrases match whole. `grep_keywords`: likely verbatim terms, `[]` if unsure.",
+        "`path`: one directory or file, host path or internal URL (`omp://`, `omp://<file>.md`, `skill://<name>`, `local://…`); omitted = workspace root. Scope known subsystem; batch related questions. Searches live files, no index; no `:start-end` selector (judges whole files).",
+        "Hits strongest first: `path:start-end score snippet` (workspace-relative, or URL under URL scope); read returned ranges. Scores: absolute comparable 0–1 probability; below ~0.4 = weak evidence, so widen query or use `grep` before concluding absence.",
+      ].join("\n"),
+    );
+    expect(find?.input_schema).toEqual({
+      type: "object",
+      properties: {
+        i: INTENT_FIELD,
+        query: { type: "string" },
+        grep_keywords: { type: "array", items: { type: "string" } },
+        path: { type: "string" },
+      },
+      required: ["grep_keywords", "query", "i"],
+    });
   });
 
   test("M1.5/T5' — read description renders hashline-anchored source line; blank lines preserved", () => {
