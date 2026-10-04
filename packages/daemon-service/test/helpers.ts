@@ -25,6 +25,8 @@ import type { JournalOp } from "../src/journal.js";
 export interface HarnessEnv {
   DAEMON_SERVICE: DurableObjectNamespace;
   AGENT_DO: DurableObjectNamespace;
+  /** Edge shield (#36): auth-hash cache binding (L1 rig provisions it locally). */
+  DAEMON_EDGE_KV: KVNamespace;
   ENROLL_KEY: string;
   DAEMON_HOST_KEY: string;
   DAEMON_HOST_ID: string;

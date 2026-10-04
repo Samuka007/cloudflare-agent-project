@@ -16,6 +16,7 @@ import {
   SPAWN_ACK_TIMEOUT_MS,
   SYNC_SPAWN_DEFER_TIMEOUT_MS,
 } from "./constants.js";
+import { DoOverloadError } from "./edge.js";
 import { threadIdFromExecutionId } from "./execution-id.js";
 import {
   emptyServiceState,
@@ -69,15 +70,35 @@ interface SocketAttachment {
 
 interface SpawnAckWaiter {
   resolve: (ack: { ok: boolean; error?: string }) => void;
-  timer: number;
+  timer: TimerHandle;
 }
 
 interface SyncGateWaiter {
   resolve: (released: boolean) => void;
-  timer: number;
+  timer: TimerHandle;
 }
 
 type SpawnAck = { ok: boolean; error?: string };
+
+/** Handle returned by the ambient `setTimeout`: a bare `number` under the
+ * Workers lib, `NodeJS.Timeout` under Node-types composed graphs — derived,
+ * never pinned, so this file typechecks under both. */
+type TimerHandle = ReturnType<typeof setTimeout>;
+
+/** Storage key of the hostKey-hash mirror (#36 auth ladder authority). */
+const HOST_KEY_MIRROR_KEY = "hostKeyMirror";
+
+/** openSession contract (bb §2.1 step 1): lease params on success, the
+ * frozen protocol-mismatch shape otherwise. Consumed by the worker front. */
+export type OpenSessionResult =
+  | { ok: true; sessionId: string; heartbeatIntervalMs: number; leaseTimeoutMs: number }
+  | { ok: false; error: "protocol_version_mismatch" };
+
+interface HostKeyMirrorEntry {
+  keyHash: string;
+  hostId: string;
+  expiresAt: number;
+}
 
 export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
   private state: ServiceStateData = emptyServiceState();
@@ -88,6 +109,11 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
   private readonly inflightRequests = new Map<string, string>();
   /** Dispatches parked by the syncing gate (I30). */
   private syncingWaiters: SyncGateWaiter[] = [];
+  /** #36: DO-touch counter on the negotiation seam (edgeStats). */
+  private edgeOpenSessionCalls = 0;
+  /** #36: L1 fault injection — arms quota/overload-class failures (same
+   * family as debugForceLeaseExpiry). Never set by production paths. */
+  private debugOverload = false;
 
   constructor(ctx: DurableObjectState, env: DaemonServiceEnv) {
     super(ctx, env);
@@ -276,7 +302,9 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     | { ok: true; sessionId: string; heartbeatIntervalMs: number; leaseTimeoutMs: number }
     | { ok: false; error: "protocol_version_mismatch" }
   > {
+    this.edgeOpenSessionCalls += 1;
     await this.ready();
+    if (this.debugOverload) throw new DoOverloadError();
     if (args.protocolVersion !== DAEMON_PROTOCOL_VERSION) {
       return { ok: false, error: "protocol_version_mismatch" };
     }
@@ -331,6 +359,35 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     const session = this.state.session;
     const valid = session !== null && session.hostId === hostId && session.sessionId === sessionId;
     return { valid };
+  }
+
+  // -------------------------------------------------------------------------
+  // Edge auth seam (#36): the DO holds the authoritative key-hash mirror;
+  // the front's KV is a cache. Enroll order: mirror write (authority) → KV
+  // put (cache). Failure window: a failed KV put leaves auth on the one-DO
+  // authCheck fallback, which backfills the cache on the next request.
+  // -------------------------------------------------------------------------
+
+  async mirrorHostKey(args: { keyHash: string; hostId: string; ttlMs: number }): Promise<{ ok: true }> {
+    const entry: HostKeyMirrorEntry = {
+      keyHash: args.keyHash,
+      hostId: args.hostId,
+      expiresAt: Date.now() + args.ttlMs,
+    };
+    await this.ctx.storage.put(HOST_KEY_MIRROR_KEY, entry);
+    return { ok: true };
+  }
+
+  async authCheck(args: { keyHash: string }): Promise<{ ok: boolean; hostId: string | null }> {
+    const entry = await this.ctx.storage.get<HostKeyMirrorEntry>(HOST_KEY_MIRROR_KEY);
+    if (entry === undefined || entry.expiresAt <= Date.now()) return { ok: false, hostId: null };
+    if (entry.keyHash !== args.keyHash) return { ok: false, hostId: null };
+    return { ok: true, hostId: entry.hostId };
+  }
+
+  /** DO-touch observability for the #36 request-budget tests. */
+  async edgeStats(): Promise<{ openSessionCalls: number }> {
+    return { openSessionCalls: this.edgeOpenSessionCalls };
   }
 
   // -------------------------------------------------------------------------
@@ -1079,6 +1136,11 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     session.leaseExpiresAt = Date.now() - DISCONNECT_GRACE_MS - 1;
     await this.ctx.storage.deleteAlarm();
     await this.alarm();
+  }
+
+  /** L1 (#36): arm/disarm the quota/overload fault the edge classifiers key on. */
+  async debugSetOverload(on: boolean): Promise<void> {
+    this.debugOverload = on;
   }
 }
 

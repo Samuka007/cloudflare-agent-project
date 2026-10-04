@@ -68,3 +68,37 @@ export const KILL_ESCALATION_MS = 5_000;
  * pins the intended policy.
  */
 export const TOMBSTONE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+// ---------------------------------------------------------------------------
+// Edge shielding (#36): the front's DO-request budget. engineering.md
+// 横切实践 11 — negotiation paths that must touch the DO are guarded by the
+// three edge gates below; everything else is digested at the edge.
+// ---------------------------------------------------------------------------
+
+/**
+ * KV TTL for the hostKey-hash auth cache. The ticket says "TTL = lease
+ * horizon"; Cloudflare KV's platform floor is 60s, so the 30s lease horizon
+ * sits inside one TTL. Revocation converges within one TTL: rotate →
+ * re-enroll overwrites the DO mirror (authority) and the cache; a stale
+ * cache entry survives ≤60s, and the DO authCheck fallback rejects it.
+ */
+export const HOST_KEY_KV_TTL_S = 60;
+
+/**
+ * Negative-cache window: after the DO raises a quota/overload-class failure
+ * for a host, the front answers that host's negotiation requests with
+ * 429 + Retry-After for this long without touching the DO. The L1 rig
+ * overrides via the DAEMON_NEGATIVE_CACHE_MS var (real-clock window;
+ * workerd isolates cannot be fake-timed from the test realm).
+ */
+export const NEGATIVE_CACHE_TTL_MS = 30_000;
+
+/**
+ * Per-hostId negotiation token bucket (in-isolate memory, best-effort per
+ * the ticket — an isolate eviction resets the buckets, which fails open).
+ * Capacity 20 with a 10/s refill admits any legitimate reconnect pattern
+ * (client backoff floor is 1s per attempt) while capping a faulty client's
+ * DO amplification.
+ */
+export const NEGOTIATE_BUCKET_CAPACITY = 20;
+export const NEGOTIATE_REFILL_PER_SEC = 10;

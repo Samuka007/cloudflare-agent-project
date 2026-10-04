@@ -1,7 +1,19 @@
 import { apiError, httpStatusForCode } from "@cap/protocol";
 import { DAEMON_PROTOCOL_VERSION } from "./constants.js";
+import {
+  armNegativeCache,
+  authKeyOf,
+  backfillAuthCache,
+  isOverloadClass,
+  loadCachedAuth,
+  negativeCacheTtlMs,
+  negativeRemainingMs,
+  rateLimitedResponse,
+  sha256Hex,
+  takeToken,
+} from "./edge.js";
 import { TestAgentSinkDO } from "./agent-sink.js";
-import { DaemonServiceDO, type DaemonServiceEnv } from "./service-do.js";
+import { DaemonServiceDO, type DaemonServiceEnv, type OpenSessionResult } from "./service-do.js";
 // Wrangler requires the DO classes on the deployed entry (main).
 export { DaemonServiceDO, TestAgentSinkDO };
 export type { DaemonServiceEnv };
@@ -24,6 +36,15 @@ export interface WorkerEnv extends DaemonServiceEnv {
   DAEMON_HOST_KEY: string;
   DAEMON_HOST_ID?: string;
   DAEMON_MACHINE_ID?: string;
+  /**
+   * Edge shield (#36): auth-hash cache binding. Optional — deployments that
+   * run on the env-key path only (L1 rig, hookup) skip every KV touch.
+   */
+  DAEMON_EDGE_KV?: KVNamespace;
+  /** Edge-shield tunables (string vars; named-constant defaults). */
+  DAEMON_NEGATIVE_CACHE_MS?: string;
+  DAEMON_RATE_LIMIT_CAPACITY?: string;
+  DAEMON_RATE_LIMIT_REFILL_PER_SEC?: string;
 }
 
 export default {
@@ -52,19 +73,19 @@ async function route(request: Request, env: WorkerEnv): Promise<Response> {
   // Everything below the daemon seam requires Bearer hostKey (engineering.md
   // practice 7: hostKey guards the daemon seam only).
   if (path === "/session/open" && request.method === "POST") {
-    const auth = bearerOf(request, env);
+    const auth = await authorize(request, env);
     if (auth === null) return unauthorized();
     return handleSessionOpen(request, env, auth.hostIdHint);
   }
 
   if (path === "/ws") {
-    const auth = bearerOf(request, env);
+    const auth = await authorize(request, env);
     if (auth === null) return unauthorized();
     return handleWsAttach(request, env);
   }
 
   if (path.startsWith("/agent/") || path.startsWith("/agent-sink/")) {
-    const auth = bearerOf(request, env);
+    const auth = await authorize(request, env);
     if (auth === null) return unauthorized();
     return handleAgentRoute(path, request, env);
   }
@@ -89,6 +110,26 @@ async function handleEnroll(request: Request, env: WorkerEnv): Promise<Response>
     return unauthorized();
   }
   const hostId = typeof parsed.hostId === "string" ? parsed.hostId : (env.DAEMON_HOST_ID ?? "poc-local");
+  // Auth-ladder order (#36): DO mirror first (the authority), KV cache
+  // second. The mirror lands in the deployment-identity DO — the one the
+  // ladder's KV-miss fallback consults (at fallback time the host is not
+  // yet known, so "which DO validates" can only be the deployment's own
+  // identity; M1's key registry replaces this seam). Failure windows:
+  // mirror write fails → enroll fails closed (no cache entry exists to
+  // answer wrongly); KV put fails after a good mirror → enroll still
+  // succeeds and the next open pays one DO authCheck that backfills the
+  // cache (self-healing).
+  const keyHash = await sha256Hex(env.DAEMON_HOST_KEY);
+  try {
+    await stubForHost(env, env.DAEMON_HOST_ID ?? env.DAEMON_MACHINE_ID ?? hostId).mirrorHostKey({
+      keyHash,
+      hostId,
+      ttlMs: 60_000,
+    });
+  } catch {
+    return errorResponse("internal", "hostKey mirror registration failed");
+  }
+  await backfillAuthCache(env.DAEMON_EDGE_KV, keyHash, hostId);
   return Response.json({ hostId, hostKey: env.DAEMON_HOST_KEY }, { status: 201 });
 }
 
@@ -110,8 +151,24 @@ async function handleSessionOpen(request: Request, env: WorkerEnv, hostIdHint: s
   if (hostId === null || bootId === null || protocolVersion === null) {
     return errorResponse("validation_failed", "hostId, bootId and protocolVersion are required");
   }
+  // Edge gates (#36): negative cache first (doomed requests must not drain
+  // bucket tokens), then the per-hostId bucket, then the DO.
+  const shield = negotiateGuard(env, hostId);
+  if (shield !== null) return shield;
   const stub = stubForHost(env, hostId);
-  const result = await stub.openSession({ hostId, protocolVersion, bootId });
+  let result: OpenSessionResult;
+  try {
+    result = await stub.openSession({ hostId, protocolVersion, bootId });
+  } catch (error) {
+    if (isOverloadClass(error)) {
+      armNegativeCache(hostId, negativeCacheTtlMs(env));
+      return rateLimitedResponse(
+        negativeCacheTtlMs(env) / 1000,
+        "durable object is overloaded; retry after the negative-cache window",
+      );
+    }
+    throw error;
+  }
   if (!result.ok) {
     return Response.json(
       // bb shape: 400 with the protocol_version_mismatch code in the envelope
@@ -142,12 +199,25 @@ async function handleWsAttach(request: Request, env: WorkerEnv): Promise<Respons
   if (hostId === "" || sessionId === "") {
     return errorResponse("validation_failed", "hostId and sessionId query params required");
   }
+  const shield = negotiateGuard(env, hostId);
+  if (shield !== null) return shield;
   // Forward the upgrade into the DO: the accepted socket must be owned by
   // the per-machine DO so hibernation, leases and the journal co-locate.
   // The DO validates the session synchronously in its fetch and rejects the
   // upgrade with 401 before any socket exists (bb's post-upgrade 1008 shape
   // degrades to a pre-upgrade 401 on this platform).
-  return stubForHost(env, hostId).fetch(request);
+  try {
+    return await stubForHost(env, hostId).fetch(request);
+  } catch (error) {
+    if (isOverloadClass(error)) {
+      armNegativeCache(hostId, negativeCacheTtlMs(env));
+      return rateLimitedResponse(
+        negativeCacheTtlMs(env) / 1000,
+        "durable object is overloaded; retry after the negative-cache window",
+      );
+    }
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -239,14 +309,39 @@ function stubForHost(env: WorkerEnv, hostId: string): DurableObjectStub & Daemon
   return env.DAEMON_SERVICE.get(env.DAEMON_SERVICE.idFromName(name)) as DurableObjectStub & DaemonServiceDO;
 }
 
-/** Bearer hostKey check; returns the hostId hint from the key identity. */
-function bearerOf(request: Request, env: WorkerEnv): { hostIdHint: string } | null {
-  const header = request.headers.get("authorization");
-  if (header === null) return null;
-  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
-  if (match === null) return null;
-  if (match[1] !== env.DAEMON_HOST_KEY) return null;
-  return { hostIdHint: env.DAEMON_HOST_ID ?? "poc-local" };
+/** Auth ladder (#36): env compare (staging single-host / L1 rig; zero edge
+ * storage) → KV hash cache → exactly one DO authCheck fallback + backfill.
+ * The DO mirror written at enroll is the authority; KV is a pure cache. */
+async function authorize(
+  request: Request,
+  env: WorkerEnv,
+): Promise<{ hostIdHint: string | null } | null> {
+  const key = authKeyOf(request);
+  if (key === null) return null;
+  if (env.DAEMON_HOST_KEY !== "" && key === env.DAEMON_HOST_KEY) {
+    return { hostIdHint: env.DAEMON_HOST_ID ?? "poc-local" };
+  }
+  const keyHash = await sha256Hex(key);
+  const cachedHostId = await loadCachedAuth(env.DAEMON_EDGE_KV, keyHash);
+  if (cachedHostId !== null) return { hostIdHint: cachedHostId };
+  const stub = stubForHost(env, env.DAEMON_HOST_ID ?? env.DAEMON_MACHINE_ID ?? "poc-local");
+  const verdict = await stub.authCheck({ keyHash });
+  if (!verdict.ok) return null;
+  await backfillAuthCache(env.DAEMON_EDGE_KV, keyHash, verdict.hostId ?? "");
+  return { hostIdHint: verdict.hostId };
+}
+
+/** Negotiation edge gates (#36): negative-cache window, then token bucket. */
+function negotiateGuard(env: WorkerEnv, hostId: string): Response | null {
+  const remaining = negativeRemainingMs(hostId);
+  if (remaining !== null) {
+    return rateLimitedResponse(remaining / 1000, "host is in the DO negative-cache window");
+  }
+  const bucket = takeToken(env, hostId);
+  if (!bucket.allowed) {
+    return rateLimitedResponse(bucket.retryAfterS, "negotiation rate limit exceeded for host");
+  }
+  return null;
 }
 
 async function jsonBody(request: Request): Promise<Record<string, unknown> | null> {
