@@ -47,6 +47,7 @@ import {
   type PeerInbox,
 } from "./tools/job-registry.js";
 import { WAIT_LIMIT_REACHED, type WaitToolContext, type WaitWake } from "./tools/wait.js";
+import { checkpointRewindState, todoJournalState } from "./tools/session-tree.js";
 
 /**
  * Per-thread bare Durable Object (no Agents SDK — docs/research/cf-agents-sdk.md):
@@ -1126,7 +1127,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       // only from this point — (re)arm the alarm to carry it.
       this.armWatchdog();
     }
+    const threadId = this.requireThread();
     const result = await runEdgeTool(row, args, {
+      executionId: execution.executionId,
+      threadId,
       appendNotebookRevision: async (text) => {
         await this.appendEvent("experimental_context_notes", { version: 1, text });
       },
@@ -1134,6 +1138,17 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         const { events } = await this.readAllEvents();
         const notes = latestContextNotes(events);
         return notes === undefined ? undefined : { text: notes.text };
+      },
+      todoState: async () => {
+        const { events } = await this.readAllEvents();
+        return todoJournalState(events, execution.executionId);
+      },
+      appendTodoPhases: async (op, phases) => {
+        await this.appendEvent("todo_phases", { version: 1, executionId: execution.executionId, op, phases });
+      },
+      checkpointRewindState: async () => {
+        const { events } = await this.readAllEvents();
+        return checkpointRewindState(events, threadId);
       },
       ...(row.name === "wait" ? { wait: this.waitToolContext(execution) } : {}),
     }).finally(() => {
