@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { resolve, sep } from "node:path";
-import { log } from "./identity.js";
+import { log } from "./log.js";
 
 /**
  * Sandbox executor (§1.3/§1.4): PTY-less bash under the sandbox root, own

@@ -17,7 +17,7 @@
  */
 
 import { runClient } from "./connection.js";
-import { loadIdentity, type ClientConfig } from "./identity.js";
+import type { ClientConfig } from "./identity.js";
 
 function argValue(flag: string): string | undefined {
   const index = process.argv.indexOf(flag);
@@ -33,5 +33,4 @@ const config: ClientConfig = {
   enrollKey: process.env["POC_ENROLL_KEY"] ?? "poc-dev-enroll-key",
 };
 
-const identity = await loadIdentity(config);
-await runClient(config, identity);
+await runClient(config);

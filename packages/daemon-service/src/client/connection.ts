@@ -3,23 +3,24 @@ import {
   DAEMON_PROTOCOL_VERSION,
   HEARTBEAT_INTERVAL_MS,
   KILL_ESCALATION_MS,
-  RECONNECT_BACKOFF_MAX_MS,
-  RECONNECT_BACKOFF_MIN_MS,
-  RECONNECT_STABLE_RESET_MS,
   WS_BACKPRESSURE_HIGH_WATER_BYTES,
 } from "../constants.js";
+import { negotiationFailure } from "./backoff.js";
+import { log } from "./log.js";
+import { runSessionLoop } from "./session-loop.js";
 import { serviceFrameSchema, type ObservedExecution, type ServiceFrame } from "../protocol.js";
-import type { ClientConfig, ClientIdentity } from "./identity.js";
-import { log } from "./identity.js";
+import { loadIdentity, type ClientConfig, type ClientIdentity } from "./identity.js";
 import { Executor, scanMarkerProcesses } from "./executor.js";
 import { ExecutionBuffer } from "./buffers.js";
 
 /**
  * Client connection lifecycle (§8.2/§8.5): open → attach → announce → serve;
- * heartbeat per the server-declared interval; reconnect with bb backoff
- * (1s→30s ×2, stable >10s resets); every reconnect is a full boot.announce —
- * the service DO's judgment tree does the rest. Disconnect NEVER kills
- * running work (§3.4): execution continues into the buffers.
+ * heartbeat per the server-declared interval; every establishment failure —
+ * enroll, session/open, WS attach, WS disconnect — waits on ONE exponential
+ * chain (client/backoff.ts, issue #35: ×2 jittered, 5min cap, Retry-After
+ * honored); every reconnect is a full boot.announce — the service DO's
+ * judgment tree does the rest. Disconnect NEVER kills running work (§3.4):
+ * execution continues into the buffers.
  */
 
 const CLIENT_COMMAND_QUEUE_LIMIT = 256;
@@ -32,40 +33,34 @@ interface ClientRuntime {
   /** announce generation, per session, from 1 (§8.2). */
   generation: number;
   heartbeatTimer: NodeJS.Timeout | null;
-  backoffMs: number;
   connectedAt: number;
   /** Command queue bound (§8.3): serial per-client processing. */
   readonly queue: Array<() => Promise<void>>;
   queueBusy: boolean;
 }
 
-export async function runClient(config: ClientConfig, identity: ClientIdentity): Promise<void> {
+export async function runClient(config: ClientConfig): Promise<void> {
   const runtime: ClientRuntime = {
     bootId: randomUUID(),
     executor: new Executor(config.sandboxRoot),
     buffers: new Map(),
     generation: 0,
     heartbeatTimer: null,
-    backoffMs: RECONNECT_BACKOFF_MIN_MS,
     connectedAt: 0,
     queue: [],
     queueBusy: false,
   };
   log(`boot ${runtime.bootId} sandbox=${config.sandboxRoot} dataDir=${config.dataDir}`);
-  while (true) {
-    try {
-      await establishSession(config, identity, runtime);
-      runtime.backoffMs = RECONNECT_BACKOFF_MIN_MS;
-      await sessionLifetime(runtime);
-    } catch (error) {
-      log(`session lost: ${errorText(error)} — reconnecting in ${runtime.backoffMs}ms`);
-    }
-    teardownSession(runtime);
-    const stable = Date.now() - runtime.connectedAt > RECONNECT_STABLE_RESET_MS;
-    if (stable) runtime.backoffMs = RECONNECT_BACKOFF_MIN_MS;
-    await sleep(runtime.backoffMs);
-    runtime.backoffMs = Math.min(runtime.backoffMs * 2, RECONNECT_BACKOFF_MAX_MS);
-  }
+  // Identity loading (first boot → enroll) lives inside the loop: a
+  // rejecting /enroll must ride the same backoff chain as session/open
+  // (issue #35) instead of crashing the process into supervisor-hammering.
+  let identity: ClientIdentity | null = null;
+  await runSessionLoop({
+    ensureIdentity: async () => (identity ??= await loadIdentity(config)),
+    establishSession: (identity_) => establishSession(config, identity_, runtime),
+    sessionLifetime: () => sessionLifetime(runtime),
+    teardownSession: () => teardownSession(runtime),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -76,7 +71,7 @@ async function establishSession(
   config: ClientConfig,
   identity: ClientIdentity,
   runtime: ClientRuntime,
-): Promise<WebSocket> {
+) {
   const openResponse = await fetch(`${config.baseUrl}/session/open`, {
     method: "POST",
     headers: {
@@ -90,7 +85,13 @@ async function establishSession(
     }),
   });
   if (openResponse.status !== 201) {
-    throw new Error(`session/open failed: HTTP ${openResponse.status} ${await openResponse.text()}`);
+    throw negotiationFailure(
+      "session/open",
+      openResponse.status,
+      openResponse.headers.get("retry-after"),
+      Date.now(),
+      await openResponse.text(),
+    );
   }
   const open = (await openResponse.json()) as {
     sessionId: string;
@@ -156,7 +157,8 @@ async function establishSession(
   // Coalesced output uplink; backpressure-aware whole-frame flushes (I29).
   const flushTimer = setInterval(() => flushBuffers(runtime, socket), 100);
   flushTimer.unref();
-  return socket;
+  // The loop consumes the ws-open time for the stable-session reset.
+  return runtime.connectedAt;
 }
 
 async function sessionLifetime(runtime: ClientRuntime): Promise<void> {
