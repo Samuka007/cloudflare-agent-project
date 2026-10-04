@@ -6,9 +6,11 @@ name: project-board-sync
 # (Backlog when milestone-less, Todo when milestoned+open,
 #  Done when closed, Canceled when closed+wontfix)
 # + Priority mirror: priority:* label → board field (labels drive, field mirrors).
+# labeled/unlabeled 仅影响 ready-for-human（→ Wait for user）；
+# 其余 label 事件幂等重算，成本可忽略。
 on:
   issues:
-    types: [opened, reopened, closed, milestoned, demilestoned]
+    types: [opened, reopened, closed, milestoned, demilestoned, labeled, unlabeled]
 
 # Serialize per-issue so close cannot race ahead of an in-flight open/milestone event.
 concurrency:
@@ -34,10 +36,13 @@ jobs:
             const { issue } = context.payload;
 
             // Lifecycle: closed+wontfix → Canceled, closed → Done,
+            // open+ready-for-human → Wait for user (user decision queue),
             // milestoned+open → Todo, milestone-less open → Backlog (Linear default).
             const desiredState = issue.state === 'closed'
               ? (issue.labels?.some((l) => l.name === 'wontfix') ? 'Canceled' : 'Done')
-              : (issue.milestone ? 'Todo' : 'Backlog');
+              : (issue.labels?.some((l) => l.name === 'ready-for-human')
+                ? 'Wait for user'
+                : (issue.milestone ? 'Todo' : 'Backlog'));
             if (!issue.milestone) {
               core.info(`Issue #${issue.number} has no milestone; Status=${desiredState}.`);
             }
