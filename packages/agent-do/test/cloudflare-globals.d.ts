@@ -6,6 +6,6 @@
 declare namespace Cloudflare {
   interface GlobalProps {
     mainModule: typeof import("../src/worker");
-    durableNamespaces: "AgentDO" | "DaemonServiceDO";
+    durableNamespaces: "AgentDO" | "DaemonServiceDO" | "HUB";
   }
 }

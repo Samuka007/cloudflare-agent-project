@@ -2,10 +2,13 @@ import { DurableObject } from "cloudflare:workers";
 import { Cause, Effect, Exit } from "effect";
 import {
   threadEventsAppendedMessage,
+  threadDeltaMessage,
+  threadPhaseChangedMessage,
   pendingInteractionChangedMessage,
   realtimeClientMessageSchema,
   type PendingInteractionPayload,
   type PendingInteractionResolution,
+  type RealtimeThreadDelta,
   type RealtimeSubscriptionTarget,
 } from "@cap/protocol";
 import { EventLog } from "./event-log.js";
@@ -170,6 +173,36 @@ export interface AgentDoBindings {
    * path). Unbound in the pure-fake test rig.
    */
   AGENT_DO?: DurableObjectNamespace;
+  /**
+   * #197 D2: the public fan-out hub (NotificationHubDO, same composed
+   * worker). Optional — unbound deployments (rig/unit tests) notify nothing
+   * (same guard shape as DAEMON_SERVICE → host_offline). The journal stays
+   * the only truth either way: frames are accelerators, never authority.
+   */
+  HUB?: DurableObjectNamespace;
+}
+
+/**
+ * The hub RPC surface the agent DO pushes through (#197 D2, spec §5.2).
+ * Structural on purpose — the composed deployment resolves it against the
+ * NotificationHubDO stub; the recording hub in tests matches the shape.
+ */
+export interface HubNotifyStub {
+  notifyThread(
+    threadId: string,
+    changes: string[],
+    metadata?: {
+      latestSeq?: number;
+      eventTypes?: string[];
+      phase?: {
+        turnId: string;
+        phase: "stream_started" | "first_token" | "terminal" | "settled" | "host_lost";
+        modelCallId?: number;
+        reason?: string;
+      };
+    },
+  ): Promise<{ delivered: number }>;
+  notifyThreadDelta(frame: RealtimeThreadDelta): Promise<{ delivered: number }>;
 }
 
 /** One `agent://<id>[/<json path>]` / `history://<id>` resolution request. */
@@ -1310,7 +1343,144 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     } else if (validated.type === "interaction.interrupted") {
       this.pushInteractionToSubscribers(validated.data.interactionId, "interrupted");
     }
+    // #197 D3: phase rows trail their fact rows inside the same single write
+    // path (persist-then-mark, P1) — no terminal/dispatch site can forget.
+    await this.appendTrailingPhase(validated);
+    // #197 D2: the live line to the hub. Fire-and-forget; a notify NEVER
+    // fails an append (spec §5.2).
+    this.notifyHub(validated);
     return record;
+  }
+
+  /**
+   * D3 trailing markers (spec §3.2 append-point table): `terminal` right
+   * after every turn.completed/failed/cancelled (reason = the row's
+   * outcome), `settled` once executions are all terminal and nothing is
+   * left to re-ask, `host_lost` once per turn after the first
+   * `tool.dispatch{outcome:"host_offline"}`. Recovery never backfills
+   * phases (P2): the fold is the only thing that replays them.
+   */
+  private async appendTrailingPhase(event: AnyAgentEvent): Promise<void> {
+    if (
+      event.type === "turn.completed" ||
+      event.type === "turn.failed" ||
+      event.type === "turn.cancelled"
+    ) {
+      const reason =
+        event.type === "turn.completed"
+          ? "completed"
+          : event.type === "turn.failed"
+            ? event.data.reason
+            : "cancelled";
+      await this.appendEvent("turn.phase", {
+        turnId: event.data.turnId,
+        phase: "terminal",
+        reason,
+      });
+      await this.settleTurnIfReady(event.data.turnId);
+      return;
+    }
+    if (event.type === "tool.dispatch" && event.data.outcome === "host_offline") {
+      const turn = this.state.turns.get(event.data.turnId);
+      if (turn !== undefined && !turn.phases.includes("host_lost")) {
+        await this.appendEvent("turn.phase", {
+          turnId: event.data.turnId,
+          phase: "host_lost",
+          reason: "host_offline",
+        });
+      }
+    }
+  }
+
+  /**
+   * D3 `settled`: silent confirmation — every execution terminal, no
+   * in-flight re-ask. The FSM already refuses terminal rows over live
+   * executions, so today this lands immediately after `terminal`; the
+   * ingestResult hook keeps the semantics honest if a future terminal path
+   * relaxes that (host_offline 收尸 convergence, spec §3.2).
+   */
+  private async settleTurnIfReady(turnId: string): Promise<void> {
+    const turn = this.state.turns.get(turnId);
+    if (turn === undefined || !turnTerminal(turn)) return;
+    if (turn.phases.includes("settled")) return;
+    for (const executionId of turn.executionIds) {
+      const execution = this.state.executions.get(executionId);
+      if (execution === undefined || !executionTerminal(execution)) return;
+    }
+    await this.appendEvent("turn.phase", { turnId, phase: "settled" });
+  }
+
+  // -------------------------------------------------------------------------
+  // #197 D2: agent-DO → hub push line (R1). One notify per journal row —
+  // the existing delta flush (deltaFlushMs/deltaFlushBytes) already coalesces
+  // the stream, so no new buffering, no new timers, DO alarm discipline kept.
+  // -------------------------------------------------------------------------
+
+  /** Hub stub; undefined = unbound deployment → notify is a silent no-op
+   * (same guard shape as DAEMON_SERVICE === undefined → host_offline). */
+  private hubStub(): HubNotifyStub | undefined {
+    const namespace = this.env.HUB;
+    if (namespace === undefined) return undefined;
+    return namespace.get(namespace.idFromName("hub")) as unknown as HubNotifyStub;
+  }
+
+  /**
+   * D2 push shape (spec §5.2): `model.delta` → `notifyThreadDelta` payload
+   * frame (Tier-A; R2-bypass rows omit `text` → freshness signal only);
+   * `turn.phase` → `["phase-changed"]` with the row's payload; everything
+   * else → `["events-appended"]` Tier-B pointer (eventTypes = the journal
+   * type). DO→DO RPC is unordered and at-least-once — consumers reconcile
+   * by `seq` per D4, so ordering/buffering machinery would be dead weight.
+   */
+  private notifyHub(event: AnyAgentEvent): void {
+    if (this.threadId === null) return;
+    const hub = this.hubStub();
+    if (hub === undefined) return;
+    const threadId = this.threadId;
+    const latestSeq = this.state.latestSeq;
+    if (event.type === "model.delta") {
+      const { turnId, modelCallId, text } = event.data;
+      const frame = threadDeltaMessage({
+        threadId,
+        turnId,
+        itemId: `itm-am-${turnId}:${modelCallId}`,
+        seq: event.seq,
+        ...(typeof text === "string" ? { text } : {}),
+        latestSeq,
+      });
+      this.ctx.waitUntil(
+        hub.notifyThreadDelta(frame).catch((error: unknown) => {
+          console.error("hub delta notify failed", error);
+        }),
+      );
+      return;
+    }
+    if (event.type === "turn.phase") {
+      const { turnId, phase, modelCallId, reason } = event.data;
+      const frame = threadPhaseChangedMessage({
+        threadId,
+        latestSeq,
+        phase: {
+          turnId,
+          phase,
+          ...(modelCallId !== undefined ? { modelCallId } : {}),
+          ...(reason !== undefined ? { reason } : {}),
+        },
+      });
+      this.ctx.waitUntil(
+        hub.notifyThread(threadId, frame.changes, frame.metadata).catch((error: unknown) => {
+          console.error("hub phase notify failed", error);
+        }),
+      );
+      return;
+    }
+    this.ctx.waitUntil(
+      hub
+        .notifyThread(threadId, ["events-appended"], { latestSeq, eventTypes: [event.type] })
+        .catch((error: unknown) => {
+          console.error("hub notify failed", error);
+        }),
+    );
   }
 
   /** I3: push strictly after persist; the platform barrier guarantees the
@@ -1555,6 +1725,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           pendingDelta = "";
           pendingDeltaBytes = 0;
           text += chunk;
+          const turn = self.state.turns.get(turnId);
+          if (turn !== undefined && !turn.phases.includes("first_token")) {
+            // #197 D3: turn-level once, immediately before the first
+            // non-empty delta row lands. The fold-driven check keeps a
+            // resumed driver (recovered mid-stream) from re-appending.
+            await self.appendEvent("turn.phase", { turnId, phase: "first_token", modelCallId });
+          }
           await self.appendEvent("model.delta", {
             turnId,
             modelCallId,
@@ -1591,6 +1768,12 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
               if (!sawFirstByte) {
                 sawFirstByte = true;
                 lastFlushAt = Date.now();
+                // #197 D3: 首字节已见 — the user-perceivable stream start,
+                // not the dispatch moment (retries can die silently). Once
+                // per model call: a retry legitimately repeats the row.
+                yield* Effect.promise(() =>
+                  self.appendEvent("turn.phase", { turnId, phase: "stream_started", modelCallId }),
+                );
               }
               pendingDelta += chunk.text;
               pendingDeltaBytes += new TextEncoder().encode(chunk.text).byteLength;
@@ -1996,14 +2179,19 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         {
           status: "error",
           exitCode: null,
-          output: error instanceof AgentRpcError ? error.message : `Delivery failed: ${String(error)}`,
+          output:
+            error instanceof AgentRpcError ? error.message : `Delivery failed: ${String(error)}`,
         },
         { ack: false },
       );
     }
   }
 
-  private async deliverToChild(childThreadId: string, from: string, text: string): Promise<boolean> {
+  private async deliverToChild(
+    childThreadId: string,
+    from: string,
+    text: string,
+  ): Promise<boolean> {
     const namespace = this.env.AGENT_DO;
     if (namespace === undefined) return false;
     const stub = namespace.get(namespace.idFromName(childThreadId)) as unknown as SubagentDoStub;
@@ -2414,6 +2602,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       this.wakeEdgeWaiter(execution.executionId, { kind: "cancelled" });
       this.wakeAskWaiter(execution.executionId, { kind: "cancelled" });
       this.wakeExecWaiters(execution.executionId, false);
+      await this.settleTurnIfReady(execution.turnId);
       return;
     }
     try {
@@ -2426,6 +2615,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     this.wakeEdgeWaiter(execution.executionId, { kind: "cancelled" });
     this.wakeAskWaiter(execution.executionId, { kind: "cancelled" });
     this.wakeExecWaiters(execution.executionId, false);
+    await this.settleTurnIfReady(execution.turnId);
   }
 
   private waitForExecutions(
@@ -3143,10 +3333,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * the sidecar is written even when the payload failed schema validation
    * ("sidecar 无效 schema 也写", §3 T17 acceptance).
    */
-  private async writeChildArtifacts(
-    state: ChildRunState,
-    output: string,
-  ): Promise<void> {
+  private async writeChildArtifacts(state: ChildRunState, output: string): Promise<void> {
     const identity = this.state.subagentIdentity;
     if (identity === null) return;
     const base = `agent/${identity.agentId}`;
@@ -3154,10 +3341,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       await this.ctx.storage.put(`${base}.md`, output);
       await this.ctx.storage.put(`${base}.jsonl`, renderJournalJsonl(state.events));
       if (state.terminal?.data !== undefined) {
-        await this.ctx.storage.put(
-          `${base}.json`,
-          JSON.stringify(state.terminal.data, null, 2),
-        );
+        await this.ctx.storage.put(`${base}.json`, JSON.stringify(state.terminal.data, null, 2));
       }
     } catch (error) {
       // Artifacts are an availability surface, not the settlement channel —

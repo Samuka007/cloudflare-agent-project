@@ -7,8 +7,15 @@
     "bindings": [
       { "name": "AGENT_DO", "class_name": "AgentDO" },
       { "name": "DAEMON_SERVICE", "class_name": "TestDaemonServiceDO" },
+      // #197 D2: the rig's hub is the recording fixture — L2 asserts the
+      // frames the agent DO pushes, not a socket fan-out (pool transport
+      // cannot deliver server→client WS frames, see server-worker c4 FIXME).
+      { "name": "HUB", "class_name": "RecordingHubDO" },
     ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AgentDO", "TestDaemonServiceDO"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["AgentDO", "TestDaemonServiceDO"] },
+    { "tag": "v2", "new_sqlite_classes": ["RecordingHubDO"] },
+  ],
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "agent-do-blobs" }],
 }
