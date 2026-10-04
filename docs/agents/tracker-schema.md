@@ -43,3 +43,4 @@ BoardSmith 章程（board-smith.md）的正本。板面任何结构性变更先�
 2. 替换类 API（singleSelectOptions 等）必须预检全量项值不悬空
 3. 词表封闭：新标签/字段/选项先入本文档
 4. 每轴单源；标签与字段不得互为镜像（缓存方向单一且可重放）
+5. **REST 建票的 labels 数组会自动创建未知标签**（事故：priority:\* 两度复活 2026-10-04）——建票模板禁含未注册标签名；priority 一律建票后 AP.apply 字段直写
