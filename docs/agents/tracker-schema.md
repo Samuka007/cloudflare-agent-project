@@ -29,6 +29,8 @@ BoardSmith 章程（board-smith.md）的正本。板面任何结构性变更先�
 
 **派发谓词（用户裁决 2026-10-04）**：`ready-for-agent` 不是标签——dispatchable 是**跨轴派生谓词**：`open ∧ Status=Todo ∧ 无未关 blocking 边 ∧ ¬ready-for-human`。各轴只存自己的正交事实，一切决策（派发/解锁/预警）从轴组合**推导**，任何单轴不得烘焙另一轴的语义（如"被挡→Backlog"=轴污染，2026-10-04 已纠）。PM 每回合把 dispatchable 集清到并发预算满或空；PMGuard 审计"dispatchable 非空且预算有余而未派"=P1。
 
+**In Progress 计票不计人（2026-10-04）**：薄激活票可由 lane 批量承载（一 lane 多票、一 PR 分 commit 关多票）——In Progress 语义=「此票正被某 lane 加工」，非「一票一进程」。lane↔票映射在派发 packet（AP.dispatchPackets）中显式生成；票集成完成（merge+close）即收敛 Done；批量 lane 的每张票独立走交付钩子四步。
+
 ## 结构关系
 
 - 伞票 sub-issue 层级（如 M1.5 #33 → #91-#116+#128）
