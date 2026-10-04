@@ -1,0 +1,126 @@
+# bb UX surface 差距矩阵（#72 数据底座）
+
+> 面向 UX 排期票 #76 的 per-surface 状态矩阵：bb SPA 全 surface 清单（视图/组件面/交互流）× 本仓移植现状。状态判定来源：#45 普查绿红清单（staging eaa5572 真浏览器）+ 此后修复 #40/#49/#52→#60/#61→#65/#62→#66 + 容忍裁定 #42（not-planned）/ #51（M3）+ 2026-10-04 staging 直探（UA `cap-matrix/1.0`，只读 GET，零模型 turn）。
+>
+> bb 源引用以仓内子模块钉版 `ba4265453` 为准；行号随版本漂移，file:line 为定位辅助。
+
+## 图例
+
+| 状态 | 含义 |
+| --- | --- |
+| ✅ 已通 | staging 真浏览器验证过，或 verbatim 数据面齐备且无 404（标注"推定"= 端口齐备但浏览器未单测） |
+| 🟡 部分 | surface 可达、主路径通，子能力缺失或降级 |
+| ❌ 未移植 | 端点/数据面缺失，交互失败或恒空（含"容忍"裁定项） |
+| ⚪ 裁剪/N-A | bb 语义下合法空态、config/flag 门控、或 web-only 部署形态不可达——非缺陷 |
+
+阶段归属按 ROADMAP 四步阶梯：M0（已关账 #31）→ M1 可用性硬化（#14）→ M1.5 工具集（#33）→ M2 存量迁移（#15）→ M3 生态扩展（#16）。
+
+## A. 路由级视图（route-paths.ts 全清单 × 现状）
+
+| # | Surface | bb 位置（apps/app/src） | 状态 | 证据 | 建议阶段 |
+| --- | --- | --- | --- | --- | --- |
+| A1 | 根 compose `/`（新建 thread + tour CTA + 欢迎面） | `views/RootComposeView.tsx`、`components/promptbox/NewThreadComposer.tsx` | ✅ | #45 绿清单；#61 真浏览器 create-with-input 全动线（一次请求链内真模型回复落 timeline） | M0 已交付 |
+| A2 | Thread 详情 `/threads/:id`（timeline + composer + header） | `views/thread-detail/ThreadDetailView.tsx` | ✅ | #45 绿（timeline 与服务端真值一致）；#60 终态收敛（幽灵 Working... 消失，跨 reload） | M0 已交付 |
+| A3 | 项目前缀 thread 详情 `/projects/:pid/threads/:tid` | 同 A2（SplitWorkspaceRoute paneContent） | ✅(推定) | 与 A2 同组件同数据面，仅路由参数不同；浏览器未单测 | M0（M1 补一条回归） |
+| A4 | Split 工作区（分屏多 thread、路由切换保 compose/面板态） | `views/SplitWorkspaceRoute.tsx`、`thread-detail/SplitThreadArea.tsx` | ✅(推定) | 纯客户端分屏状态机，无新增数据面依赖；staging 未专门驱动过 | M1 补验 |
+| A5 | 设置 `/settings`、`/settings/:section`、`/settings/plugins…` | `views/SettingsView.tsx` + `components/settings/settings-nav.tsx:18-34` | 🟡 | 主路径 ✅：#45 五开关翻转 + 深链；general/keyboard/experiments/appearance 的 PUT 路由已移植。子节 usage/updates/marketplaces/providers 恒空或 404（见 E 组） | M0 已交付主路径；子节缺陷见 E21-24 |
+| A6 | 单机页 `/settings/machines/:hostId` | `views/MachineSettingsView.tsx` | 🟡 | `GET /hosts/:id` ✓（#49 注册桥 + #62 读时 status 派生）；`/hosts/:id/provider-cli-status`、`/hosts/:id/directory`、`/hosts/:id/clone-default-path` 未移植 | M1（fleet 硬化主线 #14） |
+| A7 | 项目设置 `/projects/:pid/settings` | `views/ProjectSettingsView.tsx`、`views/project-settings/` | 🟡 | `PATCH/DELETE /projects/:id` ✓（rename/delete 面）；sources/branches（git 面，`sdk.projects.branches`）404 | M1（rename/delete 验收）；git source 面 M1.5 |
+| A8 | Extensions `/extensions(/plugins…)`（含 legacy `/tools/*` 重定向） | `views/ToolsView.tsx` | ❌（数据面裁剪） | 插件 inventory 空 = bb 合法态（/plugins 返回 `{plugins:[]}`，#40）；marketplace/catalog 端点未移植。入口可达但恒空 | M3（生态扩展 #16） |
+| A9 | Skills `/extensions/skills(/library/:id|/registry…)` | `views/SkillsView.tsx` | ❌ | `sdk.skills.list/getContent/listFiles` 无路由（staging 404）；`/system/cli-skills-status` 404（staging 实测） | M2（skills 语料随 19G 迁移 #15） |
+| A10 | 插件面板 `/plugins/:pluginId/:panelPath/*` + automations 路由组 | `views/PluginPanelView.tsx` | ⚪（裁剪） | 无插件 inventory → `usePluginFrontendBoot` 空转，无入口渲染（bb 数据面裁剪设计） | M3（#16；自动化前置=队列语义 #51） |
+| A11 | OAuth 回执 `/auth/callback` | `views/AuthCallbackView.tsx` | ⚪ | 静态「认证完成可关窗」卡片；provider OAuth 弹窗收尾用。当前唯一 provider 为服务端 omp relay，无外部 CLI 流 | 永久 N/A（接外部 CLI provider 时复活） |
+| A12 | 兜底 `*`（SPA fallback 深链） | `App.tsx` AppRoutes + Workers Assets not_found_handling | ✅ | #45：深链 `/threads/:id` 直开正确 | M0 已交付 |
+| A13 | 归档面 `/archived` + 设置内 Archived threads 节 | `components/settings/ArchivedThreadsSettingsSection.tsx` | ✅ | `threads.list(archived)` ✓ 已移植；archive/unarchive 路由 ✓ | M0 已交付 |
+
+## B. 侧栏组件面
+
+| # | Surface | bb 位置 | 状态 | 证据 | 建议阶段 |
+| --- | --- | --- | --- | --- | --- |
+| B1 | Thread 树（项目/分区/置顶/recents/草稿标记行） | `components/sidebar/AppSidebar.tsx`、`ProjectList.tsx` | ✅ | #45 绿：5 threads 列出、分区折叠、display-options；`/sidebar-bootstrap` ✓（个人单例语义照抄 bb projects.ts:249-277） | M0 已交付 |
+| B2 | 分区管理（建/改名/删除/移动 thread） | `ProjectList.tsx:1560-1700` 一带 mutation | ✅(推定) | `POST/PATCH/DELETE /thread-sections` ✓ 已移植 + L2；浏览器未过 CRUD 全序列 | M1 补验 |
+| B3 | 行内操作（rename / archive / pin / 标记已读 / delete） | `ThreadRenameCommandHandler.tsx`、`ThreadArchiveCommandHandler.tsx` 等 | ✅(推定) | `PATCH/DELETE /threads/:id`、`pin/unpin/read/unread` 路由 ✓；E2E 未覆盖全部操作 | M1 补验 |
+| B4 | Ctrl+K 全局搜索 | `SidebarThreadSearchPanel` + `hooks/queries/thread-queries.ts:493`（`sdk.threads.search`） | ❌ | `GET /threads/search` 404——被 `/threads/:id` 路由吞成 `{"code":"thread_not_found"}`（staging 2026-10-04 实测；#45 P1-4 原始证据 404 not_found）。面板 "Search failed." | M1（标题级搜索）/ M2（存量语料全文检索） |
+| B5 | 机器分组 + 更新徽标 | `components/sidebar/machineThreadGroups.ts`、`SidebarUpdatesBadge.tsx` | 🟡 | hosts 非空后机器分组渲染（#49/#66 后 `/hosts` 返回 local，status 读时派生）；徽标依赖 update inventory（无来源） | M1（分组随 fleet）；徽标永久裁剪 |
+| B6 | 草稿持久化 + "(unsubmitted draft)" 标记 | `usePromptDraftInputThreadIds` + composer draft | ✅ | #45 绿（跨导航/reload 存活）；已知化妆品：发送失败后残留（#45 P2-11，容忍中） | M1 化妆品（clear-on-404 / 过期） |
+
+## C. Composer 与交互流
+
+| # | Surface | bb 位置 | 状态 | 证据 | 建议阶段 |
+| --- | --- | --- | --- | --- | --- |
+| C1 | 新建 thread 发送（首条消息随 create 派发） | `NewThreadComposer` → `POST /threads` {input} | ✅ | #61/#65：真浏览器一次请求链内真模型回复，status 收敛 idle；修复前永卡 starting（用户实测） | M0 已交付 |
+| C2 | 空闲 thread follow-up 发送 | `ThreadDetailPromptArea` → `POST /threads/:id/send` | ✅ | #49 后 PM 07:45 实证 ACK-FU-45（真浏览器）；send 路由 ✓（resolveSendMode） | M0 已交付 |
+| C3 | busy thread 排队 follow-up（Queue follow-up） | `threadQueuedMessages.ts` → `POST/GET/DELETE /threads/:id/queued-messages` | ❌（容忍） | 三方法全 404（staging 实测）；失败静默（draft 保留无提示，#45 P0-2）。#51 裁定：M0 规避 turn 中发送，完整队列语义后期 | **M3**（#16 自动化面前置）；演示纪律规避 |
+| C4 | 模型 / 推理选择器 | `pickers/` + `GET /system/execution-options` | ✅ | #45 绿（Glm-5.3-Anth 默认 ✓ / Reasoning None ✓）；#41 静态目录（provider omp，ceiling full） | M0 已交付 |
+| C5 | @-mentions（thread/project/section/文件路径） | `hooks/usePromptMentions.ts` + `sdk.projects.paths` | 🟡 | thread/project/section 名字提及可用（sidebar 数据面齐）；文件路径提及需 `GET /projects/:id/paths`（404）；mention providers=[]（#40 合法空态） | M1.5（host 文件工具链 #33） |
+| C6 | Prompt 历史（composer 历史） | thread 级 `thread-queries.ts:634`；项目级 `projects.ts:187` | 🟡 | 项目级 ✓（#40 空列表形状）；thread 级 404（staging 实测）。SPA 降级容忍 | M1 化妆品（补空态路由，廉价） |
+| C7 | 语音输入 | config `voiceTranscriptionEnabled` | ⚪ | config false → 入口隐藏（bb 合法裁剪，bb-spa-ux-surface §5） | 永久裁剪（要功能时改 config） |
+| C8 | Composer banner 卡（待办 / prompt mode / workflow 进度 / 模型回退） | `components/promptbox/banner/*` | ⚪ | 无生产者（无 workflow/插件系统）→ 永不出现 | 随 M3 生态面复活 |
+| C9 | 权限模式选择 | execution-options permission ceiling | ✅(推定) | 目录 ceiling=full 已移植；浏览器未单测选择器本体 | M1 补验 |
+
+## D. Thread 详情子面
+
+| # | Surface | bb 位置 | 状态 | 证据 | 建议阶段 |
+| --- | --- | --- | --- | --- | --- |
+| D1 | Timeline 行渲染 + 流式拼字（delta 重取） | `components/thread/timeline/*` + `packages/thread-view` | ✅ | #45 绿（三 thread 行级与服务器一致）；#61/#60 后实时更新 E2E（WS 失效 → delta 重取） | M0 已交付 |
+| D2 | 乐观用户行（optimistic-user-） | `lib/optimistic-timeline-row.ts` | ✅ | #61 动线内隐含验证（用户行即时出现→真行替换） | M0 已交付 |
+| D3 | 向前翻页（olderCursor 滚动预载） | `useAutoLoadOlderRows.ts` + timeline `beforeAnchorSeq` | ✅(推定) | 路由支持 beforeAnchor（threads.ts:378+）；staging 无超窗 thread，从未触发 | M1 补验（造长 thread） |
+| D4 | TOC 会话大纲 | `ThreadTableOfContents` + `GET /threads/:id/conversation-outline`（threads.ts:466） | ✅(推定) | 端点 ✓；未浏览器验证 | M1 补验 |
+| D5 | 未读分叉线 | `useThreadUnreadDividerState` + `read/unread` 路由 | ✅(推定) | 路由 ✓（threads.ts:592-611）；单用户场景弱相关 | M1 低优补验 |
+| D6 | Stop 按钮 | `POST /threads/:id/stop`（threads.ts:368，引 bb thread-lifecycle:1470-1522） | ✅ | bb env-less 语义 = no-op release，逐行移植；M0 thread 无 environment，与 bb 原版行为一致 | M0 已交付（bb 等价） |
+| D7 | 错误封存行渲染 | timeline SystemErrors 行 | 🟡 | status→error 收敛已修（#60：5 个真 thread 重放 3 idle/2 error 全对）；detail 文案可见性 vs bb 原版未核对（#45 P2-9：仅 "internal" + 红徽章） | M1 核对（读码级，廉价） |
+| D8 | Fork-from-message | `useForkThreadFromMessage.ts` | ⚪（容忍休眠） | #42 裁决：按钮对 env-less thread 不渲染（isThreadForkable=false）；fetchQuery 404 console 噪音为已知化妆品 | 复活条件：per-thread 执行选项 / fork 播种成为目标（M2+ 按需） |
+| D9 | Files 面板（thread-storage） | secondary-panel + `sdk.threads.storageFiles` | ❌（休眠） | `GET /threads/:id/thread-storage/files` 404（staging 实测；#45 P1-7 其一）；面板仅二级面板打开时查询，M0 无文件生产者 | M2（随存量迁移评估 attachment 语义） |
+| D10 | Git diff / PR 面板 | `components/git-diff/`、`components/pull-request/` | ❌ | 无 project sources/git 面（`sdk.projects.branches` 等未移植）；数据生产者不存在 | M3 |
+| D11 | Terminal 面板 | secondary-panel terminals + `/ws/terminals/*` | ❌ | REST + 独立 WS 均未移植；入口仅在二级面板打开时出现 | M3（或随 M1.5 daemon 工具链提前） |
+| D12 | Info / metadata 面板 | `ThreadMetadataContent`（二级面板） | 🟡 | 恒 "No thread details available."（#45 P2-10）；env/branch/path 数据 M0 全空，疑似 bb 等价空态，未读码核对 | M1 核对（读码级） |
+| D13 | Pending interactions（权限确认卡） | `GET /threads/:id/interactions`（threads.ts:641） | ✅（合法空） | 路由 ✓ 恒空数组（bb pending\|resolving 语义）；无生产者（ceiling full 自动批准） | M1.5+ 随权限 prompt 面复活 |
+| D14 | Thread tabs（二级面板状态持久化） | `GET/PUT /threads/:id/tabs`（threads.ts:614-640） | ✅(推定) | 路由 ✓；E2E 未过 | M1 补验 |
+
+## E. 设置子节（settings-nav 11 节 + providers）
+
+| # | Surface | bb 位置 | 状态 | 证据 | 建议阶段 |
+| --- | --- | --- | --- | --- | --- |
+| E1 | General / Appearance / Keyboard / Experiments | SettingsView 各 section | ✅ | General 浏览器验证（#45 五开关）；appearance/keyboard/experiments 的 PUT 路由 ✓（system.ts:170-215）+ L2 | M0 已交付（appearance/keyboard M1 顺手过一眼） |
+| E2 | Usage limits | `UsageLimitsSettingsSection` + `sdk.system.usageLimits` | ❌ | 端点 404；无 provider 用量源（服务端 relay 不透出配额） | 建议永久裁剪（有用量源再立票） |
+| E3 | Files（本机文件打开器） | `FileOpenersSettingsSection` | ⚪ | 桌面本机语义，web 形态不适用 | 永久 N/A |
+| E4 | Updates | `UpdatesSettingsSection` | ⚪ | 桌面 CLI 更新器（update inventory）；web-only 部署无此概念 | 永久裁剪 |
+| E5 | Plugin marketplaces | `plugin-catalog-queries.ts` | ❌ | catalog/marketplace 端点未移植（A8 裁剪面一部分） | M3 |
+| E6 | Community | 静态链接节 | ✅ | 纯静态 | M0 已交付 |
+| E7 | Archived threads 节 | `ArchivedThreadsSettingsSection.tsx:123-127` | ✅ | sidebar-bootstrap + threads.list(archived) ✓ | M0 已交付 |
+| E8 | Providers（codex / claude-code CLI 状态） | `components/provider-cli/` + `GET /hosts/:id/provider-cli-status` | ❌ | 端点 404；外部 CLI provider 管理面，与服务端 provider 模型无关 | 建议永久裁剪（web-only 形态） |
+| E9 | Machines 节 | `MachinesSettingsSection.tsx` | 🟡 | hosts ✓ 渲染本机卡；status 派生 ✓（#62/#66）；CLI 状态行 404（同 E8） | M1（fleet 主线内收敛） |
+
+## F. 横切面
+
+| # | Surface | bb 位置 | 状态 | 证据 | 建议阶段 |
+| --- | --- | --- | --- | --- | --- |
+| F1 | WS 实时失效（9 target subscribe + changed fan-out） | `lib/ws.ts` + 本仓 `ws/hub.ts`（NotificationHubDO） | ✅ | hub DO 逐语义移植（无 ack 帧/无 greeting）；#60 status-changed 广播；timeline 实时更新 E2E | M0 已交付 |
+| F2 | 流式文本投影（客户端拼字） | `packages/thread-view`（纯函数投影） | ✅ | #61 E2E：回复流式落 timeline（事件追加 + delta 重取，无逐 token SSE） | M0 已交付 |
+| F3 | 401/403 降级 + Access 门 | `lib/api.ts:74-77` + 本仓 `middleware/access.ts` | ✅ | ACCESS_CHECK_ENABLED flag 门控（staging 前真 Access）；SPA HTML→"Authentication failed" 降级 verbatim；ReconnectingWebSocket 自愈 | M0 已交付 |
+| F4 | 主题同步 / 外观 | appearance PUT + 客户端 theme sync | ✅ | PUT ✓；web 侧无 `window.bbDesktop`（惰性无操作，bb 原样） | M0 已交付 |
+| F5 | Onboarding 引导 | `OnboardingHost` experiment flag 自门控 | ⚪ | flag 不下发 → 不出现（bb 合法裁剪） | 永久裁剪（想用时配 flag） |
+| F6 | PWA / favicon / manifest | 构建产物（八配色图标脚本） | ✅ | 静态资产随 dist；页面加载/图标验证过 | M0 已交付 |
+| F7 | 移动端 recents / coarse-pointer 适配 | `RootComposeMobileRecents`、`shared-ui/coarse-pointer-sizing.ts` | ✅(推定) | 纯客户端 + threads 数据面；M0 验收含双设备演示（#31 用户签收） | M0 已交付（M1 回归项） |
+| F8 | 标题回退（Untitled thread） | 服务端 `titleFallback` 派生（bb 从首条用户消息截断） | 🟡 | 本仓 title/titleFallback 双 null → 侧栏裸 ID "Thread thr_xxx"（#45 P2-8）；SPA 渲染逻辑 verbatim 无改 | M1 化妆品（服务端派生 titleFallback，廉价） |
+| F9 | 项目清单含个人项目 | bb `listDiscoverableProjects`（projects.ts:137-168，`includePersonal` 默认 false） | ✅ | 本仓 `/projects` 返回 proj_personal（staging 实测）——相对 bb 是无害超集；SPA picker 实际消费 sidebar-bootstrap（个人单例），非 /projects | 无票（记录偏差即可） |
+
+## 差距汇总（#76 排期输入）
+
+**状态计数（57 surface）**：✅ 已通 30（其中 10 项"端口齐备、浏览器未单测"的推定项）· 🟡 部分 9 · ❌ 未移植 11 · ⚪ 裁剪/N-A 7。
+
+### 建议排期归桶
+
+| 桶 | 内容 | 票据潜力 |
+| --- | --- | --- |
+| **M1 顺手修（均为小票）** | 搜索标题级（B4，注意 /threads/:id 路由吞并 search 字面量）；titleFallback 派生（F8）；草稿残留清理（B6）；thread 级 prompt-history 空态（C6）；错误 detail / Info 面板两处读码核对（D7/D12）；单机页 CLI 状态行隐藏（E9/A6 收敛） | ~6 小票，合计 ≤1 天 |
+| **M1 补验清单（零新码或近零）** | A3/A4/B2/B3/C9/D3/D4/D5/D14/E1 四节/F7——一次真浏览器 session 可全覆盖 | 1 张验收票 |
+| **M1.5（随工具集）** | @-file mentions（C5，依赖 host 文件链）；pending interactions 复活评估（D13） | 随 #33 主票 |
+| **M2（随迁移）** | skills 全家（A9/E 相关）；存量语料全文检索（B4 升级）；thread-storage 评估（D9）；fork/per-thread 执行选项按需复活（D8） | 迁移主票带出 |
+| **M3（生态）** | queued-messages 完整语义（C3，#51 已立）；automations/插件面板/marketplace（A8/A10/E5）；git diff/PR（D10）；terminal（D11） | #51 + 新立 |
+| **永久裁剪（不入票）** | updates 节（E4）、providers CLI 节（E8）、files openers（E3）、onboarding（F5）、voice（C7）、auth callback（A11，无外部 provider 流）、更新徽标（B5 半）、usage limits（E2，除非有用量源） | 建议在 #76 裁定后记入裁剪清单 |
+
+### 两处实现侧注意（非 UX 但矩阵发现）
+
+1. **路由吞并**：`GET /threads/search` 被本仓 `/threads/:id` 捕获返回 `thread_not_found`——任何未来加 `/threads/<字面量>` 子路由都要处理 Hono 参数路由的优先级（bb 用显式路由表无此问题）。
+2. **/projects 超集偏差**：本仓恒含个人项目（bb 需 `includePersonal=true`）；当前无消费方受害，但若未来按 bb 逐字节对照 wire 面，此项会显示为偏差，建议届时对齐。
