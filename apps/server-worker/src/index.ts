@@ -14,6 +14,7 @@ import {
   type ManagerDoBindings,
 } from "@cap/provider-app";
 import { createApp } from "./app.js";
+import { upsertAttachedHost } from "./db/hosts.js";
 import { NotificationHubDO } from "./ws/hub.js";
 import { LeaseStoreDO } from "./leases/lease-do.js";
 import type { Env } from "./env.js";
@@ -98,6 +99,8 @@ export default {
         DAEMON_NEGATIVE_CACHE_MS: env.DAEMON_NEGATIVE_CACHE_MS,
         DAEMON_RATE_LIMIT_CAPACITY: env.DAEMON_RATE_LIMIT_CAPACITY,
         DAEMON_RATE_LIMIT_REFILL_PER_SEC: env.DAEMON_RATE_LIMIT_REFILL_PER_SEC,
+        // #49: daemon attach → control-plane host registry (the /hosts face).
+        onDaemonAttach: (hostId) => upsertAttachedHost(env, hostId),
       };
       return daemonServiceWorker.fetch(request, serviceEnv);
     }

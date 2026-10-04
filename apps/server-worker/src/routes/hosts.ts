@@ -13,7 +13,9 @@ import type { Env, HonoBindings } from "../app-types.js";
  * Minimal hosts face (ruling #7 "hosts 最小"): fleet list/get/rename/ceiling/
  * delete. Status is "disconnected" for every host — bb derives it from open
  * daemon sessions (entity-lookup.ts toHostStatus) and no daemon lane exists
- * in M0. Enrollment is the /internal family (#27/#30) and is not served here.
+ * in M0. Rows land via the daemon attach bridge (#49): the daemon face calls
+ * upsertAttachedHost on enroll/session-open; enrollment itself is the daemon
+ * service's /enroll, not served here.
  */
 export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void {
   const routes = new Hono<{ Bindings: HonoBindings }>();

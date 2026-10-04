@@ -17,6 +17,28 @@ export async function listNonDestroyedHostRows(env: Env): Promise<HostDbRow[]> {
   return results.map(toHostDbRow);
 }
 
+/**
+ * #49 bridge: the daemon face (daemon-service enroll + session/open) calls
+ * this so the control-plane registry lists a host once its daemon attaches.
+ * Insert-if-absent; an existing row only refreshes presence (last_seen_at) —
+ * name/type/ceiling stay owner-controlled, and a destroyed host is never
+ * resurrected by a re-attach (bb keeps deletion explicit).
+ */
+export async function upsertAttachedHost(env: Env, hostId: string): Promise<void> {
+  const now = Date.now();
+  await env.DB.prepare(
+    `INSERT INTO hosts (id, name, type, connect_machine_id, max_permission_mode, destroyed_at,
+                        last_seen_at, last_rejected_protocol_version, created_at, updated_at)
+     VALUES (?, ?, 'persistent', NULL, 'full', NULL, ?, NULL, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET
+       last_seen_at = excluded.last_seen_at,
+       updated_at = excluded.updated_at
+     WHERE hosts.destroyed_at IS NULL`,
+  )
+    .bind(hostId, hostId, now, now, now)
+    .run();
+}
+
 export interface HostUpdate {
   name?: string;
   maxPermissionMode?: HostDbRow["maxPermissionMode"];
