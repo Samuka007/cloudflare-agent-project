@@ -149,7 +149,61 @@ bb 合同唯一来源 `bb/packages/server-contract/src/public-api.ts:599-692`（
 | lease | 30s（`:3`） | 30s（`constants.ts:32`） | ✅ |
 | 断开 grace（pending 交互结算） | 5s（`:4`） | DO 侧 DISCONNECT_GRACE_MS 5s（`:33`，orphan 判定用） | ✅（用途不同位） |
 | active-work grace | 30s = LEASE（`:5`） | hub 同名常量 5s（`ws/hub.ts:293`） | ❌ G3 |
-| last_seen 写入节奏 | 每帧（`daemon-protocol.ts:129-136`） | 心跳帧 + ≥30s SQL 节流（`hosts-registry.ts:19-33`） | ⚠️ G6 |
+| last_seen 写入节奏 | 每帧（`daemon-protocol.ts:129-136`） | 心跳帧 + ≥30s SQL 节流（`hosts-registry.ts:19-33`） | ⚠️→✅ G6 裁决接受偏离（§8 S6） |
 | 协议版本 | 严格相等，400+details（`session.ts:52-77`） | 严格相等，400+expected/received（`worker.ts:188-199`） | ✅（形状外 details 键名略异，M0 scheme A 认可） |
+
+## 8. S3-S7 落地与裁决（#195，实现 lane）
+
+> S1/S2（#193/#194）已先行落地；本节记录 #195 批次（S3-S7）的实现锚点与两条裁决（S6/S7）。bb 行号均对 ba42654。
+
+### S3 host 身份与升级数据（消 G4/G5/G7/G12）
+
+- **name 采集**：daemon client 在 session/open 载荷自报 `hostName`（`os.hostname()`，bb `hostDaemonSessionOpenRequestSchema:100`）；桥接回调 `onDaemonAttach(hostId, {hostName})` → `upsertAttachedHost` **仅首次插入**时写 name（bb `upsertHost` 对已存在行的 update set 不含 name，`data/hosts.ts:70-91`——重拨/主机改名不覆盖 owner 的 rename）。未自报时回退 hostId 字面量（裸 rig 握手）。
+- **lastRejectedProtocolVersion 生命周期**：握手版本不匹配 → worker 桥接 `onDaemonProtocolReject` 写入 daemon 版本（bb `internal/session.ts:52-55`）；成功 open → upsert 冲突分支清 NULL（bb `:96-98`）。400 details 增加 bb 形状的 `retryUpdate`（take 语义旗标）与 `serverProtocolVersion`，保留 M0 scheme A 的 `expected/received`。
+- **E5 retry-update 双 409 门**：`POST /hosts/:id/retry-update` 开通——rejected 为 null → 409 `host_update_not_needed`；rejected ≥ `DAEMON_PROTOCOL_VERSION` → 409 `host_cannot_self_update`；过门 → hub `requestHostProtocolUpdateRetry`（bb `routes/hosts.ts:166-186`）。旗标存 hub DO 内存 Set（bb `hub.ts:851-860` 同构，take=读清）；消费点=下次被拒握手（bb `internal/session.ts:56`）。
+- **G12 404 形状**：读面（GET /hosts/:id、GET provider-clis/status）销毁行改答 404 `host_unavailable` "Host is unavailable" + details `{reason:"destroyed", hostStatus:null, suspendedAt:null, destroyedAt}`（bb `entity-lookup.ts:115-131` + `lifecycle-api-errors.ts:149-158`）；变更面（PATCH/retry-update/DELETE）按 bb `requireMutableHost`（`routes/hosts.ts:40-46`）对销毁行一律 404 `host_not_found`——只有读面区分墓碑，bb 语义原样。
+
+### S4 删除终局（消 G11）
+
+- DELETE 序（bb `routes/hosts.ts:188-217`）：主 host 拒删 → 关停 DO 会话 → 软销毁 → `host-disconnected` 广播。
+- **主 host 裁定**：bb 级联 `dataDir ?? 单连通 ?? 单公开`（`primary-host.ts:70-76`）移植时**去 dataDir 项**（组合部署无服务端 host id 文件）：唯一 connected host 优先，否则唯一存活 host；两者皆无 → null（都可删）。两台都连通时 primary=null，与 bb 一致。
+- **会话关停**：DO 新 RPC `closeSession({hostId, reason:"expired"})`——journal `session_closed`（新 op，fold 置 `state.session=null`，重放一致）→ 顶替路径同款 waiter 清算 → 关 live socket（后续 `webSocketClose` 因 session 已 null 不再重复广播，bb `handleHostRemoved` 注释的同款"先关行再关 socket"序）→ 单次 `host-disconnected` 广播；随后软销毁 + 路由层第二帧 `host-disconnected`（bb 数据层 destroy 翻转检测同样多发一帧，`data/hosts.ts:50-52`）。
+- **凭据吊销偏差（记档）**：bb DELETE 还吊销 host auth keys（`routes/hosts.ts:200-203`）。我方 POC 凭据模型只有一把部署级 env key（DO mirror 由部署身份 DO 持有，非 per-host），**没有 per-host 凭据可吊销**——该步随 M1 key registry 落地（G8 家族）。残余洞：env-key rig 下已删 host 的 daemon 仍可重开会话（幽灵 DO 会话），但行永不复活（upsert `WHERE destroyed_at IS NULL`）且 /hosts 永不列出；组合部署的 KV/DO 鉴权梯在 M1 前维持现状。
+
+### S5 路由形状（消 G13）
+
+- `GET /hosts/:id/provider-cli-status` → `GET /hosts/:id/provider-clis/status`（bb 合同唯一形状，`public-api.ts:679`；SPA 为钉版 fork，服务端就形）。502 `host_unavailable` "Host is not connected" 降级语义不变（daemon-RPC 传输仍 crop，见 S7）。
+- G10 owner/machine 鉴权分界维持原裁定：随多机/机器凭据体系一并做（bb `assertHostManagementAllowed` 形状已录 §2 E3）。
+
+### S6 裁决：lastSeenAt 保 30s SQL 节流（G6 关闭为"接受偏离"）
+
+**裁定：保持现状。** 依据：
+
+1. 写额保护是硬约束——心跳 5s 每帧写 D1 会在单 host 下烧掉免费档配额的显著份额，fleet 化后线性放大（`hosts-registry.ts:5-17` 论证维持有效）；
+2. bb 每帧 stamp 依赖本地 SQLite 零额限制，Cloudflare D1 无此条件——**环境不同构**，bb 精度不可平移；
+3. 功能面无消费方：/hosts status 是读时派生（DO hostLiveness），SPA 对 lastSeenAt 的唯一消费是 "last seen X ago" 文案（§4），30s 粒度下文案偏大 ≤25s，无任何判读逻辑受影响；
+4. 若未来需要 bb 级 5s 新鲜度，单点旋钮 `LIVENESS_PROJECTION_INTERVAL_MS` 降至心跳窗即可，代价写额 ×6（§6 S6 预案保留）。
+
+与 bb 的分歧正式记为 ARCHITECTURE 偏离：**last_seen 写入节奏 bb 每帧（≤5s 旧）/ 我方心跳帧 + ≥30s SQL 节流**；§7 常量对照 G6 行相应改判。
+
+### S7 裁决：join-codes 与 daemon-RPC 五件套维持 crop（G8/G9 不动）
+
+- **G8 join-codes（E13）**：依赖 M1 key registry（per-host enrollKey 签发/吊销体系；S4 的凭据吊销偏差同点收口）。POC 静态 env ENROLL_KEY 维持，不开票。
+- **G9 daemon-RPC 五件套（E7 directory / E8 clone-default-path / E9 paths-exist / E10 pick-folder / E12 provider-cli install）**：依赖 #30 DO→daemon RPC seam（matrix E8 crop 裁定仍有效）。SPA 离线文案兜底路径已由 S5 统一后的 502 `host_unavailable` 覆盖，行为近似合同。不在 host 面单独开票。
+- E11 status 的 RPC 实装同样待 #30；当前 502 常量应答是 crop 裁定的一部分（`routes/hosts.ts` 注释维持）。
+
+### 缺口矩阵收账
+
+| 缺口 | 状态 |
+|---|---|
+| G4 name 采集 | ✅ 关闭（S3） |
+| G5 lastRejectedProtocolVersion 生命周期 | ✅ 关闭（S3） |
+| G6 lastSeenAt 精度 | ✅ 裁决关闭：接受 30s 偏离（S6） |
+| G7 E5 retry-update | ✅ 关闭（S3） |
+| G11 E6 删除终局 | ✅ 关闭（S4；凭据吊销 → M1） |
+| G12 E2 404 形状 | ✅ 关闭（S3） |
+| G13 E11 路径字面量 | ✅ 关闭（S5） |
+| G8 join-codes / G9 daemon-RPC 五件套 | ⏸ 维持 crop（S7；M1 key registry / #30 seam） |
+| G10 owner/machine 鉴权 | ⏸ 维持原裁定（多机凭据体系时一并） |
 
 > AGENT GENERATED: by zhipu-coding-plan/glm-5.3-flash (research lane #187)

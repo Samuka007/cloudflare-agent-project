@@ -39,12 +39,23 @@ export interface WorkerEnv extends DaemonServiceEnv {
   /**
    * Control-plane host-registry bridge (#49): fired after enroll completes
    * and after each successful session/open, so the control plane's /hosts
-   * registry learns the daemon attachment. Optional — rigs without a
-   * control-plane registry (L1, hookup) omit it. Failures are logged, never
-   * fatal: the next handshake step re-fires the bridge (same self-healing
-   * shape as the auth ladder's KV backfill).
+   * registry learns the daemon attachment. `hostName` is the daemon's
+   * self-reported machine name (bb session/open payload hostName →
+   * upsertHost, internal/session.ts:90-95) — the registry stamps it on
+   * first sight only, so owner renames survive re-dials. Optional — rigs
+   * without a control-plane registry (L1, hookup) omit it. Failures are
+   * logged, never fatal: the next handshake step re-fires the bridge (same
+   * self-healing shape as the auth ladder's KV backfill).
    */
-  onDaemonAttach?: (hostId: string) => Promise<void>;
+  onDaemonAttach?: (hostId: string, info?: DaemonAttachInfo) => Promise<void>;
+  /**
+   * #195 S3 protocol-reject bridge: a handshake with a mismatched
+   * protocolVersion writes the daemon's version into the host row
+   * (`last_rejected_protocol_version`, bb internal/session.ts:52-55) so the
+   * SPA's "Needs update" face activates. Optional like onDaemonAttach;
+   * failures are logged, never fatal (the rejection response still leaves).
+   */
+  onDaemonProtocolReject?: (hostId: string, protocolVersion: number) => Promise<void>;
   /**
    * Edge shield (#36): auth-hash cache binding. Optional — deployments that
    * run on the env-key path only (L1 rig, hookup) skip every KV touch.
@@ -120,6 +131,7 @@ async function handleEnroll(request: Request, env: WorkerEnv): Promise<Response>
   }
   const hostId =
     typeof parsed.hostId === "string" ? parsed.hostId : (env.DAEMON_HOST_ID ?? "poc-local");
+  const hostName = readString(parsed, "hostName");
   // Auth-ladder order (#36): DO mirror first (the authority), KV cache
   // second. The mirror lands in the deployment-identity DO — the one the
   // ladder's KV-miss fallback consults (at fallback time the host is not
@@ -140,7 +152,7 @@ async function handleEnroll(request: Request, env: WorkerEnv): Promise<Response>
     return errorResponse("internal", "hostKey mirror registration failed");
   }
   await backfillAuthCache(env.DAEMON_EDGE_KV, keyHash, hostId);
-  await bridgeHostAttach(env, hostId);
+  await bridgeHostAttach(env, hostId, { hostName });
   return Response.json({ hostId, hostKey: env.DAEMON_HOST_KEY }, { status: 201 });
 }
 
@@ -162,6 +174,7 @@ async function handleSessionOpen(
   const parsed = body as { hostId?: unknown; protocolVersion?: unknown; bootId?: unknown } | null;
   const hostId = typeof parsed?.hostId === "string" ? parsed.hostId : hostIdHint;
   const bootId = typeof parsed?.bootId === "string" ? parsed.bootId : null;
+  const hostName = readString(parsed ?? {}, "hostName");
   const protocolVersion =
     typeof parsed?.protocolVersion === "number" ? parsed.protocolVersion : null;
   if (hostId === null || bootId === null || protocolVersion === null) {
@@ -186,19 +199,34 @@ async function handleSessionOpen(
     throw error;
   }
   if (!result.ok) {
+    // bb internal/session.ts:52-77: a rejection stamps the daemon's version
+    // into the host row, consumes any pending retry-update flag (surfaced in
+    // details so an auto-update daemon knows it was armed), and broadcasts
+    // host-disconnected — then the 400. All three host-face effects are
+    // best-effort: the rejection itself must always answer.
+    await bridgeProtocolReject(env, hostId, protocolVersion);
+    const retryUpdate = await takeHostProtocolUpdateRetry(env, hostId);
+    notifyHubHostDisconnected(env, hostId);
     return Response.json(
       // bb shape: 400 with the protocol_version_mismatch code in the envelope
       // (outside the frozen ApiErrorCode set — M0 scheme A keeps it raw).
       {
         code: "protocol_version_mismatch",
         message: "protocol version mismatch",
-        details: { expected: DAEMON_PROTOCOL_VERSION, received: protocolVersion },
+        details: {
+          expected: DAEMON_PROTOCOL_VERSION,
+          received: protocolVersion,
+          retryUpdate,
+          serverProtocolVersion: DAEMON_PROTOCOL_VERSION,
+        },
         retryable: false,
       },
       { status: 400 },
     );
   }
-  await bridgeHostAttach(env, hostId);
+  // bb internal/session.ts:90-98: the open-time upsert is the point where a
+  // successful handshake clears the host's protocol rejection.
+  await bridgeHostAttach(env, hostId, { hostName, clearRejected: true });
   return Response.json(
     {
       sessionId: result.sessionId,
@@ -209,15 +237,67 @@ async function handleSessionOpen(
   );
 }
 
+export interface DaemonAttachInfo {
+  /** Daemon's self-reported machine name (bb session/open hostName). */
+  hostName?: string | null;
+  /** A successful session/open clears the host's protocol rejection
+   * (bb internal/session.ts:96-98); enroll leaves it untouched. */
+  clearRejected?: boolean;
+}
+
 /** #49: auxiliary registry write; best-effort by design — a failed write
  * only delays visibility until the next handshake step re-fires it. */
-async function bridgeHostAttach(env: WorkerEnv, hostId: string): Promise<void> {
+async function bridgeHostAttach(
+  env: WorkerEnv,
+  hostId: string,
+  info?: DaemonAttachInfo,
+): Promise<void> {
   if (env.onDaemonAttach === undefined) return;
   try {
-    await env.onDaemonAttach(hostId);
+    await env.onDaemonAttach(hostId, info);
   } catch (error) {
     console.error(`daemon attach bridge failed for host ${hostId}:`, error);
   }
+}
+
+/** #195 S3: mismatch stamps last_rejected_protocol_version — best-effort. */
+async function bridgeProtocolReject(
+  env: WorkerEnv,
+  hostId: string,
+  protocolVersion: number,
+): Promise<void> {
+  if (env.onDaemonProtocolReject === undefined) return;
+  try {
+    await env.onDaemonProtocolReject(hostId, protocolVersion);
+  } catch (error) {
+    console.error(`daemon protocol-reject bridge failed for host ${hostId}:`, error);
+  }
+}
+
+/** Reads-and-clears the hub's retry-update flag (bb hub takeHostProtocolUpdateRetry,
+ * hub.ts:855-860); absent hub degrades to false — the flag is advisory. */
+async function takeHostProtocolUpdateRetry(env: WorkerEnv, hostId: string): Promise<boolean> {
+  if (env.HUB === undefined) return false;
+  try {
+    const stub = env.HUB.get(env.HUB.idFromName("hub")) as DurableObjectStub & {
+      takeHostProtocolUpdateRetry(args: { hostId: string }): Promise<{ retryUpdate: boolean }>;
+    };
+    return (await stub.takeHostProtocolUpdateRetry({ hostId })).retryUpdate;
+  } catch (error) {
+    console.error(`retry-update flag read failed for host ${hostId}:`, error);
+    return false;
+  }
+}
+
+/** Fire-and-forget host-disconnected on rejection (bb internal/session.ts:57). */
+function notifyHubHostDisconnected(env: WorkerEnv, hostId: string): void {
+  if (env.HUB === undefined) return;
+  const stub = env.HUB.get(env.HUB.idFromName("hub")) as DurableObjectStub & {
+    notifyHost(hostId: string, changes: string[]): Promise<{ delivered: number }>;
+  };
+  void stub.notifyHost(hostId, ["host-disconnected"]).catch((error: unknown) => {
+    console.error(`rejection broadcast failed for host ${hostId}:`, error);
+  });
 }
 
 async function handleWsAttach(request: Request, env: WorkerEnv): Promise<Response> {

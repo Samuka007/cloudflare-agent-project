@@ -201,6 +201,9 @@ describe("host route moments (#193 S1)", () => {
   it("DELETE soft-destroys: host leaves /hosts and re-DELETE 404s", async () => {
     const hostId = "local-route-delete";
     expect((await enroll(hostId)).status).toBe(201);
+    // #195 S4: a lone host is the primary (bb resolvePrimaryHostId cascade)
+    // and refuses removal — anchor a second host so the target is deletable.
+    expect((await enroll("local-route-delete-anchor")).status).toBe(201);
 
     const response = await exports.default.fetch(`${BASE}/api/v1/hosts/${hostId}`, {
       method: "DELETE",

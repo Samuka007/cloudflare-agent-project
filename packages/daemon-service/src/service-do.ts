@@ -736,6 +736,56 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     };
   }
 
+  /**
+   * #195 S4 delete terminal — bb handleHostRemoved
+   * (session-owner-side-effects.ts:184-216): host removal is an immediate,
+   * terminal disconnect. The session row closes first (journal
+   * session_closed "expired"), which makes the sockets' later webSocketClose
+   * a no-op for the broadcast (the guard reads the already-null session), so
+   * exactly one host-disconnected fans out — this one, mirroring bb's
+   * closeSession → data/sessions.ts:128. In-flight request machinery dies
+   * with the socket, so its waiters resolve with errors like the 顶替 path.
+   */
+  async closeSession(args: { hostId: string; reason: string }): Promise<{ closed: boolean }> {
+    await this.ready();
+    const session = this.state.session;
+    if (session?.hostId !== args.hostId) return { closed: false };
+    this.journal({
+      kind: "session_closed",
+      at: Date.now(),
+      hostId: args.hostId,
+      sessionId: session.sessionId,
+      reason: args.reason,
+    });
+    this.inflightRequests.clear();
+    for (const waiter of this.isolationWaiters.values()) {
+      clearTimeout(waiter.timer);
+      waiter.resolve({
+        status: "error",
+        exitCode: null,
+        output: "isolation op aborted: host session closed by removal",
+      });
+    }
+    this.isolationWaiters.clear();
+    for (const waiter of this.spawnWaiters.values()) {
+      clearTimeout(waiter.timer);
+      waiter.resolve({ ok: false, error: "session_closed" });
+    }
+    this.spawnWaiters.clear();
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = attachmentOf(socket);
+      if (attachment?.sessionId === session.sessionId) {
+        try {
+          socket.close(1000, args.reason);
+        } catch {
+          // already closing
+        }
+      }
+    }
+    this.notifyHubHostLiveness(args.hostId, false);
+    return { closed: true };
+  }
+
   /** Tighten the alarm to the disconnect-grace deadline (bb disconnect timer). */
   private async armGraceAlarm(): Promise<void> {
     const graceDeadline = Date.now() + DISCONNECT_GRACE_MS;

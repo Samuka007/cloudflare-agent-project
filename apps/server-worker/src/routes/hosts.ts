@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { DaemonServiceDO } from "@cap/daemon-service";
+import { DAEMON_PROTOCOL_VERSION, type DaemonServiceDO } from "@cap/daemon-service";
 import {
   updateHostPermissionCeilingRequestSchema,
   updateHostRequestSchema,
@@ -35,7 +35,9 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
     return ctx.json(await toHostRecord(ctx.env, row));
   });
 
-  routes.get("/hosts/:id/provider-cli-status", async (ctx) => {
+  // bb contract path (public-api.ts:679); the SPA fork is pinned, so the
+  // server conforms to the bb route shape (#195 S5, was /provider-cli-status).
+  routes.get("/hosts/:id/provider-clis/status", async (ctx) => {
     // bb assertUsableHostId (routes/hosts.ts:288): unknown/destroyed host → 404.
     await requireHost(ctx.env, ctx.req.param("id"));
     // bb providerCliStatus RPCs provider_cli.status to the host daemon
@@ -56,7 +58,7 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
 
   routes.patch("/hosts/:id", async (ctx) => {
     const payload = await requireJsonBody(ctx, updateHostRequestSchema);
-    await requireHost(ctx.env, ctx.req.param("id"));
+    await requireMutableHost(ctx.env, ctx.req.param("id"));
     const updated = await updateHostRow(ctx.env, ctx.req.param("id"), {
       name: payload.name,
     });
@@ -71,7 +73,7 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
 
   routes.patch("/hosts/:id/permission-ceiling", async (ctx) => {
     const payload = await requireJsonBody(ctx, updateHostPermissionCeilingRequestSchema);
-    await requireHost(ctx.env, ctx.req.param("id"));
+    await requireMutableHost(ctx.env, ctx.req.param("id"));
     const updated = await updateHostRow(ctx.env, ctx.req.param("id"), {
       maxPermissionMode: payload.maxPermissionMode,
     });
@@ -84,13 +86,63 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
     return ctx.json(await toHostRecord(ctx.env, updated));
   });
 
+  // bb routes/hosts.ts:166-186: retry-update is armed only for a daemon that
+  // is waiting on a protocol update — two 409 gates, then the hub flag.
+  routes.post("/hosts/:id/retry-update", async (ctx) => {
+    const row = await requireMutableHost(ctx.env, ctx.req.param("id"));
+    if (row.lastRejectedProtocolVersion === null) {
+      throw new ApiError({
+        status: 409,
+        code: "host_update_not_needed",
+        message: "The machine is not waiting for a protocol update",
+      });
+    }
+    if (row.lastRejectedProtocolVersion >= DAEMON_PROTOCOL_VERSION) {
+      throw new ApiError({
+        status: 409,
+        code: "host_cannot_self_update",
+        message: "The machine daemon is not older than this server",
+      });
+    }
+    await hub(ctx.env).requestHostProtocolUpdateRetry({ hostId: row.id });
+    return ctx.json({ ok: true });
+  });
+
   routes.delete("/hosts/:id", async (ctx) => {
-    await requireHost(ctx.env, ctx.req.param("id"));
+    const hostId = ctx.req.param("id");
+    await requireMutableHost(ctx.env, hostId);
+    // bb routes/hosts.ts:192-198: the primary host (here: the bb cascade
+    // minus the server dataDir term — the only connected host, else the only
+    // remaining host) cannot be removed.
+    if ((await resolvePrimaryHostId(ctx.env)) === hostId) {
+      throw new ApiError({
+        status: 400,
+        code: "primary_host_removal_refused",
+        message: "The primary host cannot be removed",
+      });
+    }
+    // bb routes/hosts.ts:200-203 also revokes the host's auth keys here. The
+    // POC credential model has one deployment-wide env key (the DO mirror is
+    // deployment-scoped, not per-host), so there is nothing per-host to
+    // revoke — that step lands with M1's key registry (G8 family; recorded
+    // in docs/research/bb-host-surface.md §8). A deleted host's row still
+    // never resurrects (upsertAttachedHost guard) and stays out of /hosts.
+    const stub = daemonStubOrNull(ctx.env, hostId);
+    if (stub !== null) {
+      // bb routes/hosts.ts:204-207 → handleHostRemoved: terminal disconnect —
+      // close the daemon session (journal + sockets + one host-disconnected
+      // broadcast) before the row tombstones, so /hosts loses the row and the
+      // DO holds no live socket (#195 S4). A hiccup here must not block the
+      // tombstone: the destroyed row never resurrects (upsert guard) and
+      // hostLiveness degrades on its own once the socket dies.
+      await stub.closeSession({ hostId, reason: "expired" }).catch((error: unknown) => {
+        console.error(`host session close failed for ${hostId}:`, error);
+      });
+    }
     // bb delete marks destroyedAt (soft destroy), it does not hard-delete.
-    await updateHostRow(ctx.env, ctx.req.param("id"), { destroyedAt: Date.now() });
-    // bb destroyHost broadcasts host-disconnected (data/hosts.ts:229-230).
-    // The daemon-session shutdown terminal (closeSession + key revocation)
-    // is S4's scope and stays out here.
+    await updateHostRow(ctx.env, hostId, { destroyedAt: Date.now() });
+    // bb destroyHost broadcasts host-disconnected (data/hosts.ts:229-230);
+    // bb ships this second frame even when the close above already did.
     await hub(ctx.env).notifyHost(ctx.req.param("id"), ["host-disconnected"]);
     return ctx.json({ ok: true });
   });
@@ -98,12 +150,65 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
   app.route("/api/v1", routes);
 }
 
+/**
+ * bb requireNonDestroyedHostWithStatus (entity-lookup.ts:115-131): unknown →
+ * 404 host_not_found; destroyed → 404 host_unavailable with the destroyed
+ * details (lifecycle-api-errors.ts:149-158) so the SPA's destroyed-host
+ * branch renders instead of the generic fallback.
+ */
 async function requireHost(env: Env, hostId: string) {
+  const row = await getHostRow(env, hostId);
+  if (row === null) {
+    throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
+  }
+  if (row.destroyedAt !== null) {
+    throw new ApiError({
+      status: 404,
+      code: "host_unavailable",
+      message: "Host is unavailable",
+      details: {
+        reason: "destroyed",
+        hostStatus: null,
+        suspendedAt: null,
+        destroyedAt: row.destroyedAt,
+      },
+    });
+  }
+  return row;
+}
+
+/**
+ * bb requireMutableHost (routes/hosts.ts:40-46): the mutation routes answer
+ * a plain host_not_found for unknown AND destroyed rows — only the read face
+ * distinguishes the tombstone.
+ */
+async function requireMutableHost(env: Env, hostId: string) {
   const row = await getHostRow(env, hostId);
   if (row?.destroyedAt !== null) {
     throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
   }
   return row;
+}
+
+/**
+ * bb resolvePrimaryHostId (services/hosts/primary-host.ts:70-76) minus the
+ * server dataDir term the composed port does not have: the only connected
+ * host, else the only public (non-destroyed) host; null with neither.
+ */
+async function resolvePrimaryHostId(env: Env): Promise<string | null> {
+  const rows = await listNonDestroyedHostRows(env);
+  if (rows.length === 0) return null;
+  const connected = await Promise.all(rows.map((row) => daemonConnected(env, row.id)));
+  const connectedIds = rows.filter((_, index) => connected[index]).map((row) => row.id);
+  if (connectedIds.length === 1) return connectedIds[0] ?? null;
+  if (rows.length === 1) return rows[0]?.id ?? null;
+  return null;
+}
+
+function daemonStubOrNull(env: Env, hostId: string): (DurableObjectStub & DaemonServiceDO) | null {
+  const namespace = env.DAEMON_SERVICE;
+  if (namespace === undefined) return null;
+  return namespace.get(namespace.idFromName(hostId)) as DurableObjectStub & DaemonServiceDO;
 }
 
 /**
@@ -143,5 +248,6 @@ function hub(env: Env) {
   const stub = env.HUB.get(env.HUB.idFromName("hub"));
   return stub as DurableObjectStub & {
     notifyHost(hostId: string, changes: string[]): Promise<{ delivered: number }>;
+    requestHostProtocolUpdateRetry(args: { hostId: string }): Promise<{ ok: true }>;
   };
 }
