@@ -231,9 +231,6 @@ export function modelRequestFromEvents(
         });
         break;
       }
-      case "turn.input":
-        // Captured before the walk (exactly-one invariant above).
-        break;
       // Thread lifecycle + state events are context-invisible (ruling ③).
       case "thread.created":
       case "todo_phases":
