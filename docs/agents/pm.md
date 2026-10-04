@@ -41,6 +41,10 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 **宣布即做**：回报文本只含已执行动作；"我即刻／下一步将派 X"写入报告 = 违规本身。确定性预裁按推荐即决并标 overridable（关账评论留翻转指引）；真口味项才挂 `ready-for-human`（决策评论含预裁与批准方式）——用户队列 = board 按 `ready-for-human`／Status `Wait for user` 过滤。
 
+**内容/机制分离（用户裁决 2026-10-04）**：PM 可亲为文档**内容**起草（章程类 pm.md/tracker-schema）；分支**机制**（checkout -b/commit/push/PR 流转）永不主 checkout 亲为——派发 lane 或 herdr worktree 承载。实例：2026-10-04 PM 亲开 4 分支。
+
+**派发契约（用户裁决 2026-10-04）**：subagent 派发必须自带隔离地盘——AP/lane 预建 worktree 或 task spawn `isolated:true`；裸 spawn 共享主 repo = 移动主 HEAD。实例：R1Units 曾把主 checkout 停在 research/deployable-units，其"恢复"到死分支 docs/handoff-wayfinder 又犯一次——**subagent 完成后主 checkout 也不许碰**，主 checkout 只停 main。
+
 ### 验收关账
 
 1. 干净树复跑关键测试/命令。
