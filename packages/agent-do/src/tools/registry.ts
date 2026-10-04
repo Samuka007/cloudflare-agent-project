@@ -920,6 +920,39 @@ export function wireToolSet(
 /** Hidden rows: subagent surface only (omp HIDDEN_TOOL_NAMES ∩ registry). */
 export const SUBAGENT_ONLY_TOOLS: readonly string[] = ["yield"];
 
+/**
+ * Experimental tools → their omp config gate (#150; all default OFF —
+ * config.ts ExperimentalToolConfig). omp tools/index.ts:766-772 gates think
+ * behind cfgExternalThinking, context_notes/new_context behind
+ * cfgCompactionExperimentalContextManagement, checkpoint/rewind behind
+ * cfgCheckpointEnabled; T1/T3 shipped them ungated — this map is the gate
+ * the wire assemblies consult (enabledToolNames below).
+ */
+export const EXPERIMENTAL_TOOL_GATE: Readonly<
+  Partial<Record<string, "externalThinking" | "contextNotes" | "checkpoint">>
+> = {
+  think: "externalThinking",
+  context_notes: "contextNotes",
+  new_context: "contextNotes",
+  checkpoint: "checkpoint",
+  rewind: "checkpoint",
+};
+
+/**
+ * Filter a wire surface by the experimental gates: rows whose gate is OFF
+ * never render (omp tools/index.ts behavior). Ungated rows pass untouched.
+ */
+export function enabledToolNames(
+  surface: readonly string[],
+  gates: { externalThinking: boolean; contextNotes: boolean; checkpoint: boolean },
+): readonly string[] {
+  return surface.filter((name) => {
+    const gate = EXPERIMENTAL_TOOL_GATE[name];
+    if (gate === undefined) return true;
+    return gates[gate];
+  });
+}
+
 /** The Main-thread wire names: every registered row minus the hidden tail. */
 export const MAIN_WIRE_TOOLS: readonly string[] = TOOL_REGISTRY.filter(
   (row) => !SUBAGENT_ONLY_TOOLS.includes(row.name),

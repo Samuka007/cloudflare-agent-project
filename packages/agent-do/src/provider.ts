@@ -107,6 +107,23 @@ export interface ModelRequest {
    * a tool may ignore it — the mock and tests assert it directly.
    */
   toolChoice?: { name: string };
+  /**
+   * Deployment-time experimental tool gates (#150): the wire assembly filters
+   * think/context_notes/new_context/checkpoint/rewind off the surface unless
+   * their gate is on (config.ts ExperimentalToolConfig, all default false).
+   * Absent = the ungated default surfaces (mock/test passthrough).
+   */
+  experimentalGates?: {
+    externalThinking: boolean;
+    contextNotes: boolean;
+    checkpoint: boolean;
+  };
+  /**
+   * omp sdk.ts:4275-4282 forceReasoningOff pairing: when external thinking
+   * (the `think` tool) is on the wire, native provider reasoning is forced
+   * OFF — external CoT and native reasoning must never coexist (ToC risk).
+   */
+  forceReasoningOff?: boolean;
 }
 
 export type ModelStreamChunk =

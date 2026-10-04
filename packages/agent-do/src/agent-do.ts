@@ -25,9 +25,11 @@ import { executionIdFor, threadIdFromExecutionId } from "./ids.js";
 import {
   DEFAULT_WATCHDOG_CONFIG,
   WATCHDOG_CONFIG_KV_KEY,
+  decodeExperimentalToolConfig,
   decodeWatchdogConfig,
   mergeWatchdogConfig,
   parseWatchdogConfigPatch,
+  type ExperimentalToolConfig,
   type WatchdogConfig,
 } from "./config.js";
 import type {
@@ -121,6 +123,15 @@ function capArtifactText(
 export interface AgentDoBindings {
   /** Optional JSON patch over the default watchdog config (env var). */
   AGENT_DO_WATCHDOG?: string;
+  /**
+   * #150 experimental tool gates (#102 patch-over-defaults pattern, omp
+   * defaults all false): externalThinking gates `think` (paired with
+   * forceReasoningOff), contextNotes gates context_notes/new_context,
+   * checkpoint gates checkpoint/rewind.
+   */
+  AGENT_DO_EXTERNAL_THINKING?: string;
+  AGENT_DO_CONTEXT_NOTES?: string;
+  AGENT_DO_CHECKPOINT?: string;
   /**
    * Optional JSON patch over the default web_search provider config (env
    * var, M1.5 T12). Decoded once at construction; a patch naming a
@@ -272,6 +283,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   /** Decoded once from `AGENT_DO_WEB_SEARCH` (M1.5 T12); deployment-time
    * input — the model-facing wire schema carries no engine field. */
   private readonly webSearchConfig: WebSearchConfig;
+  /** Decoded once from the #150 experimental-gate envs; deployment-time
+   * input, all default OFF (omp tools/index.ts:766-772 posture). */
+  private readonly experimentalGates: ExperimentalToolConfig;
   private state: ReplayState = emptyReplayState();
   private threadId: string | null = null;
   private readyPromise: Promise<void> | null = null;
@@ -315,6 +329,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   constructor(ctx: DurableObjectState, env: AgentDoBindings) {
     super(ctx, env);
     this.cfg = decodeWatchdogConfig(env.AGENT_DO_WATCHDOG, DEFAULT_WATCHDOG_CONFIG);
+    this.experimentalGates = decodeExperimentalToolConfig(env);
     this.webSearchConfig = decodeWebSearchConfig(
       env.AGENT_DO_WEB_SEARCH,
       DEFAULT_WEB_SEARCH_CONFIG,
@@ -1450,13 +1465,22 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     // replay tests (src/translate.ts).
     const { events } = await this.readAllEvents();
     const request = modelRequestFromEvents(events, turnId, modelCallId);
+    // #150 experimental gates + the omp forceReasoningOff pairing
+    // (sdk.ts:4275-4282): the wire assembly filters the five experimental
+    // tools by the deployment gates; when external thinking rides the
+    // surface, native provider reasoning is pinned OFF.
+    const gated: ModelRequest = {
+      ...request,
+      experimentalGates: this.experimentalGates,
+      forceReasoningOff: this.experimentalGates.externalThinking,
+    };
     // M1.5 T16 surface policy: a subagent DO (journaled identity) renders the
     // subagent toolset — hidden `yield` included — with `task` stripped past
     // the recursion cap (omp canSpawnAtDepth gate). Main keeps MAIN_WIRE_TOOLS.
     const identity = this.state.subagentIdentity;
-    if (identity === null) return request;
+    if (identity === null) return gated;
     return {
-      ...request,
+      ...gated,
       toolSurface: "subagent",
       spawnPolicyBlocked: !canSpawnAtDepth(this.cfg.taskMaxRecursionDepth, identity.depth),
     };

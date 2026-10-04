@@ -1,5 +1,6 @@
 import type { ModelRequest, PriorModelCall, SteerContribution } from "../provider.js";
 import {
+  enabledToolNames,
   MAIN_WIRE_TOOLS,
   M0_RENDER_FLAGS,
   subagentWireTools,
@@ -106,6 +107,20 @@ export const SYSTEM_PROMPT_BLOCKS: readonly string[] = [
 /** Deterministic tool_use id derived from the log — never the wire's id. */
 export function toolUseIdFor(executionId: string): string {
   return `toolu_${executionId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
+/**
+ * omp sdk.ts:4275-4282 supportsExternalThinking: the `think` gate is
+ * cfgExternalThinking ∧ supports(model) — models with NATIVE reasoning
+ * families must not take external CoT (the forceReasoningOff pairing below
+ * exists for the models that can). Unknown/absent model ids stay permissive:
+ * the deployment env gate owns the decision there.
+ */
+const NATIVE_REASONING_MODEL_PATTERN = /^(glm|deepseek-r|o[13](?:-|$)|.*thinking)/i;
+
+export function supportsExternalThinking(model: string | undefined): boolean {
+  if (model === undefined || model === "") return true;
+  return !NATIVE_REASONING_MODEL_PATTERN.test(model);
 }
 
 /** Anthropic rejects empty tool_result content — omp fills a sentinel. */
@@ -224,16 +239,25 @@ export function anthropicRequestBody(
     model: options.model,
     max_tokens: options.maxTokens,
     stream: true,
-    thinking: options.thinking ?? { type: "disabled" },
+    // #150 forceReasoningOff pairing: when external thinking (the `think`
+    // tool) rides the surface, native reasoning is pinned OFF regardless of
+    // the caller's thinking config — the two must never coexist.
+    thinking:
+      request.forceReasoningOff === true ? { type: "disabled" } : (options.thinking ?? { type: "disabled" }),
     system: SYSTEM_PROMPT_BLOCKS.map((block) => ({ type: "text", text: block })),
     // The tool surface renders from the compile-time registry only — the
     // single schema authority (control-plane-layer.md §1.1, M1.5 T1). The
     // surface (M1.5 T16) picks main vs subagent names; the subagent surface
     // carries the hidden `yield` and strips `task` past the depth cap.
-    tools:
-      request.toolSurface === "subagent"
-        ? wireToolSet(M0_RENDER_FLAGS, subagentWireTools(request.spawnPolicyBlocked === true))
-        : wireToolSet(M0_RENDER_FLAGS, MAIN_WIRE_TOOLS),
+    tools: (() => {
+      const surface =
+        request.toolSurface === "subagent"
+          ? subagentWireTools(request.spawnPolicyBlocked === true)
+          : MAIN_WIRE_TOOLS;
+      const gated =
+        request.experimentalGates === undefined ? surface : enabledToolNames(surface, request.experimentalGates);
+      return wireToolSet(M0_RENDER_FLAGS, gated);
+    })(),
     // M1.5 T17: the ladder's forced attempt pins `yield` as the tool choice
     // (translate derives it from the reminder marker bound to this turn).
     ...(request.toolChoice === undefined
