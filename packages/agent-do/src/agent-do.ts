@@ -74,6 +74,12 @@ import {
   type AskWake,
 } from "./tools/ask.js";
 import { checkpointRewindState, todoJournalState } from "./tools/session-tree.js";
+import {
+  DEFAULT_WEB_SEARCH_CONFIG,
+  decodeWebSearchConfig,
+  type WebSearchConfig,
+  type WebSearchToolContext,
+} from "./tools/web-search.js";
 
 /**
  * Per-thread bare Durable Object (no Agents SDK — docs/research/cf-agents-sdk.md):
@@ -95,6 +101,13 @@ import { checkpointRewindState, todoJournalState } from "./tools/session-tree.js
 export interface AgentDoBindings {
   /** Optional JSON patch over the default watchdog config (env var). */
   AGENT_DO_WATCHDOG?: string;
+  /**
+   * Optional JSON patch over the default web_search provider config (env
+   * var, M1.5 T12). Decoded once at construction; a patch naming a
+   * browser-backed engine (google/ecosia/mojeek) fails the DO loudly —
+   * rejection, never silent fallback (tools/web-search.ts policy).
+   */
+  AGENT_DO_WEB_SEARCH?: string;
   /**
    * Daemon-service DO namespace (production: ticket #30's DO; tests: the
    * reference fake). When present it wins over the in-process registry —
@@ -215,6 +228,9 @@ class ProviderPullFailure {
 export class AgentDO extends DurableObject<AgentDoBindings> {
   private readonly log: EventLog;
   private cfg: WatchdogConfig;
+  /** Decoded once from `AGENT_DO_WEB_SEARCH` (M1.5 T12); deployment-time
+   * input — the model-facing wire schema carries no engine field. */
+  private readonly webSearchConfig: WebSearchConfig;
   private state: ReplayState = emptyReplayState();
   private threadId: string | null = null;
   private readyPromise: Promise<void> | null = null;
@@ -249,10 +265,19 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * (planForExecution).
    */
   private readonly taskRuns = new Map<string, Promise<void>>();
+  /** In-flight web_search transports (executionId → cancel), M1.5 T12.
+   * killNonTerminalExecutions aborts the owning call's signal so an outbound
+   * fetch in flight surfaces as a cancelled tool result (omp throwIfAborted
+   * rethrow), not an Error text. */
+  private readonly webSearchAborts = new Map<string, AbortController>();
 
   constructor(ctx: DurableObjectState, env: AgentDoBindings) {
     super(ctx, env);
     this.cfg = decodeWatchdogConfig(env.AGENT_DO_WATCHDOG, DEFAULT_WATCHDOG_CONFIG);
+    this.webSearchConfig = decodeWebSearchConfig(
+      env.AGENT_DO_WEB_SEARCH,
+      DEFAULT_WEB_SEARCH_CONFIG,
+    );
     this.log = new EventLog(ctx.storage, env.BLOBS, this.cfg.r2BypassBytes);
     this.state = this.loadState();
     if (this.state.threadId !== null) this.threadId = this.state.threadId;
@@ -1453,6 +1478,14 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       this.armWatchdog();
     }
     const threadId = this.requireThread();
+    if (row.name === "web_search") {
+      // M1.5 T12: register the cancel controller BEFORE the executor runs so
+      // killNonTerminalExecutions can abort an in-flight transport; the
+      // executor surfaces the abort as a cancelled tool result itself.
+      this.webSearchAborts.set(execution.executionId, new AbortController());
+    }
+    const webSearchAbort =
+      row.name === "web_search" ? this.webSearchAborts.get(execution.executionId) : undefined;
     const baseContext: Omit<EdgeToolContext, "wait" | "task"> = {
       executionId: execution.executionId,
       threadId,
@@ -1503,10 +1536,12 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       ...baseContext,
       ...(row.name === "wait" ? { wait: this.waitToolContext(execution) } : {}),
       ...(row.name === "ask" ? { ask: this.askToolContext(execution) } : {}),
+      ...(webSearchAbort ? { webSearch: this.webSearchToolContext(webSearchAbort.signal) } : {}),
     }).finally(() => {
       this.edgeWaiters.delete(execution.executionId);
       this.askWaiters.delete(execution.executionId);
       this.waitWindows.delete(execution.executionId);
+      this.webSearchAborts.delete(execution.executionId);
     });
     await this.ingestResult(
       execution,
@@ -1715,6 +1750,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           }
           this.wakeAskWaiter(executionId, { kind: "cancelled" });
         }
+        // web_search rides the same vocabulary: abort the in-flight
+        // transport; the executor journals the cancelled tool.result row.
+        this.webSearchAborts.get(executionId)?.abort();
         continue;
       }
       try {
@@ -1900,6 +1938,21 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     if (waiter === undefined) return;
     this.askWaiters.delete(executionId);
     waiter.resolve(wake);
+  }
+
+  /**
+   * DO-bound `web_search` context (M1.5 T12, tools/web-search.ts): the
+   * decoded provider config, the owning call's cancel signal (aborting
+   * surfaces as a cancelled tool result — omp throwIfAborted), and global
+   * fetch (MSW-intercepted under the vitest workers pool). Zero journal
+   * state beyond the tool.result row (practice 11).
+   */
+  private webSearchToolContext(signal: AbortSignal): WebSearchToolContext {
+    return {
+      config: this.webSearchConfig,
+      signal,
+      fetchImpl: (input, init) => fetch(input, init),
+    };
   }
 
   /** Settle/deliver wakes broadcast: every blocked wait re-queries its own

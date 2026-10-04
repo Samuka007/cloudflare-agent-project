@@ -242,6 +242,16 @@ const yieldSchema = type({
   "error?": type("string").describe("Failure reason; mutually exclusive with data"),
 });
 
+// omp packages/coding-agent/src/web/search/index.ts:43-50 (webSearchSchema).
+const webSearchSchema = type({
+  query: "string",
+  recency: "'day' | 'week' | 'month' | 'year'?",
+  limit: "number?",
+  max_tokens: "number?",
+  temperature: "number?",
+  num_search_results: "number?",
+});
+
 // ---------------------------------------------------------------------------
 // Description templates — omp prompts/tools/*.md verbatim
 // ---------------------------------------------------------------------------
@@ -472,6 +482,9 @@ const YIELD_DESCRIPTION_TEMPLATE = `Submit subagent output: \`{ data: <your outp
 
 Omit \`type\` for the usual single terminal structured result. Pass \`type: ["section"]\` to submit an incremental, non-terminal section that accumulates.
 Pass \`type: "result"\` to finalize; when \`data\` is omitted, your last assistant turn becomes the raw final result.`;
+
+// omp packages/coding-agent/src/prompts/tools/web-search.md verbatim.
+const WEB_SEARCH_DESCRIPTION_TEMPLATE = `Known URLs/programmatic data → \`read\`. Query: site: or -site:, after: or before: YYYY-MM-DD, inurl:, intitle:, filetype:, "phrase", -term, OR. Prefer primary sources; MUST link citations.`;
 
 /** Conditional flags the bash template resolves against (omp render context). */
 export interface ToolRenderFlags {
@@ -721,6 +734,21 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     name: "todo",
     schema: todoSchema,
     descriptionTemplate: TODO_DESCRIPTION_TEMPLATE,
+    class: "edge",
+    backend: { kind: "do-local" },
+    intent: "require",
+  },
+  {
+    // M1.5/T12 #102: web_search edge port — DO-native fetch provider surface
+    // (tools/web-search.ts). The browser-backed google/ecosia/mojeek engines
+    // are excluded at the CONFIG layer (decodeWebSearchConfig policy error —
+    // classification §2.2/§6.1 red line: unexcluded, the edge class silently
+    // becomes hybrid). omp WebSearchTool declares no `intent` member
+    // (index.ts:363-371) → resolveIntentMode default "require", same rule as
+    // todo.
+    name: "web_search",
+    schema: webSearchSchema,
+    descriptionTemplate: WEB_SEARCH_DESCRIPTION_TEMPLATE,
     class: "edge",
     backend: { kind: "do-local" },
     intent: "require",
