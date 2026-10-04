@@ -72,6 +72,23 @@
  *     // transport-missing is reported on the report — never silent. Batch:
  *     await AP.lane([197, 206]);          // one report per ticket
  *
+ * Board drift audit (#181) — the PM beat opens with a reconcile, then
+ * dispatches. Pure rules over the snapshot; output feeds AP.apply directly:
+ *
+ *     const snap = await AP.snapshot();
+ *     const rep = AP.audit(snap, { activeLanes: [181, 197] }); // roster from proc://
+ *     console.table(rep.drift);          // findings + per-ticket detail
+ *     await AP.apply(rep.mutations);     // dry-run: the preflight diff, no writes
+ *     await AP.apply(rep.mutations, { confirm: true }); // one-shot reconcile
+ *
+ * Rules: (1) CLOSED but Status∉{Done,Canceled} and (2) In Progress on a
+ * CLOSED issue converge through the sync-derived Status (wontfix→Canceled,
+ * else Done — the one closed-ticket write apply accepts); (3) active-lane
+ * tickets not reading In Progress flip back; (4) dispatchable Todos
+ * untouched for more than FRONTIER_AGE_DAYS days surface as dispatch
+ * reminders (mutation: null — the repair is AP.lane, not a write). Re-run
+ * audit after the apply: `clean` is the beat's green light.
+ *
  * PM session bootstrap = ONE cell (persistent carrier, #206):
  *
  *     %load "scripts/pm-harness.ts"
@@ -148,6 +165,9 @@ export interface Ticket {
   labels: string[];
   /** Native dependency edges pointing INTO this ticket (what blocks it). */
   blockedBy: BlockerEdge[];
+  /** Last issue update, ISO 8601 (#181 rule-4 aging proxy — any issue event
+   *  refreshes it; reminder input, never a guard input). */
+  updatedAt: string;
   /** ProjectV2Item id; null = not boarded yet (sync boards on events). */
   itemId: string | null;
   status: StatusName | null;
@@ -458,7 +478,7 @@ export const TEMPLATES = {
         status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
         priority: fieldValueByName(name: "Priority") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
         content { __typename ... on Issue {
-          id number title state bodyText
+          id number title state bodyText updatedAt
           milestone { title }
           labels(first: 50) { nodes { name } }
           blockedBy(first: 50) { nodes { number state title } }
@@ -466,7 +486,7 @@ export const TEMPLATES = {
       } } } }
   repository(owner: $owner, name: $repo) {
     issues(states: OPEN, first: 100, after: $issueCursor) { pageInfo { hasNextPage endCursor }
-      nodes { id number title state bodyText
+      nodes { id number title state bodyText updatedAt
         milestone { title }
         labels(first: 50) { nodes { name } }
         blockedBy(first: 50) { nodes { number state title } }
@@ -549,6 +569,7 @@ interface RawIssueNode {
   title: string;
   state: IssueState;
   bodyText: string | null;
+  updatedAt: string;
   milestone: { title: string } | null;
   labels: { nodes: { name: string }[] | null } | null;
   blockedBy: { nodes: { number: number; state: IssueState; title: string }[] | null } | null;
@@ -1130,6 +1151,8 @@ const SIDE_EFFECT_NOTES = {
   derivedStatus:
     "Status is sync-derived on the next issue event (open+milestone→Todo, milestone-less→Backlog); milestone and Status intent must agree.",
   closedStatus: "Done/Canceled are close-event derived; PM never targets them directly.",
+  closedConvergence:
+    "Audit convergence write (#181): replays the close-event derived Status the sync missed (closed→Done, wontfix→Canceled) — the one closed-ticket write apply accepts.",
   readyForHuman:
     "ready-for-human → Wait for user derivation on the next labeled event (user queue).",
   blockedAxisOnly:
@@ -1145,7 +1168,11 @@ function planStatusOrPriority(
   res: Resolution,
 ): void {
   const isStatus = mutation.op === "setStatus";
-  if (isStatus && (mutation.value === "Done" || mutation.value === "Canceled")) {
+  if (
+    isStatus &&
+    (mutation.value === "Done" || mutation.value === "Canceled") &&
+    ticket.state !== "CLOSED"
+  ) {
     res.errors.push(
       `#${mutation.number}: setStatus ${mutation.value} rejected — close-event derived (${SIDE_EFFECT_NOTES.closedStatus})`,
     );
@@ -1172,9 +1199,11 @@ function planStatusOrPriority(
     from,
     to: mutation.value,
     sideEffect: isStatus
-      ? mutation.value === "In Progress"
-        ? SIDE_EFFECT_NOTES.inProgress
-        : SIDE_EFFECT_NOTES.derivedStatus
+      ? ticket.state === "CLOSED"
+        ? SIDE_EFFECT_NOTES.closedConvergence
+        : mutation.value === "In Progress"
+          ? SIDE_EFFECT_NOTES.inProgress
+          : SIDE_EFFECT_NOTES.derivedStatus
       : SIDE_EFFECT_NOTES.priorityFieldTruth,
   });
   if (from !== mutation.value) {
@@ -1201,10 +1230,18 @@ export function planDiff(mutations: readonly Mutation[], input: PlanInput): Reso
       continue;
     }
     if (ticket.state === "CLOSED") {
-      res.errors.push(
-        `#${mutation.number}: ticket is CLOSED — board writes target open tickets only`,
-      );
-      continue;
+      // #181 carve-out: the ONLY write a closed ticket accepts is the
+      // convergence Status (Done/Canceled) — AP.audit replaying the
+      // close-event sync write that went missing. Everything else stays
+      // refused: board writes target open tickets.
+      const convergence =
+        mutation.op === "setStatus" && (mutation.value === "Done" || mutation.value === "Canceled");
+      if (!convergence) {
+        res.errors.push(
+          `#${mutation.number}: ticket is CLOSED — board writes target open tickets only`,
+        );
+        continue;
+      }
     }
 
     switch (mutation.op) {
@@ -1383,6 +1420,164 @@ export function planCascade(
     flips,
     dispatchableDelta,
   };
+}
+
+// ---------------------------------------------------------------------------
+// AP.audit (#181) — per-beat drift rules. Pure: reads a snapshot, reports
+// board-vs-reality drift as findings + AP.apply-ready mutations, so the PM
+// beat reconciles in one guarded apply BEFORE dispatching.
+// ---------------------------------------------------------------------------
+
+/** Drift rule ids (#181), disjoint — one finding per (ticket, rule):
+ *  1 staleClosedStatus · 2 inProgressOnClosed · 3 laneStatusMismatch ·
+ *  4 frontierAging. */
+export type DriftRule =
+  "staleClosedStatus" | "inProgressOnClosed" | "laneStatusMismatch" | "frontierAging";
+
+/** Rule-4 threshold: a dispatchable Todo untouched this many days is aged
+ *  (reminder class — the repair is a dispatch, not a board write). */
+export const FRONTIER_AGE_DAYS = 7;
+
+const DAY_MS = 86_400_000;
+
+/** One drift finding. `mutation: null` = reminder only — the repair is an
+ *  action (dispatch / roster fix), not a board write. */
+export interface DriftFinding {
+  rule: DriftRule;
+  number: number;
+  title: string;
+  /** Observed vs expected, one line (console.table-ready). */
+  detail: string;
+  /** AP.apply-direct repair; every non-null entry lands in the report's
+   *  flat `mutations` list. */
+  mutation: Mutation | null;
+}
+
+export interface AuditReport {
+  /** Findings in rule order (rules 1-3 in ticket order, then rule 4, then
+   *  roster contradictions). */
+  drift: DriftFinding[];
+  /** The apply-ready flat list — `AP.apply(rep.mutations, { confirm: true })`
+   *  is the one-shot reconcile. */
+  mutations: Mutation[];
+  clean: boolean;
+}
+
+export interface AuditOptions {
+  /** Lane numbers the PM believes alive: rule 3 checks their board Status,
+   *  rule 4 stops counting them as undispatched. */
+  activeLanes?: readonly number[];
+  /** Rule-4 threshold override (default FRONTIER_AGE_DAYS). */
+  frontierAgeDays?: number;
+  /** Reference clock for rule 4 (tests inject; default now). */
+  now?: Date;
+}
+
+/**
+ * Per-beat board drift audit (#181). The PM beat opens with it: audit →
+ * `AP.apply(rep.mutations, { confirm: true })` → re-audit clean → dispatch.
+ *
+ * Rules (disjoint):
+ *  1. staleClosedStatus — issue CLOSED but board Status ∉ {Done, Canceled}:
+ *     the close event's sync write went missing. Repair = convergence write
+ *     to the sync-derived value (wontfix→Canceled, else Done) — the ONE
+ *     closed-ticket write AP.apply accepts.
+ *  2. inProgressOnClosed — Status=In Progress on a CLOSED issue: a lane died
+ *     without closeout. Same convergence repair, distinct signal — check the
+ *     lane's worktree for unpushed work before letting it converge.
+ *  3. laneStatusMismatch — a ticket in the PM's active-lane set whose Status
+ *     ≠ In Progress: the lane(confirm) flip raced or was lost → flip
+ *     mutation. Roster entries already converged (or absent from the board)
+ *     are reported mutation-free: the roster is stale, the board is right.
+ *  4. frontierAging — dispatchable (the SAME predicate the dispatcher
+ *     clears), not on any active lane, issue untouched longer than N days:
+ *     reminder, `mutation: null` — the repair is AP.lane. updatedAt is an
+ *     aging PROXY (any issue event refreshes it); never a guard input.
+ */
+export function audit(snap: Pick<Snapshot, "tickets">, opts: AuditOptions = {}): AuditReport {
+  const drift: DriftFinding[] = [];
+  const active = new Set(opts.activeLanes ?? []);
+  const nowMs = (opts.now ?? new Date()).getTime();
+  const ageDays = opts.frontierAgeDays ?? FRONTIER_AGE_DAYS;
+
+  for (const t of snap.tickets) {
+    if (t.state === "CLOSED") {
+      // Rules 1+2: closed issue with a stale board Status. Disjoint split —
+      // rule 2 owns the In Progress case (lane died without closeout).
+      if (t.status !== null && t.status !== "Done" && t.status !== "Canceled") {
+        const inProgress = t.status === "In Progress";
+        drift.push({
+          rule: inProgress ? "inProgressOnClosed" : "staleClosedStatus",
+          number: t.number,
+          title: t.title,
+          detail: inProgress
+            ? "issue CLOSED but Status=In Progress — lane died without closeout; converge to the sync-derived value"
+            : `issue CLOSED but Status=${t.status} — close-event sync write missing; converge to the sync-derived value`,
+          // Sync-derived value (tracker-schema lifecycle): wontfix→Canceled,
+          // closed→Done.
+          mutation: {
+            op: "setStatus",
+            number: t.number,
+            value: t.labels.includes("wontfix") ? "Canceled" : "Done",
+          },
+        });
+      }
+      continue; // closed tickets: rules 1/2 own them; rules 3/4 are open-only
+    }
+    if (active.has(t.number) && t.status !== "In Progress") {
+      // Rule 3: the dispatch pipeline owns the In Progress flip — a live
+      // lane whose ticket doesn't read In Progress is a lost flip.
+      drift.push({
+        rule: "laneStatusMismatch",
+        number: t.number,
+        title: t.title,
+        detail: `active lane but Status=${t.status ?? "null"} — lane(confirm) flip lost; restore In Progress`,
+        mutation: { op: "setStatus", number: t.number, value: "In Progress" },
+      });
+    }
+  }
+
+  // Rule 4: the SAME predicate the dispatcher clears (open ∧ Todo ∧ ¬rfh ∧
+  // no open blockers), minus active lanes, aged past the threshold.
+  for (const t of dispatchable(snap)) {
+    if (active.has(t.number)) continue;
+    const ageMs = nowMs - Date.parse(t.updatedAt);
+    if (ageMs > ageDays * DAY_MS) {
+      drift.push({
+        rule: "frontierAging",
+        number: t.number,
+        title: t.title,
+        detail: `dispatchable Todo untouched ${Math.floor(ageMs / DAY_MS)}d > ${ageDays}d — dispatch (AP.lane) or schedule`,
+        mutation: null,
+      });
+    }
+  }
+
+  // Rule-3 roster contradictions the board itself cannot express.
+  for (const n of active) {
+    const t = snap.tickets.find((x) => x.number === n);
+    if (t === undefined) {
+      drift.push({
+        rule: "laneStatusMismatch",
+        number: n,
+        title: "(not on board)",
+        detail: "active-lane number missing from the snapshot — file it or correct the roster",
+        mutation: null,
+      });
+    } else if (t.state === "CLOSED" && (t.status === "Done" || t.status === "Canceled")) {
+      drift.push({
+        rule: "laneStatusMismatch",
+        number: n,
+        title: t.title,
+        detail:
+          "active lane on a converged ticket — board already closed it out; stale roster entry",
+        mutation: null,
+      });
+    }
+  }
+
+  const mutations = drift.flatMap((d) => (d.mutation === null ? [] : [d.mutation]));
+  return { drift, mutations, clean: drift.length === 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -1607,6 +1802,7 @@ function rawToTicket(raw: RawIssueNode): Ticket {
     title: raw.title,
     body: raw.bodyText ?? "",
     state: raw.state,
+    updatedAt: raw.updatedAt,
     milestone: raw.milestone?.title ?? null,
     labels: (raw.labels?.nodes ?? []).map((l) => l.name),
     blockedBy: (raw.blockedBy?.nodes ?? []).map((b) => ({
@@ -2605,6 +2801,7 @@ export async function intake(
 export const AP = {
   snapshot,
   dispatchable,
+  audit,
   intake,
   classifyIntake,
   gateOf,
@@ -2619,7 +2816,7 @@ export const AP = {
   registerSpawn,
   dorChecklist,
   /** Pure internals, exposed for tests/inspection. */
-  pure: { slugify, planDiff, planCascade, budgetOf, FILE_CONFIDENCE_FLOOR },
+  pure: { slugify, planDiff, planCascade, budgetOf, FILE_CONFIDENCE_FLOOR, FRONTIER_AGE_DAYS },
   /** Judge layer: question oracle + real transport (tests mock via fetch). */
   judge: { INTAKE_QUESTIONS, JEV_URL, JEV_MODEL, defaultJudge },
   /** Config actually in effect. */
