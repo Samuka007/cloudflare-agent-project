@@ -26,7 +26,7 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 派发同时把该票 board Status 置 **In Progress**（GraphQL 直写）。
 
-**派发谓词与自动清空（用户裁决 2026-10-04）**：dispatchable = open ∧ 无未关 blocking 边 ∧ Status=Todo ∧ ¬ready-for-human（**派生谓词，不是标签**——`ready-for-agent` 已废）。PM 每回合把 dispatchable 集清到并发预算满或空；Todo 非空且预算有余而未派 = PMGuard P1。Backlog=被挡/非当前波次（blocked 或未来里程碑），blocker 关闭的交付钩子里回调其 Backlog→Todo。语义正本见 [tracker-schema.md](tracker-schema.md)。
+**派发谓词与自动清空（用户裁决 2026-10-04）**：dispatchable = open ∧ 无未关 blocking 边 ∧ Status=Todo ∧ ¬ready-for-human（**派生谓词，不是标签**——`ready-for-agent` 已废）。PM 每回合把 dispatchable 集清到并发预算满或空；Todo 非空且预算有余而未派 = PMGuard P1。**并发预算=文件不相交度驱动（硬上限 32，provider 无实测并发约束前不做低于此的手设墙）**：不相交包（bb-ux/agent-do/daemon-service/infra）并行；同包共享文件（registry 尾、wire-order 断言）单 lane 批量承载，防 rebase 轮数吃掉并行收益。Backlog=未排期（PM 调度），blocker 关闭的交付钩子里回调其 Backlog→Todo。语义正本见 [tracker-schema.md](tracker-schema.md)。
 
 ### 交付处理（交付钩子——同回合四步，判据在每步末尾）
 
