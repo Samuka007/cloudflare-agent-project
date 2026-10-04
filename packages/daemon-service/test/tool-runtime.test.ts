@@ -321,9 +321,9 @@ describe("T6 #96 — manage_skill: SKILL.md exclusive management", () => {
 
 describe("adapter projection matrix (spike §3)", () => {
   test("unknown tool is a structured error, not a throw", async () => {
-    const result = await executeDispatch(host, frameOf("bash", "x1", { command: "echo hi" }));
+    const result = await executeDispatch(host, frameOf("l1-nonexistent", "x1", {}));
     expect(result.status).toBe("error");
-    expect(result.output).toBe("unknown tool: bash");
+    expect(result.output).toBe("unknown tool: l1-nonexistent");
     expect(result.exitCode).toBeNull();
   });
 
@@ -415,4 +415,147 @@ describe("adapter projection matrix (spike §3)", () => {
     });
     expect(["cancelled", "ok"]).toContain(result.status);
   });
+});
+
+// ---------------------------------------------------------------------------
+// T9 #99 — bash activation through the embedded runtime (probe verdict (b)
+// embed-with-shims: tools.maxTimeout pin, cwd sandbox guard, artifact
+// allocator, kill→AbortController; exit code rides details.exitCode).
+// ---------------------------------------------------------------------------
+
+describe("T9 #99 — bash through the embedded runtime", () => {
+  test("exit code propagates: ok/0 and error/7 (M0 exec.exited semantic survives)", async () => {
+    const ok = await executeDispatch(
+      host,
+      frameOf("bash", "thr_t9b:1", { command: "echo hello-embed" }),
+    );
+    expect(ok.status).toBe("ok");
+    expect(ok.exitCode).toBe(0);
+    expect(ok.output).toContain("hello-embed");
+    const failed = await executeDispatch(
+      host,
+      frameOf("bash", "thr_t9b:2", { command: "echo before-exit; exit 7" }),
+    );
+    expect(failed.status).toBe("error");
+    expect(failed.exitCode).toBe(7);
+    expect(failed.output).toContain("before-exit");
+    expect(failed.output).toContain("Command exited with code 7");
+  });
+
+  test("merged streams arrive in order (M0 §1.3 semantic survives)", async () => {
+    const result = await executeDispatch(
+      host,
+      frameOf("bash", "thr_t9b:3", { command: "echo out-stream; echo err-stream 1>&2" }),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.output).toContain("out-stream");
+    expect(result.output).toContain("err-stream");
+  });
+
+  test("tools.maxTimeout=600 pin restores the M0 ceiling (shim 1)", async () => {
+    const result = await executeDispatch(
+      host,
+      frameOf("bash", "thr_t9b:4", { command: "echo clamped", timeout: 99999 }),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.output).toContain("Timeout clamped to 600s");
+    expect(result.output).toContain("99999s");
+  });
+
+  test("omp enforces the per-call deadline (timedOut error result)", async () => {
+    const result = await executeDispatch(
+      host,
+      frameOf("bash", "thr_t9b:5", { command: "sleep 5", timeout: 1 }, 10_000),
+    );
+    expect(result.status).toBe("error");
+    expect(result.output).toContain("Command timed out after 1 seconds");
+  }, 15_000);
+
+  test("cwd sandbox guard: inside resolves, escapes refused before execution (shim 2)", async () => {
+    mkdirSync(join(fixture, "sub"), { recursive: true });
+    const inside = await executeDispatch(
+      host,
+      frameOf("bash", "thr_t9b:6", { command: "pwd", cwd: "sub" }),
+    );
+    expect(inside.status).toBe("ok");
+    expect(inside.output).toContain(join(fixture, "sub"));
+    const parentEscape = await executeDispatch(
+      host,
+      frameOf("bash", "thr_t9b:7", { command: "pwd", cwd: "../" }),
+    );
+    expect(parentEscape.status).toBe("error");
+    expect(parentEscape.output).toContain("cwd escapes the sandbox root");
+    const absoluteEscape = await executeDispatch(
+      host,
+      frameOf("bash", "thr_t9b:8", { command: "pwd", cwd: "/tmp" }),
+    );
+    expect(absoluteEscape.status).toBe("error");
+    expect(absoluteEscape.output).toContain("cwd escapes the sandbox root");
+  });
+
+  test("artifact allocator: 50 KiB-truncated output spills to artifact:// and reads back (shim 3)", async () => {
+    const result = await executeDispatch(
+      host,
+      // Multi-line so omp's 50 KiB inline cap middle-truncates (a single
+      // giant line takes the column-truncation path instead — 18.6.0 shape).
+      frameOf("bash", "thr_t9b:9", { command: "yes 0123456789abcdefghij | head -5000" }),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.outputTruncated).toBe(true);
+    const footer = /\[raw output: artifact:\/\/(\d+)\]/.exec(result.output);
+    expect(footer).not.toBeNull();
+    const artifactId = footer?.[1];
+    expect(artifactId).toBeDefined();
+    // Full bytes land in the daemon-private artifacts dir (105,000 = 5000
+    // lines x 21 bytes); the embedded read tool resolves artifact://<id>
+    // through the pinned getArtifactsDir.
+    const spilled = await Bun.file(join(agentDir, "artifacts", `${artifactId}.bash.log`)).text();
+    expect(spilled).toHaveLength(105_000);
+    const readback = await executeDispatch(
+      host,
+      frameOf("read", "thr_t9b:10", { path: `artifact://${artifactId}:raw:1-5000` }),
+    );
+    expect(readback.status).toBe("ok");
+    // The read tool applies its own inline budget past 50 KiB — the
+    // assertion proves the artifact:// resolution recovered the real spill
+    // (well beyond the truncated inline view), not a miss.
+    expect(readback.output.length).toBeGreaterThan(50_000);
+  }, 20_000);
+
+  test("persistent shell is keyed per thread: state survives within, never across (sessionKey pin)", async () => {
+    const threadA = "thr_t9shellA";
+    const threadB = "thr_t9shellB";
+    const setA = await executeDispatch(
+      host,
+      frameOf("bash", `${threadA}:1`, { command: "T9_PROBE_STATE=41" }),
+    );
+    expect(setA.status).toBe("ok");
+    const readA = await executeDispatch(
+      host,
+      frameOf("bash", `${threadA}:2`, { command: "echo state=$T9_PROBE_STATE" }),
+    );
+    expect(readA.output).toContain("state=41");
+    const readB = await executeDispatch(
+      host,
+      frameOf("bash", `${threadB}:1`, { command: "echo state=${T9_PROBE_STATE:-unset}" }),
+    );
+    expect(readB.output).toContain("state=unset");
+  });
+
+  test("kill maps to abort: cancelSignal aborts the live bash run (shim 4)", async () => {
+    // Deterministic time control cannot work here: the abort must land on a
+    // REAL live shell process (omp's AbortSignal → native kill), so the
+    // cancel is fired on the platform clock — the assertion awaits the
+    // run's actual cancellation, never a guessed duration.
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 300);
+    const started = Date.now();
+    const result = await executeDispatch(
+      host,
+      frameOf("bash", "thr_t9b:11", { command: "sleep 30" }, 30_000),
+      { cancelSignal: controller.signal },
+    );
+    expect(result.status).toBe("cancelled");
+    expect(Date.now() - started).toBeLessThan(5_000);
+  }, 15_000);
 });

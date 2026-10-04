@@ -127,12 +127,14 @@ export const execKilledAckFrameSchema = z.object({
 /**
  * Structured host-tool result (M1.5/T5'): the client's embedded omp runtime
  * projects omp AgentToolResult into the agent-do ToolResultPayload shape —
- * status/exitCode/output/outputTruncated travel verbatim (an omp isError or
- * timeout is NOT an exit-code derivation, unlike the bash exec.exited path).
+ * status/exitCode/output/outputTruncated travel verbatim. Bash (T9 #99)
+ * carries the process exit code (omp details.exitCode — probe #4) so M0's
+ * exit-code propagation survives the embedding; every other host tool pins
+ * null. An omp isError or timeout is NOT an exit-code derivation.
  */
 export const toolResultPayloadSchema = z.object({
   status: z.enum(["ok", "error", "timeout", "cancelled"]),
-  exitCode: z.null(),
+  exitCode: z.number().nullable(),
   output: z.string(),
   outputTruncated: z.boolean().optional(),
 });

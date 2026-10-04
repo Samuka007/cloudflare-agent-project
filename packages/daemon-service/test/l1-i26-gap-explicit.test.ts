@@ -21,7 +21,7 @@ describe("L1 I26 explicit gaps on resume", () => {
     const executionId = `${threadId}:1`;
     const client = new SimulatedClient(hostId);
     await client.dial();
-    await client.acknowledgeSpawnFor(
+    await client.acknowledgeToolExecFor(
       executionId,
       dispatchViaSeam(hostId, {
         threadId,
@@ -85,7 +85,7 @@ describe("L1 I26 explicit gaps on resume", () => {
     const executionId = `${threadId}:1`;
     const client = new SimulatedClient(hostId);
     await client.dial();
-    await client.acknowledgeSpawnFor(
+    await client.acknowledgeToolExecFor(
       executionId,
       dispatchViaSeam(hostId, {
         threadId,

@@ -204,7 +204,7 @@ describe("L1 tool roundtrip (T5')", () => {
     await client.close();
   });
 
-  test("bash keeps the M0 command path (routing regression guard)", async () => {
+  test("bash rides the tool.exec frame (T9 routing regression guard)", async () => {
     const hostId = uniqueHostId("toolbash");
     const threadId = `thr_${hostId}`;
     const executionId = `${threadId}:1`;
@@ -216,15 +216,37 @@ describe("L1 tool roundtrip (T5')", () => {
       command: "echo poc",
       machineId: hostId,
     });
-    // bash still arrives as exec.spawn with the projected command.
-    const spawn = await client.waitForSpawn(executionId);
-    expect(spawn.command).toBe("echo poc");
-    await client.acknowledgeSpawn(executionId);
+    // T9 #99: bash dispatches as the tool-agnostic frame with the bash
+    // arguments intact — the embedded omp runtime owns execution.
+    const toolFrame = await client.waitForToolExec(executionId);
+    expect(toolFrame.tool).toBe("bash");
+    expect(toolFrame.arguments).toEqual({ command: "echo poc" });
+    await client.acknowledgeToolExec(executionId);
     await expect(outcome).resolves.toEqual({ kind: "accepted" });
     const dispatchOps = opsOfKind(await journalOf(hostId), "dispatch").filter(
       (op) => op.executionId === executionId,
     );
-    expect(dispatchOps[0]).toMatchObject({ tool: null, command: "echo poc" });
+    expect(dispatchOps[0]).toMatchObject({ tool: "bash" });
+
+    // M0's exit-code propagation survives the embedding: the client's
+    // tool.exited carries the process exit code (null for host tools).
+    client.send({
+      type: "tool.exited",
+      threadId,
+      executionId,
+      result: { status: "error", exitCode: 7, output: "before-exit\n" },
+    });
+    const sink = sinkStub(threadId);
+    await expect
+      .poll(
+        async () => (await sink.updates()).filter((update) => update.kind === "exited").length,
+        { timeout: 5_000 },
+      )
+      .toBe(1);
+    const exited = (await sink.updates()).find((update) => update.kind === "exited");
+    expect(exited).toMatchObject({
+      result: { status: "error", exitCode: 7, output: "before-exit\n" },
+    });
     await client.close();
   });
 });

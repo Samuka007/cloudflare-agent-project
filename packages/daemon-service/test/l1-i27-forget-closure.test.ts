@@ -21,7 +21,7 @@ describe("L1 I27 forget closure", () => {
     const executionId = `${threadId}:1`;
     const client = new SimulatedClient(hostId);
     await client.dial();
-    await client.acknowledgeSpawnFor(
+    await client.acknowledgeToolExecFor(
       executionId,
       dispatchViaSeam(hostId, { threadId, executionId, machineId: hostId, command: "echo i27" }),
     );

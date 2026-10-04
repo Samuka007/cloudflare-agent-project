@@ -57,7 +57,7 @@ describe("L1 I28 judgment tree", () => {
     const executionId = `${threadId}:1`;
     const client = new SimulatedClient(hostId);
     await client.dial();
-    const ack = await client.acknowledgeSpawnFor(
+    await client.acknowledgeToolExecFor(
       executionId,
       dispatchViaSeam(hostId, { threadId, executionId, machineId: hostId, command: "sleep 60" }),
     );
@@ -66,7 +66,7 @@ describe("L1 I28 judgment tree", () => {
     const client2 = new SimulatedClient(hostId);
     await client2.dial({
       bootId: client.bootId,
-      observed: [runningObserved(executionId, threadId, ack.pid, ack.pidStartedAt)],
+      observed: [runningObserved(executionId, threadId, 201, 2010)],
     });
     await client2.waitForResume(executionId);
 
@@ -82,7 +82,7 @@ describe("L1 I28 judgment tree", () => {
     const executionId = `${threadId}:1`;
     const client = new SimulatedClient(hostId);
     await client.dial();
-    await client.acknowledgeSpawnFor(
+    await client.acknowledgeToolExecFor(
       executionId,
       dispatchViaSeam(hostId, { threadId, executionId, machineId: hostId, command: "echo done" }),
     );
@@ -121,7 +121,7 @@ describe("L1 I28 judgment tree", () => {
     const executionId = `${threadId}:1`;
     const client = new SimulatedClient(hostId);
     await client.dial();
-    const ack = await client.acknowledgeSpawnFor(
+    await client.acknowledgeToolExecFor(
       executionId,
       dispatchViaSeam(hostId, { threadId, executionId, machineId: hostId, command: "sleep 60" }),
     );
@@ -129,14 +129,14 @@ describe("L1 I28 judgment tree", () => {
 
     const client2 = new SimulatedClient(hostId); // fresh bootId
     await client2.dial({
-      observed: [runningObserved(executionId, threadId, ack.pid, ack.pidStartedAt)],
+      observed: [runningObserved(executionId, threadId, 301, 3010)],
     });
     const killList = await client2.waitForKillList();
     expect(killList.entries).toHaveLength(1);
     expect(killList.entries[0]).toMatchObject({
       executionId,
-      pid: ack.pid,
-      pidStartedAt: ack.pidStartedAt,
+      pid: 301,
+      pidStartedAt: 3010,
     });
 
     const actions = opsOfKind(await journalOf(hostId, executionId), "reconcile_action");
@@ -160,7 +160,7 @@ describe("L1 I28 judgment tree", () => {
     const executionId = `${threadId}:1`;
     const client = new SimulatedClient(hostId);
     await client.dial();
-    await client.acknowledgeSpawnFor(
+    await client.acknowledgeToolExecFor(
       executionId,
       dispatchViaSeam(hostId, { threadId, executionId, machineId: hostId, command: "sleep 60" }),
     );
