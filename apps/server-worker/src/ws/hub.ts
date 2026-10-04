@@ -325,8 +325,12 @@ interface DaemonDisconnect {
   atMs: number;
 }
 
-/** bb resolveThreadRuntimeStateFromLatestSession grace window. */
-export const DAEMON_ACTIVE_WORK_DISCONNECT_GRACE_MS = 5_000;
+/**
+ * bb resolveThreadRuntimeStateFromLatestSession reconnect grace (G3): a
+ * dropped daemon gets 30s of "host-reconnecting" before the thread display
+ * flips to waiting-for-host (bb thread-runtime-display.ts:116-129).
+ */
+export const DAEMON_ACTIVE_WORK_DISCONNECT_GRACE_MS = 30_000;
 
 function subscriptionKeysForMessage(
   message:
