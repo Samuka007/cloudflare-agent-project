@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  turnPhaseSchema,
   pendingInteractionPayloadSchema,
   pendingInteractionResolutionSchema,
   promptContentSchema,
@@ -100,6 +101,24 @@ export const agentEventDataSchemas = {
   }),
 
   "turn.cancelled": z.object({ turnId: z.string().min(1) }),
+
+  /**
+   * #197 D3 turn-phase family (streaming contract spec §3): zero-payload
+   * marker rows (≤120 bytes) written by the driver/recovery-relevant paths
+   * only, always AFTER the fact row they mark (persist-then-mark, P1). They
+   * are UX truth, never FSM state — applyEvent records them on the turn
+   * runtime without touching `status`. `stream_started` repeats per model
+   * call by design (retry = new row = new stream card); the others are
+   * once-per-turn by writer discipline.
+   */
+  "turn.phase": z.object({
+    turnId: z.string().min(1),
+    phase: turnPhaseSchema,
+    /** stream_started / first_token belong to this model call. */
+    modelCallId: z.number().int().positive().optional(),
+    /** terminal outcome detail; host_lost is always "host_offline". */
+    reason: z.string().min(1).optional(),
+  }),
 
   "model.call_started": z.object({
     turnId: z.string().min(1),

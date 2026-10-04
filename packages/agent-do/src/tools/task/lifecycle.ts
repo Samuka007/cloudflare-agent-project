@@ -226,6 +226,7 @@ export function projectLifecycle(events: readonly AnyAgentEvent[]): LifecycleVie
       case "tool.output":
       case "tool.result":
       case "turn.cancel_requested":
+      case "turn.phase":
       case "turn.failed":
       case "turn.input":
       case "turn.steer":

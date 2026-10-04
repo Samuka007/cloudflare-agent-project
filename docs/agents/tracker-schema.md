@@ -8,7 +8,7 @@ BoardSmith 章程（board-smith.md）的正本。板面任何结构性变更先�
 
 |轴|载体|语义|寿命|关闭|
 |---|---|---|---|---|
-|批次|milestone（W*；M0/M1.5=历史或在收批次）|交付门：验收面全绿+tag|周-月|走查绿即关|
+|批次|milestone（W0 规划（已关）/W1 骨架（已关）/W2 工具集完备（在收）/W3 端到端真实体验（当前））|交付门：验收面全绿+tag|周-月|走查绿即关|
 |阶段|`phase:m1/m2/m3` label + roadmap 伞 issue（#14/#15/#16）|章程叙事弧|季度+|章程阶段出口|
 |线索|`track:pm-scaffolding/infra-cd/acceptance/research` label|横切连续关切|无限|无（永不成批）|
 
@@ -18,6 +18,7 @@ BoardSmith 章程（board-smith.md）的正本。板面任何结构性变更先�
 3. 开放票归属=批次 milestone XOR phase/track label；PR 不在管理域（不占 milestone 为规约）。
 4. 无「冻结里程碑收新票」态——批次要么在跑要么是历史；阶段叙事/裁决沉淀在伞 issue，不在 milestone。
 5. 编号陷阱：milestone number 3=M2 存量迁移（勿当 M1.5；M1.5=7，W1=8）。
+6. 意图平面（phase/M 系列）≠排期：phase 是应然竖切（约束集/地图），不规定开发顺序；开发顺序唯批次（W*）论，按相对完整度与体验组织。编号陷阱更新：milestone 编号已重排：9=W0、10=W1、7=W2、8=W3（旧编号 1-6 已删/退役）。
 
 ## 轴×真相源（每轴恰一）
 

@@ -203,6 +203,9 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
 
   for (const event of events) {
     switch (event.type) {
+      // #197 D3: phase rows are UX truth, never child-run fold state.
+      case "turn.phase":
+        break;
       case "model.call_completed": {
         if (event.data.text !== "") {
           lastAssistantText = { text: event.data.text, seq: event.seq };
@@ -218,9 +221,14 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
       case "turn.failed":
       case "turn.cancelled": {
         const verdict =
-          event.type === "turn.completed" ? "completed" : event.type === "turn.failed" ? "failed" : "cancelled";
+          event.type === "turn.completed"
+            ? "completed"
+            : event.type === "turn.failed"
+              ? "failed"
+              : "cancelled";
         turnTerminal.set(event.data.turnId, verdict);
-        if (event.type === "turn.failed") turnFailedReason.set(event.data.turnId, event.data.reason);
+        if (event.type === "turn.failed")
+          turnFailedReason.set(event.data.turnId, event.data.reason);
         break;
       }
       case "tool.call": {
@@ -330,7 +338,9 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
         ? undefined
         : {
             terminal,
-            ...(turnFailedReason.has(lastTurnId) ? { reason: turnFailedReason.get(lastTurnId) } : {}),
+            ...(turnFailedReason.has(lastTurnId)
+              ? { reason: turnFailedReason.get(lastTurnId) }
+              : {}),
           };
     state.liveTurn = terminal === undefined;
   }
@@ -369,7 +379,12 @@ function foldYieldOutcome(
       return;
     }
     if (hasError) {
-      state.terminal = { callSeq: call.seq, form: "error", error: errorText, schemaOverridden: false };
+      state.terminal = {
+        callSeq: call.seq,
+        form: "error",
+        error: errorText,
+        schemaOverridden: false,
+      };
       return;
     }
     if (hasData) {
@@ -503,7 +518,10 @@ export function childRunVerdict(state: ChildRunState, budget?: ChildBudgetPolicy
     if (state.pendingSpawns.length > 0) {
       // omp executor.ts:2420-2424 — only a yield with no pending owner work
       // is terminal; the grandchild settlements re-kick this verdict.
-      return { kind: "noop", reason: `parked: ${state.pendingSpawns.length} pending owned spawn(s)` };
+      return {
+        kind: "noop",
+        reason: `parked: ${state.pendingSpawns.length} pending owned spawn(s)`,
+      };
     }
     return {
       kind: "settle",
@@ -613,17 +631,17 @@ export function childRunVerdict(state: ChildRunState, budget?: ChildBudgetPolicy
  * finalize form's last assistant turn), plus the schemaOverridden warning
  * when the payload rode the permissive override in.
  */
-export function renderYieldDelivery(state: {
-  terminal: TerminalYield;
-  sections: ChildSection[];
-}): { status: "ok" | "error"; output: string } {
+export function renderYieldDelivery(state: { terminal: TerminalYield; sections: ChildSection[] }): {
+  status: "ok" | "error";
+  output: string;
+} {
   const terminal = state.terminal;
   if (terminal.form === "error") {
     return { status: "error", output: terminal.error ?? "" };
   }
   const payload =
     terminal.form === "finalize"
-      ? terminal.assistantText ?? "(no assistant text before yield)"
+      ? (terminal.assistantText ?? "(no assistant text before yield)")
       : typeof terminal.data === "string"
         ? terminal.data
         : JSON.stringify(terminal.data, null, 2);
@@ -632,7 +650,8 @@ export function renderYieldDelivery(state: {
     const heading = `## ${section.labels.join(" / ")}`;
     if (section.data === undefined) parts.push(heading);
     else {
-      const body = typeof section.data === "string" ? section.data : JSON.stringify(section.data, null, 2);
+      const body =
+        typeof section.data === "string" ? section.data : JSON.stringify(section.data, null, 2);
       parts.push(`${heading}\n\n${body}`);
     }
   }
@@ -670,7 +689,9 @@ export function renderPartialFindings(state: {
 
 /** The child journal as JSONL (one `{seq,type,data}` per line). */
 export function renderJournalJsonl(events: readonly AnyAgentEvent[]): string {
-  const lines = events.map((event) => JSON.stringify({ seq: event.seq, type: event.type, data: event.data }));
+  const lines = events.map((event) =>
+    JSON.stringify({ seq: event.seq, type: event.type, data: event.data }),
+  );
   return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
 }
 
@@ -684,14 +705,21 @@ export function renderAgentHistory(events: readonly AnyAgentEvent[], agentId: st
     text.length > HISTORY_LINE_CAP ? `${text.slice(0, HISTORY_LINE_CAP)}…` : text;
   for (const event of events) {
     switch (event.type) {
+      case "turn.phase":
+        // Phase markers render no transcript line (zero-payload markers).
+        break;
       case "task.subagent_identity":
         lines.push(`[${event.seq}] identity ${event.data.agentId} depth=${event.data.depth}`);
         break;
       case "turn.input":
-        lines.push(`[${event.seq}] input: ${cap(event.data.content.map((part) => part.text).join(" "))}`);
+        lines.push(
+          `[${event.seq}] input: ${cap(event.data.content.map((part) => part.text).join(" "))}`,
+        );
         break;
       case "turn.steer":
-        lines.push(`[${event.seq}] steer: ${cap(event.data.content.map((part) => part.text).join(" "))}`);
+        lines.push(
+          `[${event.seq}] steer: ${cap(event.data.content.map((part) => part.text).join(" "))}`,
+        );
         break;
       case "model.call_completed": {
         const tools = event.data.toolCalls.map((call) => call.name).join(", ");

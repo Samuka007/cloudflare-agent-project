@@ -18,12 +18,14 @@ import {
   planCascade,
   planFile,
   planDiff,
+  registerSpawn,
   resolveJeapiKey,
   slugify,
   snapshot,
   type GqlFn,
   type JudgeAnswer,
   type JudgeReply,
+  type SpawnRequest,
   type Ticket,
 } from "../pm-autopilot.js";
 
@@ -211,7 +213,9 @@ class MockBoard {
           if (title !== undefined) row.milestone = { title };
         }
         this.issues.push(row);
-        return { createIssue: { issue: { id: row.id, number, url: `https://example.invalid/${number}` } } };
+        return {
+          createIssue: { issue: { id: row.id, number, url: `https://example.invalid/${number}` } },
+        };
       }
       if (query.includes("addProjectV2ItemById")) {
         const n = Number(String(variables.contentId).slice(1));
@@ -1026,11 +1030,7 @@ describe("planFile (pure)", () => {
       }),
     );
     const { plan, pmReview } = planFile({ blockedBy: [9, 9, 3] }, cls);
-    expect(plan.labels).toEqual([
-      "block:agent-harness",
-      "type:implementation",
-      "ready-for-human",
-    ]);
+    expect(plan.labels).toEqual(["block:agent-harness", "type:implementation", "ready-for-human"]);
     expect(plan.milestone).toBeNull(); // demoted → nothing written
     expect(plan.priority).toBeNull();
     expect(plan.status).toBe("Wait for user"); // needs_human applied
@@ -1094,7 +1094,9 @@ describe("AP.file (mocked transport + judge)", () => {
     // intake wiring: the judge saw the body once, with the seven questions
     expect(judgeCalls).toHaveLength(1);
     expect(String(judgeCalls[0]?.state)).toContain(TICKET_BODY);
-    expect(Object.keys(judgeCalls[0]?.questions ?? {}).sort()).toEqual([...ATOMIC_QUESTIONS].sort());
+    expect(Object.keys(judgeCalls[0]?.questions ?? {}).sort()).toEqual(
+      [...ATOMIC_QUESTIONS].sort(),
+    );
   });
 
   it("confirm: one-shot filing — issue created, fields/labels/edges complete, zero unregistered labels", async () => {
@@ -1126,8 +1128,7 @@ describe("AP.file (mocked transport + judge)", () => {
 
     // write order: create → labels → board-add → fields → edge
     const kinds = board.mutations.map((m) => m.query);
-    const indexOf = (needle: string): number =>
-      kinds.findIndex((q) => q.includes(needle));
+    const indexOf = (needle: string): number => kinds.findIndex((q) => q.includes(needle));
     expect(indexOf("createIssue")).toBe(0);
     expect(indexOf("createIssue")).toBeLessThan(indexOf("addLabelsToLabelable"));
     expect(indexOf("addLabelsToLabelable")).toBeLessThan(indexOf("addProjectV2ItemById"));
@@ -1295,7 +1296,10 @@ describe("AP.file (mocked transport + judge)", () => {
 
   it("explicit priority/needsHuman pin wins over sub-floor judge answers", async () => {
     injectJudge(
-      replyAll(0.95, { priority: choiceAnswer("P2", 0.5), needs_human: { type: "noul", noul: 0.2 } }),
+      replyAll(0.95, {
+        priority: choiceAnswer("P2", 0.5),
+        needs_human: { type: "noul", noul: 0.2 },
+      }),
     );
     const rep = await file(
       { title: "pinned fields", body: TICKET_BODY, priority: "P0", needsHuman: true },
@@ -1406,6 +1410,26 @@ function laneTicket(over: Partial<Ticket> = {}): Ticket {
   };
 }
 
+/** omp eval-kernel global view (named per repo cast rule; typeof guards do
+ *  the validation). Lane transport tests install/stub/delete `agent` here. */
+const kernelScope = globalThis as { agent?: unknown };
+
+/** Boarded fixture for confirm-path lane tests: the flip's guarded write
+ *  needs the ticket on a live (mock) board. */
+function laneBoard(...numbers: number[]): MockBoard {
+  const board = new MockBoard();
+  for (const n of numbers) {
+    board.addIssue({
+      number: n,
+      title: n === 200 ? "feat: demo lane" : "feat: second lane",
+      bodyText: FULL_DOR_BODY,
+      milestone: { title: "M1" },
+    });
+    board.boardIssue(n, "Todo", "P1");
+  }
+  return board;
+}
+
 describe("dorChecklist (pure)", () => {
   it("five items in ticket order, all pass on a complete body, budget carries the line", () => {
     const dor = dorChecklist(FULL_DOR_BODY);
@@ -1449,6 +1473,8 @@ describe("dorChecklist (pure)", () => {
 describe("AP.lane (runGit seam — zero filesystem side effects)", () => {
   afterEach(() => {
     _inject(null);
+    registerSpawn(null);
+    delete kernelScope.agent;
   });
 
   // #199 calibration: 假的严谨约束等于真的破坏推进 — DoR gaps inform the
@@ -1500,20 +1526,25 @@ describe("AP.lane (runGit seam — zero filesystem side effects)", () => {
   });
 
   it("confirm: provisions the worktree through the git seam with herdr-path naming", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const gitCalls: { args: string[]; cwd: string }[] = [];
     _inject({
+      gql: laneBoard(200).gql,
       runGit: (args, cwd) => {
         gitCalls.push({ args, cwd });
         return "";
       },
     });
+    registerSpawn(() => "L200demo");
     const rep = await lane(
       laneTicket(),
       { agent: "task", context: "# Contract\nshared interfaces" },
       { confirm: true },
     );
+    logSpy.mockRestore();
     expect(rep.ok).toBe(true);
     expect(rep.worktreeCreated).toBe(true);
+    expect(rep.spawned).toBe(true);
     expect(gitCalls).toHaveLength(1);
     expect(gitCalls[0]?.args).toEqual([
       "worktree",
@@ -1578,5 +1609,181 @@ describe("AP.lane (runGit seam — zero filesystem side effects)", () => {
       "docs/design/streaming-contract.md",
     );
     expect(rep.dor.find((c) => c.key === "budget")?.evidence).toContain("预算 ≤1.5h");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AP.lane spawn transport (#206): default SpawnFn (globalThis.agent guard),
+// registerSpawn slot, report fields, batch entry, pipeline-owned board flip
+// ---------------------------------------------------------------------------
+
+describe("AP.lane spawn transport (#206)", () => {
+  beforeEach(() => {
+    delete kernelScope.agent;
+  });
+  afterEach(() => {
+    _inject(null);
+    registerSpawn(null);
+    delete kernelScope.agent;
+  });
+
+  it("confirm: spawns through the registered transport and reports handle + roster id", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const seen: SpawnRequest[] = [];
+    const gitCalls: { args: string[] }[] = [];
+    _inject({
+      gql: laneBoard(200).gql,
+      runGit: (args) => {
+        gitCalls.push({ args });
+        return "";
+      },
+    });
+    registerSpawn((p) => {
+      seen.push(p);
+      return "L200demo";
+    });
+    const rep = await lane(
+      laneTicket(),
+      { agent: "task", context: "# Contract\nshared interfaces" },
+      { confirm: true },
+    );
+    logSpy.mockRestore();
+    expect(rep.ok).toBe(true);
+    expect(rep.spawned).toBe(true);
+    expect(rep.transport).toBe("registered");
+    expect(rep.agentHandle).toBe("L200demo");
+    expect(rep.agentId).toBe("L200demo");
+    expect(rep.spawnError).toBeNull();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.label).toBe("lane-200-feat-demo-lane");
+    expect(seen[0]?.agent).toBe("task");
+    expect(seen[0]?.context).toBe("# Contract\nshared interfaces");
+    expect(seen[0]?.prompt).toBe(rep.spawn?.task); // the full packet context IS the lane task
+    expect(gitCalls).toHaveLength(1); // worktree provisioning still happens
+  });
+
+  it("confirm owns the board flip: Status → In Progress through the guarded write, after the spawn", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const board = laneBoard(200);
+    _inject({ gql: board.gql, runGit: () => "" });
+    registerSpawn(() => "L200flip");
+    const rep = await lane(200, {}, { confirm: true });
+    logSpy.mockRestore();
+    expect(rep.spawned).toBe(true);
+    expect(rep.statusFlipped).toBe(true);
+    expect(rep.statusError).toBeNull();
+    expect(board.items.find((i) => i.issueNumber === 200)?.status).toBe("In Progress");
+    // the flip rode the guarded write path (mutation + per-batch re-verify)
+    expect(board.mutations.some((m) => m.query.includes("updateProjectV2ItemFieldValue"))).toBe(
+      true,
+    );
+  });
+
+  it("confirm without any transport reports transport-missing — worktree provisioned, no spawn lie, no flip", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const board = laneBoard(200);
+    _inject({ gql: board.gql, runGit: () => "" });
+    const rep = await lane(laneTicket(), {}, { confirm: true });
+    logSpy.mockRestore();
+    expect(rep.worktreeCreated).toBe(true);
+    expect(rep.spawned).toBe(false);
+    expect(rep.transport).toBe("missing");
+    expect(rep.spawnError).toContain("globalThis.agent");
+    expect(rep.ok).toBe(false);
+    expect(rep.statusFlipped).toBe(false);
+    // board untouched: no spawn → no flip (the board must reflect reality)
+    expect(board.items.find((i) => i.issueNumber === 200)?.status).toBe("Todo");
+  });
+
+  it("default transport wraps globalThis.agent(prompt, {isolated: true, label}) — the #200 kernel recipe", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const calls: { prompt: string; opts: { isolated: boolean; label: string } }[] = [];
+    kernelScope.agent = (prompt: string, opts: { isolated: boolean; label: string }) => {
+      calls.push({ prompt, opts });
+      return { id: "L200ctx" }; // omp kernel returns a handle object
+    };
+    _inject({ gql: laneBoard(200).gql, runGit: () => "" });
+    const rep = await lane(laneTicket(), {}, { confirm: true });
+    logSpy.mockRestore();
+    expect(rep.spawned).toBe(true);
+    expect(rep.transport).toBe("default");
+    expect(rep.agentId).toBe("L200ctx"); // {id} handles unwrap
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.opts).toEqual({ isolated: true, label: "lane-200-feat-demo-lane" });
+    expect(calls[0]?.prompt).toContain("# Worktree");
+    expect(rep.statusFlipped).toBe(true);
+  });
+
+  it("registerSpawn(null) restores the default path — the slot is an override, not a trap", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    registerSpawn(() => "mock");
+    registerSpawn(null);
+    _inject({ gql: laneBoard(200).gql, runGit: () => "" });
+    const rep = await lane(laneTicket(), {}, { confirm: true });
+    logSpy.mockRestore();
+    // no kernel agent global → the restored default reports missing,
+    // proving the override is really gone
+    expect(rep.transport).toBe("missing");
+    expect(rep.spawned).toBe(false);
+  });
+
+  it("a transport throw marks the report incomplete without a spawn lie", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    _inject({ gql: laneBoard(200).gql, runGit: () => "" });
+    registerSpawn(() => {
+      throw new Error("kernel refused spawn");
+    });
+    const rep = await lane(laneTicket(), {}, { confirm: true });
+    logSpy.mockRestore();
+    expect(rep.transport).toBe("registered");
+    expect(rep.spawned).toBe(false);
+    expect(rep.spawnError).toBe("kernel refused spawn");
+    expect(rep.ok).toBe(false);
+    expect(rep.statusFlipped).toBe(false);
+  });
+
+  it("batch entry: an array dispatches one wave and resolves one report per ticket, input order", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const gitArgs: string[][] = [];
+    _inject({
+      gql: laneBoard(200, 201).gql,
+      runGit: (args) => {
+        gitArgs.push(args);
+        return "";
+      },
+    });
+    registerSpawn((p) => `spawn:${p.label}`);
+    const reps = await lane(
+      [laneTicket(), laneTicket({ number: 201, id: "I201", title: "feat: second lane" })],
+      {},
+      { confirm: true },
+    );
+    logSpy.mockRestore();
+    expect(reps).toHaveLength(2);
+    expect(reps.map((r) => r.number)).toEqual([200, 201]);
+    expect(reps.map((r) => r.agentId)).toEqual([
+      "spawn:lane-200-feat-demo-lane",
+      "spawn:lane-201-feat-second-lane",
+    ]);
+    expect(reps.every((r) => r.worktreeCreated)).toBe(true);
+    expect(reps.every((r) => r.statusFlipped)).toBe(true);
+    expect(gitArgs).toHaveLength(2); // one worktree add per ticket
+  });
+
+  it("batch dry-run plans every ticket and touches nothing; dry-run/refused reports carry null transport fields", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const reps = await lane([laneTicket(), laneTicket({ number: 201, id: "I201" })]);
+    const refused = await lane(laneTicket({ status: "Backlog" }), {}, { confirm: true });
+    logSpy.mockRestore();
+    expect(reps).toHaveLength(2);
+    for (const r of [...reps, refused]) {
+      expect(r.spawned).toBe(false);
+      expect(r.transport).toBeNull();
+      expect(r.agentHandle).toBeNull();
+      expect(r.agentId).toBeNull();
+      expect(r.spawnError).toBeNull();
+      expect(r.statusFlipped).toBe(false);
+    }
+    expect(reps.every((r) => r.dryRun)).toBe(true);
   });
 });
