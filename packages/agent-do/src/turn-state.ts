@@ -83,6 +83,16 @@ export interface ExecutionRuntime {
   resultSeq: number | null;
 }
 
+/** Journal-folded pending-interaction row (M1.5 T4; replay truth). */
+export interface InteractionRuntime {
+  interactionId: string;
+  turnId: string;
+  executionId: string;
+  status: "pending" | "resolved" | "interrupted";
+  /** Non-null only on the pending→bounded row (omp ask.timeout). */
+  expiresAt: number | null;
+}
+
 export interface ReplayState {
   threadId: string | null;
   title: string | null;
@@ -110,6 +120,11 @@ export interface ReplayState {
     originKind: string | null;
     depth: number;
   } | null;
+  /**
+   * Pending interactions (M1.5 T4 ask) — the journal-folded SPA-visible ask
+   * state, keyed by interactionId (tools/ask.ts projectInteractions).
+   */
+  interactions: Map<string, InteractionRuntime>;
 }
 
 export function emptyReplayState(): ReplayState {
@@ -126,6 +141,7 @@ export function emptyReplayState(): ReplayState {
     modelCalls: new Map(),
     executions: new Map(),
     subagentIdentity: null,
+    interactions: new Map(),
   };
 }
 
@@ -477,6 +493,48 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       // (tools/session-tree.ts todoJournalState) folds it from the log.
       return;
     }
+    case "interaction.registered": {
+      // Thread-scoped interaction journal (proposal §3 T4); the ask
+      // projection and the watchdog expiry family fold it from the log.
+      const { interactionId, turnId, executionId, expiresAt } = event.data;
+      turn(state, turnId);
+      state.interactions.set(interactionId, {
+        interactionId,
+        turnId,
+        executionId,
+        status: "pending",
+        expiresAt,
+      });
+      return;
+    }
+    case "interaction.resolved": {
+      const interaction = state.interactions.get(event.data.interactionId);
+      if (interaction === undefined) {
+        throw new FsmViolationError(`interaction.resolved for unknown ${event.data.interactionId}`);
+      }
+      if (interaction.status !== "pending") {
+        throw new FsmViolationError(
+          `interaction ${interaction.interactionId} already ${interaction.status} (resolutions are at-most-once)`,
+        );
+      }
+      interaction.status = "resolved";
+      return;
+    }
+    case "interaction.interrupted": {
+      const interaction = state.interactions.get(event.data.interactionId);
+      if (interaction === undefined) {
+        throw new FsmViolationError(
+          `interaction.interrupted for unknown ${event.data.interactionId}`,
+        );
+      }
+      if (interaction.status !== "pending") {
+        throw new FsmViolationError(
+          `interaction ${interaction.interactionId} already ${interaction.status} (interrupts are at-most-once)`,
+        );
+      }
+      interaction.status = "interrupted";
+      return;
+    }
   }
 }
 
@@ -493,6 +551,9 @@ export interface DueWork {
   reaskExecutionIds: string[];
   /** Non-terminal wait executions past their WAIT_MAX_MS cap (§3 T2). */
   waitCapExecutionIds: string[];
+  /** Pending bounded interactions past their expiresAt (§3 T4, omp
+   * ask.timeout auto-select; null expiresAt never appears here). */
+  interactionExpiryExecutionIds: string[];
   turnWatchdogExpiredTurnIds: string[];
   nextDeadlineAt: number | null;
 }
@@ -511,17 +572,27 @@ export interface DueWork {
  *   cover it. The alarm handler resolves wait caps BEFORE turn expiry, so the
  *   cap result lands and the turn proceeds (omp semantics: wait returns a
  *   still-running snapshot at the cap, never a failed turn).
+ *
+ * Blocked asks (M1.5 T4) add the same shape with no default cap: a turn
+ * blocked on a pending interaction is not stuck — the user IS the deadline
+ * (bb leaves the composer locked until resolve or interrupt), so an unbounded
+ * pending interaction suspends the turn watchdog outright, and a bounded one
+ * (`expiresAt`, the ask.timeout arm) extends it to the expiry, which the
+ * alarm resolves BEFORE turn expiry with an auto-selected ruling.
  */
 export function computeDueWork(state: ReplayState, config: WatchdogConfig, now: number): DueWork {
   const due: DueWork = {
     sealedModelCallIds: [],
     reaskExecutionIds: [],
     waitCapExecutionIds: [],
+    interactionExpiryExecutionIds: [],
     turnWatchdogExpiredTurnIds: [],
     nextDeadlineAt: null,
   };
   const deadlines: number[] = [];
   let waitCapDeadline: number | null = null;
+  let pendingAskDeadline: number | null = null;
+  let activeTurnBlockedOnPendingAsk = false;
   for (const call of state.modelCalls.values()) {
     if (call.status !== "running") continue;
     const deadline = call.startedAt + config.modelCallCapMs;
@@ -552,21 +623,54 @@ export function computeDueWork(state: ReplayState, config: WatchdogConfig, now: 
       if (waitCapDeadline === null || deadline > waitCapDeadline) waitCapDeadline = deadline;
     }
   }
+  for (const interaction of state.interactions.values()) {
+    if (interaction.status !== "pending") continue;
+    const turnRuntime = state.turns.get(interaction.turnId);
+    if (turnRuntime === undefined || turnTerminal(turnRuntime)) continue;
+    if (interaction.expiresAt === null) {
+      // Unbounded user-wait: the turn backstop never preempts it (the
+      // interrupt path is the user's own way out — bb semantics).
+      if (interaction.turnId === state.activeTurnId) activeTurnBlockedOnPendingAsk = true;
+      continue;
+    }
+    if (now >= interaction.expiresAt) {
+      due.interactionExpiryExecutionIds.push(interaction.executionId);
+      // Retry backstop in case the expiry resolution failed to terminalize.
+      deadlines.push(now + config.execGraceMs);
+    } else {
+      deadlines.push(interaction.expiresAt);
+      if (interaction.turnId === state.activeTurnId) {
+        pendingAskDeadline =
+          pendingAskDeadline === null
+            ? interaction.expiresAt
+            : Math.max(pendingAskDeadline, interaction.expiresAt);
+      }
+    }
+  }
   const activeTurn = state.activeTurnId === null ? undefined : state.turns.get(state.activeTurnId);
   if (activeTurn !== undefined && !turnTerminal(activeTurn)) {
     // Extend the turn watchdog to cover its blocking waits (see docstring):
     // the wait cap is the terminal promise for that execution, so the
     // backstop moves out to it instead of preempting a legitimate wait.
     const base = activeTurn.inputCreatedAt + config.turnWatchdogMs;
-    const deadline =
-      waitCapDeadline !== null
-        ? Math.max(base, waitCapDeadline)
-        : due.waitCapExecutionIds.length > 0
-          ? // Cap due this tick: the handler resolves it before expiry.
-            now + config.execGraceMs
-          : base;
-    if (now >= deadline) due.turnWatchdogExpiredTurnIds.push(activeTurn.turnId);
-    else deadlines.push(deadline);
+    const deadline = activeTurnBlockedOnPendingAsk
+      ? // Suspended: a pending unbounded ask owns the turn indefinitely.
+        null
+      : pendingAskDeadline !== null
+        ? Math.max(base, pendingAskDeadline)
+        : waitCapDeadline !== null
+          ? Math.max(base, waitCapDeadline)
+          : due.waitCapExecutionIds.length > 0
+            ? // Cap due this tick: the handler resolves it before expiry.
+              now + config.execGraceMs
+            : base;
+    if (deadline === null) {
+      // No deadline while the user-wait pends; nothing to arm for the turn.
+    } else if (now >= deadline) {
+      due.turnWatchdogExpiredTurnIds.push(activeTurn.turnId);
+    } else {
+      deadlines.push(deadline);
+    }
   }
   due.nextDeadlineAt = deadlines.length === 0 ? null : Math.min(...deadlines);
   return due;

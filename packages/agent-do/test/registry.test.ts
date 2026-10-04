@@ -94,10 +94,13 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
       "glob",
       "grep",
       // T11 — omp builtin-names.ts order: find between grep and lsp (lsp
-      // unregistered; checkpoint is the next registered row).
+      // unregistered; ask (T4, builtin #6) rides after grep by lane ruling;
+      // checkpoint is the next registered row.
+      "ask",
       "find",
-      // T2/T3 merge — omp builtin-names.ts order: checkpoint/rewind before
-      // context_notes; wait between new_context and todo; think (hidden) last.
+      // T2/T3/T16 merge — omp builtin-names.ts order: checkpoint/rewind
+      // before context_notes; wait between new_context and todo; the T16
+      // hidden yield closes the wire (hidden tools last).
       "checkpoint",
       "rewind",
       "context_notes",
@@ -108,7 +111,7 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
       "think",
       "write",
       // T10' merge — omp builtin-names.ts order: eval precedes github/glob;
-      // this host has no github/ida/ask rows yet, so eval lands after write
+      // with ask (T4) now registered, eval still lands after write
       // (append-only registry discipline: existing rows never move).
       "eval",
       // T6 #96 — omp builtin wire order #30 (last builtin); the T16 hidden

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { pendingInteractionStatusSchema } from "./pending-interactions.js";
 
 /**
  * Realtime fan-out WebSocket (`/ws`), bb-shaped.
@@ -20,6 +21,8 @@ export const threadChangeKindSchema = z.enum([
   "events-appended",
   "status-changed",
   "title-changed",
+  /** M1.5 T4: a pending interaction registered/resolved/interrupted (#94). */
+  "pending-interaction",
 ]);
 export type ThreadChangeKind = z.infer<typeof threadChangeKindSchema>;
 
@@ -59,6 +62,20 @@ export const realtimeThreadChangeMetadataSchema = z
   .object({
     /** Latest event-log seq at broadcast time; hints the refetch cursor. */
     latestSeq: z.number().int().min(0).optional(),
+    /**
+     * Pending-interaction state patch at broadcast time (bb
+     * patchThreadListPendingInteractionState shape): the id + status of the
+     * interaction the frame is about, null once none is pending. The SPA
+     * renders the question body from its journal refetch, not from this
+     * socket (no payloads ride the socket).
+     */
+    pendingInteraction: z
+      .object({
+        interactionId: z.string().min(1),
+        status: pendingInteractionStatusSchema,
+      })
+      .nullable()
+      .optional(),
   })
   .strict();
 export type RealtimeThreadChangeMetadata = z.infer<typeof realtimeThreadChangeMetadataSchema>;
@@ -107,5 +124,27 @@ export function threadEventsAppendedMessage(args: {
     id: args.threadId,
     changes: ["events-appended"],
     metadata: { latestSeq: args.latestSeq },
+  };
+}
+
+/** Build a `changed` broadcast for an interaction lifecycle transition (#94). */
+export function pendingInteractionChangedMessage(args: {
+  threadId: string;
+  latestSeq: number;
+  interactionId: string;
+  status: z.infer<typeof pendingInteractionStatusSchema>;
+}): RealtimeThreadChanged {
+  return {
+    type: "changed",
+    entity: "thread",
+    id: args.threadId,
+    changes: ["events-appended", "pending-interaction"],
+    metadata: {
+      latestSeq: args.latestSeq,
+      pendingInteraction: {
+        interactionId: args.interactionId,
+        status: args.status,
+      },
+    },
   };
 }

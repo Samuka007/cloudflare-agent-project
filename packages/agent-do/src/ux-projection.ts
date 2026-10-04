@@ -40,6 +40,12 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       case "task.async_result":
       case "task.subagent_identity":
       case "todo_phases":
+      // M1.5 T4 interaction journal family: the SPA renders the pending
+      // interaction from the raw journal rows + the /ws pending-interaction
+      // push, not from the UX envelope (same rule as job.*).
+      case "interaction.registered":
+      case "interaction.resolved":
+      case "interaction.interrupted":
       case "tool.exec_started":
       case "tool.output":
       case "turn.cancel_requested":
