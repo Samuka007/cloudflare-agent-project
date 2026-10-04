@@ -21,7 +21,7 @@ describe("L1 I25 ack monotonic + trim conservation", () => {
     const executionId = `${threadId}:1`;
     const client = new SimulatedClient(hostId);
     await client.dial();
-    await client.acknowledgeSpawnFor(
+    await client.acknowledgeToolExecFor(
       executionId,
       dispatchViaSeam(hostId, { threadId, executionId, machineId: hostId, command: "seq 1 10" }),
     );
@@ -66,7 +66,7 @@ describe("L1 I25 ack monotonic + trim conservation", () => {
     const executionId = `${threadId}:1`;
     const client = new SimulatedClient(hostId);
     await client.dial();
-    await client.acknowledgeSpawnFor(
+    await client.acknowledgeToolExecFor(
       executionId,
       dispatchViaSeam(hostId, { threadId, executionId, machineId: hostId, command: "echo clamp" }),
     );

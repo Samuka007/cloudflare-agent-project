@@ -1,8 +1,9 @@
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { EvalKernelRuntime } from "./eval-kernel.js";
+import { threadIdFromExecutionId } from "../execution-id.js";
 
 /**
  * Vendored omp tool runtime (M1.5/T5' #128): host construction, native-addon
@@ -35,11 +36,12 @@ export interface ToolDispatchFrame {
 
 export type WireStatus = "ok" | "error" | "timeout" | "cancelled";
 
-/** Projected result — agent-do ToolResultPayload shape (exitCode is a bash
- * process concept; host tools carry none). */
+/** Projected result — agent-do ToolResultPayload shape. Bash carries the
+ * process exit code (M0 exec.exited semantic, T9 #99: omp details.exitCode);
+ * host tools carry none (null). */
 export interface ToolExecutionResult {
   status: WireStatus;
-  exitCode: null;
+  exitCode: number | null;
   output: string;
   outputTruncated?: boolean;
 }
@@ -57,6 +59,13 @@ interface OmpToolResult {
   isError?: boolean;
 }
 
+/** Bash result details (probe delta table): the process exit code and the
+ * truncation meta live here; everything else stays omp-internal. */
+interface BashToolDetails {
+  exitCode?: number;
+  meta?: { truncation?: unknown };
+}
+
 interface OmpTool {
   name: string;
   execute(
@@ -70,19 +79,34 @@ interface OmpTool {
 export interface ToolHost {
   /** machineId this host is bound to (frame.machineId must match). */
   machineId: string;
+  /** Workspace root — the sandbox every bash cwd is clamped into (shim 2). */
+  workspaceRoot: string;
   settings: Settings;
   session: Record<string, unknown>;
   tools: Record<string, OmpTool>;
+  /**
+   * Per-frame bash tool view keyed by the thread-scoped shell sessionKey
+   * (T9 #99): a fresh BashTool per dispatch carries `getSessionId` returning
+   * the frame's thread, so the persistent brush Shell is pinned per thread
+   * and concurrent frames cannot bleed each other's key. Built once in
+   * createToolHost (the class is captured there — omp loads lazily).
+   */
+  bashView: (sessionKey: string) => OmpTool;
 }
 
 /**
- * Host settings overrides (agent enablement, T6 #96): `autolearn.enabled`
- * admits omp's own ManageSkillTool.createIf gate — the same flag omp checks,
- * pinned host-side in the isolated settings (no daemon capability
- * negotiation, control-plane §1.2).
+ * Host settings overrides (agent enablement + policy pins):
+ * - `autolearn.enabled` (T6 #96) admits omp's own ManageSkillTool.createIf
+ *   gate — the same flag omp checks, pinned host-side in the isolated
+ *   settings (no daemon capability negotiation, control-plane §1.2).
+ * - `tools.maxTimeout` (T9 #99 shim 1): omp's bash clamps 1–3600 s natively;
+ *   the 600 s pin restores the M0 ceiling the wire schema promises
+ *   (registry bashSchema: "nonzero values are clamped to 1-600"). Probe
+ *   docs/research/bash-embedding-probe.md delta row "timeout clamp".
  */
 const HOST_SETTINGS_OVERRIDES: Record<string, unknown> = {
   "autolearn.enabled": true,
+  "tools.maxTimeout": 600,
 };
 
 // ---------------------------------------------------------------------------
@@ -164,6 +188,7 @@ export async function createToolHost(
   // env pin above must land BEFORE these specifiers evaluate.
   const [
     { Settings },
+    { ArtifactManager },
     { EditTool },
     { FindTool },
     { GlobTool },
@@ -171,8 +196,10 @@ export async function createToolHost(
     { ReadTool },
     { WriteTool },
     { ManageSkillTool },
+    { BashTool },
   ] = await Promise.all([
     import("@oh-my-pi/pi-coding-agent/config/settings"),
+    import("@oh-my-pi/pi-coding-agent/session/artifacts"),
     import("@oh-my-pi/pi-coding-agent/edit"),
     import("@oh-my-pi/pi-coding-agent/tools/jfind"),
     import("@oh-my-pi/pi-coding-agent/tools/glob"),
@@ -180,19 +207,31 @@ export async function createToolHost(
     import("@oh-my-pi/pi-coding-agent/tools/read"),
     import("@oh-my-pi/pi-coding-agent/tools/write"),
     import("@oh-my-pi/pi-coding-agent/tools/manage-skill"),
+    import("@oh-my-pi/pi-coding-agent/tools/bash"),
   ]);
   const settings = await Settings.loadIsolated({
     cwd,
     agentDir,
     overrides: HOST_SETTINGS_OVERRIDES,
   });
-  const session = {
+  // T9 #99 shim 3 (artifact allocator): omp's OutputSink middle-truncates
+  // inline output at 50 KiB; the full bytes are recoverable only when the
+  // session allocates artifacts. omp's own ArtifactManager (numeric ids,
+  // `<id>.<tool>.log` staging, atomic publish) backs a daemon-private
+  // artifacts dir, and `getArtifactsDir` pins `artifact://<id>` resolution —
+  // the embedded read tool recovers the spill end to end. Probe #14: with
+  // no allocator the elided bytes are silently gone.
+  const artifacts = new ArtifactManager(join(agentDir, "artifacts"));
+  const sessionBase = {
     cwd,
     hasUI: false,
     settings,
     getSessionFile: () => null,
     getSessionSpawns: () => null,
-  } as never;
+    getArtifactsDir: () => artifacts.dir,
+    allocateOutputArtifact: (toolType: string) => artifacts.allocatePath(toolType),
+  };
+  const session = sessionBase as never;
   const candidates: OmpTool[] = [
     new GlobTool(session),
     new GrepTool(session),
@@ -211,7 +250,9 @@ export async function createToolHost(
   // on above); when the gate closes the tool is simply absent from the map.
   const manageSkill = ManageSkillTool.createIf(session);
   if (manageSkill !== null) tools[manageSkill.name] = manageSkill;
-  return { machineId, settings, session, tools };
+  const bashView = (sessionKey: string): OmpTool =>
+    new BashTool({ ...sessionBase, getSessionId: () => sessionKey });
+  return { machineId, workspaceRoot: cwd, settings, session, tools, bashView };
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +264,41 @@ function contentText(result: OmpToolResult): string {
   return result.content
     .map((block) => (block.type === "text" ? (block.text ?? "") : `<${block.type}>`))
     .join("\n");
+}
+
+/**
+ * Bash-specific frame preparation (T9 #99 shims 2 + sessionKey pin). The
+ * embedded brush shell has no sandbox-root concept (probe delta row "cwd"):
+ * the wrapper restores M0's cwd-level confinement — resolve against the
+ * workspace root, refuse escapes, hand the tool an absolute path. The
+ * dispatch deadline is mapped onto bash's `timeout` seconds parameter so an
+ * omitted per-call timeout resolves to the agent-DO policy deadline (M0's
+ * 600 s default), not omp's 300 s. The persistent Shell is keyed per thread
+ * (probe: "pin one sessionKey per machine/thread to keep isolation
+ * intentional") — a fresh per-frame session view carries the thread id so
+ * concurrent frames cannot bleed each other's session key.
+ */
+function prepareBashFrame(
+  host: ToolHost,
+  frame: ToolDispatchFrame,
+): { arguments: Record<string, unknown>; sessionKey: string } | { error: string } {
+  const args = { ...frame.arguments };
+  const rawCwd = args.cwd;
+  if (typeof rawCwd === "string" && rawCwd.length > 0) {
+    if (isAbsolute(rawCwd) || rawCwd.split(/[\\/]/).includes("..")) {
+      return { error: `cwd escapes the sandbox root: ${rawCwd}` };
+    }
+    const resolved = resolve(host.workspaceRoot, rawCwd);
+    if (resolved !== host.workspaceRoot && !resolved.startsWith(host.workspaceRoot + sep)) {
+      return { error: `cwd escapes the sandbox root: ${rawCwd}` };
+    }
+    args.cwd = resolved;
+  }
+  const timeoutSec = Math.round(frame.timeoutMs / 1000);
+  if (frame.timeoutMs > 0 && timeoutSec > 0 && args.timeout === undefined) {
+    args.timeout = timeoutSec;
+  }
+  return { arguments: args, sessionKey: threadIdFromExecutionId(frame.executionId) };
 }
 
 export async function executeDispatch(
@@ -241,7 +317,28 @@ export async function executeDispatch(
       output: `frame for machine ${frame.machineId} reached host ${host.machineId}`,
     };
   }
-  const tool = host.tools[frame.tool];
+  let tool = host.tools[frame.tool];
+  let argumentsJson = frame.arguments;
+  if (frame.tool === "bash") {
+    // T9 #99: bash executes through omp's BashTool with the four shims from
+    // docs/research/bash-embedding-probe.md (verdict (b) embed-with-shims):
+    // (1) tools.maxTimeout=600 pin lives in the isolated settings; (2) the
+    // cwd sandbox guard + timeout default mapping below; (3) the
+    // allocateOutputArtifact wiring on the host session; (4) kill = abort —
+    // exec.kill reaches ToolRuntime.abort (connection.ts), and the pid
+    // kill-list is superseded: the brush shell IS the host process (probe:
+    // /proc/$$/exe = bun), so there is no child pid to record and no
+    // cross-restart verify-and-kill exists — in-flight externals die with
+    // the run's AbortController, same-group stragglers die with the client
+    // process, and setsid escapees stay the operator's business, same as M0
+    // post-restart minus verify-and-kill.
+    const prepared = prepareBashFrame(host, frame);
+    if ("error" in prepared) {
+      return { status: "error", exitCode: null, output: prepared.error };
+    }
+    tool = host.bashView(prepared.sessionKey);
+    argumentsJson = prepared.arguments;
+  }
   if (!tool) {
     return { status: "error", exitCode: null, output: `unknown tool: ${frame.tool}` };
   }
@@ -265,16 +362,36 @@ export async function executeDispatch(
   try {
     const result = await tool.execute(
       frame.executionId,
-      frame.arguments,
+      argumentsJson,
       controller.signal,
       options.onOutput ? (partial) => options.onOutput?.(contentText(partial)) : undefined,
     );
-    const truncation = (result.details as { meta?: { truncation?: unknown } } | undefined)?.meta
-      ?.truncation;
+    const details = result.details as BashToolDetails | undefined;
+    const truncation = details?.meta?.truncation;
+    // Bash exit code (T9 #99, M0 propagation): omp sets details.exitCode only
+    // for non-zero exits (bash.ts:732 failedExit); a definite 0 exit omits the
+    // field — an ok result without a code IS the 0 exit (bash throws on a
+    // missing exit status, bash.ts:682). Errors without a code (timeout,
+    // cancel) carry null.
+    const exitCode =
+      typeof details?.exitCode === "number" ? details.exitCode : result.isError ? null : 0;
+    // Recovery footer (shim 3): 18.6.0 records the spill id in
+    // meta.truncation.artifactId without a text pointer — project the probe's
+    // `artifact://<id>` footer so the truncated bytes are wire-discoverable.
+    let output = contentText(result);
+    const spillId: unknown =
+      typeof truncation === "object" && truncation !== null && "artifactId" in truncation
+        ? truncation.artifactId
+        : undefined;
+    const artifactId =
+      typeof spillId === "string" || typeof spillId === "number" ? String(spillId) : null;
+    if (artifactId !== null && !output.includes(`artifact://${artifactId}`)) {
+      output += `\n[raw output: artifact://${artifactId}]\n`;
+    }
     return {
       status: result.isError ? "error" : "ok",
-      exitCode: null,
-      output: contentText(result),
+      exitCode,
+      output,
       ...(truncation !== undefined ? { outputTruncated: true } : {}),
     };
   } catch (error) {

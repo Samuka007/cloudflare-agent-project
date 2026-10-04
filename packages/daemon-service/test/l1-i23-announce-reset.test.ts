@@ -26,7 +26,7 @@ describe("L1 I23 announce full reset", () => {
     // has something to be wrong about.
     const client = new SimulatedClient(hostId);
     await client.dial();
-    await client.acknowledgeSpawnFor(
+    await client.acknowledgeToolExecFor(
       executionId,
       dispatchViaSeam(hostId, { threadId, executionId, machineId: hostId, command: "echo i23" }),
     );
@@ -106,7 +106,7 @@ describe("L1 I23 announce full reset", () => {
     const executionId = `${threadId}:1`;
     const client = new SimulatedClient(hostId);
     await client.dial();
-    await client.acknowledgeSpawnFor(
+    await client.acknowledgeToolExecFor(
       executionId,
       dispatchViaSeam(hostId, { threadId, executionId, machineId: hostId, command: "echo x" }),
     );

@@ -27,7 +27,7 @@ describe("L1 I24 journal is the sole authorization list", () => {
     // Boot 1: authorize + spawn one execution, keep it RUNNING, disconnect.
     const client = new SimulatedClient(hostId);
     await client.dial();
-    const ack = await client.acknowledgeSpawnFor(
+    await client.acknowledgeToolExecFor(
       authorizedId,
       dispatchViaSeam(hostId, {
         threadId,
@@ -40,21 +40,23 @@ describe("L1 I24 journal is the sole authorization list", () => {
 
     // Boot 2 (restart): the /proc marker scan reports BOTH the authorized
     // orphan and a ghost process the journal never authorized.
+    // The pids are client-declared announce facts — arbitrary literals since
+    // T9 #99 (host-tool rows ack pid-less; nothing spawns a real pid).
     const client2 = new SimulatedClient(hostId);
     const observed: ObservedExecution[] = [
       {
         executionId: authorizedId,
         threadId,
-        pid: ack.pid,
-        pidStartedAt: ack.pidStartedAt,
+        pid: 101,
+        pidStartedAt: 1010,
         state: "running",
         bufferedFromOffset: 0,
       },
       {
         executionId: ghostId,
         threadId: "thr_ghost",
-        pid: ack.pid + 1,
-        pidStartedAt: ack.pidStartedAt + 1,
+        pid: 102,
+        pidStartedAt: 1020,
         state: "running",
         bufferedFromOffset: 0,
       },

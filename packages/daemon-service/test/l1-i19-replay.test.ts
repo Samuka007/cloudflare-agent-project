@@ -26,7 +26,7 @@ describe("L1 I19 journal replay determinism", () => {
     const client = new SimulatedClient(hostId);
     await client.dial();
 
-    const ack = await client.acknowledgeSpawnFor(
+    await client.acknowledgeToolExecFor(
       runningId,
       dispatchViaSeam(hostId, {
         threadId,
@@ -44,15 +44,7 @@ describe("L1 I19 journal replay determinism", () => {
       machineId: hostId,
       command: "echo done",
     });
-    const doneSpawn = await client.waitForSpawn(doneId);
-    client.send({
-      type: "exec.started",
-      requestId: doneSpawn.requestId,
-      threadId,
-      executionId: doneId,
-      pid: 777,
-      pidStartedAt: 7770,
-    });
+    await client.acknowledgeToolExec(doneId);
     await doneDispatch;
     client.sendExited(doneId, 0, 0);
 
@@ -76,7 +68,9 @@ describe("L1 I19 journal replay determinism", () => {
       lastOffset: beforeRunning.lastOffset,
       ackedOffset: beforeRunning.ackedOffset,
       bootId: beforeRunning.bootId,
-      pid: ack.pid,
+      // T9: host-tool rows carry the pid-0 sentinel — the replay rebuilds it
+      // verbatim; pid-bearing rows no longer exist on live dispatches.
+      pid: 0,
     });
     expect(afterDone).toMatchObject({
       state: "COMPLETED",

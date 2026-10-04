@@ -10,6 +10,7 @@ import type {
   KillListServiceFrame,
   ObservedExecution,
   ServiceFrame,
+  ToolExecServiceFrame,
 } from "../src/protocol.js";
 import type { JournalOp } from "../src/journal.js";
 
@@ -200,6 +201,27 @@ export class SimulatedClient {
     return ack;
   }
 
+  /** The service's tool.exec → simulated pid-less acceptance (T5'/T9). */
+  async acknowledgeToolExec(executionId: string): Promise<ToolExecServiceFrame> {
+    const frame = await this.waitForToolExec(executionId);
+    this.send({
+      type: "exec.spawn_ack",
+      requestId: frame.requestId,
+      threadId: frame.threadId,
+      executionId,
+      ok: true,
+    });
+    return frame;
+  }
+
+  async waitForToolExec(executionId?: string): Promise<ToolExecServiceFrame> {
+    return this.waitFor(
+      (candidate): candidate is ToolExecServiceFrame =>
+        candidate.type === "tool.exec" &&
+        (executionId === undefined || candidate.executionId === executionId),
+    );
+  }
+
   /**
    * The standard dispatch drill: the service's dispatch RPC does not settle
    * until the client acks, so callers must never await dispatch first — this
@@ -214,12 +236,34 @@ export class SimulatedClient {
     return ack;
   }
 
+  /** Tool-path twin of acknowledgeSpawnFor (T9: bash rides tool.exec). */
+  async acknowledgeToolExecFor(
+    executionId: string,
+    dispatch: Promise<unknown>,
+  ): Promise<ToolExecServiceFrame> {
+    const frame = await this.acknowledgeToolExec(executionId);
+    await dispatch;
+    return frame;
+  }
+
   async refuseSpawn(executionId: string, error: string): Promise<void> {
     const spawn = await this.waitForSpawn(executionId);
     this.send({
       type: "exec.spawn_ack",
       requestId: spawn.requestId,
       threadId: spawn.threadId,
+      executionId,
+      ok: false,
+      error,
+    });
+  }
+
+  async refuseToolExec(executionId: string, error: string): Promise<void> {
+    const frame = await this.waitForToolExec(executionId);
+    this.send({
+      type: "exec.spawn_ack",
+      requestId: frame.requestId,
+      threadId: frame.threadId,
       executionId,
       ok: false,
       error,

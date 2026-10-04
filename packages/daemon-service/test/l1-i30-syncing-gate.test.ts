@@ -10,15 +10,15 @@ import {
 
 /**
  * I30 — syncing gate (§8.2/§8.5): between WS attach and reconcile completion
- * the session is `syncing` and no exec.spawn may be forwarded. The gate is
- * proven structurally: the journal records the spawn AFTER the reconcile's
- * clean marker, and the wire shows sync.complete before exec.spawn. A
- * pre-reconcile spawn would carry a lower op_seq — the log is the order
+ * the session is `syncing` and no dispatch may be forwarded. The gate is
+ * proven structurally: the journal records the forward AFTER the reconcile's
+ * clean marker, and the wire shows sync.complete before tool.exec. A
+ * pre-reconcile forward would carry a lower op_seq — the log is the order
  * record, so no wall-clock race probing is needed.
  */
 
 describe("L1 I30 syncing gate", () => {
-  test("dispatch during syncing defers the spawn until after reconcile", async () => {
+  test("dispatch during syncing defers the forward until after reconcile", async () => {
     const hostId = uniqueHostId("i30");
     const threadId = `thr_${hostId}`;
     const executionId = `${threadId}:1`;
@@ -36,11 +36,10 @@ describe("L1 I30 syncing gate", () => {
       command: "echo gated",
     });
 
-    // Announce → reconcile → gate releases → spawn flows.
+    // Announce → reconcile → gate releases → the dispatch flows.
     await client.announce([]);
-    const spawn = await client.waitForSpawn(executionId);
-    expect(spawn.command).toBe("echo gated");
-    await client.acknowledgeSpawn(executionId);
+    const toolFrame = await client.acknowledgeToolExec(executionId);
+    expect(toolFrame.arguments).toEqual({ command: "echo gated" });
     await expect(dispatchPromise).resolves.toEqual({ kind: "accepted" });
 
     // Journal order proves the gate: the spawn follows the clean marker.
@@ -51,9 +50,9 @@ describe("L1 I30 syncing gate", () => {
     expect(clean?.action).toBe("clean");
     expect(forwarded[0]?.opSeq).toBeGreaterThan(clean?.opSeq ?? 0);
 
-    // Frame order on the wire: sync.complete precedes exec.spawn.
+    // Frame order on the wire: sync.complete precedes tool.exec.
     const types = client.inbound.map((frame) => frame.type);
-    expect(types.indexOf("sync.complete")).toBeLessThan(types.indexOf("exec.spawn"));
+    expect(types.indexOf("sync.complete")).toBeLessThan(types.indexOf("tool.exec"));
     await client.close();
   });
 });

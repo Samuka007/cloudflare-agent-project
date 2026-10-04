@@ -316,11 +316,24 @@ function dispatchFrame(
       resumeExecution(runtime, socket, frame.executionId, frame.ackedOffset);
       return;
     case "exec.kill":
-      // Business cancel (§2.4): kill the group; the exit frame is the answer.
+      // Business cancel (§2.4). Embedded bash (T9 #99) has no process group:
+      // the brush shell IS this client process (probe: /proc/$$/exe = bun),
+      // so kill = abort the run's AbortController; the tool.exited/error
+      // frame is the answer. The M0 pid kill-list is superseded — see the
+      // kill.list note below for the cross-restart gap.
       runtime.toolRuntime?.abort(frame.executionId);
+      // The executor half only fires for pid-bearing rows — none since T9;
+      // kept for the exec.* protocol face (§8.5 semantics unchanged).
       runtime.executor.killProcessGroup(frame.executionId, KILL_ESCALATION_MS);
       return;
     case "kill.list": {
+      // Reconcile verify-and-kill (§8.5/I22) — pid-bearing rows only. Since
+      // T9 #99 every host tool (bash included) runs embedded: no pid is
+      // recorded, an aborted client takes its same-group externals with it,
+      // and a cross-restart verify-and-kill cannot exist. setsid-detached
+      // escapees remain the operator's business, exactly as M0 post-restart
+      // minus verify-and-kill (probe docs/research/bash-embedding-probe.md,
+      // verdict + shim 4).
       let verifiedKills = 0;
       for (const entry of frame.entries) {
         const verified = runtime.executor.verifyAndKill(
