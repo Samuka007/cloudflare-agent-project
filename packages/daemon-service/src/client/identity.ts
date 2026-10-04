@@ -1,5 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { negotiationFailure } from "./backoff.js";
+import { log } from "./log.js";
 
 /**
  * Client identity (§8.1): the ONLY persisted client state — hostId + hostKey
@@ -43,7 +45,7 @@ async function enroll(config: ClientConfig, hostIdPath: string, authPath: string
   });
   const text = await response.text();
   if (response.status !== 201) {
-    throw new Error(`enroll failed: HTTP ${response.status} ${text}`);
+    throw negotiationFailure("enroll", response.status, response.headers.get("retry-after"), Date.now(), text);
   }
   const issued = JSON.parse(text) as { hostId: string; hostKey: string };
   writeFileSync(hostIdPath, `${issued.hostId}\n`);
@@ -52,8 +54,4 @@ async function enroll(config: ClientConfig, hostIdPath: string, authPath: string
   chmodSync(authPath, 0o600);
   log(`enrolled as hostId=${issued.hostId} (credentials persisted 0600)`);
   return { hostId: issued.hostId, hostKey: issued.hostKey };
-}
-
-export function log(message: string): void {
-  console.log(`[daemon-client] ${new Date().toISOString()} ${message}`);
 }
