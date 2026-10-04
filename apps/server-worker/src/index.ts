@@ -14,7 +14,7 @@ import {
   type ManagerDoBindings,
 } from "@cap/provider-app";
 import { createApp } from "./app.js";
-import { upsertAttachedHost } from "./db/hosts.js";
+import { updateHostRow, upsertAttachedHost } from "./db/hosts.js";
 import { NotificationHubDO } from "./ws/hub.js";
 import { LeaseStoreDO } from "./leases/lease-do.js";
 import type { Env } from "./env.js";
@@ -91,6 +91,9 @@ export default {
       const serviceEnv: DaemonServiceWorkerEnv = {
         DAEMON_SERVICE: requireDaemonService(env),
         AGENT_DO: env.AGENT_DO,
+        // #195 S3: the rejection path consumes the retry-update flag and
+        // broadcasts host-disconnected through the hub (bb internal/session.ts:56-57).
+        HUB: env.HUB,
         ENROLL_KEY: env.ENROLL_KEY ?? "[REDACTED-staging-secret]",
         DAEMON_HOST_KEY: env.DAEMON_HOST_KEY ?? "[REDACTED-staging-secret]",
         DAEMON_HOST_ID: env.DAEMON_HOST_ID,
@@ -99,8 +102,13 @@ export default {
         DAEMON_NEGATIVE_CACHE_MS: env.DAEMON_NEGATIVE_CACHE_MS,
         DAEMON_RATE_LIMIT_CAPACITY: env.DAEMON_RATE_LIMIT_CAPACITY,
         DAEMON_RATE_LIMIT_REFILL_PER_SEC: env.DAEMON_RATE_LIMIT_REFILL_PER_SEC,
-        // #49: daemon attach → control-plane host registry (the /hosts face).
-        onDaemonAttach: (hostId) => upsertAttachedHost(env, hostId),
+        // #49: daemon attach → control-plane host registry (the /hosts face);
+        // #195 S3: protocol rejections stamp last_rejected_protocol_version
+        // so the SPA's "Needs update" face activates (bb internal/session.ts:53-55).
+        onDaemonAttach: (hostId, info) => upsertAttachedHost(env, hostId, info),
+        onDaemonProtocolReject: async (hostId, protocolVersion) => {
+          await updateHostRow(env, hostId, { lastRejectedProtocolVersion: protocolVersion });
+        },
       };
       return daemonServiceWorker.fetch(request, serviceEnv);
     }

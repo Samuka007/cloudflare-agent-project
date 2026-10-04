@@ -191,10 +191,10 @@ describe("D7: sealed-error rows carry the message text with error status", () =>
   });
 });
 
-describe("E9/A6: provider-cli-status answers bb offline semantics", () => {
+describe("E9/A6: provider-clis/status answers bb offline semantics (#195 S5 path unification)", () => {
   it("404s an unknown host and 502 host_unavailable for a daemon-less one", async () => {
     const missing = await exports.default.fetch(
-      "https://example.com/api/v1/hosts/host_missing/provider-cli-status",
+      "https://example.com/api/v1/hosts/host_missing/provider-clis/status",
     );
     expect(missing.status).toBe(404);
     expect((await missing.json<{ code: string }>()).code).toBe("host_not_found");
@@ -207,7 +207,7 @@ describe("E9/A6: provider-cli-status answers bb offline semantics", () => {
       .bind(Date.now(), Date.now())
       .run();
     const known = await exports.default.fetch(
-      "https://example.com/api/v1/hosts/host_cli_status/provider-cli-status",
+      "https://example.com/api/v1/hosts/host_cli_status/provider-clis/status",
     );
     expect(known.status).toBe(502);
     const body = await known.json<{ code: string; message: string }>();

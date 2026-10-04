@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { negotiationFailure } from "./backoff.js";
 import { log } from "./log.js";
@@ -51,7 +52,9 @@ async function enroll(
   const response = await fetch(`${config.baseUrl}/enroll`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ enrollKey: config.enrollKey }),
+    // hostName rides the first registry insert (bb /hosts/enroll upserts the
+    // daemon's self-reported name, internal/hosts.ts:110).
+    body: JSON.stringify({ enrollKey: config.enrollKey, hostName: hostname() }),
   });
   const text = await response.text();
   if (response.status !== 201) {
