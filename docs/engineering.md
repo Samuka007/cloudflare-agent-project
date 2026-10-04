@@ -37,7 +37,7 @@
 7. 两把钥匙各守各的门：Access JWT 只在 Worker 前门；hostKey 只在 daemon 接缝；内部不重复验权
 8. 幂等写：D1 用 CAS（bb 形状）；DO 写用显式事务
 9. FSM 穷尽匹配：switch 禁 default，新增断点编译期红
-10. 移植保真：bb 已有之物逐字保真；新物种组件（daemon client）文档化标准与 bb 等同。**上游化约束（#76 裁决，2026-10-04）**：对 bb 面（SPA/协议/wire 形状）的一切改动必须以"可作为 bb 可选部署形式上游化"的形态存在——空态用 bb 自身门控（flag/env/数据缺省）表达，缺路由的高可见面优先以 bb 形状返回合法空响应；禁止 fork-only 补丁（F9 /projects 超集此类偏差须对齐）
+10. 移植保真：bb 已有之物逐字保真；新物种组件（daemon client）文档化标准与 bb 等同。**上游化约束（#76 裁决，2026-10-04）**：对 bb 面（SPA/协议/wire 形状）的一切改动必须以"可作为 bb 可选部署形式上游化"的形态存在；禁止 fork-only 补丁（F9 /projects 超集此类偏差须对齐）。**surface 三层判定法（用户澄清 2026-10-04，目标函数=最小化 contribute 难度）**：①**空置**——web 形态下无人调用的面（桌面专属入口/SPA 不会发出的请求）不写代码，路由缺失即正确；②**部署形态门控**（PM 自裁层）——SPA 有调用但服务端无概念的，按优先级取首个可行项：bb 自身机制（flag/env/数据缺省门控）> bb 形状合法空态响应 > 自建门控；③**根本性冲突上报**——无法以 ①② 手段同时兼容桌面与云端形态的冲突，立票请用户裁决，agent 不代答
 11. DO 请求量预算（#36 事故规则，2026-10-04）：跨 DO 接缝的设计必须附请求量预算表——哪些路径**必碰 DO**、哪些在**边缘消化**。DO 是按请求计费的热路径，边缘能消化的量（鉴权、拒绝、缓存、限流）不进 DO；DO 只留真状态。事故基线：#36 前 daemon-service front 是纯透传，每个协商请求 ≥1 次 DO RPC（hostKey 校验也走 DO），无负缓存、无限流，单 client 故障即可无限放大 DO 请求量。
 12. 版本与交付纪律（2026-10-04）：staging 部署只经 `nix run .#staging-deploy`（SPA 构建→资产断言→SERVER_VERSION=commit SHA→deploy；工具链由 flake 钉版）；milestone 关票打 tag 并更新 CHANGELOG；面板/基础设施侧变更（无 git 面）当日入 `docs/ops/`。M0 后 lane 改 **PR-per-lane**（直推 main 仅限事故热修，且票面必须留 PM 亲验证据）。
 
