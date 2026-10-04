@@ -50,7 +50,13 @@ export type {
   ToolResultPayload,
   ToolResultStatus as SeamToolResultStatus,
 } from "./daemon.js";
-export { applyEvent, computeDueWork, emptyReplayState, replayEvents } from "./turn-state.js";
+export {
+  activeTurnIdFromEvents,
+  applyEvent,
+  computeDueWork,
+  emptyReplayState,
+  replayEvents,
+} from "./turn-state.js";
 export type {
   ExecutionRuntime,
   ExecutionStatus,

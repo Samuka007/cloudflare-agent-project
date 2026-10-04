@@ -9,6 +9,7 @@ import {
 import { createRig, resetRuntime, type Rig } from "./helpers.js";
 import { executionIdFor } from "../src/ids.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";
+import { activeTurnIdFromEvents } from "../src/turn-state.js";
 import {
   askOptionValue,
   buildAskPayload,
@@ -306,6 +307,38 @@ describe("M1.5 T4 — ask pure semantics (omp ask.ts port)", () => {
     expect(duplicateLabels.output).toBe("Error: option labels must be unique within a question: A");
     expect(seen).toEqual([]);
   });
+
+  test("stop-route fold: input/steer assert the active turn, only a terminal clears it", () => {
+    expect(activeTurnIdFromEvents([])).toBeNull();
+    const input = event(
+      "turn.input",
+      { turnId: "turn_a", inputId: "in-1", content: [{ type: "text", text: "go" }] },
+      1,
+    );
+    expect(activeTurnIdFromEvents([input])).toBe("turn_a");
+    const steer = event(
+      "turn.steer",
+      { turnId: "turn_a", inputId: "st-1", content: [{ type: "text", text: "left" }] },
+      2,
+    );
+    expect(activeTurnIdFromEvents([input, steer])).toBe("turn_a");
+    // cancel_requested is a non-terminal row: a second Stop must still find
+    // the cancelling turn (cancelTurn is at-least-once by design).
+    const requested = event("turn.cancel_requested", { turnId: "turn_a" }, 3);
+    expect(activeTurnIdFromEvents([input, steer, requested])).toBe("turn_a");
+    const cancelled = event("turn.cancelled", { turnId: "turn_a" }, 4);
+    expect(activeTurnIdFromEvents([input, steer, requested, cancelled])).toBeNull();
+    // A foreign terminal never clears the pointer; the next input wins.
+    expect(activeTurnIdFromEvents([input, event("turn.completed", { turnId: "turn_z" }, 5)])).toBe(
+      "turn_a",
+    );
+    const next = event(
+      "turn.input",
+      { turnId: "turn_b", inputId: "in-2", content: [{ type: "text", text: "again" }] },
+      6,
+    );
+    expect(activeTurnIdFromEvents([input, cancelled, next])).toBe("turn_b");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -528,6 +561,24 @@ describe("M1.5 T4 — ask DO integration (DO↔SPA pending-interaction channel)"
     if (result?.type !== "tool.result") throw new Error("no cancelled result");
     expect(result.data.output).toBe("Ask tool was cancelled by the user");
     expect(events.some((event) => event.type === "turn.cancelled")).toBe(true);
+  });
+
+  test("ask pending is the cancellable active turn in the stop-route fold; the cancel clears it", async () => {
+    // #226: the SPA Stop route derives its target from this fold — a turn
+    // parked on an unbounded ask suspends the turn watchdog (the user IS the
+    // deadline), so the fold must still report it active until the cancel
+    // lands turn.cancelled.
+    const rig = await createRig({
+      turns: [
+        { toolCalls: [{ name: "ask", arguments: { questions: [ASK_QUESTION] } }] },
+        { deltas: ["ok"] },
+      ],
+    });
+    const turnId = await startAskTurn(rig, "stop-fold-cancel");
+    expect(activeTurnIdFromEvents(await rig.events())).toBe(turnId);
+    expect(await rig.stub.cancelTurn({ turnId })).toEqual({ accepted: true });
+    await rig.waitTurnComplete(turnId);
+    expect(activeTurnIdFromEvents(await rig.events())).toBeNull();
   });
 
   test("replay consistency: ruling landing while evicted is the re-asked executor's journal answer", async () => {
