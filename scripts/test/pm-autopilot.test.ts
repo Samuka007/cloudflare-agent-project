@@ -677,7 +677,8 @@ describe("pure core", () => {
     expect(packet?.context).toContain("墙钟 ≤ 60min");
     expect(packet?.worktree.command).toContain("herdr worktree create");
     expect(packet?.worktree.command).toContain("--branch lane/131-infra-pm-autopilot-eval");
-    const [skeleton] = dispatchPackets([{ ...t, body: "no budget here" }]);
+    // A true negative: no budget keyword, no wall-clock figure anywhere.
+    const [skeleton] = dispatchPackets([{ ...t, body: "nothing relevant on this line" }]);
     expect(skeleton?.budget.source).toBe("skeleton");
   });
 
@@ -1374,6 +1375,20 @@ const STRIPPED_DOR_BODY = FULL_DOR_BODY.split("\n")
   .filter((l) => !/锚点|往例/.test(l))
   .join("\n");
 
+/** #199 acceptance fixture: #197's original body, VERBATIM (unmodified
+ *  wording). The old word-form patterns rejected it (上游锚： has no 锚点;
+ *  预算 ≤1.5h has no 预算：) while every item was really present. */
+const TICKET_197_BODY = [
+  "## What to build",
+  "按 docs/design/streaming-contract.md D2/D3（**spec 为正本，先读**）：(1) agent-DO journal append 钩子（agent-do.ts:1099-1138 既有 pushToSubscribers tap）经 env.HUB 推式 RPC 到 NotificationHubDO（同 worker 导出，index.ts:36-44；AgentDoBindings 增 HUB? 可选，未绑定 no-op）；(2) hub 帧面增 delta payload 帧型（schema 按 spec 帧表）；(3) journal 词表增 turn.phase 五相行（stream_started/first_token/terminal/settled/host_lost，D3 语义）；(4) flush 旋钮用既有 deltaFlushMs=100/deltaFlushBytes=2048（config.ts:72-73），零新增缓冲。",
+  "**协调约束：与 #193（host 广播同碰 hub notify）串行——本票先动 hub 帧面+#193 后接生产者，或 PM 裁分工**。**复用三问**：hub/帧 schema 全自有（bb 无此面），DO RPC=CF 原生，无外部库可搬；适配垫=零（同 worker 绑定）。上游锚：spec §D2-D4+研究 docs/research/stream-surface.md。预算 ≤1.5h。参照往例：T17 yield 事件族 ≈ 1h。",
+  "",
+  "## Acceptance",
+  "- [ ] L2：journal append→hub 帧端到端断言（含 at-least-once/弃帧调和 D4 游标语义）",
+  "- [ ] turn.phase 五相行 replay 一致性（fold 不变式：渲染文本≡fold(journal[≤cursor])）",
+  "- [ ] staging 手验一帧真 delta 到达（curl WS 或测试桥）",
+].join("\n");
+
 function laneTicket(over: Partial<Ticket> = {}): Ticket {
   return {
     number: 200,
@@ -1413,6 +1428,22 @@ describe("dorChecklist (pure)", () => {
     const noBudget = dorChecklist("三问：有\n验收：有\n锚点：bb:x\n往例：有");
     expect(noBudget.find((c) => c.key === "budget")?.ok).toBe(false);
   });
+
+  // #199: detection is semantic — real writing like "上游锚：spec §D2-D4"
+  // or "预算 ≤1.5h" counts as evidence though neither carries the old
+  // word forms (锚点 / 预算：).
+  it("semantic detection: 锚：/§ refs/file paths/colonless time expressions count", () => {
+    const semantic = dorChecklist(
+      "复用三问：零适配垫\n验收：端到端断言\n上游锚：spec §D2-D4+研究 stream-surface.md\n预算 ≤1.5h\n参照往例：#147 ≈ 1h",
+    );
+    expect(semantic.every((c) => c.ok)).toBe(true);
+    const byPath = dorChecklist(
+      "三问：a\n验收：b\n按 scripts/pm-autopilot.ts:583-594 修\n预算 40min\n往例：c",
+    );
+    expect(byPath.find((c) => c.key === "anchors")?.ok).toBe(true);
+    const byTimeExpr = dorChecklist("三问：a\n验收：b\n锚点：c\n≤40min\n往例：d");
+    expect(byTimeExpr.find((c) => c.key === "budget")?.ok).toBe(true);
+  });
 });
 
 describe("AP.lane (runGit seam — zero filesystem side effects)", () => {
@@ -1420,22 +1451,30 @@ describe("AP.lane (runGit seam — zero filesystem side effects)", () => {
     _inject(null);
   });
 
-  it("refuses on missing DoR items with zero side effects, even on confirm", () => {
-    const rep = lane(laneTicket({ body: STRIPPED_DOR_BODY }), {}, { confirm: true });
-    expect(rep.refused).toBe(true);
-    expect(rep.ok).toBe(false);
-    expect(rep.spawn).toBeNull(); // a refused ticket never yields a spawn packet
-    expect(rep.worktreeCreated).toBe(false);
-    const reasons = rep.refusalReasons.join(" ");
-    expect(reasons).toContain("③上游锚点");
-    expect(reasons).toContain("⑤参照往例");
+  // #199 calibration: 假的严谨约束等于真的破坏推进 — DoR gaps inform the
+  // PM through the advisory table, they never refuse.
+  it("DoR is advisory: missing items print as gaps but the gate dispatches anyway", async () => {
+    const rep = await lane(laneTicket({ body: STRIPPED_DOR_BODY }));
+    expect(rep.refused).toBe(false); // old gate refused here on ③/⑤
+    expect(rep.ok).toBe(true);
+    expect(rep.spawn).not.toBeNull();
+    expect(rep.dor.filter((c) => !c.ok).map((c) => c.key)).toEqual(["anchors", "precedent"]);
   });
 
-  it("refuses tickets that fail the board predicate even with a full DoR", () => {
-    const backlog = lane(laneTicket({ status: "Backlog" }), {}, { confirm: true });
+  it("a fixture missing every DoR item still dispatches — only the board predicate refuses", async () => {
+    const rep = await lane(laneTicket({ body: "随便写写：改点东西，缺上游依据，时限未写。" }));
+    expect(rep.refused).toBe(false);
+    expect(rep.dor.every((c) => !c.ok)).toBe(true); // advisory table fully red, gate still open
+  });
+
+  it("refuses tickets that fail the board predicate (the only refusal)", async () => {
+    const backlog = await lane(laneTicket({ status: "Backlog" }), {}, { confirm: true });
     expect(backlog.refused).toBe(true);
     expect(backlog.refusalReasons[0]).toContain("board predicate");
-    const blocked = lane(
+    const closed = await lane(laneTicket({ state: "CLOSED" }), {}, { confirm: true });
+    expect(closed.refused).toBe(true);
+    expect(closed.worktreeCreated).toBe(false);
+    const blocked = await lane(
       laneTicket({ blockedBy: [{ number: 9, state: "OPEN", title: "open blocker" }] }),
       {},
       { confirm: true },
@@ -1443,8 +1482,8 @@ describe("AP.lane (runGit seam — zero filesystem side effects)", () => {
     expect(blocked.refused).toBe(true);
   });
 
-  it("dry-run pass: full plan + isolated spawn packet, no worktree created", () => {
-    const rep = lane(laneTicket());
+  it("dry-run pass: full plan + isolated spawn packet, no worktree created", async () => {
+    const rep = await lane(laneTicket());
     expect(rep.ok).toBe(true);
     expect(rep.refused).toBe(false);
     expect(rep.dryRun).toBe(true);
@@ -1460,7 +1499,7 @@ describe("AP.lane (runGit seam — zero filesystem side effects)", () => {
     );
   });
 
-  it("confirm: provisions the worktree through the git seam with herdr-path naming", () => {
+  it("confirm: provisions the worktree through the git seam with herdr-path naming", async () => {
     const gitCalls: { args: string[]; cwd: string }[] = [];
     _inject({
       runGit: (args, cwd) => {
@@ -1468,7 +1507,7 @@ describe("AP.lane (runGit seam — zero filesystem side effects)", () => {
         return "";
       },
     });
-    const rep = lane(
+    const rep = await lane(
       laneTicket(),
       { agent: "task", context: "# Contract\nshared interfaces" },
       { confirm: true },
@@ -1491,16 +1530,53 @@ describe("AP.lane (runGit seam — zero filesystem side effects)", () => {
     });
   });
 
-  it("confirm: git failure surfaces as an explicit error without a spawn lie", () => {
+  it("confirm: git failure surfaces as an explicit error without a spawn lie", async () => {
     _inject({
       runGit: () => {
         throw new Error("fatal: a branch named 'lane/200-feat-demo-lane' already exists");
       },
     });
-    const rep = lane(laneTicket(), {}, { confirm: true });
+    const rep = await lane(laneTicket(), {}, { confirm: true });
     expect(rep.ok).toBe(false);
     expect(rep.worktreeCreated).toBe(false);
     expect(rep.errors[0]).toContain("git worktree add failed");
     expect(rep.errors[0]).toContain("already exists");
+  });
+
+  // #199: dual entry. A number self-resolves through the snapshot seam and
+  // throws only when the number is not on the board.
+  it("dual entry: a number resolves through the snapshot seam to the same packet as the Ticket", async () => {
+    const board = new MockBoard();
+    board.addIssue({
+      number: 200,
+      title: "feat: demo lane",
+      bodyText: FULL_DOR_BODY,
+      milestone: { title: "M1" },
+    });
+    board.boardIssue(200, "Todo", "P1");
+    _inject({ gql: board.gql });
+    const byNumber = await lane(200);
+    const byTicket = await lane(laneTicket());
+    expect(byNumber.number).toBe(200);
+    expect(byNumber.refused).toBe(false);
+    expect(byNumber.spawn?.task).toBe(byTicket.spawn?.task);
+    expect(byNumber.worktree.branch).toBe(byTicket.worktree.branch);
+  });
+
+  it("dual entry: a number not on board throws — the only new throw", async () => {
+    _inject({ gql: new MockBoard().gql });
+    await expect(lane(999)).rejects.toThrow("not on board");
+  });
+
+  it("#197 original body (verbatim, unmodified) passes the gate with a fully green advisory table", async () => {
+    const rep = await lane(laneTicket({ number: 197, id: "I197", body: TICKET_197_BODY }));
+    expect(rep.refused).toBe(false);
+    expect(rep.ok).toBe(true);
+    expect(rep.dor.every((c) => c.ok)).toBe(true);
+    // first match wins: line 2's spec file path is itself an anchor now
+    expect(rep.dor.find((c) => c.key === "anchors")?.evidence).toContain(
+      "docs/design/streaming-contract.md",
+    );
+    expect(rep.dor.find((c) => c.key === "budget")?.evidence).toContain("预算 ≤1.5h");
   });
 });

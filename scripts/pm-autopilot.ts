@@ -50,18 +50,21 @@
  *                                      // exact-milestone match; explicit pins are
  *                                      // never re-classified or demoted.
  *
- * Dispatch gate (#171) — AP.lane: DoR preflight → worktree provision →
- * isolated spawn. Structure replaces PM recall; a bare spawn of the main
+ * Dispatch gate (#171, recalibrated #199) — AP.lane: board-predicate
+ * refusal → worktree provision → isolated spawn, with the DoR table riding
+ * along as advisory. Structure replaces PM recall; a bare spawn of the main
  * checkout is no longer expressible:
  *
  *     const t = AP.dispatchable(snap)[0];
+ *     await AP.lane(197);                 // number entry: snapshot self-fetch (#199)
  *     await AP.lane(t);                   // dry-run: DoR table + spawn plan, zero writes
  *     await AP.lane(t, { agent: "task" }, { confirm: true });
  *                                      // runs `git worktree add <herdr path>
  *                                      // -b lane/<ticket>-<slug> origin/main`, returns
  *                                      // spawn { agent, isolated: true, task, context }.
- *                                      // Any unmet DoR item (三问/验收/锚点/预算/往例)
- *                                      // or a failed board predicate refuses dispatch.
+ *                                      // A failed board predicate refuses dispatch;
+ *                                      // DoR gaps (三问/验收/锚点/预算/往例) are
+ *                                      // advisory — they print, never refuse.
  *     // then mark In Progress:
  *     await AP.apply([{ op: "setStatus", number: t.number, value: "In Progress" }], { confirm: true });
  *
@@ -580,8 +583,13 @@ export function slugify(title: string, number: number): string {
 
 // No /g: exec advances lastIndex across calls on a shared /g regex, which
 // silently drops the budget of every packet after the first match.
+// Semantic level (#199): a budget is any line naming the axis (预算/budget/
+// 墙钟/wall 时钟/efficienc) or carrying a wall-clock time expression
+// (≤1.5h / 40min / 30分钟 / 2 hours) — no colon shape required; real writing
+// is "预算 ≤1.5h", not "预算：≤1.5h", and the detector must read the same
+// language the tickets do.
 const BUDGET_PATTERN =
-  /^\s*(?:[-*]\s*)?(?:.*(?:预算|budget|wall\s*时钟|墙钟|efficienc)\s*[：:].*)$/im;
+  /^\s*(?:[-*]\s*)?(?:.*(?:预算|budget|wall\s*时钟|墙钟|efficienc).*|.*\d+(?:\.\d+)?\s*(?:min(?:ute)?s?|h(?:ours?|rs?)?|分钟)(?![a-z]).*)$/im;
 
 function budgetOf(body: string): { source: "body" | "skeleton"; line: string } {
   const matched = BUDGET_PATTERN.exec(body)?.[0];
@@ -677,7 +685,12 @@ const DOR_LINE_ITEMS: readonly {
   {
     key: "anchors",
     label: "③上游锚点",
-    pattern: /锚点|anchor|(?:^|\s)(?:bb|omp)\s*[：:]\s*\S/i,
+    // Semantic level (#199): an anchor is 锚/anchor wording, a § reference,
+    // a bb:/omp: pointer, or a file path (pathed or bare-filename, line
+    // range optional) — "上游锚：spec §D2-D4" and "按 agent-do.ts:1099" are
+    // anchors though neither contains the literal word 锚点.
+    pattern:
+      /锚|anchor|§\s*\S|(?:^|\s)(?:bb|omp)\s*[：:]\s*\S|[\w@.-]+(?:\/[\w@.-]+)+\.[A-Za-z]\w{0,7}|\b[\w@-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|rb|php|sh|md|json|ya?ml|toml|sql|css|html|nix|tf|env|conf)\b/i,
   },
   {
     key: "precedent",
@@ -687,10 +700,12 @@ const DOR_LINE_ITEMS: readonly {
 ];
 
 /**
- * The five DoR gate items (#171) detected in the ticket body: 复用三问答案
- * 引用 / 验收面 / 上游锚点 / 预算 / 参照往例. Budget reuses budgetOf's body
- * pattern (the skeleton fallback = the item is missing). Pure, line-anchored
- * heuristics — the L1 suite pins them; anything smarter belongs in intake.
+ * The five DoR items (#171) detected in the ticket body: 复用三问答案引用 /
+ * 验收面 / 上游锚点 / 预算 / 参照往例. Budget reuses budgetOf's body pattern
+ * (the skeleton fallback = the item is missing). Detection is semantic
+ * (#199) — matched against how tickets are actually written (锚：/预算
+ * ≤1.5h/§refs/file paths), not a pinned word form. Pure line heuristics; the
+ * L1 suite pins them; anything smarter belongs in intake.
  */
 export function dorChecklist(body: string): DorCheck[] {
   const lines = body
@@ -732,8 +747,10 @@ export interface LaneDispatchReport {
   title: string;
   /** Board predicate held (open ∧ Todo ∧ no open blockers ∧ ¬rfh). */
   dispatchable: boolean;
+  /** Advisory only (#199): informs the PM, never refuses. */
   dor: DorCheck[];
   refused: boolean;
+  /** Only the board predicate refuses (#199) — DoR gaps are advisory. */
   refusalReasons: string[];
   worktree: WorktreePlan;
   /** True only when the confirm path actually ran `git worktree add`. */
@@ -757,6 +774,20 @@ const expandHome = (p: string): string =>
 const truncateLine = (line: string, max: number): string =>
   line.length > max ? `${line.slice(0, max - 1)}…` : line;
 
+/** number → Ticket through a fresh snapshot (#199): the PM's first move is
+ *  `lane(197)`, not a snapshot fetch. Throws only when the number is not on
+ *  the board — every other judgement stays with the normal gate flow. */
+async function ticketOnBoard(number: number): Promise<Ticket> {
+  const snap = await snapshot();
+  const found = snap.tickets.find((t) => t.number === number);
+  if (found === undefined) {
+    throw new Error(
+      `AP.lane: #${number} not on board — file it first (AP.file) or check the number`,
+    );
+  }
+  return found;
+}
+
 function renderLaneReport(r: LaneDispatchReport): string {
   const lines = [
     `== AP.lane ${r.refused ? "REFUSED" : r.dryRun ? "plan (dry-run)" : "dispatched"} #${r.number} ==`,
@@ -768,6 +799,9 @@ function renderLaneReport(r: LaneDispatchReport): string {
       `  DoR ${c.ok ? "✓" : "✗"} ${c.label}` +
         (c.evidence !== null ? ` — ${truncateLine(c.evidence, 80)}` : " — MISSING"),
     );
+  }
+  if (r.dor.some((c) => !c.ok)) {
+    lines.push("  DoR note  advisory — gaps do NOT refuse (#199); PM judges before spawning");
   }
   lines.push(
     `  WORKTREE  ${r.worktree.branch} @ ${r.worktree.path}` +
@@ -783,48 +817,61 @@ function renderLaneReport(r: LaneDispatchReport): string {
   }
   for (const e of r.refusalReasons) lines.push(`  REFUSED   ${e}`);
   for (const e of r.errors) lines.push(`  ERROR     ${e}`);
+  if (!r.refused) {
+    lines.push(
+      `  PM        flip Status → In Progress via AP.apply — the gate writes no board fields`,
+    );
+  }
   return lines.join("\n");
 }
 
 /**
- * The dispatch gate (#171): structure replaces PM recall. Given a ticket,
- * AP.lane (a) preflights the five DoR items and REFUSES — zero side effects
- * — if any is missing or the board predicate fails; (b) on confirm, runs
+ * The dispatch gate (#171), recalibrated by #199 into plain spawn
+ * scaffolding: its value is the guarantees — deterministic herdr worktree,
+ * isolated-only spawn packet, board-truth refusal — not prose policing.
+ * 假的严谨约束等于真的破坏推进: the first real use rejected #197 four
+ * times on word-form checks while the body carried real anchors and budget.
+ *
+ * Entry is number | Ticket (#199): a number resolves through a fresh
+ * snapshot and throws only when it is not on the board. AP.lane (a) refuses
+ * — zero side effects — on the ONE structural check, the board predicate
+ * (open ∧ Todo ∧ no open blockers ∧ ¬ready-for-human); the five-item DoR
+ * table rides along as ADVISORY for the PM and never refuses; (b) on
+ * confirm, runs
  * `git worktree add <herdr path> -b lane/<ticket>-<slug> origin/main` at the
  * deterministic herdr path (naming reused from dispatchPackets); (c) always
  * returns the omp spawn packet with `isolated: true` baked in — a bare
  * spawn of the main checkout is no longer expressible through this gate.
  *
+ * The Status → In Progress flip stays with the PM via AP.apply: the gate
+ * writes no board fields (its only transport is the number-entry snapshot;
+ * the only write it issues is the confirm-path `git worktree add`).
+ *
  * DRY-RUN default (consistent with apply/file): prints the DoR table +
- * worktree/spawn plan, creates nothing. The PM then marks the ticket In
- * Progress via AP.apply — lane() stays transport-free (only the runGit seam),
- * hence synchronous; awaiting it at a call site stays legal if a transport
- * ever grows onto the gate.
+ * worktree/spawn plan, creates nothing.
  */
-export function lane(
-  ticket: Ticket,
+export async function lane(
+  ticket: number | Ticket,
   agentSpec: LaneAgentSpec = {},
   opts: { confirm?: boolean; base?: string; cwd?: string } = {},
-): LaneDispatchReport {
-  const [packet] = dispatchPackets([ticket]);
+): Promise<LaneDispatchReport> {
+  const t = typeof ticket === "number" ? await ticketOnBoard(ticket) : ticket;
+  const [packet] = dispatchPackets([t]);
   if (packet === undefined) throw new Error("AP.lane: dispatchPackets returned no packet");
-  const dor = dorChecklist(ticket.body);
-  const isDispatchable = dispatchable({ tickets: [ticket] }).length > 0;
+  const dor = dorChecklist(t.body);
+  const isDispatchable = dispatchable({ tickets: [t] }).length > 0;
   const refusalReasons: string[] = [];
   if (!isDispatchable) {
     refusalReasons.push(
       "board predicate unmet (open ∧ Todo ∧ no open blockers ∧ ¬ready-for-human) — flip Status via AP.apply first",
     );
   }
-  for (const m of dor.filter((c) => !c.ok)) {
-    refusalReasons.push(`DoR ${m.label} missing from ticket body`);
-  }
   const dryRun = !opts.confirm;
   const report: LaneDispatchReport = {
     ok: false,
     dryRun,
-    number: ticket.number,
-    title: ticket.title,
+    number: t.number,
+    title: t.title,
     dispatchable: isDispatchable,
     dor,
     refused: refusalReasons.length > 0,
