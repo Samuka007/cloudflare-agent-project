@@ -77,6 +77,44 @@ const thinkSchema = type({
   "+": "reject",
 }).describe("private scratchpad; not shown to user");
 
+// omp packages/coding-agent/src/tools/read.ts:687-689 (@oh-my-pi 18.6.0)
+const readSchema = type({
+  path: type("string").describe("Local path, internal URI, or URL; selectors inline."),
+});
+
+// omp packages/coding-agent/src/tools/write.ts:194-197 (18.6.0)
+const writeSchema = type({
+  path: "string",
+  "content?": "string",
+});
+
+// omp packages/coding-agent/src/tools/glob.ts:34-39 (`findSchema` — the
+// glob/find unified search surface, 18.6.0)
+const globSchema = type({
+  "path?": "string",
+  "hidden?": "boolean",
+  "gitignore?": "boolean",
+  "limit?": "number",
+});
+
+// omp packages/coding-agent/src/tools/grep.ts:60-66 (`searchSchema`, 18.6.0)
+const grepSchema = type({
+  pattern: type("string"),
+  "path?": "string",
+  "case?": "boolean",
+  "gitignore?": "boolean",
+  "skip?": type("number").or("null"),
+});
+
+// omp packages/coding-agent/src/edit/schemas.ts:39-41
+// (`hashlineEditParamsSchema`, 18.6.0). The daemon host pins the edit mode
+// via isolated settings (edit.mode default "hashline"; no per-model variant
+// — the host session never sets an active model), so the hashline variant IS
+// the schema the embedded EditTool validates against.
+const editSchema = type({
+  input: "string",
+});
+
 // ---------------------------------------------------------------------------
 // Description templates — omp prompts/tools/*.md verbatim
 // ---------------------------------------------------------------------------
@@ -103,43 +141,169 @@ const NEW_CONTEXT_DESCRIPTION_TEMPLATE =
 // omp think.ts:56 — no prompt file exists; the tool's literal description.
 const THINK_DESCRIPTION = "private scratchpad; not shown to user";
 
+// omp packages/coding-agent/src/prompts/tools/read.md (18.6.0; handlebars
+// conditionals — IS_HL_MODE true for this host, see ToolRenderFlags).
+const READ_DESCRIPTION_TEMPLATE = `Use \`read\` for static web; browser only if needed.
+
+Path suffixes: :50 or :50- starts at line 50; :50-200 inclusive; :50+150 counts lines; :-60 last 60; commas join ranges (:5-16,960-973) or individual lines (:19,59). :raw verbatim without anchors/prefixes; combine :2-4:raw or :raw:2-4. :conflicts lists one line per unresolved merge block. SVG/SVGZ default text; :img PNG, :raw original. Video requires ffmpeg/ffprobe: bare preview grid+metadata, :412 frame, :1h5m42s/:90s/:01:23 time.
+
+Sources:
+- Bare code: declarations only; re-read ONLY footer-named omissions, NEVER guess \`..\`/\`…\`.
+{{#if IS_HL_MODE}}- Selected file: \`[foo.ts#1A2B]\` snapshot+lines. Copy \`[FILENAME#TAG]\` for anchored edits; NEVER invent tag.
+{{/if}}- Directory: complete root; child listings cap at 12 (\`… N more\`), read child; page via :N-M/:-N.
+- SQLite: file.db tables; :table schema/rows; :table:key by primary key; ?limit=, ?where=, ?q=SELECT.
+- Archives: ZIP/JAR/APK/WHL, compressed TAR, RAR/7z/ISO/CAB/DEB/RPM/CPIO/AR/LZH/ARJ/ASAR, compressed streams; member via archive.ext:member/path.
+{{#if BINARY_VIEWS}}- Executables (ELF/PE/Mach-O, extensionless ok): overview + function list; :<func|0xaddr> pseudocode, :<func>:asm, :imports, :exports, :strings, :xrefs:<func|0xaddr>; line ranges apply after the view (bin:main:10-40). Universal Mach-O: host-arch slice by default, bin:@<arch> picks another (bin:@x86_64:main).
+{{/if}}- PDF/documents: extracted text; notebooks: editable cells; images: decoded inline. URLs: reader text/markdown, :raw original HTML; bare host:port needs trailing slash.
+`;
+
+// omp packages/coding-agent/src/prompts/tools/write.md (18.6.0)
+const WRITE_DESCRIPTION_TEMPLATE = `SHOULD \`edit\` existing files; \`write\` for required new files or whole-file replacement. NEVER create docs or emojis unless requested.
+\`archive.ext:member\`: ZIP/tar families and \`.asar\` writable, others read-only. \`db.sqlite:table\`: insert; \`db.sqlite:table:key\`: JSON update, empty content deletes.
+`;
+
+// omp packages/coding-agent/src/prompts/tools/glob.md (18.6.0; ifAny block
+// resolves empty — this host has no find tool and no delegation surface).
+const GLOB_DESCRIPTION_TEMPLATE = `Glob files/dirs: \`;\`-separated paths or internal URLs (\`local://*.md\`, \`omp://**/*.md\`); default workspace root.
+\`gitignore\` and \`hidden\` default true; ignored dotfiles need \`gitignore: false\`. Newest-first by directory; dirs end \`/\`.
+{{#ifAny eagerDelegation hasFind}}
+{{#if hasFind}}Behavior search → \`find\`.{{/if}}
+{{#if eagerDelegation}}Multi-round discovery → {{#if scoutAvailable}}Task + scout{{else}}Task{{/if}}.{{/if}}
+{{/ifAny}}
+`;
+
+// omp packages/coding-agent/src/prompts/tools/grep.md (18.6.0; same flag
+// policy as glob).
+const GREP_DESCRIPTION_TEMPLATE = `Regex: Rust, then PCRE2. \`path\`: \`;\`-separated file/dir/glob/URL; default \`.\`. Default case-sensitive, gitignore respected; \`skip\` paginates files.
+File-only selector: \`src/foo.ts:50-100\`. Literal \`\\n\`/\`\\\\n\` enables cross-line.
+Bare glob \`*.ts\` matches any depth; \`dir/*.ts\` only \`dir\`'s direct children (\`dir/**/*.ts\` recurses).
+{{#if hasFind}}Behavior/unknown symbol → \`find\`; literals/regex → \`grep\`.{{/if}}
+{{#if eagerDelegation}}Multi-round search MUST use {{#if scoutAvailable}}Task + scout{{else}}Task{{/if}}, not chained calls.{{/if}}
+`;
+
+// Embedded EditTool description for the host-pinned hashline mode: the
+// verbatim output of omp's native `editDescription("hashline")` + render
+// (@oh-my-pi 18.6.0 — extracted by running the vendored runtime; no prompt
+// file exists for it). Re-extract on version bumps.
+const EDIT_HASHLINE_DESCRIPTION = `Hashline patches existing files; new files: \`write\`. Each file: \`[PATH#TAG]\`, \`TAG\` required 4-hex snapshot from latest \`read\`/\`search\`. Numbers: original \`LINE:TEXT\`, never hunk-shifted.
+
+<ops>
+\`PUT N.=M:\` replace inclusive N–M with \`+\` body (\`N.=N\` for one line); \`PUT N*:\` replace block N.
+\`PUT <N:\`/\`PUT >N:\` insert before/after N (\`<1\` head, \`>$\` tail). \`PUT >N*:\` insert after block N at sibling depth; inside, use \`PUT >M:\` at closer.
+\`CUT N.=M\`/\`CUT N*\` delete and capture, optionally as \`@name\`.
+\`PUT <N @name\`/\`PUT >N @name\` paste at gap (omit name for anonymous CUT); \`PUT N.=M @name\`/\`PUT N* @name\` paste over range/block (name REQUIRED). Register pastes have NO body; named registers persist across calls.
+\`REM\` delete file; \`MV DEST\` rename after prior edits (quote spaced paths).
+</ops>
+
+<rules>
+- \`:\` ops only: body rows \`+TEXT\` verbatim incl. indent; lone \`+\` blank. Literal \`- item\`/\`+ item\` → \`+- item\`/\`++ item\`. NEVER \`-\`/bare context. Body length independent of range; delete with CUT, not empty PUT.
+- Touch displayed changed lines only; \`…\`, \`..\`, collapsed \`N-M:\` and out-of-window lines UNSEEN. Re-read first. Tight ranges: split nonadjacent changes; NEVER include keepers or start/end mid-expression/block. Pure addition uses gap PUT.
+- \`*\` requires multi-line opener, NEVER closer/last/inner statement; use range/gap for one statement. Anchor first decorator/attribute/doc-comment to include it; standalone comments need explicit range.
+- Markdown heading blocks run through deeper headings until next same/higher; after section \`PUT >N*:\`, end body with blank line.
+- NEVER restyle unrelated code. After EVERY edit tag/numbers change: use edit response or fresh \`read\`; stale tag/surprise → STOP, re-read.
+</rules>
+
+<example>
+\`\`\`
+[greet.py#A1B2]
+PUT 1*:
++@cache
++def greet(name):
++    print(name)
+[PLAN.md#3C4D]
+PUT >2:
++- task
+\`\`\`
+Cross-file move: \`CUT 1* @fn\` in source, then \`PUT <1 @fn\` in destination section.
+</example>`;
+
 /** Conditional flags the bash template resolves against (omp render context). */
 export interface ToolRenderFlags {
   hasEval: boolean;
   asyncEnabled: boolean;
   hasLaunch: boolean;
   autoBackgroundEnabled: boolean;
+  /** read.md: hashline mode is on (selected-file snapshot lines + edit tags). */
+  IS_HL_MODE: boolean;
+  /** read/glob/grep.md: the find (jfind) tool is registered. */
+  hasFind: boolean;
+  /** glob/grep.md: eager delegation guidance (Task + scout) is on the surface. */
+  eagerDelegation: boolean;
+  /** glob/grep.md: the scout delegate exists. */
+  scoutAvailable: boolean;
+  /** read.md: binary view lines (ELF/PE/Mach-O readers). */
+  BINARY_VIEWS: boolean;
 }
 
-/** M0 rendering policy: every bash conditional false (M0 wire.ts anchor). */
+/**
+ * Host rendering policy: bash conditionals false (M0 wire.ts anchor); the
+ * host-template conditionals reflect the daemon host's pinned render context
+ * — hashline edit mode is pinned by the isolated settings (IS_HL_MODE true),
+ * and find/delegation/binary-view surfaces are absent in M1.5.
+ */
 export const M0_RENDER_FLAGS: ToolRenderFlags = {
   hasEval: false,
   asyncEnabled: false,
   hasLaunch: false,
   autoBackgroundEnabled: false,
+  IS_HL_MODE: true,
+  hasFind: false,
+  eagerDelegation: false,
+  scoutAvailable: false,
+  BINARY_VIEWS: false,
 };
 
-/** Resolves `{{#if flag}}a{{else}}b{{/if}}` branches; no nesting in omp tool templates. */
+const TAG_SPLIT = /\{\{(#if \w+|#ifAny [\w ]+|else|\/if|\/ifAny)\}\}/g;
+
+/**
+ * Resolves omp handlebars conditional blocks against the flags: `{{#if x}}`,
+ * `{{#ifAny x y}}` (any-true semantics), `{{else}}`, and their closers —
+ * nested, blocks spanning lines or inline within one. Tag-only lines vanish
+ * (handlebars standalone-block semantics) and a line that was entirely a
+ * false conditional disappears with its resolution; every other line keeps
+ * its shape, so the hashline edit template's intentional blank lines survive
+ * (a global blank-line pass would destroy them).
+ */
 export function renderToolDescription(template: string, flags: ToolRenderFlags): string {
-  const rendered = template.replaceAll(
-    /\{\{#if (\w+)\}\}([\s\S]*?)\{\{else\}\}([\s\S]*?)\{\{\/if\}\}/g,
-    (_match, flag: string, whenTrue: string, whenFalse: string) =>
-      flags[flag as keyof ToolRenderFlags] ? whenTrue : whenFalse,
-  );
-  return (
-    rendered
-      .replaceAll(
-        /\{\{#if (\w+)\}\}([\s\S]*?)\{\{\/if\}\}/g,
-        (_match, flag: string, body: string) => (flags[flag as keyof ToolRenderFlags] ? body : ""),
-      )
-      // A false {{#if}} on its own template line leaves an empty line behind
-      // (handlebars strips standalone-conditionals lines); omp tool templates
-      // carry no intentionally blank lines, so drop them.
-      .split("\n")
-      .filter((line) => line.trim().length > 0)
-      .join("\n")
-      .trimEnd()
-  );
+  const outLines: string[] = [];
+  const stack: { active: boolean; satisfied: boolean }[] = [];
+  const enclosingActive = () => stack.every((frame) => frame.active);
+  for (const line of template.split("\n")) {
+    const tokens = line.split(TAG_SPLIT);
+    const pieces: string[] = [];
+    let hadTag = false;
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index];
+      if (token === undefined) continue;
+      if (index % 2 === 1) {
+        hadTag = true;
+        if (token.startsWith("#if ")) {
+          const flag = token.slice(4);
+          const value = enclosingActive() && flags[flag as keyof ToolRenderFlags] === true;
+          stack.push({ active: value, satisfied: value });
+        } else if (token.startsWith("#ifAny ")) {
+          const names = token.slice(7).trim().split(/\s+/);
+          const value =
+            enclosingActive() && names.some((name) => flags[name as keyof ToolRenderFlags] === true);
+          stack.push({ active: value, satisfied: value });
+        } else if (token === "else") {
+          const frame = stack[stack.length - 1];
+          if (frame !== undefined) {
+            frame.active = stack.slice(0, -1).every((parent) => parent.active) && !frame.satisfied;
+          }
+        } else {
+          stack.pop();
+        }
+      } else if (enclosingActive() && token.length > 0) {
+        pieces.push(token);
+      }
+    }
+    const rendered = pieces.join("");
+    if (hadTag && rendered.length === 0) continue;
+    outLines.push(rendered);
+  }
+  if (stack.length > 0) throw new Error("unbalanced conditionals in tool description template");
+  return outLines.join("\n").trimEnd();
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +317,44 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     name: "bash",
     schema: bashSchema,
     descriptionTemplate: BASH_DESCRIPTION_TEMPLATE,
+    class: "host",
+    backend: { kind: "daemon-dispatch" },
+    intent: "require",
+  },
+  {
+    // M1.5/T5' #128: read is vendored-runtime host class — the daemon client
+    // executes it through the embedded omp runtime (@oh-my-pi 18.6.0).
+    name: "read",
+    schema: readSchema,
+    descriptionTemplate: READ_DESCRIPTION_TEMPLATE,
+    class: "host",
+    backend: { kind: "daemon-dispatch" },
+    intent: "require",
+  },
+  {
+    // M1.5/T5' #128: edit rides the same embedded runtime; hashline mode is
+    // pinned host-side by the isolated settings (edit.mode default).
+    name: "edit",
+    schema: editSchema,
+    descriptionTemplate: EDIT_HASHLINE_DESCRIPTION,
+    class: "host",
+    backend: { kind: "daemon-dispatch" },
+    intent: "require",
+  },
+  {
+    // M1.5/T5' #128: glob — natives glob engine, executed by the daemon host.
+    name: "glob",
+    schema: globSchema,
+    descriptionTemplate: GLOB_DESCRIPTION_TEMPLATE,
+    class: "host",
+    backend: { kind: "daemon-dispatch" },
+    intent: "require",
+  },
+  {
+    // M1.5/T5' #128: grep — natives ripgrep engine, executed by the daemon host.
+    name: "grep",
+    schema: grepSchema,
+    descriptionTemplate: GREP_DESCRIPTION_TEMPLATE,
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",
@@ -184,6 +386,16 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "edge",
     backend: { kind: "do-local" },
     intent: "omit",
+  },
+  {
+    // M1.5/T5' #128: write — the last of the five vendored-runtime host
+    // tools (builtin wire order #23).
+    name: "write",
+    schema: writeSchema,
+    descriptionTemplate: WRITE_DESCRIPTION_TEMPLATE,
+    class: "host",
+    backend: { kind: "daemon-dispatch" },
+    intent: "require",
   },
 ];
 

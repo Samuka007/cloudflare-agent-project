@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import {
   DAEMON_PROTOCOL_VERSION,
   HEARTBEAT_INTERVAL_MS,
@@ -12,6 +13,12 @@ import { serviceFrameSchema, type ObservedExecution, type ServiceFrame } from ".
 import { loadIdentity, type ClientConfig, type ClientIdentity } from "./identity.js";
 import { Executor, scanMarkerProcesses } from "./executor.js";
 import { ExecutionBuffer } from "./buffers.js";
+import {
+  assertNativeAddonCurrent,
+  readNativeAddonStatus,
+  ToolRuntime,
+  type ToolDispatchFrame,
+} from "./tool-runtime.js";
 import { watchSocketClose, WSSession } from "./ws-session.js";
 
 /**
@@ -30,6 +37,10 @@ const WS_ATTACH_TIMEOUT_MS = 10_000;
 interface ClientRuntime {
   bootId: string;
   executor: Executor;
+  /** machineId this boot serves (the hostId; set with the identity). */
+  machineId: string | null;
+  /** Embedded omp runtime (T5') — lazily constructed, one per process. */
+  toolRuntime: ToolRuntime | null;
   readonly buffers: Map<string, ExecutionBuffer>;
   /** announce generation, per session, from 1 (§8.2). */
   generation: number;
@@ -48,6 +59,8 @@ export async function runClient(config: ClientConfig): Promise<void> {
   const runtime: ClientRuntime = {
     bootId: randomUUID(),
     executor: new Executor(config.sandboxRoot),
+    machineId: null,
+    toolRuntime: null,
     buffers: new Map(),
     generation: 0,
     session: null,
@@ -58,6 +71,11 @@ export async function runClient(config: ClientConfig): Promise<void> {
     queueBusy: false,
   };
   log(`boot ${runtime.bootId} sandbox=${config.sandboxRoot} dataDir=${config.dataDir}`);
+  // Native addon version gate (T5'): a stale addon (addon release != package
+  // release) loads but crashes host tools at import — refuse to start at all
+  // (spike §2: 15.5.6 addon under an 18.4.4 package).
+  assertNativeAddonCurrent(await readNativeAddonStatus());
+  log("native addon gate: current");
   // Identity loading (first boot → enroll) lives inside the loop: a
   // rejecting /enroll must ride the same backoff chain as session/open
   // (issue #35) instead of crashing the process into supervisor-hammering.
@@ -108,6 +126,7 @@ async function establishSession(
     leaseTimeoutMs: number;
   };
   log(`session ${open.sessionId} opened (heartbeat ${open.heartbeatIntervalMs}ms)`);
+  runtime.machineId ??= identity.hostId;
 
   const wsUrl = `${config.baseUrl.replace(/^http/, "ws")}/ws?hostId=${encodeURIComponent(identity.hostId)}&sessionId=${encodeURIComponent(open.sessionId)}`;
   // Bun extends the WHATWG constructor with per-socket headers (bb Bearer
@@ -290,11 +309,15 @@ function dispatchFrame(
       }
       return;
     }
+    case "tool.exec":
+      dispatchToolExec(runtime, config, socket, frame);
+      return;
     case "exec.resume":
       resumeExecution(runtime, socket, frame.executionId, frame.ackedOffset);
       return;
     case "exec.kill":
       // Business cancel (§2.4): kill the group; the exit frame is the answer.
+      runtime.toolRuntime?.abort(frame.executionId);
       runtime.executor.killProcessGroup(frame.executionId, KILL_ESCALATION_MS);
       return;
     case "kill.list": {
@@ -335,6 +358,69 @@ function dispatchFrame(
       log(`service error frame: ${frame.code} ${frame.message}`);
       return;
   }
+}
+
+/**
+ * Host-tool dispatch (T5'): relay the tool-agnostic frame into the embedded
+ * omp runtime. The execution is kicked off, never awaited inline (the §8.3
+ * serial queue stays synchronous); output streams through the same offset
+ * buffer as bash, and the structured projection closes with tool.exited.
+ */
+function dispatchToolExec(
+  runtime: ClientRuntime,
+  config: ClientConfig,
+  socket: WebSocket,
+  frame: Extract<ServiceFrame, { type: "tool.exec" }>,
+): void {
+  const toolRuntime = (runtime.toolRuntime ??= new ToolRuntime({
+    workspaceRoot: config.sandboxRoot,
+    agentDir: join(config.dataDir, "omp-agent"),
+    machineId: runtime.machineId ?? "",
+  }));
+  // A watchdog re-forward of a live run reuses its buffer — the first run
+  // owns the output subscription (execute() is idempotent per executionId).
+  const existing = runtime.buffers.get(frame.executionId) ?? new ExecutionBuffer();
+  runtime.buffers.set(frame.executionId, existing);
+  const dispatchFrame_: ToolDispatchFrame = {
+    tool: frame.tool,
+    arguments: frame.arguments,
+    executionId: frame.executionId,
+    machineId: runtime.machineId ?? "",
+    timeoutMs: frame.timeoutMs,
+  };
+  if (!toolRuntime.running.has(frame.executionId)) {
+    const execution = toolRuntime.execute(dispatchFrame_, (chunk) => existing.append(chunk));
+    void execution
+      .then((result) => {
+        existing.exited = { exitCode: null, signal: null, finalOffset: existing.end };
+        existing.toolResult = result;
+        if (socket.readyState !== socket.OPEN) return;
+        flushBuffers(runtime, socket); // output bytes precede the result on the wire
+        socket.send(
+          JSON.stringify({
+            type: "tool.exited",
+            threadId: threadIdOf(frame.executionId),
+            executionId: frame.executionId,
+            result,
+          } satisfies Record<string, unknown>),
+        );
+      })
+      .catch((error: unknown) => {
+        log(`tool ${frame.executionId} crashed: ${errorText(error)}`);
+      });
+  }
+  // Idempotent acceptance (I16 client half): a watchdog re-forward of a live
+  // run acks without a second execution.
+  socket.send(
+    JSON.stringify({
+      type: "exec.spawn_ack",
+      requestId: frame.requestId,
+      threadId: frame.threadId,
+      executionId: frame.executionId,
+      ok: true,
+    } satisfies Record<string, unknown>),
+  );
+  log(`tool ${frame.executionId} accepted (${frame.tool}, timeout ${frame.timeoutMs}ms)`);
 }
 
 /** Client-local timeout backup (§5.1): self-kill when the service cannot. */
@@ -425,16 +511,27 @@ function resumeExecution(
   }
   const exited = buffer.exited;
   if (exited !== null && buffer.sent >= buffer.end) {
-    socket.send(
-      JSON.stringify({
-        type: "exec.exited",
-        threadId: threadIdOf(executionId),
-        executionId,
-        exitCode: exited.exitCode,
-        signal: exited.signal,
-        finalOffset: exited.finalOffset,
-      } satisfies Record<string, unknown>),
-    );
+    if (buffer.toolResult !== null) {
+      socket.send(
+        JSON.stringify({
+          type: "tool.exited",
+          threadId: threadIdOf(executionId),
+          executionId,
+          result: buffer.toolResult,
+        } satisfies Record<string, unknown>),
+      );
+    } else {
+      socket.send(
+        JSON.stringify({
+          type: "exec.exited",
+          threadId: threadIdOf(executionId),
+          executionId,
+          exitCode: exited.exitCode,
+          signal: exited.signal,
+          finalOffset: exited.finalOffset,
+        } satisfies Record<string, unknown>),
+      );
+    }
   }
 }
 
@@ -503,6 +600,19 @@ function observedSnapshot(runtime: ClientRuntime): ObservedExecution[] {
       pidStartedAt: marker.pidStartedAt,
       state: "running",
       bufferedFromOffset: Number.MAX_SAFE_INTEGER,
+    });
+  }
+  // Host-tool runs (T5'): pid-less — announce with the pid-0 sentinel so the
+  // same-boot judgment tree takes the resume path (§8.5).
+  for (const executionId of runtime.toolRuntime?.running.keys() ?? []) {
+    if (observed.has(executionId)) continue;
+    observed.set(executionId, {
+      executionId,
+      threadId: threadIdOf(executionId),
+      pid: 0,
+      pidStartedAt: 0,
+      state: "running",
+      bufferedFromOffset: runtime.buffers.get(executionId)?.bufferedFrom ?? 0,
     });
   }
   return [...observed.values()];

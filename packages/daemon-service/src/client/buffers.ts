@@ -1,4 +1,5 @@
 import { CLIENT_RING_BUFFER_BYTES, OUTPUT_CHUNK_BYTES } from "../constants.js";
+import type { ToolExecutionResult } from "./tool-runtime.js";
 
 /**
  * Per-execution output buffer (§8.1/§8.3): the retransmit source. Byte
@@ -19,6 +20,8 @@ export class ExecutionBuffer {
   evicted = false;
   /** Set when the process exited; carries closure for ended re-reports. */
   exited: { exitCode: number | null; signal: string | null; finalOffset: number } | null = null;
+  /** Set when a host-tool run closed (T5'); resume replays tool.exited. */
+  toolResult: ToolExecutionResult | null = null;
 
   append(text: string): void {
     const chunk = Buffer.from(text, "utf8");
