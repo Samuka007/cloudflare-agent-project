@@ -52,7 +52,8 @@ describe("daemon attach → /hosts registry bridge (#49)", () => {
     expect(row).toBeDefined();
     const host = hostSchema.parse(row);
     // bb list shape: registry entry stays even while its daemon is between
-    // sessions — M0 derives no connected status (routes/hosts.ts).
+    // sessions; no daemon socket attaches in this test, so the derived
+    // status reads disconnected (#62, entity-lookup.ts toHostStatus).
     expect(host.status).toBe("disconnected");
     expect(host.type).toBe("persistent");
     expect(host.lastSeenAt).not.toBeNull();

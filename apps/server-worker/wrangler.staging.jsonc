@@ -22,6 +22,13 @@
       "database_name": "cap-control-plane",
       "database_id": "4e823d64-cc93-4922-b576-ec1a455c02aa",
     },
+    {
+      // #62 liveness projection: daemon heartbeats stamp hosts.last_seen_at
+      // (bb markHostSeen). Same database as DB; explicit DO seam binding.
+      "binding": "HOSTS_DB",
+      "database_name": "cap-control-plane",
+      "database_id": "4e823d64-cc93-4922-b576-ec1a455c02aa",
+    },
   ],
   "durable_objects": {
     "bindings": [

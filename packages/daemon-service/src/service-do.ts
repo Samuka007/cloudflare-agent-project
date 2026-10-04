@@ -10,6 +10,7 @@ import {
   DEFAULT_EXEC_TIMEOUT_MS,
   DISCONNECT_GRACE_MS,
   HEARTBEAT_INTERVAL_MS,
+  LIVENESS_PROJECTION_INTERVAL_MS,
   LEASE_TIMEOUT_MS,
   MAX_FRAME_BYTES,
   RESULT_INLINE_LIMIT_BYTES,
@@ -18,6 +19,7 @@ import {
 } from "./constants.js";
 import { DoOverloadError } from "./edge.js";
 import { threadIdFromExecutionId } from "./execution-id.js";
+import { markHostSeen } from "./hosts-registry.js";
 import {
   emptyServiceState,
   foldOp,
@@ -61,6 +63,13 @@ import {
 export interface DaemonServiceEnv {
   /** Agent-update sink; the integration worker binds the real AgentDO. */
   AGENT_DO: DurableObjectNamespace;
+  /**
+   * #62 hosts-registry D1 for the liveness projection (heartbeat →
+   * last_seen_at; the port's markHostSeen). The composed deployment binds
+   * the same control-plane database as the app's DB; standalone rigs omit
+   * the binding and the projection skips. Optional for exactly that reason.
+   */
+  HOSTS_DB?: D1Database;
 }
 
 interface SocketAttachment {
@@ -491,6 +500,10 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     session.leaseExpiresAt = Date.now() + LEASE_TIMEOUT_MS;
     switch (frame.data.type) {
       case "heartbeat":
+        // #62: the heartbeat is the liveness carrier — project it into the
+        // hosts registry so last_seen_at advances while the daemon lives
+        // (bb heartbeatSession → markHostSeen, daemon-protocol.ts:129-136).
+        await this.projectLiveness(session.hostId);
         return;
       case "boot.announce":
         await this.handleAnnounce(ws, frame.data);
@@ -514,11 +527,50 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     }
   }
 
-  override webSocketClose(_ws: WebSocket, _code: number, _reason: string, _clean: boolean): void {
+  override webSocketClose(ws: WebSocket, _code: number, _reason: string, _clean: boolean): void {
     // Explicit-abort policy (§8.5): a closed socket only arms the grace
     // timer — never a kill, never an implicit drain. The client keeps
     // running and buffering; reconcile decides on reconnect.
     void this.armGraceAlarm();
+    // bb closeSession stamps last_seen_at at close (sessions.ts:126); the
+    // port stamps via the same throttled projection. Fire-and-forget: the
+    // regular heartbeat already keeps the stamp within one window.
+    const attachment = attachmentOf(ws);
+    if (attachment !== null) {
+      void this.projectLiveness(attachment.hostId);
+    }
+  }
+
+  /**
+   * #62 hosts-registry projection: best-effort by contract (the #49
+   * bridge's shape) — a failed write only delays the stamp until the next
+   * heartbeat; it never kills the session.
+   */
+  private async projectLiveness(hostId: string): Promise<void> {
+    await this.ready();
+    const db = this.env.HOSTS_DB;
+    if (db === undefined) return;
+    try {
+      await markHostSeen(db, hostId, Date.now(), LIVENESS_PROJECTION_INTERVAL_MS);
+    } catch (error) {
+      console.error(`host liveness projection failed for ${hostId}:`, error);
+    }
+  }
+
+  /**
+   * #62 /hosts liveness seam — bb toHostStatus (entity-lookup.ts:71-80)
+   * derives status read-time from the open daemon session (hub registration
+   * + active session row); this DO holds both in the port (hibernated
+   * sockets + journal session), so the hosts routes ask here: connected iff
+   * a current session for the host still has a live socket.
+   */
+  async hostLiveness(args: { hostId: string }): Promise<{ connected: boolean }> {
+    await this.ready();
+    const session = this.state.session;
+    return {
+      connected:
+        session !== null && session.hostId === args.hostId && this.liveSocket() !== null,
+    };
   }
 
   /** Tighten the alarm to the disconnect-grace deadline (bb disconnect timer). */

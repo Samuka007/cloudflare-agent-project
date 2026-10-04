@@ -18,6 +18,14 @@
       // staging provisioning substitutes the real database id (#31).
       "database_id": "00000000-0000-0000-0000-000000000000",
     },
+    {
+      // #62 liveness projection: the per-host daemon service DO stamps the
+      // registry's last_seen_at on daemon heartbeats (bb markHostSeen).
+      // Same database as DB; the second binding keeps the DO seam explicit.
+      "binding": "HOSTS_DB",
+      "database_name": "cap-control-plane",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+    },
   ],
   "durable_objects": {
     "bindings": [

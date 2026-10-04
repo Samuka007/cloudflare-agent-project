@@ -1,59 +1,38 @@
 import { Hono } from "hono";
+import type { DaemonServiceDO } from "@cap/daemon-service";
 import {
   updateHostPermissionCeilingRequestSchema,
   updateHostRequestSchema,
 } from "../contract/api/hosts.js";
 import { hostSchema } from "../contract/domain/host.js";
+import type { Host } from "../contract/domain/host.js";
+import type { HostDbRow } from "../db/rows.js";
 import { ApiError } from "../shared/api-error.js";
 import { requireJsonBody } from "../shared/route-utils.js";
 import { getHostRow, listNonDestroyedHostRows, updateHostRow } from "../db/hosts.js";
 import type { Env, HonoBindings } from "../app-types.js";
 
 /**
- * Minimal hosts face (ruling #7 "hosts 最小"): fleet list/get/rename/ceiling/
- * delete. Status is "disconnected" for every host — bb derives it from open
- * daemon sessions (entity-lookup.ts toHostStatus) and no daemon lane exists
- * in M0. Rows land via the daemon attach bridge (#49): the daemon face calls
- * upsertAttachedHost on enroll/session-open; enrollment itself is the daemon
- * service's /enroll, not served here.
+ * Hosts face (ruling #7 "hosts 最小"): fleet list/get/rename/ceiling/delete.
+ * Status derives read-time from the live daemon session — bb's toHostStatus
+ * (entity-lookup.ts:71-80) asks the hub for the host's registered daemon
+ * session and answers "connected" only for an open one; the port asks the
+ * per-host daemon-service DO (hostLiveness: current session + live socket).
+ * Rows land via the daemon attach bridge (#49); daemon heartbeats keep
+ * last_seen_at advancing through the DO's registry projection (#62).
+ * Enrollment itself is the daemon service's /enroll, not served here.
  */
 export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void {
   const routes = new Hono<{ Bindings: HonoBindings }>();
 
   routes.get("/hosts", async (ctx) => {
     const rows = await listNonDestroyedHostRows(ctx.env);
-    return ctx.json(
-      rows.map((row) =>
-        hostSchema.parse({
-          id: row.id,
-          name: row.name,
-          type: row.type,
-          status: "disconnected",
-          maxPermissionMode: row.maxPermissionMode,
-          lastSeenAt: row.lastSeenAt,
-          lastRejectedProtocolVersion: row.lastRejectedProtocolVersion,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-        }),
-      ),
-    );
+    return ctx.json(await Promise.all(rows.map((row) => toHostRecord(ctx.env, row))));
   });
 
   routes.get("/hosts/:id", async (ctx) => {
     const row = await requireHost(ctx.env, ctx.req.param("id"));
-    return ctx.json(
-      hostSchema.parse({
-        id: row.id,
-        name: row.name,
-        type: row.type,
-        status: "disconnected",
-        maxPermissionMode: row.maxPermissionMode,
-        lastSeenAt: row.lastSeenAt,
-        lastRejectedProtocolVersion: row.lastRejectedProtocolVersion,
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt,
-      }),
-    );
+    return ctx.json(await toHostRecord(ctx.env, row));
   });
 
   routes.patch("/hosts/:id", async (ctx) => {
@@ -65,19 +44,7 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
     if (!updated) {
       throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
     }
-    return ctx.json(
-      hostSchema.parse({
-        id: updated.id,
-        name: updated.name,
-        type: updated.type,
-        status: "disconnected",
-        maxPermissionMode: updated.maxPermissionMode,
-        lastSeenAt: updated.lastSeenAt,
-        lastRejectedProtocolVersion: updated.lastRejectedProtocolVersion,
-        createdAt: updated.createdAt,
-        updatedAt: updated.updatedAt,
-      }),
-    );
+    return ctx.json(await toHostRecord(ctx.env, updated));
   });
 
   routes.patch("/hosts/:id/permission-ceiling", async (ctx) => {
@@ -89,19 +56,7 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
     if (!updated) {
       throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
     }
-    return ctx.json(
-      hostSchema.parse({
-        id: updated.id,
-        name: updated.name,
-        type: updated.type,
-        status: "disconnected",
-        maxPermissionMode: updated.maxPermissionMode,
-        lastSeenAt: updated.lastSeenAt,
-        lastRejectedProtocolVersion: updated.lastRejectedProtocolVersion,
-        createdAt: updated.createdAt,
-        updatedAt: updated.updatedAt,
-      }),
-    );
+    return ctx.json(await toHostRecord(ctx.env, updated));
   });
 
   routes.delete("/hosts/:id", async (ctx) => {
@@ -120,4 +75,37 @@ async function requireHost(env: Env, hostId: string) {
     throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
   }
   return row;
+}
+
+/**
+ * bb toHostRecord reads the status out of the live session before shaping
+ * the response (entity-lookup.ts:82-94); same here, one DO round trip per
+ * host. Every non-connected answer — no DAEMON_SERVICE binding in this
+ * deployment, a failed or cold RPC, no current session — degrades to
+ * "disconnected", exactly bb's reading for an unregistered host.
+ */
+async function toHostRecord(env: Env, row: HostDbRow): Promise<Host> {
+  return hostSchema.parse({
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    status: (await daemonConnected(env, row.id)) ? "connected" : "disconnected",
+    maxPermissionMode: row.maxPermissionMode,
+    lastSeenAt: row.lastSeenAt,
+    lastRejectedProtocolVersion: row.lastRejectedProtocolVersion,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  });
+}
+
+async function daemonConnected(env: Env, hostId: string): Promise<boolean> {
+  const namespace = env.DAEMON_SERVICE;
+  if (namespace === undefined) return false;
+  const stub = namespace.get(namespace.idFromName(hostId)) as DurableObjectStub &
+    DaemonServiceDO;
+  try {
+    return (await stub.hostLiveness({ hostId })).connected;
+  } catch {
+    return false;
+  }
 }
