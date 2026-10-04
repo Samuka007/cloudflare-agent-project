@@ -13,6 +13,8 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 ### 派单
 
+**PM 每拍先 audit 再派发（#181）**：`const rep = AP.audit(snapshot, { activeLanes })` → `AP.apply(rep.mutations, { confirm: true })` 一键消漂移，复拍读 `clean` 才继续派发。规则：①issue CLOSED 但 Status∉{Done,Canceled}（收敛写=补落 sync 漏写，wontfix→Canceled 其余→Done）②Status=In Progress 但 CLOSED（lane 死亡未收口）③活跃 lane 票 Status≠In Progress（lane(confirm) 翻转丢失→补翻）④dispatchable Todo 超 N 天未派（frontier 老化提醒，无 mutation，动作是派发）。见 scripts/pm-autopilot.ts。
+
 票面五项齐才派（DoR，定义见 AGENTS.md）：①复用三问字面答案（手写票含三问否定论证）②不确定性已 spike 退役（票面引用探针结论）③验收产品面可观察 ④bb/omp 锚点 ⑤预算行——估算锚同类往例实测（参考类预测，如"bb 路由移植 ≈ FixUxBatch 单项 ≈ 1h"）。
 
 派单上下文必含：
@@ -94,6 +96,6 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 5. **假严谨=真破坏**（用户引四渡赤水）：约束检测面对齐真实书写语言；词形级误拒真票=修工具（detector），不是改票面喂正则（hack）。同理：工具限制把 PM 逼回裸 spawn=丢全部保证=工具 bug。
 6. **票=正本，spec 落盘非必要**：契约钉票链+研究文档+修订评论即可冷启动；"已知即所得"，.scratch spec 文件是仪式不是保险。
 7. **上下文工具禁则**：self new_context 禁用，直至可靠上下文感知存在（两类死法：无 handoff 自压/压后连环误压）。如启用：拍边界+notebook 检查点已落=唯一安全翻转点；拍中禁。产品侧补法= #200（harness 水位暴露+确定性 rollover）。
-8. **板面对账每拍**（#181 落地前手动）：snapshot→比对在跑 lane→消漂移。坑档：REST milestone 写可重置 status（写后复查）；AP 模块变更后内核需带 ?t= 重 import；lane() 收 Ticket 对象（#199 修）。
+8. **板面对账每拍**（#181 起 AP.audit 自动化）：snapshot→`AP.audit(snap, { activeLanes })`→`AP.apply(rep.mutations, { confirm: true })` 消漂移→复拍 clean。坑档：REST milestone 写可重置 status（写后复查=audit 再拍）；AP 模块变更后内核需带 ?t= 重 import；lane() 收 Ticket 对象（#199 修）。
 9. **发令三段观察**：送达（spawn-ack）/回执（5 分钟限时，超时催办）/核验（远端地面真值，不信自报）——缺一段=开环指挥。
 10. **PR 不在管理域**：Issue=管理域（归属规则见 tracker-schema.md 三轴模型）；PR=交付机制，不占 milestone 为规约。
