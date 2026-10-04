@@ -17,6 +17,13 @@ import type { UxThreadEvent } from "../seam/agent-do.js";
 
 const PREVIEW_MAX_CHARS = 512;
 
+/**
+ * bb error titles render on a single line and truncate (thread-view
+ * error-display.ts:31-34): past 80 chars the row swaps in the generic
+ * "System error" label and moves the full text into the detail body.
+ */
+const MAX_ERROR_TITLE_LENGTH = 80;
+
 type RowDraft = TimelineRow & { __order: number };
 
 type EventData = Record<string, unknown>;
@@ -271,6 +278,19 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
       case "system/error": {
         const parsed = threadEventDataSchemas["system/error"].safeParse(raw);
         const rowId = `syserr:${event.id}`;
+        // bb error-row display (thread-view parse-error-message.ts:78 +
+        // error-display.ts:112-117): the event's human message is the title;
+        // `detail` is a separate event field the M0 producer never emits, so
+        // the body stays null — the projection previously surfaced the
+        // machine category ("internal") as the title and sealed the message
+        // into a detail the row never showed (census #45 P2-9). Titles past
+        // MAX_ERROR_TITLE_LENGTH fall back to "System error" with the full
+        // text in the detail (error-display.ts:80-89). Non-reconnect error
+        // rows carry status "error" (build-thread-timeline.ts:786), which
+        // drives the SPA's red badge and terminal auto-expand.
+        const message = parsed.success ? parsed.data.message : "";
+        const naturalTitle = message.length > 0 ? message : "Error event";
+        const overLength = naturalTitle.length > MAX_ERROR_TITLE_LENGTH;
         rows.set(rowId, {
           kind: "system",
           systemKind: "error",
@@ -281,9 +301,9 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
           sourceSeqEnd: event.seq,
           startedAt: event.createdAt,
           createdAt: event.createdAt,
-          title: parsed.success ? parsed.data.category : "error",
-          detail: parsed.success ? parsed.data.message : null,
-          status: null,
+          title: overLength ? "System error" : naturalTitle,
+          detail: overLength ? naturalTitle : null,
+          status: "error",
           __order: event.seq,
         });
         break;

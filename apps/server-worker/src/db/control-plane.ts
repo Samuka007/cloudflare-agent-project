@@ -284,6 +284,7 @@ export interface CreateThreadRecordArgs {
   projectId: string;
   providerId: string;
   title: string | null;
+  titleFallback: string | null;
   sectionId: string | null;
   parentThreadId: string | null;
   sourceThreadId: string | null;
@@ -311,7 +312,7 @@ export async function createThreadRecord(
       null,
       null,
       args.title,
-      null,
+      args.titleFallback,
       args.sectionId,
       status,
       args.parentThreadId,
