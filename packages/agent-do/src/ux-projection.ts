@@ -249,6 +249,26 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
         });
         break;
       }
+      case "turn.phase": {
+        // #197 D3/spec §4: 1:1 direct projection — transport identity kept
+        // verbatim so the ux cursor view replays phases at their journal
+        // seqs (the catch-up authority for D4 reconciliation).
+        const data = event.data;
+        ux = buildThreadEvent({
+          id: event.id,
+          threadId: event.threadId,
+          seq: event.seq,
+          type: "turn/phase",
+          data: {
+            turnId: data.turnId,
+            phase: data.phase,
+            ...(data.modelCallId !== undefined ? { modelCallId: data.modelCallId } : {}),
+            ...(data.reason !== undefined ? { reason: data.reason } : {}),
+          },
+          createdAt: event.createdAt,
+        });
+        break;
+      }
       case "turn.failed": {
         ux = buildThreadEvent({
           id: event.id,

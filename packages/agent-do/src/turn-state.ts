@@ -1,6 +1,7 @@
 import type { AnyAgentEvent } from "./fsm-events.js";
 import { executionIdFor } from "./ids.js";
 import type { WatchdogConfig } from "./config.js";
+import type { TurnPhase } from "@cap/protocol";
 
 /**
  * Turn/execution FSM state, derived exclusively by replaying the event log
@@ -49,6 +50,9 @@ export interface TurnRuntime {
   inputCreatedAt: number;
   inputId: string;
   status: TurnFsmStatus;
+  /** #197 D3: folded turn.phase markers, journal order (fold participates
+   * in replay, so a resumed driver never re-appends first_token/settled). */
+  phases: TurnPhase[];
   steerSeqs: number[];
   consumedSteerSeqs: number[];
   modelCallIds: number[];
@@ -227,6 +231,7 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
         inputCreatedAt: event.createdAt,
         inputId,
         status: "queued",
+        phases: [],
         steerSeqs: [],
         consumedSteerSeqs: [],
         modelCallIds: [],
@@ -429,6 +434,14 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       const runtime = requireActive(state);
       requireNonTerminal(runtime);
       runtime.status = "cancelling";
+      return;
+    }
+    case "turn.phase": {
+      // #197 D3: UX truth folded onto the turn, FSM status untouched. The
+      // row is legal in any state after turn.input — including terminal
+      // (settled follows the terminal row by construction).
+      const runtime = turn(state, event.data.turnId);
+      runtime.phases.push(event.data.phase);
       return;
     }
     case "turn.completed":

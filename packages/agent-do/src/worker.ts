@@ -2,6 +2,7 @@ import { AgentDO, AgentRpcError, type AgentDoBindings } from "./agent-do.js";
 import { setAgentRuntime } from "./injection.js";
 import { AnthropicRelayProvider } from "./relay/anthropic-provider.js";
 import { TestDaemonServiceDO } from "./testing/test-daemon-do.js";
+import { RecordingHubDO } from "./testing/recording-hub.js";
 import { DaemonServiceDO, daemonServiceWorker, type WorkerEnv } from "@cap/daemon-service";
 
 /**
@@ -10,7 +11,7 @@ import { DaemonServiceDO, daemonServiceWorker, type WorkerEnv } from "@cap/daemo
  * `DaemonServiceDO` (#30) is exported for the composed deployment — the
  * hookup rig binds it as `DAEMON_SERVICE`.
  */
-export { AgentDO, TestDaemonServiceDO, DaemonServiceDO };
+export { AgentDO, TestDaemonServiceDO, DaemonServiceDO, RecordingHubDO };
 
 /** Route prefixes served by the landed daemon-service worker (#30). */
 const DAEMON_ROUTE_PREFIXES = ["/health", "/enroll", "/session/open", "/ws", "/agent/"];
