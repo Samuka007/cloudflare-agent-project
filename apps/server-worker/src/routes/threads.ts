@@ -61,7 +61,11 @@ import {
 import type { ThreadDbRow } from "../db/rows.js";
 import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs.js";
 import { getAppSettingsRow, toAppSettings } from "../db/settings.js";
-import { toThreadListEntry, toThreadResponseWithSpawnCheck } from "../services/runtime-display.js";
+import {
+  resolveHostRuntimeSnapshot,
+  toThreadListEntry,
+  toThreadResponseWithSpawnCheck,
+} from "../services/runtime-display.js";
 import {
   THREAD_SEARCH_LIMIT_PER_GROUP_DEFAULT,
   THREAD_SEARCH_LIMIT_PER_GROUP_MAX,
@@ -154,8 +158,10 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
       ...(offsetRaw !== undefined ? { offset: offsetRaw } : {}),
     });
-    // bb threadListResponseSchema: bare array.
-    return ctx.json(rows.map(toThreadListEntry));
+    // bb threadListResponseSchema: bare array. One host snapshot per request
+    // (#194): every row's runtime derives from the same attached host.
+    const host = await resolveHostRuntimeSnapshot(ctx.env);
+    return ctx.json(rows.map((row) => toThreadListEntry(row, host)));
   });
 
   // --- search ---------------------------------------------------------------------
@@ -199,9 +205,12 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // non-deleted set into an archived and an active group (data/threads.ts:
     // 1113-1132); the title-level M0 scan serves both from one listing.
     const rows = await listThreads(ctx.env, {});
+    // One host snapshot per request (#194): every row's runtime derives from
+    // the same attached host.
+    const host = await resolveHostRuntimeSnapshot(ctx.env);
     const response = buildTitleSearchResponse({ rows, query: searchQuery, limitPerGroup });
     const toResult = (result: (typeof response.active.results)[number]) => ({
-      thread: toThreadListEntry(result.thread),
+      thread: toThreadListEntry(result.thread, host),
       matches: result.matches,
     });
     return ctx.json(
