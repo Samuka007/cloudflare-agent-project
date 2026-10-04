@@ -33,6 +33,7 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       case "job.settled":
       case "peer.message":
       case "peer.message_consumed":
+      case "todo_phases":
       case "tool.exec_started":
       case "tool.output":
       case "turn.cancel_requested":

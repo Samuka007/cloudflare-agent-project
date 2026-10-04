@@ -119,6 +119,33 @@ const editSchema = type({
   input: "string",
 });
 
+// omp packages/coding-agent/src/tools/checkpoint.ts:29-31
+const checkpointSchema = type({
+  goal: type("string").describe("investigation goal"),
+});
+
+// omp packages/coding-agent/src/tools/checkpoint.ts:35-37
+const rewindSchema = type({
+  report: type("string").describe("investigation findings"),
+});
+
+// omp packages/coding-agent/src/tools/todo.ts:53-70. Exported for the
+// executor's lenient-arg repair (todo-state.ts resolveTodoParams) — the row
+// stays the single schema authority.
+export const todoSchema = type({
+  op: type('"init" | "start" | "done" | "rm" | "drop" | "block" | "unblock" | "append" | "view"'),
+  "list?": type({ phase: type("string"), items: type("string").array().atLeastLength(1) })
+    .array()
+    .describe("phases for init"),
+  "task?": type("string").describe("verbatim task content"),
+  "phase?": type("string"),
+  // No `atLeastLength(1)` here: `items` is only meaningful for `init`/`append`,
+  // and both enforce non-empty with op-specific errors. A stray `items: []` on
+  // an op that ignores it (e.g. `view`) must not be a hard schema rejection.
+  "items?": type("string").array().describe("tasks for flat init or append"),
+  "reason?": type("string").describe("blocker note for block"),
+});
+
 // ---------------------------------------------------------------------------
 // Description templates — omp prompts/tools/*.md verbatim
 // ---------------------------------------------------------------------------
@@ -226,6 +253,34 @@ Blocks on background jobs/services you started; returns on the first result, a m
 Nothing you started running? Errors; NEVER wait on other agents.
 Results and messages auto-deliver. NEVER poll while work remains.`;
 
+// omp packages/coding-agent/src/prompts/tools/checkpoint.md
+const CHECKPOINT_DESCRIPTION_TEMPLATE = `Context checkpoint: before exploratory work; later \`rewind\`, retaining only concise report.
+
+Use for investigations with many intermediate tool calls (\`read\`/\`grep\`/\`glob\`/\`lsp\`/etc.) to minimize subsequent context cost.
+
+Rules:
+- MUST \`rewind\` before yielding after starting a checkpoint.
+- NEVER \`checkpoint\` while another checkpoint active.
+- Subagents: disabled by default. Enable: agent-definition \`tools:\` frontmatter lists \`checkpoint\` or \`rewind\`; sister tool auto-included; requires \`checkpoint.enabled\` setting.
+
+Typical flow:
+1. \`checkpoint(goal: …)\`
+2. Exploratory work
+3. \`rewind(report: …)\` with concise findings
+
+After \`rewind\`: intermediate checkpoint messages removed from active context; replaced by report.`;
+
+// omp packages/coding-agent/src/prompts/tools/rewind.md
+const REWIND_DESCRIPTION_TEMPLATE =
+  "End the active checkpoint; rewind context to it, replacing intermediate exploration with your report.";
+
+// omp packages/coding-agent/src/prompts/tools/todo.md
+const TODO_DESCRIPTION_TEMPLATE = `Tasks identified by verbatim content, NEVER generated IDs (task-1). Unique, stable task/phase names; lost text: view, NEVER guess.
+Before work, init for 3+ steps, requested task sets, or new instructions. MUST list EVERY user item separately (phased/numbered/bulleted/N); NEVER omit or remember leftovers.
+After successful mutation: no active means earliest pending starts (phase order); multiple active means only earliest stays. Blocked NEVER starts automatically; unblock returns pending. Done out of order may rewind pointer but NEVER reopen completed. Mark done immediately; follow phase order.
+External waits (user/agent/service): block with optional reason suppresses stop reminder, starts next pending. Unblock when actionable; append a clearing task for agent-actionable blocker.
+NEVER call todo alone: init with first work; done/start with next action.`;
+
 /** Conditional flags the bash template resolves against (omp render context). */
 export interface ToolRenderFlags {
   hasEval: boolean;
@@ -274,6 +329,12 @@ const TAG_SPLIT = /\{\{(#if \w+|#ifAny [\w ]+|else|\/if|\/ifAny)\}\}/g;
  * (a global blank-line pass would destroy them).
  */
 export function renderToolDescription(template: string, flags: ToolRenderFlags): string {
+  // Line-resolving handlebars renderer (T5' stack form + T3 blank-line
+  // semantics, #93/#128): conditional lines resolve against the flag stack;
+  // a conditional-only line that renders to nothing is removed outright,
+  // template blank lines in ACTIVE regions are content and stay, and lines
+  // inside an INACTIVE region vanish entirely. Supports {{#if}}/{{else}},
+  // multi-line blocks, and {{#ifAny}} (glob.md) — the regex form cannot.
   const outLines: string[] = [];
   const stack: { active: boolean; satisfied: boolean }[] = [];
   const enclosingActive = () => stack.every((frame) => frame.active);
@@ -308,7 +369,7 @@ export function renderToolDescription(template: string, flags: ToolRenderFlags):
       }
     }
     const rendered = pieces.join("");
-    if (hadTag && rendered.length === 0) continue;
+    if (rendered.length === 0 && (hadTag || !enclosingActive())) continue;
     outLines.push(rendered);
   }
   if (stack.length > 0) throw new Error("unbalanced conditionals in tool description template");
@@ -369,6 +430,29 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     intent: "require",
   },
   {
+    // omp tools/checkpoint.ts:53-87 — session-tree boundary marker; no
+    // fs/git despite the summary string (docs/tools/checkpoint.md §Notes).
+    // omp declares `intent` as a function (checkpoint.ts:62), which
+    // resolveIntentMode maps to omit (agent-loop.ts:1025) — no `i` field.
+    name: "checkpoint",
+    schema: checkpointSchema,
+    descriptionTemplate: CHECKPOINT_DESCRIPTION_TEMPLATE,
+    class: "edge",
+    backend: { kind: "do-local" },
+    intent: "omit",
+  },
+  {
+    // omp tools/checkpoint.ts:89-131 (RewindTool) — the rewind half of the
+    // safety pair; function intent → omit (checkpoint.ts:98 + agent-loop
+    // resolveIntentMode), same rule as checkpoint.
+    name: "rewind",
+    schema: rewindSchema,
+    descriptionTemplate: REWIND_DESCRIPTION_TEMPLATE,
+    class: "edge",
+    backend: { kind: "do-local" },
+    intent: "omit",
+  },
+  {
     // omp tools/context-notes.ts:80-94 — session notebook, DO-local journal.
     name: "context_notes",
     schema: contextNotesSchema,
@@ -398,8 +482,20 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     intent: "optional",
   },
   {
+    // omp tools/todo.ts:712-728 — journal-backed phase/task state machine,
+    // Filesystem: None (docs/tools/todo.md §Side Effects). No `intent`
+    // member in omp → resolveIntentMode default "require".
+    name: "todo",
+    schema: todoSchema,
+    descriptionTemplate: TODO_DESCRIPTION_TEMPLATE,
+    class: "edge",
+    backend: { kind: "do-local" },
+    intent: "require",
+  },
+  {
     // omp tools/think.ts:51-59 — private scratchpad, zero I/O; omp declares
     // `intent = "omit"` (think.ts:59) so no `i` field is injected on the wire.
+    // Hidden tool: last in the wire order (omp builtin-names hidden tail).
     name: "think",
     schema: thinkSchema,
     descriptionTemplate: THINK_DESCRIPTION,

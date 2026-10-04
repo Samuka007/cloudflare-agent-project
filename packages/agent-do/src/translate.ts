@@ -154,6 +154,7 @@ export function modelRequestFromEvents(
       // Thread lifecycle + state events are context-invisible (ruling ③).
       case "thread.created":
       case "experimental_context_notes":
+      case "todo_phases":
       case "model.call_failed":
       case "model.call_retry":
       case "model.call_sealed":

@@ -35,12 +35,17 @@ const ACTIVE_ROW = { status: "active" as const, archivedAt: null, deletedAt: nul
 describe("terminal turn → lifecycle event derivation", () => {
   it("maps an accepted→completed turn to run.succeeded and the row to idle", () => {
     const events = [
-      uxEvent("item/started", { turnId: "t1", item: { type: "userMessage", id: "u1", content: [] } }),
+      uxEvent("item/started", {
+        turnId: "t1",
+        item: { type: "userMessage", id: "u1", content: [] },
+      }),
       uxEvent("turn/started", { turnId: "t1" }),
       uxEvent("turn/completed", { turnId: "t1", status: "completed", error: null }),
     ];
     expect(deriveSettledTurnEvent(events)).toEqual({ type: "run.succeeded" });
-    expect(evaluateThreadLifecycleEvent({ event: { type: "run.succeeded" }, thread: ACTIVE_ROW })).toEqual({
+    expect(
+      evaluateThreadLifecycleEvent({ event: { type: "run.succeeded" }, thread: ACTIVE_ROW }),
+    ).toEqual({
       to: "idle",
     });
   });
@@ -48,7 +53,10 @@ describe("terminal turn → lifecycle event derivation", () => {
   it("maps an accepted→failed (sealed) turn to run.failed and the row to error", () => {
     const events = [
       uxEvent("turn/started", { turnId: "t1" }),
-      uxEvent("system/error", { message: "model stream interrupted mid-call; turn sealed", category: "internal" }),
+      uxEvent("system/error", {
+        message: "model stream interrupted mid-call; turn sealed",
+        category: "internal",
+      }),
       uxEvent("turn/completed", {
         turnId: "t1",
         status: "failed",
@@ -56,7 +64,9 @@ describe("terminal turn → lifecycle event derivation", () => {
       }),
     ];
     expect(deriveSettledTurnEvent(events)).toEqual({ type: "run.failed" });
-    expect(evaluateThreadLifecycleEvent({ event: { type: "run.failed" }, thread: ACTIVE_ROW })).toEqual({
+    expect(
+      evaluateThreadLifecycleEvent({ event: { type: "run.failed" }, thread: ACTIVE_ROW }),
+    ).toEqual({
       to: "error",
     });
   });

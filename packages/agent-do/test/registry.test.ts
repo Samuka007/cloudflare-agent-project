@@ -89,9 +89,14 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
       "edit",
       "glob",
       "grep",
+      // T2/T3 merge — omp builtin-names.ts order: checkpoint/rewind before
+      // context_notes; wait between new_context and todo; think (hidden) last.
+      "checkpoint",
+      "rewind",
       "context_notes",
       "new_context",
       "wait",
+      "todo",
       "think",
       "write",
     ]);
