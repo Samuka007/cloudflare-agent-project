@@ -99,6 +99,14 @@ export interface ModelRequest {
    * stay in every later call's history via the prior-call slices.
    */
   asyncResults: AsyncResultContribution[];
+  /**
+   * Forced tool choice (M1.5 T17 reminder ladder, attempt 3): the subagent
+   * run's final reminder forces `yield` as the only permitted next call.
+   * Derived from the journal fold (translate projects the reminder marker
+   * bound to this turn); absent everywhere else. Providers that cannot force
+   * a tool may ignore it — the mock and tests assert it directly.
+   */
+  toolChoice?: { name: string };
 }
 
 export type ModelStreamChunk =

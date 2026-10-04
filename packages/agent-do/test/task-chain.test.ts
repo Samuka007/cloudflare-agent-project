@@ -12,7 +12,7 @@ import {
   settlementForSpawn,
   subagentIdentityOf,
 } from "../src/tools/task/types.js";
-import { NO_YIELD_WARNING } from "../src/tools/task/executor.js";
+import { NO_YIELD_WARNING } from "../src/tools/task/child-run.js";
 import { setAgentDefinitions } from "../src/tools/task/types.js";
 
 /**

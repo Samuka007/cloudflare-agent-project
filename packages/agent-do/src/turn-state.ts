@@ -119,6 +119,9 @@ export interface ReplayState {
     sourceThreadId: string | null;
     originKind: string | null;
     depth: number;
+    /** T17 structured contract mirrored from the spawn plan (optional). */
+    outputSchema?: unknown;
+    schemaMode?: "permissive" | "strict";
   } | null;
   /**
    * Pending interactions (M1.5 T4 ask) — the journal-folded SPA-visible ask
@@ -465,11 +468,14 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
     case "peer.message_consumed":
     case "task.spawn_planned":
     case "task.spawn_settled":
-    case "task.async_result": {
+    case "task.async_result":
+    case "task.yield_reminder":
+    case "task.yield_warning":
+    case "task.yield_completed": {
       // Thread-scoped JobRegistry journal data, not FSM state (proposal §3 T2:
       // jobs outlive turns); the projections in tools/job-registry.ts fold
       // them from the log — the task family (proposal §3 T16) likewise, via
-      // tools/task/*.
+      // tools/task/*, and the T17 yield-gate family via tools/task/child-run.ts.
       return;
     }
     case "task.subagent_identity": {
@@ -485,6 +491,10 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
         sourceThreadId: event.data.sourceThreadId,
         originKind: event.data.originKind,
         depth: event.data.depth,
+        ...(event.data.outputSchemaJson === undefined
+          ? {}
+          : { outputSchema: JSON.parse(event.data.outputSchemaJson) as unknown }),
+        ...(event.data.schemaMode === undefined ? {} : { schemaMode: event.data.schemaMode }),
       };
       return;
     }

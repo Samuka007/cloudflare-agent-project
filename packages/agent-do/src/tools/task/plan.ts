@@ -148,3 +148,49 @@ export function hasAgentScopeCollision(events: readonly AnyAgentEvent[], agentId
   const segment = dot === -1 ? agentId : agentId.slice(0, dot);
   return takenAgentNames(projectSpawnPlans(events)).has(segment.toLowerCase());
 }
+
+/**
+ * omp agent:// surface grammar (docs/tools/task.md:92): `agent://<id>` names
+ * the artifact family; a `/`-suffix is the JSON extraction path walked into
+ * the `<id>.json` sidecar (`agent://<id>/<key>/<index>`); nested subagents
+ * are dot-joined ids (`agent://<id>.<child>`), so the id itself is everything
+ * up to the first `/`. `agent://all` rides the same grammar (write-only).
+ */
+export function parseAgentUri(uri: string): { agentId: string; path?: string[] } | null {
+  const match = /^agent:\/\/([^/?#]+)(?:\/(.*))?$/.exec(uri);
+  if (match === null) return null;
+  const agentId = match[1];
+  if (agentId === undefined || agentId === "") return null;
+  const rawPath = match[2];
+  if (rawPath === undefined || rawPath === "") return { agentId };
+  const path = rawPath.split("/").filter((segment) => segment !== "");
+  return path.length === 0 ? { agentId } : { agentId, path };
+}
+
+/**
+ * Walk `agent://<id>/<key>/<index>` extraction segments into a parsed JSON
+ * value: object keys by name, array elements by numeric segment. Result-
+ * shaped instead of throwing — the caller renders the omp-style error.
+ */
+export function walkJsonPath(
+  value: unknown,
+  segments: readonly string[],
+): { ok: true; value: unknown } | { ok: false; failedAt: string } {
+  let current = value;
+  for (const segment of segments) {
+    if (Array.isArray(current)) {
+      const index = Number(segment);
+      if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+        return { ok: false, failedAt: segment };
+      }
+      current = current[index];
+      continue;
+    }
+    if (typeof current === "object" && current !== null && segment in current) {
+      current = (current as Record<string, unknown>)[segment];
+      continue;
+    }
+    return { ok: false, failedAt: segment };
+  }
+  return { ok: true, value: current };
+}

@@ -123,6 +123,9 @@ export function modelRequestFromEvents(
       case "task.spawn_planned":
       case "task.spawn_settled":
       case "task.subagent_identity":
+      case "task.yield_reminder":
+      case "task.yield_warning":
+      case "task.yield_completed":
         break;
       case "task.async_result":
         // Consumed above from the full log; the turn filter skips it here.
@@ -290,5 +293,18 @@ export function modelRequestFromEvents(
     // The current call's boundary rows ride the trailing user message (wire
     // appends them after the steers); prior calls carry theirs permanently.
     asyncResults: asyncResultsByCall.get(modelCallId) ?? [],
+    // T17 reminder ladder: the reminder marker bound to THIS turn's inputId
+    // (task.yield_reminder.inputId === turn.input.inputId) forces `yield` as
+    // the tool choice for every model call of that turn. Only the 3rd-tier
+    // marker carries forced=true (the verdict that appended it — every
+    // reminder turn has a marker, so the join alone cannot tier them).
+    ...(events.some(
+      (event) =>
+        event.type === "task.yield_reminder" &&
+        event.data.forced &&
+        event.data.inputId === inputEvent.data.inputId,
+    )
+      ? { toolChoice: { name: "yield" } }
+      : {}),
   };
 }
