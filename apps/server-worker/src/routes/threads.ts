@@ -60,6 +60,7 @@ import {
 } from "../db/control-plane.js";
 import type { ThreadDbRow } from "../db/rows.js";
 import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs.js";
+import { getAppSettingsRow, toAppSettings } from "../db/settings.js";
 import { toThreadListEntry, toThreadResponseWithSpawnCheck } from "../services/runtime-display.js";
 import {
   THREAD_SEARCH_LIMIT_PER_GROUP_DEFAULT,
@@ -72,7 +73,9 @@ import { settleThreadTurnStatus } from "../services/thread-run-settlement.js";
 import {
   buildConversationOutline,
   buildTimelinePage,
+  mergeTimelineRows,
   projectTimelineRows,
+  projectUnhandledProviderRows,
   timelineLatestRowsCache,
 } from "../services/timeline.js";
 import { computeTimelineRowDelta } from "../contract/thread-timeline.js";
@@ -460,6 +463,14 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
   routes.get("/threads/:id/timeline", async (ctx) => {
     const query = parseOr422(threadTimelineQuerySchema, ctx.req.query());
     let row = await requirePublicThread(ctx);
+    // bb data.ts:331-334 — the Debug settings toggle turns on the
+    // provider-unhandled diagnostic rows (bb dev builds force them on; the
+    // packaged staging Worker has no dev term, so the flag alone decides).
+    // Read per-request, so unlike bb's server-start constant the latest-rows
+    // delta cache below MUST key on it (bb data.ts:334-337).
+    const includeUnhandledProviderEvents = toAppSettings(
+      await getAppSettingsRow(ctx.env),
+    ).showUnhandledProviderEvents;
     let segmentLimit = THREAD_TIMELINE_DEFAULT_SEGMENT_LIMIT;
     if (query.segmentLimit !== undefined) {
       const parsed = Number(query.segmentLimit);
@@ -486,7 +497,14 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       await hub(ctx).notifyThread(row.id, ["status-changed"], { projectId: row.projectId });
       await hub(ctx).notifyProject(row.projectId, ["threads-changed"]);
     }
-    const allRows = projectTimelineRows(events);
+    let allRows = projectTimelineRows(events);
+    if (includeUnhandledProviderEvents) {
+      const { events: rawEvents } = await agentDoFor(ctx.env, row.id).getEvents({
+        sinceSeq: 0,
+        project: "raw",
+      });
+      allRows = mergeTimelineRows(allRows, projectUnhandledProviderRows(events, rawEvents));
+    }
     const kind = query.beforeAnchorSeq !== undefined ? "older" : "latest";
     if (query.beforeAnchorSeq !== undefined) {
       const anchorId = query.beforeAnchorId;
@@ -519,7 +537,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       summaryOnly,
     };
     const page = buildTimelinePage(allRows, pageQuery);
-    const paramsKey = `${row.id}|${row.status}|${kind}|${segmentLimit}|${String(includeNestedRows)}|${String(summaryOnly)}`;
+    const paramsKey = `${row.id}|${row.status}|${kind}|${segmentLimit}|${String(includeNestedRows)}|${String(summaryOnly)}|${String(includeUnhandledProviderEvents)}`;
     let delta;
     if (query.afterSequence !== undefined && kind === "latest") {
       const cached = timelineLatestRowsCache.get(paramsKey);
