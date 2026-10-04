@@ -40,7 +40,7 @@ interface ClientRuntime {
   flushTimer: NodeJS.Timeout | null;
   connectedAt: number;
   /** Command queue bound (§8.3): serial per-client processing. */
-  readonly queue: Array<() => Promise<void>>;
+  readonly queue: (() => void)[];
   queueBusy: boolean;
 }
 
@@ -66,7 +66,9 @@ export async function runClient(config: ClientConfig): Promise<void> {
     ensureIdentity: async () => (identity ??= await loadIdentity(config)),
     establishSession: (identity_) => establishSession(config, identity_, runtime),
     sessionLifetime: () => sessionLifetime(runtime),
-    teardownSession: () => clearSessionTimers(runtime),
+    teardownSession: () => {
+      clearSessionTimers(runtime);
+    },
   });
 }
 
@@ -115,13 +117,15 @@ async function establishSession(
   } as unknown as string[];
   const socket = new WebSocket(wsUrl, BUN_WS_HEADERS);
 
-  const attach = Promise.withResolvers<void>();
-  const failTimer = setTimeout(() => attach.reject(new Error("ws attach timeout")), WS_ATTACH_TIMEOUT_MS);
+  const attach = Promise.withResolvers<undefined>();
+  const failTimer = setTimeout(() => {
+    attach.reject(new Error("ws attach timeout"));
+  }, WS_ATTACH_TIMEOUT_MS);
   socket.addEventListener("open", () => {
     clearTimeout(failTimer);
     runtime.generation = 0;
     runtime.connectedAt = Date.now();
-    attach.resolve();
+    attach.resolve(undefined);
   });
   socket.addEventListener("error", () => {
     clearTimeout(failTimer);
@@ -135,12 +139,17 @@ async function establishSession(
   // and reject the latch so the unified chain (issue #35) consumes the
   // rung — instead of waiting on a heartbeat flag only teardown (which
   // runs after sessionLifetime returns) could clear.
-  const session = runtime.session = new WSSession();
+  const session = (runtime.session = new WSSession());
   socket.addEventListener("message", (event) => {
-    void handleServiceFrame(runtime, config, socket, String(event.data));
+    handleServiceFrame(runtime, config, socket, String(event.data));
   });
-  watchSocketClose(socket, session, () => runtime.session === session, () =>
-    clearSessionTimers(runtime),
+  watchSocketClose(
+    socket,
+    session,
+    () => runtime.session === session,
+    () => {
+      clearSessionTimers(runtime);
+    },
   );
 
   // First frame after attach: the full boot announce (§8.2) — it resets the
@@ -169,7 +178,9 @@ async function establishSession(
   );
 
   // Coalesced output uplink; backpressure-aware whole-frame flushes (I29).
-  runtime.flushTimer = setInterval(() => flushBuffers(runtime, socket), 100);
+  runtime.flushTimer = setInterval(() => {
+    flushBuffers(runtime, socket);
+  }, 100);
   runtime.flushTimer.unref();
   // The loop consumes the ws-open time for the stable-session reset.
   return runtime.connectedAt;
@@ -188,12 +199,12 @@ async function sessionLifetime(runtime: ClientRuntime): Promise<void> {
 // Service frames in.
 // ---------------------------------------------------------------------------
 
-async function handleServiceFrame(
+function handleServiceFrame(
   runtime: ClientRuntime,
   config: ClientConfig,
   socket: WebSocket,
   raw: string,
-): Promise<void> {
+): void {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -208,25 +219,31 @@ async function handleServiceFrame(
   // Serial command processing (§8.3 envLane discipline); bounded queue with
   // an explicit busy error — never silent drops, never a crashed socket.
   if (runtime.queue.length >= CLIENT_COMMAND_QUEUE_LIMIT) {
-    socket.send(JSON.stringify({ type: "error", code: "busy", message: "client command queue full" }));
+    socket.send(
+      JSON.stringify({ type: "error", code: "busy", message: "client command queue full" }),
+    );
     return;
   }
-  runtime.queue.push(() => dispatchFrame(runtime, config, socket, frame.data));
+  runtime.queue.push(() => {
+    dispatchFrame(runtime, config, socket, frame.data);
+  });
   if (runtime.queueBusy) return;
   runtime.queueBusy = true;
   while (runtime.queue.length > 0) {
     const task = runtime.queue.shift();
-    if (task !== undefined) await task();
+    // Every queued handler is synchronous (dispatchFrame has no await), so
+    // the serial §8.3 discipline drains in-order without microtask yields.
+    if (task !== undefined) task();
   }
   runtime.queueBusy = false;
 }
 
-async function dispatchFrame(
+function dispatchFrame(
   runtime: ClientRuntime,
   config: ClientConfig,
   socket: WebSocket,
   frame: ServiceFrame,
-): Promise<void> {
+): void {
   switch (frame.type) {
     case "session.ready":
       log(`session.ready ${frame.sessionId}`);
@@ -238,9 +255,14 @@ async function dispatchFrame(
       const buffer = new ExecutionBuffer();
       runtime.buffers.set(frame.executionId, buffer);
       try {
-        const entry = runtime.executor.spawn(frame.executionId, frame.command, frame.cwd, (text) => {
-          buffer.append(text);
-        });
+        const entry = runtime.executor.spawn(
+          frame.executionId,
+          frame.command,
+          frame.cwd,
+          (text) => {
+            buffer.append(text);
+          },
+        );
         socket.send(
           JSON.stringify({
             type: "exec.started",
@@ -278,7 +300,11 @@ async function dispatchFrame(
     case "kill.list": {
       let verifiedKills = 0;
       for (const entry of frame.entries) {
-        const verified = runtime.executor.verifyAndKill(entry.executionId, entry.pid, entry.pidStartedAt);
+        const verified = runtime.executor.verifyAndKill(
+          entry.executionId,
+          entry.pid,
+          entry.pidStartedAt,
+        );
         if (verified) verifiedKills += 1;
         runtime.buffers.delete(entry.executionId);
         socket.send(
@@ -312,30 +338,38 @@ async function dispatchFrame(
 }
 
 /** Client-local timeout backup (§5.1): self-kill when the service cannot. */
-function watchProcess(runtime: ClientRuntime, socket: WebSocket, executionId: string, timeoutMs: number): void {
+function watchProcess(
+  runtime: ClientRuntime,
+  socket: WebSocket,
+  executionId: string,
+  timeoutMs: number,
+): void {
   const buffer = runtime.buffers.get(executionId);
   const entry = runtime.executor.get(executionId);
   if (buffer === undefined || entry === undefined) return;
-  const timeoutTimer = setTimeout(() => {
-    if (runtime.executor.get(executionId) === undefined) return;
-    log(`exec ${executionId}: client-local timeout — killing process group`);
-    runtime.executor.killProcessGroup(executionId, KILL_ESCALATION_MS);
-    buffer.exited = { exitCode: null, signal: "SIGKILL", finalOffset: buffer.end };
-    if (socket.readyState === socket.OPEN) {
-      flushBuffers(runtime, socket); // output bytes precede the exit on the wire
-      socket.send(
-        JSON.stringify({
-          type: "exec.exited",
-          threadId: threadIdOf(executionId),
-          executionId,
-          exitCode: null,
-          signal: "SIGKILL",
-          finalOffset: buffer.end,
-          reason: "timeout",
-        } satisfies Record<string, unknown>),
-      );
-    }
-  }, Math.max(timeoutMs, 1));
+  const timeoutTimer = setTimeout(
+    () => {
+      if (runtime.executor.get(executionId) === undefined) return;
+      log(`exec ${executionId}: client-local timeout — killing process group`);
+      runtime.executor.killProcessGroup(executionId, KILL_ESCALATION_MS);
+      buffer.exited = { exitCode: null, signal: "SIGKILL", finalOffset: buffer.end };
+      if (socket.readyState === socket.OPEN) {
+        flushBuffers(runtime, socket); // output bytes precede the exit on the wire
+        socket.send(
+          JSON.stringify({
+            type: "exec.exited",
+            threadId: threadIdOf(executionId),
+            executionId,
+            exitCode: null,
+            signal: "SIGKILL",
+            finalOffset: buffer.end,
+            reason: "timeout",
+          } satisfies Record<string, unknown>),
+        );
+      }
+    },
+    Math.max(timeoutMs, 1),
+  );
   timeoutTimer.unref();
   entry.child.once("exit", (code, signal) => {
     clearTimeout(timeoutTimer);
@@ -357,7 +391,12 @@ function watchProcess(runtime: ClientRuntime, socket: WebSocket, executionId: st
 }
 
 /** §8.3 resume: explicit gap when the ack point predates the ring base. */
-function resumeExecution(runtime: ClientRuntime, socket: WebSocket, executionId: string, ackedOffset: number): void {
+function resumeExecution(
+  runtime: ClientRuntime,
+  socket: WebSocket,
+  executionId: string,
+  ackedOffset: number,
+): void {
   const buffer = runtime.buffers.get(executionId);
   if (buffer === undefined) return;
   if (ackedOffset < buffer.bufferedFrom) {
@@ -489,4 +528,3 @@ function threadIdOf(executionId: string): string {
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-

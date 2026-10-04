@@ -92,8 +92,8 @@ describe("L1 edge shield — auth ladder (#36)", () => {
       expect(response.status).toBe(201);
       // Backfill: the cache now holds the mirror's verdict.
       const backfilled = await testEnv.DAEMON_EDGE_KV.get(authKvKey(mirrorHash));
-      expect(backfilled).not.toBeNull();
-      expect(JSON.parse(backfilled as string)).toEqual({ hostId });
+      if (backfilled === null) throw new Error("auth cache was not backfilled");
+      expect(JSON.parse(backfilled)).toEqual({ hostId });
     } finally {
       await testEnv.DAEMON_EDGE_KV.delete(authKvKey(mirrorHash));
     }

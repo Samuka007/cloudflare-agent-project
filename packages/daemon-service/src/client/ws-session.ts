@@ -23,7 +23,7 @@ export class WSSession {
    * NegotiationError: a WS close carries no Retry-After, so the chain's own
    * jittered schedule — not a server-indicated wait — governs the reconnect.
    */
-  readonly ended = Promise.withResolvers<void>();
+  readonly ended = Promise.withResolvers<undefined>();
 
   private lost = false;
 

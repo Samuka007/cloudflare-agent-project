@@ -1,4 +1,4 @@
-import { SELF, env } from "cloudflare:test";
+import { env, exports } from "cloudflare:workers";
 import type { DispatchOutcome } from "@cap/agent-do";
 import { DAEMON_PROTOCOL_VERSION } from "../src/constants.js";
 import type { DaemonServiceDO } from "../src/service-do.js";
@@ -37,9 +37,10 @@ export const testEnv = env as unknown as HarnessEnv;
 
 /** The real worker front — auth + routing included. */
 export async function workerFetch(request: Request): Promise<Response> {
-  // SELF is cloudflare:test's service binding to the worker's default export
-  // (docs/research/testing-strategy-cloudflare-do.md §1.3 integration entry).
-  return SELF.fetch(request);
+  // exports.default is cloudflare:workers' handle on the worker's default
+  // export (docs/research/testing-strategy-cloudflare-do.md §1.3 integration
+  // entry; SELF is the deprecated cloudflare:test spelling).
+  return exports.default.fetch(request);
 }
 
 export function uniqueHostId(prefix: string): string {
@@ -77,7 +78,7 @@ export class SimulatedClient {
   private sessionId: string | null = null;
   readonly inbound: ServiceFrame[] = [];
   /** Close frames observed on the current socket (code + reason). */
-  readonly closeEvents: Array<{ code: number; reason: string }> = [];
+  readonly closeEvents: { code: number; reason: string }[] = [];
   /** Frames the client "would have missed" (closed socket) — for I27. */
   forgets: string[] = [];
   /** Simulated OS process table: executionId → {pid, pidStartedAt}. */
@@ -112,7 +113,7 @@ export class SimulatedClient {
     if (openResponse.status !== 201) {
       throw new Error(`session/open failed: ${openResponse.status} ${await openResponse.text()}`);
     }
-    const open = (await openResponse.json()) as { sessionId: string };
+    const open = await openResponse.json<{ sessionId: string }>();
     this.sessionId = open.sessionId;
 
     const upgradeResponse = await workerFetch(
@@ -139,7 +140,7 @@ export class SimulatedClient {
       }
     });
     socket.addEventListener("close", (event) => {
-      const close = event as CloseEvent;
+      const close = event;
       this.closeEvents.push({ code: close.code, reason: close.reason });
     });
     socket.accept();
@@ -173,10 +174,11 @@ export class SimulatedClient {
     this.socket.send(JSON.stringify(frame));
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
     this.closed = true;
     this.socket?.close(1000, "client_bye");
     this.socket = null;
+    return Promise.resolve();
   }
 
   /** The service's exec.spawn → simulated spawn + started ack. */
@@ -203,7 +205,10 @@ export class SimulatedClient {
    * until the client acks, so callers must never await dispatch first — this
    * sequences spawn-wait → ack → dispatch settlement.
    */
-  async acknowledgeSpawnFor(executionId: string, dispatch: Promise<unknown>): Promise<{ pid: number; pidStartedAt: number }> {
+  async acknowledgeSpawnFor(
+    executionId: string,
+    dispatch: Promise<unknown>,
+  ): Promise<{ pid: number; pidStartedAt: number }> {
     const ack = await this.acknowledgeSpawn(executionId);
     await dispatch;
     return ack;
@@ -233,7 +238,12 @@ export class SimulatedClient {
     });
   }
 
-  sendExited(executionId: string, exitCode: number | null, finalOffset: number, reason?: "timeout"): void {
+  sendExited(
+    executionId: string,
+    exitCode: number | null,
+    finalOffset: number,
+    reason?: "timeout",
+  ): void {
     this.send({
       type: "exec.exited",
       threadId: threadIdOf(executionId),
@@ -282,7 +292,9 @@ export class SimulatedClient {
     );
   }
 
-  async waitForResume(executionId: string): Promise<Extract<ServiceFrame, { type: "exec.resume" }>> {
+  async waitForResume(
+    executionId: string,
+  ): Promise<Extract<ServiceFrame, { type: "exec.resume" }>> {
     return this.waitFor(
       (candidate): candidate is Extract<ServiceFrame, { type: "exec.resume" }> =>
         candidate.type === "exec.resume" && candidate.executionId === executionId,
@@ -290,7 +302,10 @@ export class SimulatedClient {
   }
 
   /** Polls the inbound queue until a matching frame shows up. */
-  async waitFor<T extends ServiceFrame>(predicate: (frame: ServiceFrame) => frame is T, timeoutMs = 5000): Promise<T> {
+  async waitFor<T extends ServiceFrame>(
+    predicate: (frame: ServiceFrame) => frame is T,
+    timeoutMs = 5000,
+  ): Promise<T> {
     const deadline = Date.now() + timeoutMs;
     let scanned = 0;
     while (Date.now() < deadline) {
@@ -301,11 +316,15 @@ export class SimulatedClient {
       }
       await sleep(25);
     }
-    throw new Error(`timeout waiting for frame (inbound: ${JSON.stringify(this.inbound.map((f) => f.type))})`);
+    throw new Error(
+      `timeout waiting for frame (inbound: ${JSON.stringify(this.inbound.map((f) => f.type))})`,
+    );
   }
 
-  framesOfType<T extends ServiceFrame["type"]>(type: T): Array<Extract<ServiceFrame, { type: T }>> {
-    return this.inbound.filter((frame): frame is Extract<ServiceFrame, { type: T }> => frame.type === type);
+  framesOfType<T extends ServiceFrame["type"]>(type: T): Extract<ServiceFrame, { type: T }>[] {
+    return this.inbound.filter(
+      (frame): frame is Extract<ServiceFrame, { type: T }> => frame.type === type,
+    );
   }
 }
 
@@ -341,7 +360,10 @@ export async function dispatchViaSeam(
 // Journal assertions.
 // ---------------------------------------------------------------------------
 
-export async function journalOf(hostId: string, executionId?: string): Promise<Array<JournalOp & { opSeq: number }>> {
+export async function journalOf(
+  hostId: string,
+  executionId?: string,
+): Promise<(JournalOp & { opSeq: number })[]> {
   return serviceStub(hostId).journalOps(executionId);
 }
 
@@ -350,10 +372,12 @@ export async function executionViewOf(hostId: string, executionId: string) {
 }
 
 export function opsOfKind<T extends JournalOp["kind"]>(
-  ops: Array<JournalOp & { opSeq: number }>,
+  ops: (JournalOp & { opSeq: number })[],
   kind: T,
-): Array<Extract<JournalOp, { kind: T }> & { opSeq: number }> {
-  return ops.filter((op): op is Extract<JournalOp, { kind: T }> & { opSeq: number } => op.kind === kind);
+): (Extract<JournalOp, { kind: T }> & { opSeq: number })[] {
+  return ops.filter(
+    (op): op is Extract<JournalOp, { kind: T }> & { opSeq: number } => op.kind === kind,
+  );
 }
 
 function threadIdOf(executionId: string): string {
@@ -362,7 +386,10 @@ function threadIdOf(executionId: string): string {
 }
 
 function sleep(ms: number): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
+  // Real-clock pause by contract: the L1 rig drives workerd's own timers
+  // (docs/research/testing-strategy-cloudflare-do.md) — there is no
+  // injectable clock at this seam to fake.
+  const { promise, resolve } = Promise.withResolvers<undefined>();
   setTimeout(resolve, ms);
   return promise;
 }

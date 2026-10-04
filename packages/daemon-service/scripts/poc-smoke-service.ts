@@ -17,12 +17,12 @@ import { mkdirSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 // Journal op rows as the smoke reads them (structural — the script must not
 // pull the Workers-typed journal module into the Bun/Node type context).
-type OpRow = {
+interface OpRow {
   opSeq: number;
   kind: string;
   executionId?: string;
   verified?: boolean;
-};
+}
 
 // Run from packages/daemon-service (bun scripts/poc-smoke-service.ts).
 const PACKAGE = process.cwd();
@@ -60,7 +60,11 @@ function captureClientLines(prefix: string, chunk: Buffer): void {
   }
 }
 
-async function waitFor(predicate: () => Promise<boolean>, what: string, timeoutMs = 60_000): Promise<void> {
+async function waitFor(
+  predicate: () => Promise<boolean>,
+  what: string,
+  timeoutMs = 60_000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await predicate()) return;
@@ -70,7 +74,7 @@ async function waitFor(predicate: () => Promise<boolean>, what: string, timeoutM
 }
 
 function sleep(ms: number): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
+  const { promise, resolve } = Promise.withResolvers<undefined>();
   setTimeout(resolve, ms);
   return promise;
 }
@@ -88,7 +92,9 @@ async function get(path: string): Promise<Response> {
 }
 
 async function journal(executionId?: string): Promise<OpRow[]> {
-  const response = await get(`/agent/journal${executionId ? `?executionId=${encodeURIComponent(executionId)}` : ""}`);
+  const response = await get(
+    `/agent/journal${executionId ? `?executionId=${encodeURIComponent(executionId)}` : ""}`,
+  );
   return ((await response.json()) as { ops: OpRow[] }).ops;
 }
 
@@ -99,16 +105,20 @@ async function sinkUpdates(): Promise<AgentUpdate[]> {
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error(`agent-sink updates: non-JSON response (HTTP ${response.status}): ${text.slice(0, 300)}`);
+    throw new Error(
+      `agent-sink updates: non-JSON response (HTTP ${response.status}): ${text.slice(0, 300)}`,
+    );
   }
   if (parsed === null || typeof parsed !== "object" || !("updates" in parsed)) {
-    throw new Error(`agent-sink updates: unexpected body (HTTP ${response.status}): ${text.slice(0, 300)}`);
+    throw new Error(
+      `agent-sink updates: unexpected body (HTTP ${response.status}): ${text.slice(0, 300)}`,
+    );
   }
   const updates = parsed.updates;
   if (!Array.isArray(updates)) {
     throw new Error(`agent-sink updates: not an array: ${text.slice(0, 300)}`);
   }
-  return updates;
+  return updates as AgentUpdate[];
 }
 
 async function dispatch(executionId: string, command: string): Promise<DispatchOutcomeResponse> {
@@ -125,13 +135,21 @@ async function dispatch(executionId: string, command: string): Promise<DispatchO
 }
 
 function startClient(prefix: string): ChildProcess {
-  const child = spawn("bun", ["src/client/index.ts", "--url", BASE, "--dataDir", DATA_DIR, "--sandbox", SANDBOX], {
-    cwd: PACKAGE,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, POC_ENROLL_KEY: ENROLL_KEY },
+  const child = spawn(
+    "bun",
+    ["src/client/index.ts", "--url", BASE, "--dataDir", DATA_DIR, "--sandbox", SANDBOX],
+    {
+      cwd: PACKAGE,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, POC_ENROLL_KEY: ENROLL_KEY },
+    },
+  );
+  child.stdout.on("data", (chunk: Buffer) => {
+    captureClientLines(prefix, chunk);
   });
-  child.stdout?.on("data", (chunk: Buffer) => captureClientLines(prefix, chunk));
-  child.stderr?.on("data", (chunk: Buffer) => captureClientLines(`${prefix}!`, chunk));
+  child.stderr.on("data", (chunk: Buffer) => {
+    captureClientLines(`${prefix}!`, chunk);
+  });
   return child;
 }
 
@@ -166,7 +184,9 @@ async function main(): Promise<void> {
     stdio: ["ignore", "ignore", "pipe"],
     env: { ...process.env, WRANGLER_SEND_METRICS: "false" },
   });
-  wrangler.stderr?.on("data", (chunk: Buffer) => process.stderr.write(`[wrangler] ${chunk}`));
+  wrangler.stderr?.on("data", (chunk: Buffer) =>
+    process.stderr.write(`[wrangler] ${chunk.toString()}`),
+  );
   await waitFor(async () => {
     try {
       return (await fetch(`${BASE}/health`)).ok;
@@ -181,8 +201,10 @@ async function main(): Promise<void> {
   client = startClient("boot1");
   await waitFor(async () => {
     try {
-      const session = ((await (await get("/agent/session")).json()) as { session: { syncing: boolean } | null }).session;
-      return session !== null && session.syncing === false;
+      const session = (
+        (await (await get("/agent/session")).json()) as { session: { syncing: boolean } | null }
+      ).session;
+      return session !== null && !session.syncing;
     } catch {
       return false;
     }
@@ -197,8 +219,12 @@ async function main(): Promise<void> {
     roundtripIds.push(executionId);
     log(`dispatch ${executionId}: ${command}`);
     const outcome = await dispatch(executionId, command);
-    if (outcome.kind !== "accepted") throw new Error(`dispatch ${executionId} → ${JSON.stringify(outcome)}`);
-    await waitFor(async () => (await journal(executionId)).some((op) => op.kind === "exited"), `exit of ${executionId}`);
+    if (outcome.kind !== "accepted")
+      throw new Error(`dispatch ${executionId} → ${JSON.stringify(outcome)}`);
+    await waitFor(
+      async () => (await journal(executionId)).some((op) => op.kind === "exited"),
+      `exit of ${executionId}`,
+    );
   }
 
   // 4. Journal + agent-sink verification.
@@ -223,9 +249,13 @@ async function main(): Promise<void> {
   log("dispatching long sleeper, then killing the client mid-exec …");
   const sleeperId = `${THREAD_ID}:99`;
   const sleeperOutcome = await dispatch(sleeperId, "sleep 25 && echo late");
-  if (sleeperOutcome.kind !== "accepted") throw new Error(`sleeper dispatch → ${JSON.stringify(sleeperOutcome)}`);
-  await waitFor(async () => (await journal(sleeperId)).some((op) => op.kind === "spawn_ack"), "sleeper spawn");
-  client?.kill("SIGKILL");
+  if (sleeperOutcome.kind !== "accepted")
+    throw new Error(`sleeper dispatch → ${JSON.stringify(sleeperOutcome)}`);
+  await waitFor(
+    async () => (await journal(sleeperId)).some((op) => op.kind === "spawn_ack"),
+    "sleeper spawn",
+  );
+  client.kill("SIGKILL");
   client = null;
   log("client killed mid-exec — sleeper stays RUNNING, turn not hung");
 
@@ -252,8 +282,12 @@ async function main(): Promise<void> {
   // 7. Post-restart the machine serves new work.
   const afterId = `${THREAD_ID}:100`;
   const afterOutcome = await dispatch(afterId, "echo after-restart");
-  if (afterOutcome.kind !== "accepted") throw new Error(`post-restart dispatch → ${JSON.stringify(afterOutcome)}`);
-  await waitFor(async () => (await journal(afterId)).some((op) => op.kind === "exited"), "post-restart exit");
+  if (afterOutcome.kind !== "accepted")
+    throw new Error(`post-restart dispatch → ${JSON.stringify(afterOutcome)}`);
+  await waitFor(
+    async () => (await journal(afterId)).some((op) => op.kind === "exited"),
+    "post-restart exit",
+  );
   log("post-restart roundtrip ok");
 
   // Transcript summary.
@@ -278,7 +312,7 @@ main()
     teardown();
     process.exit(0);
   })
-  .catch((error) => {
+  .catch((error: unknown) => {
     console.error(`[smoke] FAILED: ${error instanceof Error ? error.stack : String(error)}`);
     teardown();
     process.exit(1);

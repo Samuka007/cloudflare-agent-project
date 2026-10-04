@@ -55,10 +55,11 @@ function virtualClock(horizonMs: number, random: () => number): VirtualClock {
     clock: {
       now: () => now,
       random,
-      sleep: async (ms: number) => {
+      sleep: (ms: number): Promise<void> => {
         sleeps.push(ms);
         now += ms;
-        if (now > horizonMs) throw new HourElapsed(now, sleeps);
+        if (now > horizonMs) return Promise.reject(new HourElapsed(now, sleeps));
+        return Promise.resolve();
       },
     },
     sleeps,
@@ -91,11 +92,10 @@ async function runLoop(
   try {
     await runSessionLoop(
       {
-        ensureIdentity: async () => {
+        ensureIdentity: (): Promise<CredentialBundle> => {
           counts.enrollCalls += 1;
-          return script.ensureIdentity === undefined
-            ? DEFAULT_IDENTITY
-            : await script.ensureIdentity();
+          if (script.ensureIdentity === undefined) return Promise.resolve(DEFAULT_IDENTITY);
+          return script.ensureIdentity();
         },
         establishSession: async () => {
           counts.openCalls += 1;
@@ -104,7 +104,10 @@ async function runLoop(
         sessionLifetime: async () => {
           await script.sessionLifetime?.(virtual);
         },
-        teardownSession: () => {},
+        // The fake holds no per-session state to clear.
+        teardownSession: () => {
+          /* no-op */
+        },
       },
       virtual.clock,
     );
@@ -194,10 +197,10 @@ describe("L1 client negotiation backoff (issue #35)", () => {
     let enrollCall = 0;
     let openCall = 0;
     const { sleeps, counts } = await runLoop(15_000, () => 0.5, {
-      ensureIdentity: async () => {
+      ensureIdentity: (): Promise<CredentialBundle> => {
         enrollCall += 1;
-        if (enrollCall <= 2) throw negotiationFailure("enroll", 503, null, 0);
-        return { hostId: "host_enrolled", hostKey: "key_enrolled" };
+        if (enrollCall <= 2) return Promise.reject(negotiationFailure("enroll", 503, null, 0));
+        return Promise.resolve({ hostId: "host_enrolled", hostKey: "key_enrolled" });
       },
       establishSession: (virtual) => {
         openCall += 1;
@@ -218,8 +221,9 @@ describe("L1 client negotiation backoff (issue #35)", () => {
         flapCall += 1;
         return flapCall === 2 ? Promise.resolve(virtual.now()) : rejectOpen503();
       },
-      sessionLifetime: async (virtual) => {
+      sessionLifetime: (virtual): Promise<void> => {
         virtual.advance(5_000);
+        return Promise.resolve();
       },
     });
     // Session lived 5s < 10s: the chain keeps climbing (2000 next).
@@ -231,8 +235,9 @@ describe("L1 client negotiation backoff (issue #35)", () => {
         stableCall += 1;
         return stableCall === 2 ? Promise.resolve(virtual.now()) : rejectOpen503();
       },
-      sessionLifetime: async (virtual) => {
+      sessionLifetime: (virtual): Promise<void> => {
         virtual.advance(15_000);
+        return Promise.resolve();
       },
     });
     // Session lived 15s > 10s: stable — the chain restarts at 1s.

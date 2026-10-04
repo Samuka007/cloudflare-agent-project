@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { SimulatedClient, uniqueHostId, journalOf, opsOfKind, dispatchViaSeam, executionViewOf } from "./helpers.js";
+import {
+  SimulatedClient,
+  uniqueHostId,
+  journalOf,
+  opsOfKind,
+  dispatchViaSeam,
+  executionViewOf,
+} from "./helpers.js";
 
 /**
  * I29 — backpressure honesty (§8.3): a windowed client pauses its uplink at

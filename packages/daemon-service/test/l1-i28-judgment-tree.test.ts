@@ -16,11 +16,28 @@ import type { ObservedExecution } from "../src/protocol.js";
  * kill-list+UNKNOWN, direct UNKNOWN, or clean — never none, never two.
  */
 
-function runningObserved(executionId: string, threadId: string, pid: number, startedAt: number): ObservedExecution {
-  return { executionId, threadId, pid, pidStartedAt: startedAt, state: "running", bufferedFromOffset: 0 };
+function runningObserved(
+  executionId: string,
+  threadId: string,
+  pid: number,
+  startedAt: number,
+): ObservedExecution {
+  return {
+    executionId,
+    threadId,
+    pid,
+    pidStartedAt: startedAt,
+    state: "running",
+    bufferedFromOffset: 0,
+  };
 }
 
-function endedObserved(executionId: string, threadId: string, finalOffset: number, exitCode: number): ObservedExecution {
+function endedObserved(
+  executionId: string,
+  threadId: string,
+  finalOffset: number,
+  exitCode: number,
+): ObservedExecution {
   return {
     executionId,
     threadId,
@@ -47,7 +64,10 @@ describe("L1 I28 judgment tree", () => {
     await client.close();
 
     const client2 = new SimulatedClient(hostId);
-    await client2.dial({ bootId: client.bootId, observed: [runningObserved(executionId, threadId, ack.pid, ack.pidStartedAt)] });
+    await client2.dial({
+      bootId: client.bootId,
+      observed: [runningObserved(executionId, threadId, ack.pid, ack.pidStartedAt)],
+    });
     await client2.waitForResume(executionId);
 
     const actions = opsOfKind(await journalOf(hostId, executionId), "reconcile_action");
@@ -84,10 +104,13 @@ describe("L1 I28 judgment tree", () => {
     expect(view.state).toBe("COMPLETED");
     expect(view.result).toMatchObject({ status: "ok", exitCode: 0, output: "done\n" });
     await expect
-      .poll(async () => (await sinkStub(threadId).updates()).some((update) => update.kind === "exited"), {
-        timeout: 5000,
-        interval: 50,
-      })
+      .poll(
+        async () => (await sinkStub(threadId).updates()).some((update) => update.kind === "exited"),
+        {
+          timeout: 5000,
+          interval: 50,
+        },
+      )
       .toBe(true);
     await client2.close();
   });
@@ -105,10 +128,16 @@ describe("L1 I28 judgment tree", () => {
     await client.close();
 
     const client2 = new SimulatedClient(hostId); // fresh bootId
-    await client2.dial({ observed: [runningObserved(executionId, threadId, ack.pid, ack.pidStartedAt)] });
+    await client2.dial({
+      observed: [runningObserved(executionId, threadId, ack.pid, ack.pidStartedAt)],
+    });
     const killList = await client2.waitForKillList();
     expect(killList.entries).toHaveLength(1);
-    expect(killList.entries[0]).toMatchObject({ executionId, pid: ack.pid, pidStartedAt: ack.pidStartedAt });
+    expect(killList.entries[0]).toMatchObject({
+      executionId,
+      pid: ack.pid,
+      pidStartedAt: ack.pidStartedAt,
+    });
 
     const actions = opsOfKind(await journalOf(hostId, executionId), "reconcile_action");
     expect(actions.map((op) => op.action)).toEqual(["kill_list"]);

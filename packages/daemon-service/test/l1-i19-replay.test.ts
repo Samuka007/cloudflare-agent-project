@@ -27,12 +27,22 @@ describe("L1 I19 journal replay determinism", () => {
 
     const ack = await client.acknowledgeSpawnFor(
       runningId,
-      dispatchViaSeam(hostId, { threadId, executionId: runningId, machineId: hostId, command: "sleep 60" }),
-   );
+      dispatchViaSeam(hostId, {
+        threadId,
+        executionId: runningId,
+        machineId: hostId,
+        command: "sleep 60",
+      }),
+    );
     client.sendOutput(runningId, 0, "partial");
     await client.waitForOutput(runningId);
 
-    const doneDispatch = dispatchViaSeam(hostId, { threadId, executionId: doneId, machineId: hostId, command: "echo done" });
+    const doneDispatch = dispatchViaSeam(hostId, {
+      threadId,
+      executionId: doneId,
+      machineId: hostId,
+      command: "echo done",
+    });
     const doneSpawn = await client.waitForSpawn(doneId);
     client.send({
       type: "exec.started",
