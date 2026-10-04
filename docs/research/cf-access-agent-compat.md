@@ -20,21 +20,21 @@
 
 ## 1. 现状盘点（live API 只读实测 + 仓库证据）
 
-| 项 | 实测值（live 2026-10-04） | 证据 |
-| --- | --- | --- |
-| zone `samuka007.top` | Free 套餐、active；`browser_check=on`、`security_level=medium`、托管 WAF `off` | GET /zones、/zones/{id}/settings |
-| zone WAF custom rules / IP access rules / lockdowns | **全部为空**（无任何已配规则，IP 过滤是绿地） | rulesets 列表仅 managed；`firewall/access_rules/rules`、`firewall/lockdowns` 返回 `[]` |
-| Access 组织 | `samuka007.cloudflareaccess.com`（2024-09-30 建）；`strict_service_token_auth=false`（2026-10-05 前建的组织可自选开关）；`service_token_inactivity` 关闭 | GET /accounts/{id}/access/organizations |
-| Access apps | 4 个，**无一是 `.top` zone**（cvat/langfuse-priv-3090 在 samuka007.com + warp + launcher）→ staging 目前完全不在 Access 后面 | GET /accounts/{id}/access/apps |
-| Service tokens | 1 枚 `omp`（2026-09-13 建，8760h，2027-09-13 到期，未挂 policy） | GET /access/service_tokens |
-| Workers | `cap-server-staging` 存活（2026-10-04 修改），跑在 `cap-server-staging.dai-samuel.workers.dev`（subdomain `dai-samuel`）；`/health`、`/api/v1/hosts` 实测 200、无 Access 挑战；zone workers routes 为空、custom domains 列表无 staging → **`staging.samuka007.top` 尚未挂** | GET /workers/scripts、/workers/subdomain、/workers/domains、实测 fetch |
-| DNS | `.top` 上 5 对 A/AAAA 指向 VPS `43.139.31.220`（dns-only）；无 staging 记录、无 DDNS 记录 | GET /zones/{id}/dns_records |
-| 家庭 WSL 出口 IP | `103.155.37.8`（live 实测 ifconfig.me）；cvat app 的 Allow policy 里已钉 `ip: 103.155.37.8/32` —— **Access 侧 IP 钉制先例** | live fetch + GET cvat app policies |
-| staging 开关 | `ACCESS_CHECK_ENABLED="false"`（vars 烧死在 wrangler.staging.jsonc:62） | 仓库 wrangler.staging.jsonc |
-| daemon face 旁路 | `DAEMON_ROUTE_PREFIXES = ["/enroll", "/session/open", "/agent/", "/agent-sink/"]` + 「`/ws` 且带 `authorization` 头」→ 直接派发 `daemonServiceWorker`，**先于** `createApp`，即 originGuard/accessGate/CORS 全部不经过 | apps/server-worker/src/index.ts:67-78、87-108 |
-| 中间件覆盖面 | accessGate 挂在 `/api/v1/*` 与 `/ws`（先 originGuard 后 accessGate 后 CORS）；`/health`、`/assets/*`、SPA fallback 无鉴权 | apps/server-worker/src/app.ts:26-50 |
-| 中间件实现 | 接受 `Cf-Access-Jwt-Assertion` 头或 `CF_Authorization` cookie（bearerToken, access.ts:45-61）；RS256 + team JWKS（10min 缓存）+ `aud`==`ACCESS_AUD` + `exp` 校验；claims 只要求 `aud`/`exp` 两项 | apps/server-worker/src/middleware/access.ts |
-| CI | ci.yml 仅 checkout/pnpm/lint/typecheck/test，**零 CF 流量**；仓库无任何 wrangler 调用 | .github/workflows/ci.yml:1-35 |
+| 项                                                  | 实测值（live 2026-10-04）                                                                                                                                                                                                                                                   | 证据                                                                                   |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| zone `samuka007.top`                                | Free 套餐、active；`browser_check=on`、`security_level=medium`、托管 WAF `off`                                                                                                                                                                                              | GET /zones、/zones/{id}/settings                                                       |
+| zone WAF custom rules / IP access rules / lockdowns | **全部为空**（无任何已配规则，IP 过滤是绿地）                                                                                                                                                                                                                               | rulesets 列表仅 managed；`firewall/access_rules/rules`、`firewall/lockdowns` 返回 `[]` |
+| Access 组织                                         | `samuka007.cloudflareaccess.com`（2024-09-30 建）；`strict_service_token_auth=false`（2026-10-05 前建的组织可自选开关）；`service_token_inactivity` 关闭                                                                                                                    | GET /accounts/{id}/access/organizations                                                |
+| Access apps                                         | 4 个，**无一是 `.top` zone**（cvat/langfuse-priv-3090 在 samuka007.com + warp + launcher）→ staging 目前完全不在 Access 后面                                                                                                                                                | GET /accounts/{id}/access/apps                                                         |
+| Service tokens                                      | 1 枚 `omp`（2026-09-13 建，8760h，2027-09-13 到期，未挂 policy）                                                                                                                                                                                                            | GET /access/service_tokens                                                             |
+| Workers                                             | `cap-server-staging` 存活（2026-10-04 修改），跑在 `cap-server-staging.dai-samuel.workers.dev`（subdomain `dai-samuel`）；`/health`、`/api/v1/hosts` 实测 200、无 Access 挑战；zone workers routes 为空、custom domains 列表无 staging → **`staging.samuka007.top` 尚未挂** | GET /workers/scripts、/workers/subdomain、/workers/domains、实测 fetch                 |
+| DNS                                                 | `.top` 上 5 对 A/AAAA 指向 VPS `43.139.31.220`（dns-only）；无 staging 记录、无 DDNS 记录                                                                                                                                                                                   | GET /zones/{id}/dns_records                                                            |
+| 家庭 WSL 出口 IP                                    | `103.155.37.8`（live 实测 ifconfig.me）；cvat app 的 Allow policy 里已钉 `ip: 103.155.37.8/32` —— **Access 侧 IP 钉制先例**                                                                                                                                                 | live fetch + GET cvat app policies                                                     |
+| staging 开关                                        | `ACCESS_CHECK_ENABLED="false"`（vars 烧死在 wrangler.staging.jsonc:62）                                                                                                                                                                                                     | 仓库 wrangler.staging.jsonc                                                            |
+| daemon face 旁路                                    | `DAEMON_ROUTE_PREFIXES = ["/enroll", "/session/open", "/agent/", "/agent-sink/"]` + 「`/ws` 且带 `authorization` 头」→ 直接派发 `daemonServiceWorker`，**先于** `createApp`，即 originGuard/accessGate/CORS 全部不经过                                                      | apps/server-worker/src/index.ts:67-78、87-108                                          |
+| 中间件覆盖面                                        | accessGate 挂在 `/api/v1/*` 与 `/ws`（先 originGuard 后 accessGate 后 CORS）；`/health`、`/assets/*`、SPA fallback 无鉴权                                                                                                                                                   | apps/server-worker/src/app.ts:26-50                                                    |
+| 中间件实现                                          | 接受 `Cf-Access-Jwt-Assertion` 头或 `CF_Authorization` cookie（bearerToken, access.ts:45-61）；RS256 + team JWKS（10min 缓存）+ `aud`==`ACCESS_AUD` + `exp` 校验；claims 只要求 `aud`/`exp` 两项                                                                            | apps/server-worker/src/middleware/access.ts                                            |
+| CI                                                  | ci.yml 仅 checkout/pnpm/lint/typecheck/test，**零 CF 流量**；仓库无任何 wrangler 调用                                                                                                                                                                                       | .github/workflows/ci.yml:1-35                                                          |
 
 ---
 
@@ -102,11 +102,11 @@
 
 ### 4.1 三个工具在 Free 套餐的可用性
 
-| 工具 | Free 可用 | 配额 | 关键语义 | 判定 |
-| --- | --- | --- | --- | --- |
-| **WAF custom rules** | **是** | 5 条（无 regex、除 Log 外全部 action） | rules 语言表达式，`ip.src in {…}` 原生支持；CF 官方推荐的 IP allowlist 载体 | **采用** |
-| IP Access rules | 是 | 50,000 条（zone/account 级） | Allow 动作会**绕过 custom rules**（顺序陷阱）；CF 自己建议「Use custom rules instead」 | 备选不用 |
-| Zone Lockdown | **否（0 条规则）** | Pro 3 / Business 10 / Enterprise 200 | URL 粒度 allowlist，语义最贴需求但 Free 无门 | 出局 |
+| 工具                 | Free 可用          | 配额                                   | 关键语义                                                                               | 判定     |
+| -------------------- | ------------------ | -------------------------------------- | -------------------------------------------------------------------------------------- | -------- |
+| **WAF custom rules** | **是**             | 5 条（无 regex、除 Log 外全部 action） | rules 语言表达式，`ip.src in {…}` 原生支持；CF 官方推荐的 IP allowlist 载体            | **采用** |
+| IP Access rules      | 是                 | 50,000 条（zone/account 级）           | Allow 动作会**绕过 custom rules**（顺序陷阱）；CF 自己建议「Use custom rules instead」 | 备选不用 |
+| Zone Lockdown        | **否（0 条规则）** | Pro 3 / Business 10 / Enterprise 200   | URL 粒度 allowlist，语义最贴需求但 Free 无门                                           | 出局     |
 
 [来源：Custom rules — https://developers.cloudflare.com/waf/custom-rules/ §Availability ；IP Access rules — https://developers.cloudflare.com/waf/tools/ip-access-rules/ §Availability/§Recommendation ；Zone Lockdown — https://developers.cloudflare.com/waf/tools/zone-lockdown/ §Availability ]
 
@@ -118,11 +118,11 @@
 
 ### 4.3 出口 IP 清单与自动化
 
-| 消费方 | 出口 | 动态性 | 允许名单策略 |
-| --- | --- | --- | --- |
-| 家庭 WSL（PM smoke/CDP/本地脚本） | `103.155.37.8`（live 2026-10-04） | 动态（工单口径；ticket 载明 lighthouse 已跑 cloudflare-ddns 更新本 zone 的先例；今日 `.top` DNS 实测尚无 DDNS 记录，接入时需建记录） | WAF 表达式里的 IP 集合随 DDNS 记录值经 API 重写（一条 PUT，占 5 条配额之一）；先例：cvat policy 钉 `/32` |
-| VPS `43.139.31.220` | 静态（`.top` 上 5 条 A 记录在案） | 静态 | 直接写死 |
-| GitHub Actions 托管 runner | **7,078 条 CIDR**（v4 5,555 + v6 1,523，live 实测 api.github.com/meta `actions`） | 高度动态 | **不做 allowlist，也不需要**（§4.4） |
+| 消费方                            | 出口                                                                              | 动态性                                                                                                                               | 允许名单策略                                                                                             |
+| --------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| 家庭 WSL（PM smoke/CDP/本地脚本） | `103.155.37.8`（live 2026-10-04）                                                 | 动态（工单口径；ticket 载明 lighthouse 已跑 cloudflare-ddns 更新本 zone 的先例；今日 `.top` DNS 实测尚无 DDNS 记录，接入时需建记录） | WAF 表达式里的 IP 集合随 DDNS 记录值经 API 重写（一条 PUT，占 5 条配额之一）；先例：cvat policy 钉 `/32` |
+| VPS `43.139.31.220`               | 静态（`.top` 上 5 条 A 记录在案）                                                 | 静态                                                                                                                                 | 直接写死                                                                                                 |
+| GitHub Actions 托管 runner        | **7,078 条 CIDR**（v4 5,555 + v6 1,523，live 实测 api.github.com/meta `actions`） | 高度动态                                                                                                                             | **不做 allowlist，也不需要**（§4.4）                                                                     |
 
 ### 4.4 CI 为什么天然免疫
 
@@ -136,11 +136,11 @@
 
 ### 5.1 三种 Access 形态的取舍（本次最重要的一条文档约束）
 
-| 形态 | 覆盖面 | WebSocket | 判定 |
-| --- | --- | --- | --- |
-| 账号级 protect-all-Workers（`all_workers`） | 账号内所有 Worker 的全部域名含 previews | **「Worker-level Access policies do not currently support WebSocket connections. WebSocket upgrade requests … will fail with a 403 error.」** | 出局（连坐所有 Worker，且 kills `/ws`） |
-| 单 Worker 级（`worker` destination） | 该 Worker 的 routes + custom domains + workers.dev + previews | 同上 403 | 出局（`/ws` 是核心） |
-| **hostname 型 self-hosted app** | 精确 hostname/path（含 workers.dev 主机名、custom domain、单 path） | 限制只明文写在 worker 级形态上；cvat 等 app 先例均在 hostname 型上跑浏览器流量 | **采用**；`/ws` 放入其中 [INFERENCE：hostname 型无 WS 禁令，升级请求按普通 HTTP 评估，service token 头可携带] |
+| 形态                                        | 覆盖面                                                              | WebSocket                                                                                                                                     | 判定                                                                                                          |
+| ------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| 账号级 protect-all-Workers（`all_workers`） | 账号内所有 Worker 的全部域名含 previews                             | **「Worker-level Access policies do not currently support WebSocket connections. WebSocket upgrade requests … will fail with a 403 error.」** | 出局（连坐所有 Worker，且 kills `/ws`）                                                                       |
+| 单 Worker 级（`worker` destination）        | 该 Worker 的 routes + custom domains + workers.dev + previews       | 同上 403                                                                                                                                      | 出局（`/ws` 是核心）                                                                                          |
+| **hostname 型 self-hosted app**             | 精确 hostname/path（含 workers.dev 主机名、custom domain、单 path） | 限制只明文写在 worker 级形态上；cvat 等 app 先例均在 hostname 型上跑浏览器流量                                                                | **采用**；`/ws` 放入其中 [INFERENCE：hostname 型无 WS 禁令，升级请求按普通 HTTP 评估，service token 头可携带] |
 
 [来源：Workers Cloudflare Access §Choose what to protect / §WebSocket limitation — https://developers.cloudflare.com/workers/configuration/cloudflare-access/ ]
 
@@ -165,14 +165,14 @@
 
 判定：✅ 直接可用；🟡 可用但需改造/有陷阱；❌ 不可用/反指示。
 
-| 消费者 ↓ / 选项 → | Access service token（Service Auth） | Access 浏览器 cookie（Allow） | WAF custom rule（IP 层） | hostKey-only（现状缝合） | worker 级 Access | Access mTLS |
-| --- | --- | --- | --- | --- | --- | --- |
-| PM smoke 脚本（家庭 WSL，curl/CLI） | ✅ 双头直带，401/403 可编程；IP 层再钉 `/32`（cvat 先例） | 🟡 需人工 OTP 登录保活，脚本化不可行（§2.4） | ✅ 出口 IP 入集合（DDNS 联动重写） | ✅（现状即此） | ❌ WS 403 连坐 | ❌ Free 无 mTLS |
-| CDP Chrome（SPA + WebSocket hub） | ❌ 浏览器无法设头；strict 下封死换 cookie | ✅ 一次性登录 + 自动续发（§3.1） | ✅ 同上（出口 IP） | ✅（现状即此） | ❌ WS 403 | ❌ 同上 |
-| daemon client（`/enroll`、`/session/open`、`/ws` attach） | ✅ 升级请求带头即可；hostKey 照旧在缝合内验（两层不打架） | ❌ 非浏览器 | ✅（VPS/家庭 IP 入集合） | ✅（现状即此，仍保留为第二把钥匙） | ❌ WS 403 | ❌ |
-| CI（GH 托管 runner） | 🟡 仅当未来 CI 需 app-plane 时（今日不需要） | ❌ | ❌ 7,078 CIDR 无法 allowlist | ❌ | ❌ | ❌ |
-| 未来 M1 soak（Worker 内 cron / VPS cron） | ✅ Worker 内 cron 无入站流量天然免疫；VPS cron 走 token + 静态 IP | ❌ | ✅ VPS 静态 IP | 🟡 仅限缝合内路径 | ❌ | ❌ |
-| wrangler deploy（CI 未来项） | — 不适用（控制面流量，api.cloudflare.com，zone 产品无关） | — | — 不受影响 | — | — | — |
+| 消费者 ↓ / 选项 →                                         | Access service token（Service Auth）                              | Access 浏览器 cookie（Allow）                | WAF custom rule（IP 层）           | hostKey-only（现状缝合）           | worker 级 Access | Access mTLS     |
+| --------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------- | ---------------------------------- | ---------------------------------- | ---------------- | --------------- |
+| PM smoke 脚本（家庭 WSL，curl/CLI）                       | ✅ 双头直带，401/403 可编程；IP 层再钉 `/32`（cvat 先例）         | 🟡 需人工 OTP 登录保活，脚本化不可行（§2.4） | ✅ 出口 IP 入集合（DDNS 联动重写） | ✅（现状即此）                     | ❌ WS 403 连坐   | ❌ Free 无 mTLS |
+| CDP Chrome（SPA + WebSocket hub）                         | ❌ 浏览器无法设头；strict 下封死换 cookie                         | ✅ 一次性登录 + 自动续发（§3.1）             | ✅ 同上（出口 IP）                 | ✅（现状即此）                     | ❌ WS 403        | ❌ 同上         |
+| daemon client（`/enroll`、`/session/open`、`/ws` attach） | ✅ 升级请求带头即可；hostKey 照旧在缝合内验（两层不打架）         | ❌ 非浏览器                                  | ✅（VPS/家庭 IP 入集合）           | ✅（现状即此，仍保留为第二把钥匙） | ❌ WS 403        | ❌              |
+| CI（GH 托管 runner）                                      | 🟡 仅当未来 CI 需 app-plane 时（今日不需要）                      | ❌                                           | ❌ 7,078 CIDR 无法 allowlist       | ❌                                 | ❌               | ❌              |
+| 未来 M1 soak（Worker 内 cron / VPS cron）                 | ✅ Worker 内 cron 无入站流量天然免疫；VPS cron 走 token + 静态 IP | ❌                                           | ✅ VPS 静态 IP                     | 🟡 仅限缝合内路径                  | ❌               | ❌              |
+| wrangler deploy（CI 未来项）                              | — 不适用（控制面流量，api.cloudflare.com，zone 产品无关）         | —                                            | — 不受影响                         | —                                  | —                | —               |
 
 ---
 

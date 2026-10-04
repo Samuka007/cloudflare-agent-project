@@ -117,9 +117,9 @@ describe("hosts liveness (#62)", () => {
     );
 
     socket.close(1000, "test-done");
-    expect(
-      await pollUntil(async () => (await readHost(hostId))?.status === "disconnected"),
-    ).toBe(true);
+    expect(await pollUntil(async () => (await readHost(hostId))?.status === "disconnected")).toBe(
+      true,
+    );
   });
 
   it("heartbeat refreshes last_seen_at; fresh stamps stay throttled", async () => {

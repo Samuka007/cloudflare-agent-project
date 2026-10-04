@@ -69,7 +69,9 @@ describe("daemon attach → /hosts registry bridge (#49)", () => {
   it("attach refreshes last_seen_at without touching owner-owned fields", async () => {
     const hostId = "local-bridge-refresh";
     expect((await enroll(hostId)).status).toBe(201);
-    await env.DB.prepare("UPDATE hosts SET name = 'renamed', max_permission_mode = 'accept-edits' WHERE id = ?")
+    await env.DB.prepare(
+      "UPDATE hosts SET name = 'renamed', max_permission_mode = 'accept-edits' WHERE id = ?",
+    )
       .bind(hostId)
       .run();
 
