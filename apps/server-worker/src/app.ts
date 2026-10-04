@@ -7,6 +7,7 @@ import { registerThreadRoutes } from "./routes/threads.js";
 import { registerSystemRoutes } from "./routes/system.js";
 import { registerProjectRoutes, registerThreadSectionRoutes } from "./routes/projects.js";
 import { registerHostRoutes } from "./routes/hosts.js";
+import { registerPluginRoutes } from "./routes/plugins.js";
 import type { AppEnv, Env } from "./app-types.js";
 import type { Context, Next } from "hono";
 
@@ -53,6 +54,7 @@ export function createApp(env: Env): Hono<AppEnv> {
   registerProjectRoutes(app);
   registerThreadSectionRoutes(app);
   registerHostRoutes(app);
+  registerPluginRoutes(app);
   registerSystemRoutes(app);
 
   app.notFound((ctx) => {
