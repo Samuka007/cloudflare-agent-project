@@ -39,7 +39,7 @@
 
 派单上下文必含：
 
-**隔离强制（2026-10-04 劫持事故后立；同日升级为 herdr 托管）**：写 lane 的 worktree 由 **PM 经 herdr 预建**——`herdr worktree create --cwd <repo> --branch lane/<slug> --base origin/main --label <slug> --no-focus`，取 `.result.worktree.path`（确定性路径 `~/.herdr/worktrees/<repo>/<branch-as-dash>`，在 herdr 注册表可查），lane 只 cd 入内、禁自建/禁换。lane 关账后 PM `herdr worktree remove --workspace <其 workspace>`（含 --force 可清未净树）；存量盘点 `herdr worktree list`。lane 自建 worktree=违规（命名漂移/无注册/难回收是旧 /tmp 时代的三个病）。主仓 checkout 仅 PM 使用；PM 的提交/推送在钉住 origin/main 的净树进行并推送后核对 origin/main 实际移动。读 lane 默认无写面不适用。事故实例：v3/v4 分解文档提交落 sibling 分支被清理，main 从未收到。
+**隔离强制（2026-10-04 劫持事故后立；同日升级为 herdr 托管；所有权再修正）**：写 lane 的 worktree 由 **PM 经 herdr 预建**——`herdr worktree create --cwd <repo> --branch lane/<slug> --base origin/main --label <slug> --no-focus`，取 `.result.worktree.path`（确定性路径 `~/.herdr/worktrees/<repo>/<branch-as-dash>`，在 herdr 注册表可查），lane 只 cd 入内、禁自建/禁换/禁入主仓。lane 关账后 PM `herdr worktree remove --workspace <其 workspace>`（含 --force 可清未净树）；存量盘点 `herdr worktree list`。lane 自建 worktree=违规（命名漂移/无注册/难回收是旧 /tmp 时代的三个病）。**主仓 checkout 归 PM 独占**——PM 的一切读写/提交/推送都在主仓 main 上直接进行（不再使用任何临时净树；劫持时代已由本条款终结），推送后必核对 origin/main 实际移动。读 lane 默认无写面不适用。事故实例：v3/v4 分解文档提交落 sibling 分支被清理，main 从未收到；后续矫枉过正期 PM 流放自己在 /tmp 净树写作（2026-10-04 已废）。
 
 1. **效率预算行**：预期墙钟 / 资源占用上限 / 等待方式（交付即回 or 脚本化监控）。超预算 50% 要解释。
 2. **资源所有权账本**：owned files/dirs + owned worktree 路径 + owned 外部资源（staging 部署、secret 注入、newapi 面板等）。PM 派单前做**不相交断言**——两 lane 地盘相交 = 派单错误。
