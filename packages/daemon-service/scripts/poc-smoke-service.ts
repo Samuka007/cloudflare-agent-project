@@ -141,7 +141,7 @@ function startClient(prefix: string): ChildProcess {
     {
       cwd: PACKAGE,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, POC_ENROLL_KEY: ENROLL_KEY },
+      env: { ...process.env, DAEMON_ENROLL_KEY: ENROLL_KEY },
     },
   );
   child.stdout.on("data", (chunk: Buffer) => {
@@ -153,13 +153,13 @@ function startClient(prefix: string): ChildProcess {
   return child;
 }
 
-/** Finds the surviving orphan bash via its POC_DAEMON_MARKER environ. */
+/** Finds the surviving orphan bash via its DAEMON_EXEC_MARKER environ. */
 function findMarkerOrphanPid(): number {
   for (const entry of readdirSync("/proc")) {
     const pid = Number(entry);
     if (!Number.isInteger(pid) || pid === process.pid) continue;
     try {
-      if (readFileSync(`/proc/${pid}/environ`).toString("utf8").includes("POC_DAEMON_MARKER=1")) {
+      if (readFileSync(`/proc/${pid}/environ`).toString("utf8").includes("DAEMON_EXEC_MARKER=1")) {
         return pid;
       }
     } catch {
