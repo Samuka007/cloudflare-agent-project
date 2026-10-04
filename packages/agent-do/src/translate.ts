@@ -72,7 +72,8 @@ export function modelRequestFromEvents(
             (cut.checkpointResultSeq !== null && event.seq <= cut.checkpointResultSeq),
         );
 
-  // M1.5 T16 async-result attribution runs over the FULL log — background
+  // M1.5 T16 async-result attribution runs over the whole active branch
+  // (#147: hidden-span rows never re-inject post-cut) — background
   // completions land between turns, so the per-turn filter below never sees
   // them. Boundary rule (boundaryOwnerSeqs): a result rides the first call
   // that starts after it; it then stays in that call's slice forever.
