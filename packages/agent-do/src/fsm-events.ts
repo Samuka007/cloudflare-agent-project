@@ -254,6 +254,101 @@ export const agentEventDataSchemas = {
     op: z.enum(["init", "start", "done", "rm", "drop", "block", "unblock", "append", "view"]),
     phases: z.array(todoPhaseSchema),
   }),
+
+  /**
+   * M1.5 T16 task/subagent journal family (proposal §3 T16) — thread-scoped
+   * like the JobRegistry family: spawn plans outlive turns, projected by
+   * tools/task/*, never FSM state.
+   *
+   * `task.spawn_planned` is the journal-first CAS for one spawn: idempotent by
+   * `executionId` (recovery re-dispatch re-adopts the same child — never a
+   * second spawn), while a *re-sent* task call gets a fresh executionId and
+   * deliberately spawns a new child (omp zero-dedup semantics, matrix §2.4:
+   * follow-up should `write agent://<id>`, not re-spawn). `machineId` carries
+   * the bb same-host constructive default: the child inherits the parent's
+   * machine binding (bb-fleet-shape §7).
+   */
+  "task.spawn_planned": z.object({
+    executionId: z.string().min(1),
+    /** Child DO address and spawn dedup key (one id serves both roles). */
+    spawnId: z.string().min(1),
+    /** Uniquified omp agent id (dup `-2`, nested `Parent.Child`). */
+    agentId: z.string().min(1),
+    agent: z.string().min(1),
+    childThreadId: z.string().min(1),
+    parentThreadId: z.string().min(1),
+    machineId: z.string().min(1),
+    mode: z.enum(["blocking", "background"]),
+    /** T2 JobRegistry id for background spawns; null = blocking inline. */
+    jobId: z.string().min(1).nullable(),
+    task: z.string().min(1),
+    /** omp solutionSpace — forwarded to the child's auto thinking classifier. */
+    solutionSpace: z.string(),
+    /** Ordered model preference; explicit selectors never fall back to the parent model (omp task.md §model). */
+    model: z.string().optional(),
+    /**
+     * Accepted-but-T17-activated structured contract (recorded, not yet
+     * validated). JSON-encoded on the journal: event data must stay
+     * RPC-serializable (no top-level `unknown`), and the raw caller value
+     * lives only in the in-memory spawn plan.
+     */
+    outputSchemaJson: z.string().min(1).optional(),
+    schemaMode: z.enum(["permissive", "strict"]).optional(),
+    depth: z.number().int().nonnegative(),
+  }),
+
+  /**
+   * Terminal backflow row for one spawn, appended by the child-completion
+   * wake source (AgentDO.completeSubagent) BEFORE any waiter wakes (iron
+   * rule 1). Idempotent by `spawnId` — duplicate callbacks append nothing
+   * (cross-DO message dedup, T16 acceptance).
+   */
+  "task.spawn_settled": z.object({
+    spawnId: z.string().min(1),
+    jobId: z.string().min(1).nullable(),
+    agentId: z.string().min(1),
+    childThreadId: z.string().min(1),
+    status: z.enum(["ok", "error"]),
+    /** Inline delivery text — already summary-capped by the executor. */
+    output: z.string(),
+    outputTruncated: z.boolean().optional(),
+  }),
+
+  /**
+   * Background-completion follow-up (omp ASYNC_RESULT_MESSAGE_TYPE
+   * "async-result"): the model-visible injection into the parent's next run.
+   * The translate projection attaches it to the boundary of the first model
+   * call that starts after this row (deterministic replay, no consumption
+   * marker). Blocking spawns return through `tool.result` instead and never
+   * produce this row.
+   */
+  "task.async_result": z.object({
+    spawnId: z.string().min(1),
+    agentId: z.string().min(1),
+    jobId: z.string().min(1),
+    status: z.enum(["ok", "error"]),
+    output: z.string(),
+  }),
+
+  /**
+   * Child-journal identity row (bb dual-axis shape, bb-fleet-shape §1/§8):
+   * `parentThreadId` is the hierarchy axis, `sourceThreadId`+`originKind` the
+   * provenance axis — the pair is an XOR (fork provenance vs hierarchy
+   * ownership). The T16 spawn path writes only the hierarchy axis; the fork
+   * fields exist so the shape is frozen for the T17+ fork/side-chat paths
+   * without a schema migration. Folded into ReplayState.subagentIdentity —
+   * the child's replay-derivable knowledge of being a subagent (drives the
+   * subagent wire surface and the parent-completion hook).
+   */
+  "task.subagent_identity": z.object({
+    /** Parent-side spawn dedup key; rides the completion callback. */
+    spawnId: z.string().min(1),
+    agentId: z.string().min(1),
+    parentThreadId: z.string().min(1),
+    sourceThreadId: z.string().min(1).nullable(),
+    originKind: z.string().min(1).nullable(),
+    depth: z.number().int().nonnegative(),
+  }),
 } as const;
 
 export type AgentEventType = keyof typeof agentEventDataSchemas;

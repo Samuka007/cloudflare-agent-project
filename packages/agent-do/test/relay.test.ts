@@ -23,6 +23,7 @@ const REQUEST: ModelRequest = {
   input: "hi",
   steers: [],
   priorCalls: [],
+  asyncResults: [],
 };
 
 /** Build a Response whose body streams the given text in two chunks. */

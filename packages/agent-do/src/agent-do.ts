@@ -38,7 +38,7 @@ import { projectToUxEvents } from "./ux-projection.js";
 import { getAgentRuntime } from "./injection.js";
 import { modelRequestFromEvents } from "./translate.js";
 import { toolRegistryRow, type ToolRegistryRow } from "./tools/registry.js";
-import { latestContextNotes, runEdgeTool } from "./tools/edge.js";
+import { latestContextNotes, runEdgeTool, type EdgeToolContext } from "./tools/edge.js";
 import {
   projectInbox,
   type JobRegistration,
@@ -47,6 +47,21 @@ import {
   type PeerInbox,
 } from "./tools/job-registry.js";
 import { WAIT_LIMIT_REACHED, type WaitToolContext, type WaitWake } from "./tools/wait.js";
+import {
+  settleSpawn,
+  NO_YIELD_WARNING,
+  type RunSubagentRequest,
+  type SubagentSpawnHost,
+  type TaskToolContext,
+} from "./tools/task/executor.js";
+import {
+  canSpawnAtDepth,
+  lastYieldResult,
+  projectSpawnPlans,
+  settlementForSpawn,
+} from "./tools/task/types.js";
+import { childAssignment } from "./tools/task/plan.js";
+import { renderYieldOutput } from "./tools/yield.js";
 import { checkpointRewindState, todoJournalState } from "./tools/session-tree.js";
 
 /**
@@ -94,6 +109,23 @@ export class AgentRpcError extends Error {
     super(message);
     this.name = "AgentRpcError";
   }
+}
+
+/**
+ * Structural RPC view of a sibling AgentDO reached through the AGENT_DO
+ * namespace binding (M1.5 T16): the spawn host on the child side, the
+ * completion target on the parent side. Hand-written — the typed-stub
+ * mapping collapses unless every member stays RPC-serializable.
+ */
+interface SubagentDoStub {
+  createThread(request: CreateThreadRequest): Promise<CreateThreadResult>;
+  runSubagent(request: RunSubagentRequest): Promise<{ turnId: string; duplicated: boolean }>;
+  completeSubagent(request: {
+    spawnId: string;
+    agentId: string;
+    status: "ok" | "error";
+    output: string;
+  }): Promise<{ duplicated: boolean }>;
 }
 
 export interface CreateThreadRequest {
@@ -191,6 +223,14 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   /** In-memory message-only ladder windows (executionId → deadlineAt); the
    * 30-minute cap lives in computeDueWork's journal-derived table instead. */
   private readonly waitWindows = new Map<string, number>();
+  /**
+   * In-flight task executors (M1.5 T16), keyed by executionId — the same
+   * dedup the wait tool gets from edgeWaiters: dispatch and watchdog races
+   * must not fork a second spawn for one executionId. Recovery (sequential
+   * re-dispatch after eviction) re-adopts through the journal instead
+   * (planForExecution).
+   */
+  private readonly taskRuns = new Map<string, Promise<void>>();
 
   constructor(ctx: DurableObjectState, env: AgentDoBindings) {
     super(ctx, env);
@@ -346,6 +386,134 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       output: settlement.output,
     });
     this.wakeAllEdgeWaiters({ kind: "job" });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Subagent drive + completion (M1.5 T16) — the child-facing entry the
+  // parent's task executor calls, and the child→parent wake source. Both are
+  // journal-first: identity/settlement rows land before any turn drive or
+  // waiter wake (iron rule 1).
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Child bring-up (called on the CHILD DO through the AGENT_DO binding):
+   * persist the subagent identity, then reuse sendMessage's input-first-persist
+   * + I2 dedup by keying the turn input on `spawnId`. A re-invocation (recovery
+   * re-dispatch of the parent's executor after eviction) finds the identity row
+   * and answers `duplicated` without re-driving anything — cross-DO spawn
+   * dedup (T16 acceptance).
+   */
+  async runSubagent(request: RunSubagentRequest): Promise<{ turnId: string; duplicated: boolean }> {
+    await this.ready();
+    this.requireThread();
+    const identity = this.state.subagentIdentity;
+    if (identity !== null) {
+      if (identity.spawnId !== request.spawnId) {
+        throw new AgentRpcError(
+          "conflict",
+          `DO already owns subagent ${identity.spawnId}; got ${request.spawnId}`,
+        );
+      }
+      const firstTurn = this.state.turns.values().next().value;
+      if (firstTurn === undefined) {
+        throw new AgentRpcError("not_found", "subagent identity exists but no turn was driven");
+      }
+      return { turnId: firstTurn.turnId, duplicated: true };
+    }
+    await this.appendEvent("task.subagent_identity", {
+      spawnId: request.spawnId,
+      agentId: request.agentId,
+      parentThreadId: request.parentThreadId,
+      // bb dual-axis shape (bb-fleet-shape §1/§8): the T16 spawn path writes
+      // the hierarchy axis only; the fork axis stays null until the fork
+      // paths land (T17+).
+      sourceThreadId: null,
+      originKind: null,
+      depth: request.depth,
+    });
+    return this.sendMessage({
+      clientRequestId: request.spawnId,
+      content: [{ type: "text", text: childAssignment(request.task) }],
+      mode: "start",
+    });
+  }
+
+  /**
+   * Child-completion wake source (called on the PARENT DO by the child's
+   * terminal hook): journal-first `task.spawn_settled` (idempotent by
+   * spawnId — duplicates append nothing, cross-DO message dedup), then the
+   * T2 settle for background jobs (which wakes owner-filtered waits), then
+   * the `task.async_result` backflow row the parent's next run projects,
+   * and finally the blocking executor's wake.
+   */
+  async completeSubagent(request: {
+    spawnId: string;
+    agentId: string;
+    status: "ok" | "error";
+    output: string;
+  }): Promise<{ duplicated: boolean }> {
+    await this.ready();
+    this.requireThread();
+    const { events } = await this.readAllEvents();
+    const plan = projectSpawnPlans(events).find((record) => record.spawnId === request.spawnId);
+    if (plan === undefined) {
+      throw new AgentRpcError("not_found", `no spawn plan for ${request.spawnId}`);
+    }
+    if (settlementForSpawn(events, request.spawnId) !== undefined) {
+      return { duplicated: true };
+    }
+    // Journal-first settlement (delivery text arrives summary-capped from the
+    // child's rendering path — settleSpawn on the parent caps it defensively).
+    await settleSpawn(this.taskSpawnSink(), {
+      spawnId: plan.spawnId,
+      jobId: plan.jobId,
+      agentId: plan.agentId,
+      childThreadId: plan.childThreadId,
+      status: request.status,
+      output: request.output,
+    });
+    if (plan.mode === "background" && plan.jobId !== null) {
+      // Backflow marker for the parent's next run boundary; settleSpawn's
+      // registry.settle already woke blocked waits, so ordering here is
+      // journal-visible before the next turn's projection reads it.
+      await this.appendEvent("task.async_result", {
+        spawnId: plan.spawnId,
+        agentId: plan.agentId,
+        jobId: plan.jobId,
+        status: request.status,
+        output: request.output,
+      });
+    }
+    this.wakeEdgeWaiter(plan.executionId, { kind: "job" });
+    return { duplicated: false };
+  }
+
+  /** Journal mutator face for the task settlement path (settleSpawn input). */
+  private taskSpawnSink(): {
+    recordSpawnSettlement: TaskToolContext["recordSpawnSettlement"];
+    registry: Pick<JobRegistry, "register" | "settle">;
+    config: TaskToolContext["config"];
+  } {
+    return {
+      recordSpawnSettlement: async (settlement) => {
+        await this.appendEvent("task.spawn_settled", settlement);
+      },
+      registry: {
+        register: (input: JobRegistration) => this.registerJob(input),
+        settle: (jobId: string, settlement: JobSettlement) => this.settleJob(jobId, settlement),
+      },
+      config: this.taskConfig(),
+    };
+  }
+
+  private taskConfig(): TaskToolContext["config"] {
+    return {
+      maxRecursionDepth: this.cfg.taskMaxRecursionDepth,
+      asyncEnabled: this.cfg.taskAsyncEnabled,
+      maxOutputBytes: this.cfg.taskMaxOutputBytes,
+      maxOutputLines: this.cfg.taskMaxOutputLines,
+      inlineSummaryCapChars: this.cfg.taskInlineSummaryCapChars,
+    };
   }
 
   /**
@@ -641,6 +809,14 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       }
     } finally {
       this.activeDrivers.delete(turnId);
+      // M1.5 T16: a subagent DO reports its terminal outcome to the parent
+      // whatever it is (yield result, missing-yield failure, model error,
+      // cancellation) — omp "finished and failed subagents both stay
+      // interrogable" backflow (task semantics §5). Idempotent end-to-end:
+      // the parent dedups by spawnId, and a revived child re-runs the hook.
+      if (this.state.subagentIdentity !== null) {
+        await this.completeSpawnToParent();
+      }
     }
   }
 
@@ -977,7 +1153,17 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     // replay-consistency guarantee; the projection is shared with the
     // replay tests (src/translate.ts).
     const { events } = await this.readAllEvents();
-    return modelRequestFromEvents(events, turnId, modelCallId);
+    const request = modelRequestFromEvents(events, turnId, modelCallId);
+    // M1.5 T16 surface policy: a subagent DO (journaled identity) renders the
+    // subagent toolset — hidden `yield` included — with `task` stripped past
+    // the recursion cap (omp canSpawnAtDepth gate). Main keeps MAIN_WIRE_TOOLS.
+    const identity = this.state.subagentIdentity;
+    if (identity === null) return request;
+    return {
+      ...request,
+      toolSurface: "subagent",
+      spawnPolicyBlocked: !canSpawnAtDepth(this.cfg.taskMaxRecursionDepth, identity.depth),
+    };
   }
 
   private async readAllEvents(): Promise<{ events: AnyAgentEvent[] }> {
@@ -1115,6 +1301,12 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       // owns the result.
       return;
     }
+    if (row.name === "task" && this.taskRuns.has(execution.executionId)) {
+      // Same rule for the task executor (M1.5 T16): one in-flight spawn per
+      // executionId; the registered run owns the result. Recovery after
+      // eviction re-enters here sequentially and re-adopts via the journal.
+      return;
+    }
     if (row.name === "wait") {
       // Blocking marker, same vocabulary as the host path: the wait is about
       // to park on its wake legs; journal-first keeps observers (and tests)
@@ -1128,7 +1320,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       this.armWatchdog();
     }
     const threadId = this.requireThread();
-    const result = await runEdgeTool(row, args, {
+    const baseContext: Omit<EdgeToolContext, "wait" | "task"> = {
       executionId: execution.executionId,
       threadId,
       appendNotebookRevision: async (text) => {
@@ -1144,12 +1336,38 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         return todoJournalState(events, execution.executionId);
       },
       appendTodoPhases: async (op, phases) => {
-        await this.appendEvent("todo_phases", { version: 1, executionId: execution.executionId, op, phases });
+        await this.appendEvent("todo_phases", {
+          version: 1,
+          executionId: execution.executionId,
+          op,
+          phases,
+        });
       },
       checkpointRewindState: async () => {
         const { events } = await this.readAllEvents();
         return checkpointRewindState(events, threadId);
       },
+    };
+    if (row.name === "task") {
+      // The in-flight promise is recorded BEFORE it can race (dispatch +
+      // watchdog); the finally-clear mirrors the wait edgeWaiters discipline.
+      const run = runEdgeTool(row, args, { ...baseContext, task: this.taskToolContext(execution) })
+        .then((result) =>
+          this.ingestResult(
+            execution,
+            { status: result.status, exitCode: null, output: result.output },
+            { ack: false },
+          ),
+        )
+        .finally(() => {
+          this.taskRuns.delete(execution.executionId);
+        });
+      this.taskRuns.set(execution.executionId, run);
+      await run;
+      return;
+    }
+    const result = await runEdgeTool(row, args, {
+      ...baseContext,
       ...(row.name === "wait" ? { wait: this.waitToolContext(execution) } : {}),
     }).finally(() => {
       this.edgeWaiters.delete(execution.executionId);
@@ -1476,6 +1694,123 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       },
       now: () => Date.now(),
     };
+  }
+
+  /**
+   * DO-bound `task` context (tools/task/executor.ts TaskToolContext — the
+   * wait.ts WaitToolContext precedent): journal accessors + spawn host +
+   * wake plumbing; decision logic stays in the executor. The subagent host
+   * rides the AGENT_DO namespace binding; unbound deployments fail the spawn
+   * loudly (T16 scope is same-host only, cross-machine is explicit out).
+   */
+  private taskToolContext(execution: ExecutionRuntime): TaskToolContext {
+    const threadId = this.requireThread();
+    const identity = this.state.subagentIdentity;
+    const namespace = this.env.AGENT_DO;
+    let subagentHost: SubagentSpawnHost | undefined;
+    if (namespace !== undefined) {
+      // Structural stub view — keeps the seam RPC-serializable without a
+      // generated typed-stub (the daemon() precedent below).
+      const stubFor = (childThreadId: string): SubagentDoStub =>
+        namespace.get(namespace.idFromName(childThreadId)) as unknown as SubagentDoStub;
+      subagentHost = {
+        createThread: async (request) => stubFor(request.threadId).createThread(request),
+        runSubagent: async (request) => stubFor(request.spawnId).runSubagent(request),
+      };
+    }
+    return {
+      executionId: execution.executionId,
+      turnId: execution.turnId,
+      threadId,
+      machineId: this.state.machineId ?? "local",
+      // The spawning thread's own depth: Main is 0, a subagent reads its
+      // journaled identity (replay-derived — recover() refolds it).
+      depth: identity === null ? 0 : identity.depth,
+      parentAgentId: identity === null ? undefined : identity.agentId,
+      events: async () => (await this.readAllEvents()).events,
+      recordSpawnPlan: async (plan) => {
+        await this.appendEvent("task.spawn_planned", {
+          executionId: plan.executionId,
+          spawnId: plan.spawnId,
+          agentId: plan.agentId,
+          agent: plan.agent,
+          childThreadId: plan.childThreadId,
+          parentThreadId: plan.parentThreadId,
+          machineId: plan.machineId,
+          mode: plan.mode,
+          jobId: plan.jobId,
+          task: plan.task,
+          solutionSpace: plan.solutionSpace,
+          ...(plan.model === undefined ? {} : { model: plan.model }),
+          ...((plan.outputSchema === undefined
+            ? {}
+            : { outputSchemaJson: JSON.stringify(plan.outputSchema) }) as {
+            outputSchemaJson?: string;
+          }),
+          depth: plan.depth,
+        });
+      },
+      recordSpawnSettlement: async (settlement) => {
+        await this.appendEvent("task.spawn_settled", settlement);
+      },
+      registry: {
+        register: (input: JobRegistration) => this.registerJob(input),
+        settle: (jobId: string, settlement: JobSettlement) => this.settleJob(jobId, settlement),
+      },
+      subagentHost,
+      wake: () => {
+        const { promise, resolve } = Promise.withResolvers<WaitWake>();
+        this.edgeWaiters.set(execution.executionId, { resolve });
+        return promise.then((wake) => wake.kind);
+      },
+      config: this.taskConfig(),
+    };
+  }
+
+  /**
+   * Child→parent terminal backflow (M1.5 T16): project the last terminal
+   * yield — the minimal gate; none, or a non-ok yield execution, settles the
+   * spawn failed (omp SYSTEM WARNING, task.md:186 minus the T17 ladder
+   * clause) — then deliver through the AGENT_DO binding to the parent's
+   * completeSubagent wake source. Delivery failures log, never throw: the
+   * parent's recovery re-adopt derives everything from its own journal.
+   */
+  private async completeSpawnToParent(): Promise<void> {
+    const identity = this.state.subagentIdentity;
+    if (identity === null) return;
+    const namespace = this.env.AGENT_DO;
+    if (namespace === undefined) {
+      console.error(`subagent ${identity.agentId}: no AGENT_DO binding; completion not delivered`);
+      return;
+    }
+    const { events } = await this.readAllEvents();
+    const yielded = lastYieldResult(events);
+    let status: "ok" | "error";
+    let output: string;
+    if (yielded === undefined || (yielded.data === undefined && yielded.error === undefined)) {
+      status = "error";
+      output = NO_YIELD_WARNING;
+    } else if (yielded.resultStatus !== "ok") {
+      status = "error";
+      output = `yield did not complete (status ${yielded.resultStatus})`;
+    } else {
+      const rendered = renderYieldOutput(yielded);
+      status = rendered.status;
+      output = rendered.output;
+    }
+    const parent = namespace.get(
+      namespace.idFromName(identity.parentThreadId),
+    ) as unknown as SubagentDoStub;
+    try {
+      await parent.completeSubagent({
+        spawnId: identity.spawnId,
+        agentId: identity.agentId,
+        status,
+        output,
+      });
+    } catch (error) {
+      console.error(`subagent ${identity.agentId}: completion delivery failed`, error);
+    }
   }
 
   // -------------------------------------------------------------------------

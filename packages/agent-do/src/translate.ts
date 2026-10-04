@@ -1,11 +1,13 @@
 import type { AnyAgentEvent } from "./fsm-events.js";
 import { executionIdFor } from "./ids.js";
 import type {
+  AsyncResultContribution,
   ModelRequest,
   PriorModelCall,
   SteerContribution,
   ToolResultContribution,
 } from "./provider.js";
+import { boundaryOwnerSeqs, renderAsyncResultText } from "./tools/task/plan.js";
 
 /**
  * Event log → model request projection (#28 ruling ③ translation layer).
@@ -50,6 +52,37 @@ export function modelRequestFromEvents(
   turnId: string,
   modelCallId: number,
 ): ModelRequest {
+  // M1.5 T16 async-result attribution runs over the FULL log — background
+  // completions land between turns, so the per-turn filter below never sees
+  // them. Boundary rule (boundaryOwnerSeqs): a result rides the first call
+  // that starts after it; it then stays in that call's slice forever.
+  const asyncRows = events.filter(
+    (event): event is Extract<AnyAgentEvent, { type: "task.async_result" }> =>
+      event.type === "task.async_result",
+  );
+  const callStartSeqs = events
+    .filter((event) => event.type === "model.call_started")
+    .map((event) => event.seq);
+  const asyncResultsByCall = new Map<number, AsyncResultContribution[]>();
+  for (const row of asyncRows) {
+    const contribution: AsyncResultContribution = {
+      seq: row.seq,
+      spawnId: row.data.spawnId,
+      agentId: row.data.agentId,
+      status: row.data.status,
+      text: renderAsyncResultText(row.data.agentId, row.data.status, row.data.output),
+    };
+    const boundary = boundaryOwnerSeqs(callStartSeqs, row.seq);
+    // boundary -1: the result landed after every call that has started — it
+    // is pending until the NEXT run's boundary and never enters the current
+    // request (a mid-call arrival belongs to the future, replay-safe either
+    // way: the same log always projects the same request).
+    if (boundary === -1) continue;
+    const bucket = asyncResultsByCall.get(boundary);
+    if (bucket === undefined) asyncResultsByCall.set(boundary, [contribution]);
+    else bucket.push(contribution);
+  }
+
   const turnEvents = events.filter(
     (event) => "turnId" in event.data && event.data.turnId === turnId,
   );
@@ -83,6 +116,12 @@ export function modelRequestFromEvents(
       case "job.settled":
       case "peer.message":
       case "peer.message_consumed":
+      case "task.spawn_planned":
+      case "task.spawn_settled":
+      case "task.subagent_identity":
+        break;
+      case "task.async_result":
+        // Consumed above from the full log; the turn filter skips it here.
         break;
       case "turn.steer": {
         steerTexts.set(event.seq, event.data.content.map((part) => part.text).join("\n"));
@@ -217,6 +256,7 @@ export function modelRequestFromEvents(
       }
       return result;
     });
+    const priorAsync = asyncResultsByCall.get(callId) ?? [];
     if (toolResults.length !== slice.toolCalls.length) {
       throw new ProjectionError(
         `call ${callId}: ${slice.toolCalls.length} toolCalls vs ${toolResults.length} results`,
@@ -228,6 +268,7 @@ export function modelRequestFromEvents(
       text: slice.text,
       toolCalls: slice.toolCalls,
       toolResults,
+      asyncResults: priorAsync,
     });
   }
 
@@ -242,5 +283,8 @@ export function modelRequestFromEvents(
     input,
     steers: current.steers,
     priorCalls,
+    // The current call's boundary rows ride the trailing user message (wire
+    // appends them after the steers); prior calls carry theirs permanently.
+    asyncResults: asyncResultsByCall.get(modelCallId) ?? [],
   };
 }
