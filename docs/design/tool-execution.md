@@ -15,8 +15,8 @@
                  + 123 LoC 适配垫（executionId→toolCallId / content[]→output /
                    truncation→outputTruncated / onUpdate→ExecutionUpdate）
                  + native addon 版本钉死门禁（stale 拒启）
-               例外：bash 保留我方子进程执行体（omp=brush-core 内嵌 Rust shell，
                  换引擎=推翻 M0 沙箱语义）；只 embed 其纯 TS 件               [#128 在做]
+               bash：embed-with-shims（BashProbe 判决 #130——brush-core 17/17 真跑通，
      hybrid ─ 拆缝规则（分类表 §3.3）：控制/状态面归 AgentDO，执行体（fs/进程/natives）
                归 daemon——按工具逐个拆（task=编排 DO/隔离工作区 daemon）
   → 结果回灌：tool.result 落 journal（persist-then-wake），executionId 去重，
@@ -32,6 +32,7 @@ wire 面：`tools:` 数组只从注册表行渲染（wireToolSet），intent 字
 3. **先日志后应用**；已提交部分流永不重放（#71）
 4. 上游化：bb 面零改动（工具 wire 经 providerOwnsRuntimeSurface 透传——实践 10）
 5. omp 运行时 vendoring 钉版本 + native 门禁；Settings.loadIsolated 隔离目录
+6. **实验工具闸（omp 姿态，#150）**：think/context_notes/new_context/checkpoint/rewind 五件默认 **off**——env `AGENT_DO_EXTERNAL_THINKING` / `AGENT_DO_CONTEXT_NOTES` / `AGENT_DO_CHECKPOINT` 开闸；think 开闸时 provider **forceReasoningOff 钉死配对**（外部 CoT 与原生推理互斥=ToC 安全）；supportsExternalThinking 按模型判定（原生推理族拒绝）。部署面 env：另 `DAEMON_TASK_ISOLATION`（#110 隔离后端）、`DAEMON_AGENT_AUTH`（#145 judge 通道：providers→models.yml/runtimeKeys/judgeRole）。
 
 ## 状态（2026-10-04）
 
