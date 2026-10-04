@@ -19,6 +19,7 @@ export default defineConfig({
       "test/l1-edit-semantics.test.ts",
       "test/l1-find-semantics.test.ts",
       "test/l1-task-isolation.test.ts",
+      "test/l1-security-scan.test.ts",
     ],
     maxWorkers: 1,
     minWorkers: 1,

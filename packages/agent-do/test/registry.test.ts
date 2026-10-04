@@ -87,8 +87,8 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
       "bash",
       // T2/T3/T5'/T16 merge — omp builtin-names.ts order: the T5'
       // vendored-runtime host five after bash; checkpoint/rewind before
-      // context_notes; task between new_context and wait; think and yield
-      // (hidden) last, write the T5' host row second to last.
+      // context_notes; security_scan (T15) between new_context and task;
+      // think and yield (hidden) last, write the T5' host row second to last.
       "read",
       "edit",
       "glob",
@@ -105,6 +105,9 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
       "rewind",
       "context_notes",
       "new_context",
+      // T15 — omp builtin-names.ts:20: security_scan between new_context and
+      // task (the slot the T16 task row deferred to until registration).
+      "security_scan",
       "task",
       "wait",
       "todo",
@@ -457,6 +460,90 @@ describe("M1.5 T2 — wait registry row (edge essential)", () => {
       type: "object",
       properties: { i: INTENT_FIELD },
     });
+  });
+});
+
+describe("M1.5 T15 — security_scan registry row (整体归 daemon)", () => {
+  test("row is host/daemon-dispatch (the 整体归 daemon collapse), omp default intent", () => {
+    const row = toolRegistryRow("security_scan");
+    expect(row?.name).toBe("security_scan");
+    // Classification §2.3 calls the omp tool hybrid; the M1.5 ruling (OAuth
+    // credentials 宿主保管, no half-migration) collapses it to host-side
+    // execution, so the frozen T1 class↔backend invariant holds.
+    expect(row?.class).toBe("host");
+    expect(row?.backend).toEqual({ kind: "daemon-dispatch" });
+    // No `intent` member on omp SecurityScanTool → default require.
+    expect(row?.intent).toBe("require");
+  });
+
+  test("description is omp prompts/tools/security-scan.md verbatim; schema projects the 9-action face", () => {
+    const tools = wireToolSet(M0_RENDER_FLAGS);
+    const securityScan = tools.find((tool) => tool.name === "security_scan");
+    expect(securityScan?.description).toBe(
+      [
+        "OMP-native repository security scans: plan, start, inspect, cancel, validate.",
+        "`preflight`: immutable plan pinned to repository snapshot, model, exact OAuth credential.",
+        "`start`: plan → background OMP job.",
+        "`status`, `cancel`: returned operation ID.",
+        "`cloud_scans`: Codex Security cloud configurations for exact selected ChatGPT OAuth account.",
+        "`cloud_start`: creates/enables configuration using `repository_id`, `repository_url`, `environment_id`; consumes account's separate Codex Security cloud allowance; NEVER native-scan fallback.",
+        "`cloud_status`: cloud progress.",
+        "`cloud_pull`: cloud findings → canonical OMP security store, available through `security://`.",
+        "Cloud actions: `cloud_configuration_id` required; `credential_id` MAY pin account.",
+        "Security MUST be enabled in settings.",
+      ].join("\n"),
+    );
+    const schema = securityScan?.input_schema as {
+      type: string;
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+    expect(schema.type).toBe("object");
+    // omp security-scan.ts:21-45 field set, verbatim — no added/renamed keys.
+    // (the arktype projection emits properties in sorted key order)
+    const fieldSet = Object.keys(schema.properties)
+      .filter((key) => key !== "i")
+      .sort();
+    expect(fieldSet).toEqual([
+      "action",
+      "archive_existing",
+      "base_revision",
+      "cloud_configuration_id",
+      "credential_id",
+      "environment_id",
+      "exclude_paths",
+      "finding_id",
+      "head_revision",
+      "include_paths",
+      "knowledge_base_paths",
+      "lookback_days",
+      "operation_id",
+      "output_root",
+      "plan_id",
+      "repository_id",
+      "repository_url",
+      "scan_id",
+      "target_kind",
+      "validation_evidence",
+      "validation_status",
+      "validation_summary",
+    ]);
+    // Bare literal union projects as a sorted enum with no type key (arktype).
+    expect(schema.properties.action).toEqual({
+      enum: [
+        "cancel",
+        "cloud_pull",
+        "cloud_scans",
+        "cloud_start",
+        "cloud_status",
+        "preflight",
+        "start",
+        "status",
+        "validate",
+      ],
+    });
+    // Only `action` is required in omp; the intent field joins it.
+    expect(schema.required).toEqual(["action", "i"]);
   });
 });
 
