@@ -390,6 +390,7 @@ function dispatchToolExec(
     agentDir: join(config.dataDir, "omp-agent"),
     machineId: runtime.machineId ?? "",
     taskIsolation: config.taskIsolation,
+    agentAuth: config.agentAuth,
   }));
   // A watchdog re-forward of a live run reuses its buffer — the first run
   // owns the output subscription (execute() is idempotent per executionId).

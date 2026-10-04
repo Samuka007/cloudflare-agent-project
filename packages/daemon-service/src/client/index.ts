@@ -18,6 +18,7 @@
 
 import { runClient } from "./connection.js";
 import type { ClientConfig } from "./identity.js";
+import { decodeAgentAuthConfig } from "./agent-auth.js";
 import { decodeTaskIsolationConfig } from "./task-isolation.js";
 
 function argValue(flag: string): string | undefined {
@@ -32,6 +33,7 @@ const config: ClientConfig = {
   sandboxRoot: argValue("--sandbox") ?? process.env.POC_SANDBOX_ROOT ?? "/tmp/poc-sandbox",
   enrollKey: process.env.POC_ENROLL_KEY ?? "poc-dev-enroll-key",
   taskIsolation: decodeTaskIsolationConfig(process.env.DAEMON_TASK_ISOLATION),
+  agentAuth: decodeAgentAuthConfig(process.env.DAEMON_AGENT_AUTH),
 };
 
 await runClient(config);

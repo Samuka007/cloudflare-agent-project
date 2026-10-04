@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync } from "n
 import { join } from "node:path";
 import { negotiationFailure } from "./backoff.js";
 import { log } from "./log.js";
+import type { AgentAuthConfig } from "./agent-auth.js";
 import type { TaskIsolationConfig } from "./task-isolation.js";
 
 /**
@@ -17,6 +18,8 @@ export interface ClientConfig {
   enrollKey: string;
   /** T20 #110 isolation policy — decoded from DAEMON_TASK_ISOLATION. */
   taskIsolation: TaskIsolationConfig;
+  /** #145 provider channel — decoded from DAEMON_AGENT_AUTH. */
+  agentAuth: AgentAuthConfig;
 }
 
 export interface ClientIdentity {

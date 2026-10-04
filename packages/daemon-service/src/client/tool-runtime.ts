@@ -5,6 +5,7 @@ import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { EvalKernelRuntime } from "./eval-kernel.js";
 import { threadIdFromExecutionId } from "../execution-id.js";
 import { IsolationManager, type TaskIsolationConfig } from "./task-isolation.js";
+import { installAgentAuth, type AgentAuthConfig } from "./agent-auth.js";
 
 /**
  * Vendored omp tool runtime (M1.5/T5' #128): host construction, native-addon
@@ -185,6 +186,7 @@ export async function createToolHost(
   cwd: string,
   agentDir: string,
   machineId: string,
+  agentAuth: AgentAuthConfig | null = null,
 ): Promise<ToolHost> {
   // Agent-dir isolation (T6 #96): process-global omp paths — the
   // managed-skills store (getManagedSkillsDir → getAgentDir()), auth,
@@ -219,11 +221,39 @@ export async function createToolHost(
     import("@oh-my-pi/pi-coding-agent/tools/manage-skill"),
     import("@oh-my-pi/pi-coding-agent/tools/bash"),
   ]);
+  // #145: the judge role pins the provider channel the find cascade
+  // resolves through (deployment-time input; the model-facing schemas stay
+  // omp-verbatim).
   const settings = await Settings.loadIsolated({
     cwd,
     agentDir,
-    overrides: HOST_SETTINGS_OVERRIDES,
+    overrides: agentAuth?.judgeRole
+      ? { ...HOST_SETTINGS_OVERRIDES, "modelRoles.judge": agentAuth.judgeRole }
+      : HOST_SETTINGS_OVERRIDES,
   });
+  // #145: materialize the provider channel into the daemon-private agentDir
+  // (models.yml is the canonical omp custom-provider config — baseUrl +
+  // apiKey + models land there), then build the ModelRegistry over the
+  // agent-dir auth store. find's ChainJudge resolves through this registry;
+  // without it every find degrades with "find has no model registry".
+  await installAgentAuth(agentDir, agentAuth);
+  const [{ discoverAuthStorage }, { ModelRegistry }] = await Promise.all([
+    import("@oh-my-pi/pi-coding-agent/session/auth-broker-config"),
+    import("@oh-my-pi/pi-coding-agent/config/model-registry"),
+  ]);
+  // Explicit agentDir: the local SQLite store (<agentDir>/agent.db) — never
+  // the operator's ~/.omp credentials.
+  const authStorage = await discoverAuthStorage(agentDir);
+  // modelsPath is EXPLICIT: the registry's default resolves getAgentDir(),
+  // which is frozen at the first omp import (the static Settings import at
+  // this module's top — before the PI_CODING_AGENT_DIR pin lands) and would
+  // silently read the operator's ~/.omp/models.yml instead of the
+  // daemon-private one.
+  const modelRegistry = new ModelRegistry(authStorage, join(agentDir, "models.yml"), { settings });
+  await modelRegistry.refresh();
+  for (const [provider, apiKey] of Object.entries(agentAuth?.runtimeKeys ?? {})) {
+    authStorage.keys.setRuntime(provider, apiKey);
+  }
   // T9 #99 shim 3 (artifact allocator): omp's OutputSink middle-truncates
   // inline output at 50 KiB; the full bytes are recoverable only when the
   // session allocates artifacts. omp's own ArtifactManager (numeric ids,
@@ -236,6 +266,9 @@ export async function createToolHost(
     cwd,
     hasUI: false,
     settings,
+    // #145: the judge channel. FindTool resolves `resolveJudge` from
+    // here; absent, every find dies with "find has no model registry".
+    modelRegistry,
     getSessionFile: () => null,
     getSessionSpawns: () => null,
     getArtifactsDir: () => artifacts.dir,
@@ -252,10 +285,10 @@ export async function createToolHost(
     const candidates: OmpTool[] = [
       new GlobTool(session),
       new GrepTool(session),
-      // T11 (#101): the judge role resolves through the session's model
-      // registry — absent here, every find degrades with the precise
-      // ToolError ("find has no model registry to resolve a judge from")
-      // until the daemon-side provider channel lands (ticket #145).
+      // T11 (#101) + #145: the judge role resolves through the
+      // session's model registry (always wired — see the auth block above);
+      // with NO credential configured the chain resolves to zero candidates
+      // and find degrades with "judgment: no judge model available".
       new FindTool(session),
       new ReadTool(session),
       new WriteTool(session),
@@ -482,6 +515,8 @@ export interface ToolRuntimeConfig {
   machineId: string;
   /** T20 #110 isolation policy (omp defaults; DAEMON_TASK_ISOLATION patch). */
   taskIsolation: TaskIsolationConfig;
+  /** #145 provider channel (DAEMON_AGENT_AUTH; null = agentDir only). */
+  agentAuth: AgentAuthConfig | null;
 }
 
 export class ToolRuntime {
@@ -500,7 +535,12 @@ export class ToolRuntime {
   ensureHost(): Promise<ToolHost> {
     this.hostPromise ??= (async () => {
       assertNativeAddonCurrent(await readNativeAddonStatus());
-      return createToolHost(this.config.workspaceRoot, this.config.agentDir, this.config.machineId);
+      return createToolHost(
+        this.config.workspaceRoot,
+        this.config.agentDir,
+        this.config.machineId,
+        this.config.agentAuth,
+      );
     })();
     return this.hostPromise;
   }
@@ -523,7 +563,12 @@ export class ToolRuntime {
       // workspace-isolated, else the base host.
       this.isolation ??= new IsolationManager(host, this.config.taskIsolation);
       const isolation = this.isolation;
-      const routedHost = isolation.hostFor(threadIdFromExecutionId(frame.executionId)) ?? host;
+      // Prefix-less executionIds (test rigs) have no thread leg; the raw id
+      // then never matches a session key and routing falls to the base host.
+      const frameThreadId = frame.executionId.includes(":")
+        ? threadIdFromExecutionId(frame.executionId)
+        : frame.executionId;
+      const routedHost = isolation.hostFor(frameThreadId) ?? host;
       return isolation.execute(frame).then(
         (handled) =>
           handled ??
