@@ -345,9 +345,12 @@ interface DaemonDisconnect {
 }
 
 /**
- * bb resolveThreadRuntimeStateFromLatestSession reconnect grace (G3): a
- * dropped daemon gets 30s of "host-reconnecting" before the thread display
- * flips to waiting-for-host (bb thread-runtime-display.ts:116-129).
+ * bb resolveThreadRuntimeStateFromLatestSession reconnect grace (G3, 30s):
+ * the window a dropped daemon's identity stays "recently disconnected" on the
+ * hub. #148 removed the thread display as a consumer (an in-flight turn must
+ * never banner, §9.3); the window remains for the hub's disconnect cleanup
+ * alarm and the bb-side S6 post-turn host face (host-broadcast.test.ts pins
+ * the state machine).
  */
 export const DAEMON_ACTIVE_WORK_DISCONNECT_GRACE_MS = 30_000;
 
