@@ -234,7 +234,7 @@ export type CommandSettleOutcome =
 
 // Type aliases (not interfaces) so they satisfy the SqlStorage exec
 // Record<string, SqlStorageValue> constraint via implicit index signatures.
-interface SessionRowSql {
+type SessionRowSql = {
   id: string;
   host_id: string;
   instance_id: string;
@@ -253,7 +253,7 @@ interface SessionRowSql {
   active_thread_ids: string;
   created_at: number;
   updated_at: number;
-}
+};
 
 function sessionFromSql(row: SessionRowSql): HostDaemonSessionRow {
   return {
@@ -264,21 +264,21 @@ function sessionFromSql(row: SessionRowSql): HostDaemonSessionRow {
     hostType: row.host_type,
     dataDir: row.data_dir,
     platform: row.platform,
-    protocolVersion: Number(row.protocol_version),
-    heartbeatIntervalMs: Number(row.heartbeat_interval_ms),
-    leaseTimeoutMs: Number(row.lease_timeout_ms),
+    protocolVersion: row.protocol_version,
+    heartbeatIntervalMs: row.heartbeat_interval_ms,
+    leaseTimeoutMs: row.lease_timeout_ms,
     status: row.status as HostDaemonSessionRow["status"],
-    leaseExpiresAt: Number(row.lease_expires_at),
-    closedAt: row.closed_at === null ? null : Number(row.closed_at),
+    leaseExpiresAt: row.lease_expires_at,
+    closedAt: row.closed_at,
     closeReason: (row.close_reason ?? null) as HostDaemonSessionRow["closeReason"],
-    socketAttached: Number(row.socket_attached) === 1,
+    socketAttached: row.socket_attached === 1,
     activeThreadIds: JSON.parse(row.active_thread_ids) as string[],
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
-interface CommandRowSql {
+type CommandRowSql = {
   id: string;
   host_id: string;
   session_id: string | null;
@@ -292,30 +292,30 @@ interface CommandRowSql {
   created_at: number;
   fetched_at: number | null;
   completed_at: number | null;
-}
+};
 
 function commandFromSql(row: CommandRowSql): HostDaemonCommandRow {
   return {
     id: row.id,
     hostId: row.host_id,
     sessionId: row.session_id,
-    cursor: Number(row.cursor),
+    cursor: row.cursor,
     type: row.type as HostDaemonCommandRow["type"],
     threadId: row.thread_id,
     payload: JSON.parse(row.payload) as unknown,
     state: row.state as HostDaemonCommandRow["state"],
-    retryCount: Number(row.retry_count),
+    retryCount: row.retry_count,
     resultPayload:
       row.result_payload === null
         ? null
         : (JSON.parse(row.result_payload) as AdapterCommandOutcome),
-    createdAt: Number(row.created_at),
-    fetchedAt: row.fetched_at === null ? null : Number(row.fetched_at),
-    completedAt: row.completed_at === null ? null : Number(row.completed_at),
+    createdAt: row.created_at,
+    fetchedAt: row.fetched_at,
+    completedAt: row.completed_at,
   };
 }
 
-interface AttemptRowSql {
+type AttemptRowSql = {
   id: string;
   command_id: string;
   session_id: string | null;
@@ -323,7 +323,7 @@ interface AttemptRowSql {
   delivered_at: number;
   lease_expires_at: number;
   settled_at: number | null;
-}
+};
 
 function attemptFromSql(row: AttemptRowSql): HostDaemonCommandAttemptRow {
   return {
@@ -331,9 +331,9 @@ function attemptFromSql(row: AttemptRowSql): HostDaemonCommandAttemptRow {
     commandId: row.command_id,
     sessionId: row.session_id,
     status: row.status as HostDaemonCommandAttemptRow["status"],
-    deliveredAt: Number(row.delivered_at),
-    leaseExpiresAt: Number(row.lease_expires_at),
-    settledAt: row.settled_at === null ? null : Number(row.settled_at),
+    deliveredAt: row.delivered_at,
+    leaseExpiresAt: row.lease_expires_at,
+    settledAt: row.settled_at,
   };
 }
 
@@ -364,7 +364,7 @@ export class HostOrchestratorDO extends DurableObject {
       this.sql
         .exec<{ version: number }>("SELECT version FROM orchestrator_migrations")
         .toArray()
-        .map((row) => Number(row.version)),
+        .map((row) => row.version),
     );
     for (const migration of MIGRATIONS) {
       if (applied.has(migration.version)) continue;
@@ -423,7 +423,7 @@ export class HostOrchestratorDO extends DurableObject {
    * instance, full session-close notification otherwise), then the new
    * active session is inserted with a fresh lease.
    */
-  async openSession(
+  openSession(
     args: HostDaemonSessionOpenRequest & {
       heartbeatIntervalMs?: number;
       leaseTimeoutMs?: number;
@@ -491,7 +491,7 @@ export class HostOrchestratorDO extends DurableObject {
     if (session === null) {
       throw new Error("session insert failed");
     }
-    this.scheduleAlarm();
+    await this.scheduleAlarm();
     return {
       kind: "opened",
       session,
@@ -509,9 +509,9 @@ export class HostOrchestratorDO extends DurableObject {
    * wins (same pinning rule as openSession). A mismatch is an outcome, not a
    * thrown RPC error — the bridge maps it to a control-plane 500.
    */
-  async ensureHost(args: {
+  ensureHost(args: {
     hostId: string;
-  }): Promise<{ kind: "bound"; hostId: string } | { kind: "host_mismatch"; boundHostId: string }> {
+  }): { kind: "bound"; hostId: string } | { kind: "host_mismatch"; boundHostId: string } {
     const stored = this.metaGet("host_id");
     if (stored !== undefined && stored !== args.hostId) {
       return { kind: "host_mismatch", boundHostId: stored };
@@ -528,16 +528,16 @@ export class HostOrchestratorDO extends DurableObject {
    * detaches any other socket the host holds (bb unregisterDaemon of the old
    * session id).
    */
-  async attachSocket(args: {
+  attachSocket(args: {
     sessionId: string;
     hostId: string;
     wsSubprotocol?: string;
-  }): Promise<SocketAttachOutcome> {
+  }): SocketAttachOutcome {
     if (args.wsSubprotocol !== undefined && args.wsSubprotocol !== DAEMON_WS_SUBPROTOCOL) {
       return { kind: "rejected", closeCode: 1008, reason: "unsupported-protocol" };
     }
     const session = this.getSessionRow(args.sessionId);
-    if (session === null || session.status !== "active") {
+    if (session?.status !== "active") {
       return { kind: "rejected", closeCode: 1008, reason: "inactive-session" };
     }
     if (session.hostId !== args.hostId) {
@@ -573,12 +573,12 @@ export class HostOrchestratorDO extends DurableObject {
    * window for a reconnect and is skipped entirely when any socket is
    * attached for the host when it fires.
    */
-  async detachSocket(args: {
+  detachSocket(args: {
     sessionId: string;
     graceMs?: number;
-  }): Promise<{ closed: boolean; graceDeadlineAt: number | null }> {
+  }): { closed: boolean; graceDeadlineAt: number | null } {
     const session = this.getSessionRow(args.sessionId);
-    if (session === null || session.status !== "active") {
+    if (session?.status !== "active") {
       return { closed: false, graceDeadlineAt: null };
     }
     const now = Date.now();
@@ -593,7 +593,7 @@ export class HostOrchestratorDO extends DurableObject {
       session.hostId,
       deadline,
     );
-    this.scheduleAlarm();
+    await this.scheduleAlarm();
     return { closed: true, graceDeadlineAt: deadline };
   }
 
@@ -604,9 +604,9 @@ export class HostOrchestratorDO extends DurableObject {
    * already-expired sessions answer `inactive` — the WS layer closes 1008
    * "inactive-session".
    */
-  async recordDaemonMessage(args: { sessionId: string }): Promise<DaemonMessageReceipt> {
+  recordDaemonMessage(args: { sessionId: string }): Promise<DaemonMessageReceipt> {
     const session = this.getSessionRow(args.sessionId);
-    if (session === null || session.status !== "active") {
+    if (session?.status !== "active") {
       return { kind: "inactive" };
     }
     const now = Date.now();
@@ -621,7 +621,7 @@ export class HostOrchestratorDO extends DurableObject {
       now,
       session.id,
     );
-    this.scheduleAlarm();
+    await this.scheduleAlarm();
     return { kind: "renewed", leaseExpiresAt };
   }
 
@@ -630,22 +630,22 @@ export class HostOrchestratorDO extends DurableObject {
     return this.recordDaemonMessage(args);
   }
 
-  async getSession(args: { sessionId: string }): Promise<HostDaemonSessionRow | null> {
+  getSession(args: { sessionId: string }): HostDaemonSessionRow | null {
     return this.getSessionRow(args.sessionId);
   }
 
-  async getLatestSessionForHost(): Promise<HostDaemonSessionRow | null> {
+  getLatestSessionForHost(): HostDaemonSessionRow | null {
     return this.latestSessionForHost();
   }
 
-  async listSessions(): Promise<HostDaemonSessionRow[]> {
+  listSessions(): HostDaemonSessionRow[] {
     return this.sql
       .exec<SessionRowSql>("SELECT * FROM host_daemon_sessions ORDER BY created_at, id")
       .toArray()
       .map(sessionFromSql);
   }
 
-  async listDisconnectDispositions(): Promise<DisconnectDisposition[]> {
+  listDisconnectDispositions(): DisconnectDisposition[] {
     return this.sql
       .exec<{
         session_id: string;
@@ -660,7 +660,7 @@ export class HostOrchestratorDO extends DurableObject {
         sessionId: row.session_id,
         hostId: row.host_id,
         kind: row.kind as DisconnectDisposition["kind"],
-        completedAt: Number(row.completed_at),
+        completedAt: row.completed_at,
       }));
   }
 
@@ -709,11 +709,11 @@ export class HostOrchestratorDO extends DurableObject {
   // Command journal (host_daemon_commands / host_daemon_command_attempts).
   // ===========================================================================
 
-  async enqueueCommand(args: {
+  enqueueCommand(args: {
     type: AdapterCommandType;
     command: AdapterCommand;
     threadId?: string;
-  }): Promise<{ commandId: string; cursor: number }> {
+  }): { commandId: string; cursor: number } {
     // The journal is host-scoped: openSession binds the host first (bb wrote
     // host_daemon_commands rows only for enrolled hosts).
     if (this.metaGet("host_id") === undefined) {
@@ -750,7 +750,7 @@ export class HostOrchestratorDO extends DurableObject {
     route?: "provider" | "machine";
   }): Promise<CommandDispatchOutcome> {
     const run = this.dispatchChain.then(() => this.dispatchCommandInner(args));
-    this.dispatchChain = run.catch(() => {});
+    this.dispatchChain = run.catch(() => undefined);
     return run;
   }
 
@@ -787,7 +787,7 @@ export class HostOrchestratorDO extends DurableObject {
       now,
       now + timeoutMs,
     );
-    this.scheduleAlarm();
+    await this.scheduleAlarm();
 
     // Journal payloads were type-checked at enqueueCommand; the JSON
     // round-trip only widens the row type to `unknown` — this cast restores
@@ -856,13 +856,13 @@ export class HostOrchestratorDO extends DurableObject {
    * Terminal attempts and terminal commands reject late results as stale —
    * the unique-active attempt index guarantees at most one live attempt.
    */
-  async settleCommand(args: {
+  settleCommand(args: {
     commandId: string;
     attemptId: string;
     outcome: AdapterCommandOutcome;
-  }): Promise<CommandSettleOutcome> {
+  }): CommandSettleOutcome {
     const attempt = this.getAttemptRow(args.attemptId);
-    if (attempt === undefined || attempt.commandId !== args.commandId) {
+    if (attempt?.commandId !== args.commandId) {
       return { kind: "rejected", reason: "unknown" };
     }
     if (attempt.status !== "active") {
@@ -872,7 +872,7 @@ export class HostOrchestratorDO extends DurableObject {
       return { kind: "rejected", reason: "attempt-terminal" };
     }
     const cmd = this.getCommandRow(args.commandId);
-    if (cmd === undefined || cmd.state !== "fetched") {
+    if (cmd?.state !== "fetched") {
       return { kind: "rejected", reason: "command-terminal" };
     }
     this.applySettlement(cmd.id, args.attemptId, args.outcome, Date.now());
@@ -883,15 +883,13 @@ export class HostOrchestratorDO extends DurableObject {
    * bb retryable-command path: a failed command re-enters the pending queue
    * with an incremented retry_count; the next dispatch opens a fresh attempt.
    */
-  async retryCommand(args: {
-    commandId: string;
-  }): Promise<{
+  retryCommand(args: { commandId: string }): {
     queued: boolean;
     state: HostDaemonCommandRow["state"] | null;
     retryCount: number | null;
-  }> {
+  } {
     const cmd = this.getCommandRow(args.commandId);
-    if (cmd === undefined || cmd.state !== "failed") {
+    if (cmd?.state !== "failed") {
       return {
         queued: false,
         state: cmd?.state ?? null,
@@ -905,18 +903,18 @@ export class HostOrchestratorDO extends DurableObject {
     return { queued: true, state: "pending", retryCount: cmd.retryCount + 1 };
   }
 
-  async getCommand(args: { commandId: string }): Promise<HostDaemonCommandRow | null> {
+  getCommand(args: { commandId: string }): HostDaemonCommandRow | null {
     return this.getCommandRow(args.commandId) ?? null;
   }
 
-  async listCommands(): Promise<HostDaemonCommandRow[]> {
+  listCommands(): HostDaemonCommandRow[] {
     return this.sql
       .exec<CommandRowSql>("SELECT * FROM host_daemon_commands ORDER BY cursor")
       .toArray()
       .map(commandFromSql);
   }
 
-  async listAttempts(args: { commandId: string }): Promise<HostDaemonCommandAttemptRow[]> {
+  listAttempts(args: { commandId: string }): HostDaemonCommandAttemptRow[] {
     return this.sql
       .exec<AttemptRowSql>(
         "SELECT * FROM host_daemon_command_attempts WHERE command_id = ? ORDER BY delivered_at, id",
@@ -1006,9 +1004,7 @@ export class HostOrchestratorDO extends DurableObject {
   // Watch-set aggregation.
   // ===========================================================================
 
-  async applyWatchInterests(
-    args: WatchSetApplyArgs,
-  ): Promise<{ emitted: boolean; generation: number }> {
+  applyWatchInterests(args: WatchSetApplyArgs): { emitted: boolean; generation: number } {
     const aggregator = this.loadWatchAggregator();
     aggregator.apply(args);
     this.persistWatchInterests(aggregator);
@@ -1061,7 +1057,7 @@ export class HostOrchestratorDO extends DurableObject {
   // Daemon outbox (server→daemon frames awaiting the WS layer).
   // ===========================================================================
 
-  async drainDaemonOutbox(): Promise<DaemonServerMessage[]> {
+  drainDaemonOutbox(): DaemonServerMessage[] {
     const rows = this.sql
       .exec<{ seq: number; payload: string }>("SELECT seq, payload FROM daemon_outbox ORDER BY seq")
       .toArray();
@@ -1083,7 +1079,7 @@ export class HostOrchestratorDO extends DurableObject {
 
   async alarm(): Promise<void> {
     const now = Date.now();
-    for (const session of await this.listSessions()) {
+    for (const session of this.listSessions()) {
       if (session.status === "active" && session.leaseExpiresAt <= now) {
         this.closeSessionRow(session.id, "expired", now);
       }
@@ -1137,7 +1133,7 @@ export class HostOrchestratorDO extends DurableObject {
           grace.host_id,
         )
         .toArray()[0];
-      if (hostHasSocket !== undefined && Number(hostHasSocket.n) > 0) {
+      if (hostHasSocket !== undefined && hostHasSocket.n > 0) {
         continue;
       }
       this.sql.exec(
@@ -1165,7 +1161,7 @@ export class HostOrchestratorDO extends DurableObject {
       )
       .toArray()[0];
     if (sessionDeadline?.d !== undefined) {
-      deadlines.push(Math.max(Number(sessionDeadline.d), now));
+      deadlines.push(Math.max(sessionDeadline.d, now));
     }
     const attemptDeadline = this.sql
       .exec<{ d: number }>(
@@ -1173,7 +1169,7 @@ export class HostOrchestratorDO extends DurableObject {
       )
       .toArray()[0];
     if (attemptDeadline?.d !== undefined) {
-      deadlines.push(Math.max(Number(attemptDeadline.d), now));
+      deadlines.push(Math.max(attemptDeadline.d, now));
     }
     const graceDeadline = this.sql
       .exec<{ d: number }>(
@@ -1181,7 +1177,7 @@ export class HostOrchestratorDO extends DurableObject {
       )
       .toArray()[0];
     if (graceDeadline?.d !== undefined) {
-      deadlines.push(Math.max(Number(graceDeadline.d), now));
+      deadlines.push(Math.max(graceDeadline.d, now));
     }
     if (deadlines.length === 0) {
       await this.ctx.storage.deleteAlarm();

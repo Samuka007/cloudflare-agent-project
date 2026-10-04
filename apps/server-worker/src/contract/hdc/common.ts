@@ -5,18 +5,18 @@
 // Inlined from bb packages/hono-typed-routes/src/endpoint.ts (only symbols
 // the ported contract needs; descriptor helpers are not ported).
 declare const __untyped: unique symbol;
-export interface Untyped {
+export type Untyped = {
   readonly [__untyped]: never;
-}
-export interface Endpoint<
+};
+export type Endpoint<
   Input,
   Output = Untyped,
   Status extends number = 200,
   Format extends "json" | "text" | "binary" = "json",
-> {
+> = {
   input: Input;
   output: Output;
   outputFormat: Format;
   status: Status;
-}
-export type EmptyInput = Record<never, never>;
+};
+export type EmptyInput = Record<string, never>;
