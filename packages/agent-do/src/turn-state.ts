@@ -438,6 +438,11 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       // them from the log.
       return;
     }
+    case "todo_phases": {
+      // Thread-scoped journal data, not FSM state; the todo projection
+      // (tools/session-tree.ts todoJournalState) folds it from the log.
+      return;
+    }
   }
 }
 

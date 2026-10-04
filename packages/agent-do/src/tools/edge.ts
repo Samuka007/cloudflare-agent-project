@@ -3,6 +3,18 @@ import type { AnyAgentEvent } from "../fsm-events.js";
 import { executionIdFor } from "../ids.js";
 import type { ToolRegistryRow } from "./registry.js";
 import { runWaitTool, type WaitToolContext } from "./wait.js";
+import {
+  type CheckpointRewindState,
+  type TodoJournalState,
+} from "./session-tree.js";
+import {
+  applyParams,
+  clonePhases,
+  formatSummary,
+  resolveTodoParams,
+  type TodoOperation,
+  type TodoPhase,
+} from "./todo-state.js";
 
 /**
  * DO-local executors for `edge`-class tools (control-plane-layer.md §1.2,
@@ -25,6 +37,10 @@ export interface EdgeToolResult {
 
 /** Storage seam the DO binds at execution time — keeps executors pure. */
 export interface EdgeToolContext {
+  /** Owning execution — todo journal writes key on it for re-ask idempotency. */
+  readonly executionId: string;
+  /** Owning thread — checkpoint/rewind projection pairs tool rows by executionId. */
+  readonly threadId: string;
   /** Append one notebook revision as a journal entry (DO storage write). */
   appendNotebookRevision(text: string): Promise<void>;
   /** Project the latest visible notebook revision from the journal. */
@@ -32,6 +48,15 @@ export interface EdgeToolContext {
   /** Blocking-wait surface — bound only for `wait` (omp WaitTool session
    * deps); the DO owns journal accessors, alarm tables and the wake map. */
   wait?: WaitToolContext;
+  /**
+   * Fold the todo journal: latest canonical snapshot plus any snapshot this
+   * execution already committed (crash window recovery — session-tree.ts).
+   */
+  todoState(): Promise<TodoJournalState>;
+  /** Append one canonical todo snapshot keyed by the owning execution. */
+  appendTodoPhases(op: TodoOperation, phases: TodoPhase[]): Promise<void>;
+  /** Project the checkpoint/rewind pair state from the journal rows. */
+  checkpointRewindState(): Promise<CheckpointRewindState>;
 }
 
 // omp session/context-notes.ts:5-6 — journal entry type + size cap.
@@ -42,6 +67,11 @@ const CONTEXT_NOTES_ABSENT = "No context notes are stored for this session branc
 const CONTEXT_NOTES_SAVED = "Context notes saved.";
 const NEW_CONTEXT_REQUESTED = "New context window requested.";
 const THINK_ECHO = "------";
+const CHECKPOINT_ACTIVE = "Checkpoint already active.";
+const CHECKPOINT_COMPLETED =
+  "Checkpoint already completed; continue from the retained rewind report instead of calling rewind again.";
+const NO_ACTIVE_CHECKPOINT = "No active checkpoint. Create a checkpoint before calling rewind.";
+const EMPTY_REPORT = "Report cannot be empty.";
 
 /**
  * Latest valid notebook revision, omp session/context-notes.ts:41-49 verbatim
@@ -99,13 +129,23 @@ export function rolloverRequestedInTurn(
  * Execute one edge tool call: registry-row schema validates arguments (the
  * row is the schema authority — omp verbatim rejection behavior), then the
  * per-tool body runs. Every branch is omp-verbatim (`T:context-notes.ts`
- * ContextNotesTool/NewContextTool execute, `T:think.ts` execute).
+ * ContextNotesTool/NewContextTool execute, `T:think.ts` execute,
+ * `T:todo.ts` TodoTool execute, `T:checkpoint.ts` CheckpointTool/RewindTool
+ * execute — ToolError paths render as `error` status with the message).
  */
 export async function runEdgeTool(
   row: ToolRegistryRow,
   args: Record<string, unknown>,
   ctx: EdgeToolContext,
 ): Promise<EdgeToolResult> {
+  if (row.name === "todo") {
+    // Before the generic gate: omp sets lenientArgValidation (todo.ts:723),
+    // so raw args reach execute() on schema failure and resolveTodoParams
+    // repairs the one recoverable shape (missing `op`) — a generic early
+    // rejection would swallow that repair and the omp error text differs.
+    return runTodoTool(args, ctx);
+  }
+
   const validated = row.schema(args);
   if (validated instanceof type.errors) {
     return { status: "error", output: `Invalid arguments: ${validated.summary}` };
@@ -153,5 +193,75 @@ export async function runEdgeTool(
     return runWaitTool(ctx.wait);
   }
 
+  if (row.name === "checkpoint") {
+    // omp checkpoint.ts:72-86 — reject nested checkpoints, then acknowledge.
+    // No journal write: the ok tool.result row IS the boundary marker (omp
+    // docs/tools/checkpoint.md §Side Effects — "there is no separate
+    // checkpoint-marker entry"), folded by session-tree.ts.
+    const state = await ctx.checkpointRewindState();
+    if (state.phase === "active") {
+      return { status: "error", output: CHECKPOINT_ACTIVE };
+    }
+    const params = validated as { goal: string };
+    return {
+      status: "ok",
+      output: [`Checkpoint: ${params.goal}`, "Finish exploration and formulate findings."].join("\n"),
+    };
+  }
+
+  if (row.name === "rewind") {
+    // omp checkpoint.ts:108-130 — state check first (completed-rewind vs
+    // idle distinction), then the trimmed-report guard; the ok result is
+    // only the request — the branchWithSummary cut applies at turn end
+    // (activeBranchAfterRewind projection; rollover tickets commit it).
+    const state = await ctx.checkpointRewindState();
+    if (state.phase !== "active") {
+      return { status: "error", output: state.phase === "completed" ? CHECKPOINT_COMPLETED : NO_ACTIVE_CHECKPOINT };
+    }
+    const params = validated as { report: string };
+    const report = params.report.trim();
+    if (report.length === 0) {
+      return { status: "error", output: EMPTY_REPORT };
+    }
+    return {
+      status: "ok",
+      output: ["Rewind requested.", "Report captured for context replacement."].join("\n"),
+    };
+  }
+
   return { status: "error", output: `No edge executor for tool ${row.name}.` };
+}
+
+/**
+ * omp todo.ts:730-768 (TodoTool.execute) verbatim. The snapshot write is
+ * keyed to this execution (todo_phases.executionId): a crash between the
+ * journal append and the tool.result append re-asks the executor, and the
+ * interrupted snapshot completes the run instead of re-applying a
+ * non-idempotent op (init/append/rm all reject their own replay).
+ */
+async function runTodoTool(args: Record<string, unknown>, ctx: EdgeToolContext): Promise<EdgeToolResult> {
+  const { previous, interrupted } = await ctx.todoState();
+  if (interrupted !== undefined) {
+    return { status: "ok", output: formatSummary(interrupted, [], false) };
+  }
+  const previousPhases = clonePhases(previous);
+  const resolved = resolveTodoParams(args, previousPhases.length > 0);
+  if (typeof resolved === "string") {
+    return { status: "error", output: resolved };
+  }
+  // Pure-view calls are reads: no normalization, no state write.
+  const readOnly = resolved.op === "view";
+  const { phases: updated, errors } = readOnly
+    ? { phases: previousPhases, errors: [] as string[] }
+    : applyParams(clonePhases(previousPhases), resolved);
+  // A batch with any error is discarded wholesale: persisting a
+  // half-applied batch makes the natural retry hit "already exists" for
+  // the ops that did land. State and rendered summary stay at previous.
+  const failed = errors.length > 0;
+  const effective = failed ? previousPhases : updated;
+  if (!readOnly && !failed) await ctx.appendTodoPhases(resolved.op, updated);
+  return {
+    status: failed ? "error" : "ok",
+    output: formatSummary(effective, errors, readOnly),
+  };
 }

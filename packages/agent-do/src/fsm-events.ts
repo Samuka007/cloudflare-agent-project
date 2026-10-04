@@ -48,6 +48,22 @@ const toolCallDataSchema = z.object({
   arguments: z.record(z.string(), z.unknown()),
 });
 
+/**
+ * omp TodoPhase/TodoItem verbatim (pi-tui tools/todo.ts:25-44). The
+ * display-only `details`/`notes` members are absent: cloneTask drops them,
+ * so they never enter tool state (coding-agent tools/todo.ts:93-97).
+ */
+export const todoItemSchema = z.object({
+  content: z.string(),
+  status: z.enum(["pending", "in_progress", "completed", "abandoned", "blocked"]),
+  blocker: z.string().optional(),
+});
+
+export const todoPhaseSchema = z.object({
+  name: z.string(),
+  tasks: z.array(todoItemSchema),
+});
+
 export const agentEventDataSchemas = {
   "thread.created": z.object({
     title: z.string(),
@@ -218,6 +234,25 @@ export const agentEventDataSchemas = {
   "peer.message_consumed": z.object({
     messageId: z.string().min(1),
     byExecutionId: z.string().min(1),
+  }),
+
+  /**
+   * Edge `todo` canonical snapshot — the DO journal's projection of omp
+   * "durable canonical todo snapshot on tool-result details"
+   * (coding-agent tools/todo.ts canonicalTodoPhases; DO tool.result rows
+   * carry no details field, so the snapshot rides its own typed entry).
+   * Written only by successful non-view mutations, before the tool.result
+   * lands. Thread-scoped like thread.created; folded by the todo projection
+   * (tools/session-tree.ts todoJournalState), not by the FSM. `executionId`
+   * keys re-ask idempotency: a crash between this append and the result row
+   * leaves the snapshot discoverable by its owning execution, so the re-run
+   * completes instead of re-applying a non-idempotent op.
+   */
+  todo_phases: z.object({
+    version: z.literal(1),
+    executionId: z.string().min(1),
+    op: z.enum(["init", "start", "done", "rm", "drop", "block", "unblock", "append", "view"]),
+    phases: z.array(todoPhaseSchema),
   }),
 } as const;
 
