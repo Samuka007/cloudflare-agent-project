@@ -15,11 +15,11 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 **PM 每拍先 audit 再派发（#181）**：`const rep = AP.audit(snapshot, { activeLanes })` → `AP.apply(rep.mutations, { confirm: true })` 一键消漂移，复拍读 `clean` 才继续派发。规则：①issue CLOSED 但 Status∉{Done,Canceled}（收敛写=补落 sync 漏写，wontfix→Canceled 其余→Done）②Status=In Progress 但 CLOSED（lane 死亡未收口）③活跃 lane 票 Status≠In Progress（lane(confirm) 翻转丢失→补翻）④dispatchable Todo 超 N 天未派（frontier 老化提醒，无 mutation，动作是派发）。见 scripts/pm-autopilot.ts。
 
-票面五项齐才派（DoR，定义见 AGENTS.md）：①复用三问字面答案（手写票含三问否定论证）②不确定性已 spike 退役（票面引用探针结论）③验收产品面可观察 ④bb/omp 锚点 ⑤预算行——估算锚同类往例实测（参考类预测，如"bb 路由移植 ≈ FixUxBatch 单项 ≈ 1h"）。
+票面三项齐才派（DoR 票门，#224 裁减为三项；工程纪律全定义仍见 AGENTS.md）：①复用三问字面答案（手写票含三问否定论证）②验收产品面可观察 ③bb/omp 上游锚点。预算行与参照往例不再是票门：预算仅作派单 packet 信息行（见下），往例估算（参考类预测）是人类纪律（AGENTS.md），均不进票门。
 
 派单上下文必含：
 
-- **worktree + spawn 经 AP.lane（派发钩子，#171；#199 校准为纯 spawn 脚手架）**：派发 = `AP.lane(number | ticket, agentSpec)`（scripts/pm-autopilot.ts；传数字时自查 snapshot，票不在板上才抛）——唯一硬拒 = board 谓词（open ∧ Todo ∧ 无未关 blocking 边 ∧ ¬rfh）；DoR 五项表（①三问引用②验收面③上游锚点④预算⑤参照往例）降为 **advisory**：表照打、缺项不拒派（假的严谨约束等于真的破坏推进），缺真锚点/预算由 PM 派单前自行拦 → 确认后自动预建 worktree（`git worktree add ~/.herdr/worktrees/<repo>/<branch-as-dash> -b lane/<ticket>-<slug> origin/main`，dry-run 默认零写）→ 产出 `isolated: true` 的 task spawn 包（worktree 命令生成复用 `AP.dispatchPackets`）。lane cd 入内即工作，全程在该树；**主仓 checkout 归 PM 独占**（劫持事故条款：lane 入主仓或自建树 = 违规）。关账后 PM 回收 worktree（`git worktree remove <path>`）；盘点 `git worktree list` / `herdr worktree list`。**PM 会话启动 = 一个 cell `%load scripts/pm-harness.ts`（#206 持久装载体：cache-bust 动态 import→globalThis.AP、织入 spawn 传输、AP_READY 标志）**——lane(confirm) 端到端真派发：内建默认 SpawnFn = `globalThis.agent(prompt, {isolated: true, label})` 包一层（#200 内核配方；`registerSpawn` 覆盖槽供测试 mock/自定义织入；无 agent 全局时报告 transport-missing 不静默），支持批量 `AP.lane([a, b])`。
+- **worktree + spawn 经 AP.lane（派发钩子，#171；#199 校准为纯 spawn 脚手架）**：派发 = `AP.lane(number | ticket, agentSpec)`（scripts/pm-autopilot.ts；传数字时自查 snapshot，票不在板上才抛）——唯一硬拒 = board 谓词（open ∧ Todo ∧ 无未关 blocking 边 ∧ ¬rfh）；DoR 三项表（①三问引用②验收面③上游锚点，#224）降为 **advisory**：表照打、缺项不拒派（假的严谨约束等于真的破坏推进），缺真锚点由 PM 派单前自行拦 → 确认后自动预建 worktree（`git worktree add ~/.herdr/worktrees/<repo>/<branch-as-dash> -b lane/<ticket>-<slug> origin/main`，dry-run 默认零写）→ 产出 `isolated: true` 的 task spawn 包（worktree 命令生成复用 `AP.dispatchPackets`）。lane cd 入内即工作，全程在该树；**主仓 checkout 归 PM 独占**（劫持事故条款：lane 入主仓或自建树 = 违规）。关账后 PM 回收 worktree（`git worktree remove <path>`）；盘点 `git worktree list` / `herdr worktree list`。**PM 会话启动 = 一个 cell `%load scripts/pm-harness.ts`（#206 持久装载体：cache-bust 动态 import→globalThis.AP、织入 spawn 传输、AP_READY 标志）**——lane(confirm) 端到端真派发：内建默认 SpawnFn = `globalThis.agent(prompt, {isolated: true, label})` 包一层（#200 内核配方；`registerSpawn` 覆盖槽供测试 mock/自定义织入；无 agent 全局时报告 transport-missing 不静默），支持批量 `AP.lane([a, b])`。
 - **效率预算行**：预期墙钟／资源上限／等待方式（交付即回 or 脚本化监控）；超 50% 须解释。
 - **资源所有权账本**：owned files/dirs + worktree 路径 + owned 外部资源（staging 部署、secret、面板）。PM 派单前做**不相交断言**——两 lane 地盘相交 = 派单错误。
 - **分支纪律**：lane 只推 `lane/<ticket>-<slug>`，PR 由 PM 审后 merge。**main 分支保护=一切经 PR（2026-10-04 起，repo rule 强制）**——PM 文档/热修同样走短命分支 PR；对 main 的 push 非 ff 拒绝=硬停，先 `git status --branch` 看分叉方向，force 类操作仅限事故回滚本身且须 --force-with-lease 钉基线。
@@ -91,7 +91,7 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 1. **角色终裁**：PM 担风险、推交付、自纠不过用户。用户决策清单仅三类：产品边界裁决（G1 类）、交付签收（tag 类）、预裁复裁（overridable 类）。其余一切 PM 自决并留理由。
 2. **内容/机制分离**（#170 已入交付钩子）：PM 可起草文档内容；分支机制（checkout -b/commit/push/PR 流转）永不主 checkout 亲为。
-3. **派发=保证型脚手架**（#171/#199）：AP.lane 的产品=四保证（worktree 预建/隔离 spawn/状态同步/派发记录）。DoR 五项=建议性仪表盘（打印永不拒派）；预算退出要求位（仅信息行）；唯一拒派=板面谓词（闭票/非 Todo）。
+3. **派发=保证型脚手架**（#171/#199）：AP.lane 的产品=四保证（worktree 预建/隔离 spawn/状态同步/派发记录）。DoR 三项=建议性仪表盘（打印永不拒派）；预算退出要求位=packet 信息行不进门（#224）；唯一拒派=板面谓词（闭票/非 Todo）。
 4. **散文≠机制**（三连事故档：Banner/L197/L199）：派发承诺的隔离必须在 spawn 参数里（isolated:true）或派发前 bash 预建 worktree——上下文散文里的 "automatic" 一文不值。手工 spawn 无 isolated:true = 禁止。
 5. **假严谨=真破坏**（用户引四渡赤水）：约束检测面对齐真实书写语言；词形级误拒真票=修工具（detector），不是改票面喂正则（hack）。同理：工具限制把 PM 逼回裸 spawn=丢全部保证=工具 bug。
 6. **票=正本，spec 落盘非必要**：契约钉票链+研究文档+修订评论即可冷启动；"已知即所得"，.scratch spec 文件是仪式不是保险。

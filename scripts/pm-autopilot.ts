@@ -63,7 +63,7 @@
  *                                      // -b lane/<ticket>-<slug> origin/main`, returns
  *                                      // spawn { agent, isolated: true, task, context }.
  *                                      // A failed board predicate refuses dispatch;
- *                                      // DoR gaps (三问/验收/锚点/预算/往例) are
+ *                                      // DoR gaps (三问/验收/锚点, #224) are
  *                                      // advisory — they print, never refuse.
  *     // confirm additionally spawns for real through the transport (#206:
  *     // default = globalThis.agent(prompt, {isolated: true, label}); the
@@ -628,7 +628,7 @@ function budgetOf(body: string): { source: "body" | "skeleton"; line: string } {
   }
   return {
     source: "skeleton",
-    line: "预算行缺失（DoR ⑤ 未过）：墙钟 ≤ __min；资源上限 __；等待方式：交付即回（超 50% 须解释）",
+    line: "预算行缺失：墙钟 ≤ __min；资源上限 __；等待方式：交付即回（超 50% 须解释）",
   };
 }
 
@@ -691,7 +691,7 @@ export function dispatchPackets(tickets: Ticket[], _snapshot?: Snapshot): Dispat
 
 /** One DoR line printed per dispatch: gate item, pass/fail, body evidence. */
 export interface DorCheck {
-  key: "three-questions" | "acceptance" | "anchors" | "budget" | "precedent";
+  key: "three-questions" | "acceptance" | "anchors";
   label: string;
   ok: boolean;
   /** First body line backing the check (trimmed); null when absent. */
@@ -723,20 +723,15 @@ const DOR_LINE_ITEMS: readonly {
     pattern:
       /锚|anchor|§\s*\S|(?:^|\s)(?:bb|omp)\s*[：:]\s*\S|[\w@.-]+(?:\/[\w@.-]+)+\.[A-Za-z]\w{0,7}|\b[\w@-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|rb|php|sh|md|json|ya?ml|toml|sql|css|html|nix|tf|env|conf)\b/i,
   },
-  {
-    key: "precedent",
-    label: "⑤参照往例",
-    pattern: /往例|先例|类比|同类|precedent|参考类|≈/i,
-  },
 ];
 
 /**
- * The five DoR items (#171) detected in the ticket body: 复用三问答案引用 /
- * 验收面 / 上游锚点 / 预算 / 参照往例. Budget reuses budgetOf's body pattern
- * (the skeleton fallback = the item is missing). Detection is semantic
- * (#199) — matched against how tickets are actually written (锚：/预算
- * ≤1.5h/§refs/file paths), not a pinned word form. Pure line heuristics; the
- * L1 suite pins them; anything smarter belongs in intake.
+ * The three DoR gate items (#171; trimmed to three by #224 — budget and
+ * precedent left the gate, budgetOf survives only as the packet info line):
+ * 复用三问答案引用 / 验收面 / 上游锚点. Detection is semantic (#199) —
+ * matched against how tickets are actually written (锚：/§refs/file paths),
+ * not a pinned word form. Pure line heuristics; the L1 suite pins them;
+ * anything smarter belongs in intake.
  */
 export function dorChecklist(body: string): DorCheck[] {
   const lines = body
@@ -744,18 +739,10 @@ export function dorChecklist(body: string): DorCheck[] {
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
   const firstMatch = (re: RegExp): string | null => lines.find((l) => re.test(l)) ?? null;
-  const budget = budgetOf(body);
-  const checks: DorCheck[] = DOR_LINE_ITEMS.map((item) => {
+  return DOR_LINE_ITEMS.map((item) => {
     const evidence = firstMatch(item.pattern);
     return { key: item.key, label: item.label, ok: evidence !== null, evidence };
   });
-  checks.splice(3, 0, {
-    key: "budget",
-    label: "④预算行",
-    ok: budget.source === "body",
-    evidence: budget.source === "body" ? budget.line : null,
-  });
-  return checks;
 }
 
 /** The spawn packet AP.lane hands back — paste into the omp `task` tool.
@@ -962,7 +949,7 @@ function renderLaneReport(r: LaneDispatchReport): string {
  * Entry is number | Ticket | Array (#199, batch #206): a number resolves through a fresh
  * snapshot and throws only when it is not on the board. AP.lane (a) refuses
  * — zero side effects — on the ONE structural check, the board predicate
- * (open ∧ Todo ∧ no open blockers ∧ ¬ready-for-human); the five-item DoR
+ * (open ∧ Todo ∧ no open blockers ∧ ¬ready-for-human); the three-item DoR
  * table rides along as ADVISORY for the PM and never refuses; (b) on
  * confirm, runs
  * `git worktree add <herdr path> -b lane/<ticket>-<slug> origin/main` at the
