@@ -7,3 +7,5 @@ dist/
 .staging-daemon.env
 .env.local
 apps/server-worker/public/
+result
+result-*

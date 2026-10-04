@@ -297,7 +297,7 @@ function startClient(base: string, dataDir: string): ChildProcess {
     {
       cwd: CLIENT_PACKAGE,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, POC_ENROLL_KEY: ENROLL_KEY },
+      env: { ...process.env, DAEMON_ENROLL_KEY: ENROLL_KEY },
     },
   );
   child.stdout.on("data", (chunk: Buffer) => {
