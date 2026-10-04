@@ -1431,6 +1431,16 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * else → `["events-appended"]` Tier-B pointer (eventTypes = the journal
    * type). DO→DO RPC is unordered and at-least-once — consumers reconcile
    * by `seq` per D4, so ordering/buffering machinery would be dead weight.
+   *
+   * #148 bridge: a `model.delta` row ALSO emits the `["events-appended"]`
+   * pointer. The pinned bb SPA (streaming contract §16 S4 not yet landed)
+   * ignores the `delta` payload frame, so without the pointer a streaming
+   * stretch triggers no Tier-B refetch and the conversation row only grows at
+   * turn.completed — the repro behind "流式 delta 未实时投影（turn 完成前
+   * conversation 行不生长）". The pointer is redundant-but-idempotent for the
+   * future S4 consumer (latestSeq > cursor → throttled catch-up, seq dedupe),
+   * and the row rate is already capped by deltaFlushMs/Bytes. Retire this
+   * second emit when the S4 SPA consumes delta frames directly.
    */
   private notifyHub(event: AnyAgentEvent): void {
     if (this.threadId === null) return;
@@ -1452,6 +1462,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         hub.notifyThreadDelta(frame).catch((error: unknown) => {
           console.error("hub delta notify failed", error);
         }),
+      );
+      this.ctx.waitUntil(
+        hub
+          .notifyThread(threadId, ["events-appended"], { latestSeq, eventTypes: [event.type] })
+          .catch((error: unknown) => {
+            console.error("hub delta pointer notify failed", error);
+          }),
       );
       return;
     }

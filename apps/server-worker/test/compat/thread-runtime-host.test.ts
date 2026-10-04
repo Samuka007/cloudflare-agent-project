@@ -4,24 +4,20 @@ import { ensureMigrations } from "../migrate.js";
 import { createThread, send } from "../helpers.js";
 import { threadResponseSchema } from "../../src/contract/api/threads.js";
 import type { ThreadDbRow } from "../../src/db/rows.js";
-import {
-  resolveThreadRuntimeState,
-  type HostRuntimeSnapshot,
-} from "../../src/services/runtime-display.js";
-import { DAEMON_ACTIVE_WORK_DISCONNECT_GRACE_MS } from "../../src/ws/hub.js";
+import { resolveThreadRuntimeState } from "../../src/services/runtime-display.js";
 
 /**
- * #194 S2: the thread runtime display is honest about the attached host.
- * The M0 topology (PM ruling) binds every thread's session to the single
- * attached daemon (ORCHESTRATOR_HOST_ID, "local" composed), so an active
- * thread's display derives from one host fact per request — bb
- * resolveThreadRuntimeStateFromLatestSession (thread-runtime-display.ts:
- * 194-221) reduced to HostRuntimeSnapshot. L2 three states: connected
- * echoes "active" (no banner — the old hardcoded waiting-for-host lie at
- * services/runtime-display.ts:18-23), a drop inside the hub's 30s grace
- * reads "host-reconnecting" with the countdown, past it
- * "waiting-for-host". The daemon-side moments feeding the hub are S1's
- * (#193) wiring; here the display consumption is exercised end-to-end.
+ * #148: the thread runtime display never preempts an in-flight turn with a
+ * host banner (streaming contract §9.3 — the banner's only legitimate source
+ * is "no active turn ∧ runtime host offline"; 活跃 turn 期间横幅恒 ✗). Under
+ * #73 execution suspension a turn keeps streaming pure chat while the host is
+ * down, so `resolveThreadRuntimeState` echoes the row's execution status
+ * verbatim; the #194 S2 host-aware branch (active + host-down →
+ * host-reconnecting / waiting-for-host — the thr_jk45qe4786
+ * banner-during-streaming repro) is gone. The hub grace state machine itself
+ * stays (#193 S1 producers; covered by host-broadcast.test.ts) and the §9.3
+ * row-4 post-turn host face lands with the bb-side S6 slice together with its
+ * SPA follow-up queue/submit gate, reconciled with 消息可发.
  */
 beforeAll(ensureMigrations);
 
@@ -94,46 +90,21 @@ async function readThread(id: string) {
   return threadResponseSchema.parse(await detail.json());
 }
 
-describe("#194 resolver mapping (bb thread-runtime-display.ts:96-108, 194-221)", () => {
+describe("#148 resolver mapping (echo-only display, §9.3)", () => {
   // The resolver reads only the row's status; the rest of the row is inert here.
   const row = (status: ThreadDbRow["status"]) => ({ status }) as ThreadDbRow;
 
-  it("active + connected host echoes active with no banner instant", () => {
-    expect(
-      resolveThreadRuntimeState(row("active"), { connected: true, graceExpiresAt: null }),
-    ).toEqual({ displayStatus: "active", hostReconnectGraceExpiresAt: null });
-  });
-
-  it("active + drop inside the grace reads host-reconnecting with the countdown", () => {
-    const expiresAt = Date.now() + DAEMON_ACTIVE_WORK_DISCONNECT_GRACE_MS;
-    expect(
-      resolveThreadRuntimeState(row("active"), { connected: false, graceExpiresAt: expiresAt }),
-    ).toEqual({ displayStatus: "host-reconnecting", hostReconnectGraceExpiresAt: expiresAt });
-  });
-
-  it("active + drop past the grace reads waiting-for-host", () => {
-    expect(
-      resolveThreadRuntimeState(row("active"), { connected: false, graceExpiresAt: null }),
-    ).toEqual({ displayStatus: "waiting-for-host", hostReconnectGraceExpiresAt: null });
-  });
-
-  it("non-active statuses echo themselves verbatim regardless of the host", () => {
-    for (const status of ["idle", "starting", "stopping", "error"] as const) {
-      for (const host of [
-        { connected: true, graceExpiresAt: null },
-        { connected: false, graceExpiresAt: Date.now() },
-        { connected: false, graceExpiresAt: null },
-      ] satisfies HostRuntimeSnapshot[]) {
-        expect(resolveThreadRuntimeState(row(status), host)).toEqual({
-          displayStatus: status,
-          hostReconnectGraceExpiresAt: null,
-        });
-      }
+  it("every status echoes itself — an active turn never renders a host banner", () => {
+    for (const status of ["active", "idle", "starting", "stopping", "error"] as const) {
+      expect(resolveThreadRuntimeState(row(status))).toEqual({
+        displayStatus: status,
+        hostReconnectGraceExpiresAt: null,
+      });
     }
   });
 });
 
-describe("#194 thread runtime host awareness (wiring)", () => {
+describe("#148 wiring: an in-flight turn never banners, host state notwithstanding", () => {
   let socket: WebSocket | null = null;
 
   beforeAll(async () => {
@@ -148,16 +119,18 @@ describe("#194 thread runtime host awareness (wiring)", () => {
     await hub().markDaemonConnected({ hostId: HOST_ID });
   });
 
-  it("no attached host: an active thread waits-for-host with no grace", async () => {
+  it("no attached host: the active thread reads active — no waiting-for-host banner", async () => {
     const thread = await createThread({ title: "runtime-host-orphan" });
     await send(thread.id);
     const body = await readThread(thread.id);
     expect(body.status).toBe("active");
-    expect(body.runtime.displayStatus).toBe("waiting-for-host");
+    // #148 regression guard: #194's resolver read waiting-for-host here —
+    // the banner that preempted the streaming face on thr_jk45qe4786.
+    expect(body.runtime.displayStatus).toBe("active");
     expect(body.runtime.hostReconnectGraceExpiresAt).toBeNull();
   });
 
-  it("attached host: the active thread echoes active — no banner", async () => {
+  it("attached host: the active thread echoes active", async () => {
     expect((await enroll(HOST_ID)).status).toBe(201);
     const { sessionId } = await openSession(HOST_ID);
     socket = await openDaemonSocket(HOST_ID, sessionId);
@@ -171,38 +144,33 @@ describe("#194 thread runtime host awareness (wiring)", () => {
     expect(body.runtime.hostReconnectGraceExpiresAt).toBeNull();
   });
 
-  it("drop inside the 30s grace: host-reconnecting with a 30s countdown", async () => {
+  it("drop inside the 30s grace: the active row still reads active — no host-reconnecting banner", async () => {
     if (socket === null) throw new Error("attach did not leave a socket");
     socket.close(1000, "test-done");
+    // The grace really armed on the hub — the display must ignore it anyway.
     expect(
       await pollUntil(
         async () => (await hub().getDaemonDisconnectState({ hostId: HOST_ID })).inGrace,
       ),
     ).toBe(true);
 
-    // A fresh row ("starting") next to the dropped host: the echo path
-    // ignores the host entirely.
+    // A fresh row ("starting") echoes itself — the echo path is status-only.
     const fresh = await readThread((await createThread({ title: "runtime-host-echo" })).id);
     expect(fresh.status).toBe("starting");
     expect(fresh.runtime.displayStatus).toBe("starting");
     expect(fresh.runtime.hostReconnectGraceExpiresAt).toBeNull();
 
-    // The active row shows the reconnecting banner with the countdown —
-    // pinned above 20s so the pre-G3 5s constant cannot pass.
+    // The active row keeps the loading face while the host is mid-grace —
+    // #194's resolver read host-reconnecting with the countdown here.
     const graceThread = await createThread({ title: "runtime-host-grace-active" });
     await send(graceThread.id);
     const graceBody = await readThread(graceThread.id);
-    expect(graceBody.runtime.displayStatus).toBe("host-reconnecting");
-    const now = Date.now();
-    const expiresAt = graceBody.runtime.hostReconnectGraceExpiresAt;
-    // Narrowing guard, not an assertion (repo lint): a null here would mean
-    // the hub answered inGrace without an expiry.
-    if (expiresAt === null) throw new Error("grace expiry missing on host-reconnecting display");
-    expect(expiresAt).toBeGreaterThan(now + 20_000);
-    expect(expiresAt).toBeLessThanOrEqual(now + DAEMON_ACTIVE_WORK_DISCONNECT_GRACE_MS + 5_000);
+    expect(graceBody.status).toBe("active");
+    expect(graceBody.runtime.displayStatus).toBe("active");
+    expect(graceBody.runtime.hostReconnectGraceExpiresAt).toBeNull();
   });
 
-  it("recovery clears the banner: active returns", async () => {
+  it("recovery: active still reads active", async () => {
     const reopened = await openSession(HOST_ID);
     socket = await openDaemonSocket(HOST_ID, reopened.sessionId);
     const thread = await createThread({ title: "runtime-host-recovered" });
