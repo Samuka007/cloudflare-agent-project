@@ -603,15 +603,17 @@ describe("M1.5 T3 — executor branches (T:checkpoint.ts ToolError paths + crash
 describe("M1.5 T3 — registry rows (control-plane §1.1, classification §2.2)", () => {
   test("the session-tree trio is registered class edge with do-local routing and omp intent modes", () => {
     // omp builtin-names.ts order restricted to the registered set: bash,
-    // checkpoint, rewind, context_notes, new_context, think, todo.
+    // checkpoint, rewind, context_notes, new_context, wait, todo, think
+    // (hidden tool last).
     expect(TOOL_REGISTRY.map((row) => row.name)).toEqual([
       "bash",
       "checkpoint",
       "rewind",
       "context_notes",
       "new_context",
-      "think",
+      "wait",
       "todo",
+      "think",
     ]);
     for (const name of ["checkpoint", "rewind", "todo"]) {
       const row = toolRegistryRow(name);
