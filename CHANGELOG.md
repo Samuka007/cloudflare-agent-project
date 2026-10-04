@@ -3,6 +3,18 @@
 本仓以 GitHub milestone + 票面验收为里程碑权威记录；本文件是人类可读摘要。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+
+### Fixed
+
+- **#228 派发链断点**：模型请求投影（translate.ts）按 turn 过滤——同一会话的
+  第二个 turn（子代理 yield 提醒梯的 reminder turn、主线程的用户追发消息）完全
+  丢失此前所有 turn 的上下文，真机上子代理在 reminder turn 里 yield 出"未收到
+  任务内容"。现按 omp §1.5 全日志折叠：每个已完成 turn 的 input + 调用史作为
+  `priorTurns` 进请求（#147 rewind 截断的 pre-boundary turn 仍由 branch summary
+  替代、不回流）；L2 断言钉 child reminder turn 上下文含派发 task 原文
+  （task-chain.test.ts）+ 纯投影四格（translate.test.ts）。
+
 ## [m1.5] — 2026-10-04 · 工具集完备（omp 33 工具面边缘化）
 
 Milestone `M1.5` 收官（票集 #91–#116，正本 docs/proposals/m15-ticket-set.md 六波次；

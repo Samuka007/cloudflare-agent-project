@@ -4,6 +4,7 @@ import type {
   AsyncResultContribution,
   ModelRequest,
   PriorModelCall,
+  PriorTurnHistory,
   SteerContribution,
   ToolResultContribution,
 } from "./provider.js";
@@ -18,9 +19,15 @@ import { rewindContextCut } from "./tools/session-tree.js";
  * replay tests share one implementation (omp §1.5: every model call rebuilds
  * its full context from the log; this rebuild *is* the replay-consistency
  * guarantee). Only the model-visible trio (#28 ruling ③) enters the request:
- * turn input → input, model calls → assistant slices, tool calls/results →
- * the pairing structure. State events (dispatch/exec_started/output/…) are
- * context-invisible by ruling.
+ * turn inputs → user-side material, model calls → assistant slices, tool
+ * calls/results → the pairing structure. State events
+ * (dispatch/exec_started/output/…) are context-invisible by ruling.
+ *
+ * Session scope (#228): the fold spans every completed turn of the thread,
+ * not only the caller's turn — a multi-turn session (child reminder turns,
+ * follow-up user messages) carries each prior turn's input and call history
+ * into the request as {@link PriorTurnHistory}. An armed rewind cut excludes
+ * pre-boundary turns entirely: the branch summary replaces that span (#147).
  *
  * Steer attribution: a `turn.steer` enters the context at the boundary of the
  * model call whose `model.call_started.consumedSteerSeqs` records it (§2.3,
@@ -107,27 +114,16 @@ export function modelRequestFromEvents(
   const turnEvents = activeEvents.filter(
     (event) => "turnId" in event.data && event.data.turnId === turnId,
   );
-  const inputEvents = turnEvents.filter((event) => event.type === "turn.input");
-  if (inputEvents.length !== 1) {
-    throw new ProjectionError(
-      `turn ${turnId}: expected exactly one turn.input, found ${inputEvents.length}`,
-    );
-  }
-  const inputEvent = inputEvents[0];
-  if (inputEvent === undefined) {
-    throw new ProjectionError(`turn ${turnId}: turn.input vanished mid-projection`);
-  }
-  const input = inputEvent.data.content.map((part) => part.text).join("\n");
-  if (input === "") {
-    throw new ProjectionError(`turn ${turnId}: turn.input has empty text`);
-  }
-
   const steerTexts = new Map<number, string>();
   const slices = new Map<number, CallSlice>();
   const callOrder: number[] = [];
+  /** Session-wide turn registry (#228): every turn.input row, in seq order. */
+  const turnInputs: { turnId: string; seq: number; inputId: string; text: string }[] = [];
+  /** Session-wide call grouping: turnId → its model.call_started seqs. */
+  const callsByTurn = new Map<string, number[]>();
   const executionToCall = new Map<string, number>();
 
-  for (const event of turnEvents) {
+  for (const event of activeEvents) {
     switch (event.type) {
       // Thread-scoped journal families that never appear inside a turn slice
       // (JobRegistry entries, notebook revisions, interaction rows — the
@@ -160,6 +156,18 @@ export function modelRequestFromEvents(
         steerTexts.set(event.seq, event.data.content.map((part) => part.text).join("\n"));
         break;
       }
+      case "turn.input": {
+        // Session-wide registry: prior turns fold below; exactly the caller's
+        // row becomes the request input. (The old exactly-one filter was the
+        // #228 defect: a second turn's request lost the whole first turn.)
+        turnInputs.push({
+          turnId: event.data.turnId,
+          seq: event.seq,
+          inputId: event.data.inputId,
+          text: event.data.content.map((part) => part.text).join("\n"),
+        });
+        break;
+      }
       case "model.call_started": {
         const slice: CallSlice = {
           modelCallId: event.seq,
@@ -174,6 +182,9 @@ export function modelRequestFromEvents(
         };
         slices.set(event.seq, slice);
         callOrder.push(event.seq);
+        const byTurn = callsByTurn.get(event.data.turnId);
+        if (byTurn === undefined) callsByTurn.set(event.data.turnId, [event.seq]);
+        else byTurn.push(event.seq);
         break;
       }
       case "model.call_completed": {
@@ -254,6 +265,15 @@ export function modelRequestFromEvents(
     }
   }
 
+  const inputTurn = turnInputs.find((turn) => turn.turnId === turnId);
+  if (inputTurn === undefined) {
+    throw new ProjectionError(`turn ${turnId}: no turn.input in the log`);
+  }
+  if (inputTurn.text === "") {
+    throw new ProjectionError(`turn ${turnId}: turn.input has empty text`);
+  }
+  const input = inputTurn.text;
+
   const current = slices.get(modelCallId);
   if (current === undefined) {
     throw new ProjectionError(`turn ${turnId}: no model.call_started for call ${modelCallId}`);
@@ -262,13 +282,16 @@ export function modelRequestFromEvents(
   // "Prior" is temporal: only calls whose boundary precedes the current
   // call's belong in this request. Replaying an earlier call's request from
   // a longer final log must reconstruct the request as it was THEN — later
-  // calls are the future and never enter it.
-  const currentIndex = callOrder.indexOf(modelCallId);
+  // calls are the future and never enter it. (callOrder is session-wide;
+  // priorCalls stays the current turn's earlier calls.)
+  const currentTurnCallIds = callsByTurn.get(turnId) ?? [];
+  const currentIndex = currentTurnCallIds.indexOf(modelCallId);
   if (currentIndex === -1) {
     throw new ProjectionError(`call ${modelCallId} missing from call order`);
   }
+  const priorCallIds = currentTurnCallIds.slice(0, currentIndex);
   const priorCalls: PriorModelCall[] = [];
-  for (const callId of callOrder.slice(0, currentIndex)) {
+  for (const callId of priorCallIds) {
     const slice = slices.get(callId);
     if (slice === undefined) {
       throw new ProjectionError(`call ${callId} in call order but missing from slices`);
@@ -304,6 +327,56 @@ export function modelRequestFromEvents(
     });
   }
 
+  // Prior turns (#228): every earlier turn's input + completed call history,
+  // oldest first. Under an armed rewind cut, pre-boundary turns stay excluded
+  // — the branch summary replaces the hidden span (#147). Later turns (a
+  // longer final log replaying an earlier call) are the future and never
+  // enter.
+  const priorTurns: PriorTurnHistory[] = [];
+  for (const turn of turnInputs) {
+    if (turn.turnId === turnId || turn.seq >= inputTurn.seq) continue;
+    if (cut !== undefined && turn.seq <= cut.hideThroughSeq) continue;
+    if (turn.text === "") {
+      throw new ProjectionError(`turn ${turn.turnId}: turn.input has empty text`);
+    }
+    const calls: PriorModelCall[] = [];
+    for (const callId of callsByTurn.get(turn.turnId) ?? []) {
+      const slice = slices.get(callId);
+      if (slice === undefined) {
+        throw new ProjectionError(`turn ${turn.turnId}: call ${callId} missing from slices`);
+      }
+      if (!slice.completed) {
+        // Pre-first-byte failed attempt on the retry path: zero wire content
+        // (no deltas, no tool calls) — the retry replaces it in history.
+        continue;
+      }
+      const toolResults = slice.executionIds.map((executionId) => {
+        const result = slice.resultByExecutionId.get(executionId);
+        if (result === undefined) {
+          throw new ProjectionError(
+            `call ${callId}: execution ${executionId} has no terminal tool.result — dangling tool_use`,
+          );
+        }
+        return result;
+      });
+      const priorAsync = asyncResultsByCall.get(callId) ?? [];
+      if (toolResults.length !== slice.toolCalls.length) {
+        throw new ProjectionError(
+          `call ${callId}: ${slice.toolCalls.length} toolCalls vs ${toolResults.length} results`,
+        );
+      }
+      calls.push({
+        modelCallId: callId,
+        steers: slice.steers,
+        text: slice.text,
+        toolCalls: slice.toolCalls,
+        toolResults,
+        asyncResults: priorAsync,
+      });
+    }
+    priorTurns.push({ input: turn.text, calls });
+  }
+
   return {
     threadId: firstRow.threadId,
     turnId,
@@ -311,6 +384,8 @@ export function modelRequestFromEvents(
     input,
     steers: current.steers,
     priorCalls,
+    // Session history (#228): prior turns ride every post-turn request.
+    ...(priorTurns.length > 0 ? { priorTurns } : {}),
     // The current call's boundary rows ride the trailing user message (wire
     // appends them after the steers); prior calls carry theirs permanently.
     asyncResults: asyncResultsByCall.get(modelCallId) ?? [],
@@ -323,7 +398,7 @@ export function modelRequestFromEvents(
       (event) =>
         event.type === "task.yield_reminder" &&
         event.data.forced &&
-        event.data.inputId === inputEvent.data.inputId,
+        event.data.inputId === inputTurn.inputId,
     )
       ? { toolChoice: { name: "yield" } }
       : {}),
