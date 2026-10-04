@@ -133,10 +133,12 @@ function mapAgentError(error: unknown): AdapterCommandOutcome {
   return errorOutcome("provider_error", message);
 }
 
-function textInputsOf(command: Extract<AdapterCommand, { type: "turn/start" } | { type: "turn/steer" }>): Array<{
+function textInputsOf(
+  command: Extract<AdapterCommand, { type: "turn/start" } | { type: "turn/steer" }>,
+): {
   type: "text";
   text: string;
-}> {
+}[] {
   return flattenPromptInputGroups(command.input, command.inputGroups).flatMap((part) =>
     part.type === "text" ? [{ type: "text", text: part.text }] : [],
   );
@@ -197,10 +199,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       case "thread/resume":
         return this.resumeThread(command);
       case "thread/fork":
-        return errorOutcome(
-          "unsupported",
-          "agent DO sessions do not support fork in M0",
-        );
+        return errorOutcome("unsupported", "agent DO sessions do not support fork in M0");
       case "turn/start":
         return this.startTurn(command);
       case "turn/steer":
@@ -210,10 +209,10 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       case "thread/discard":
         return this.discardThread(command.providerThreadId);
       case "thread/goal/clear":
-        return this.withRow(
-          command.providerThreadId,
-          () => ({ ok: true, result: { cleared: true } }),
-        );
+        return this.withRow(command.providerThreadId, () => ({
+          ok: true,
+          result: { cleared: true },
+        }));
       case "thread/name/set":
         return this.setName(command.providerThreadId, command.title);
       case "thread/archive":
@@ -372,11 +371,10 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
         result: {
           threadId: row.threadId,
           providerThreadId: row.providerThreadId,
-          ompRecovery:
-            command.ompRecovery ?? {
-              sessionId: row.recoverySessionId,
-              sessionFile: row.recoverySessionFile,
-            },
+          ompRecovery: command.ompRecovery ?? {
+            sessionId: row.recoverySessionId,
+            sessionFile: row.recoverySessionFile,
+          },
         },
       };
     }
@@ -427,10 +425,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
         },
       };
     }
-    return errorOutcome(
-      "thread_not_found",
-      `unknown provider thread ${command.providerThreadId}`,
-    );
+    return errorOutcome("thread_not_found", `unknown provider thread ${command.providerThreadId}`);
   }
 
   private async startTurn(
@@ -474,9 +469,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       lifecycle: "active",
       active_client_request_id: command.clientRequestId,
       active_turn_id: sent.turnId,
-      ...(drift === "live"
-        ? { harness_json: snapshotHarness(resolveHarness(this.env)) }
-        : {}),
+      ...(drift === "live" ? { harness_json: snapshotHarness(resolveHarness(this.env)) } : {}),
     });
     return {
       ok: true,
@@ -570,7 +563,10 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
     return { ok: true, result: { title } };
   }
 
-  private async setArchived(providerThreadId: string, archived: boolean): Promise<AdapterCommandOutcome> {
+  private async setArchived(
+    providerThreadId: string,
+    archived: boolean,
+  ): Promise<AdapterCommandOutcome> {
     const row = this.rowByProviderThreadId(providerThreadId);
     if (row === undefined) {
       return errorOutcome("thread_not_found", `unknown provider thread ${providerThreadId}`);

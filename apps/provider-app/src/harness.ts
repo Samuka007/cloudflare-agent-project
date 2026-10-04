@@ -68,7 +68,10 @@ export const HARNESS_DEFAULTS = {
   machineId: "local",
 } as const;
 
-function executionOptionsOf(mode: string | undefined, model: string): RuntimeThreadExecutionOptions {
+function executionOptionsOf(
+  mode: string | undefined,
+  model: string,
+): RuntimeThreadExecutionOptions {
   const base = {
     model,
     serviceTier: "default" as const,
@@ -108,7 +111,8 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
   const baseUrl = env.MODEL_RELAY_BASE_URL_ANTHROPIC?.trim() || HARNESS_DEFAULTS.baseUrl;
   const apiKey = env.MODEL_RELAY_API_KEY?.trim() ?? "";
   const maxTokensRaw = Number.parseInt(env.MODEL_RELAY_MAX_TOKENS ?? "", 10);
-  const maxTokens = Number.isFinite(maxTokensRaw) && maxTokensRaw > 0 ? maxTokensRaw : HARNESS_DEFAULTS.maxTokens;
+  const maxTokens =
+    Number.isFinite(maxTokensRaw) && maxTokensRaw > 0 ? maxTokensRaw : HARNESS_DEFAULTS.maxTokens;
   const budgetRaw = Number.parseInt(env.MODEL_RELAY_THINKING_BUDGET_TOKENS ?? "", 10);
   const thinking: ThinkingConfig =
     Number.isFinite(budgetRaw) && budgetRaw > 0

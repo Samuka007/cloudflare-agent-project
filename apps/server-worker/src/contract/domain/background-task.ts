@@ -26,10 +26,7 @@ export function isBackgroundCommandTaskType(taskType: string): boolean {
 }
 
 export function isBackgroundAgentTaskType(taskType: string): boolean {
-  return (
-    taskType === LOCAL_AGENT_TASK_TYPE ||
-    taskType === LOCAL_SUBAGENT_TASK_TYPE
-  );
+  return taskType === LOCAL_AGENT_TASK_TYPE || taskType === LOCAL_SUBAGENT_TASK_TYPE;
 }
 
 /**
@@ -56,13 +53,7 @@ export type BackgroundTaskStatus = z.infer<typeof backgroundTaskStatusSchema>;
  * "interrupted" display state is derived at render time from a terminal task
  * with non-terminal agents — it is intentionally not persisted per agent.
  */
-export const workflowAgentStateValues = [
-  "queued",
-  "running",
-  "done",
-  "failed",
-  "skipped",
-] as const;
+export const workflowAgentStateValues = ["queued", "running", "done", "failed", "skipped"] as const;
 export const workflowAgentStateSchema = z.enum(workflowAgentStateValues);
 export type WorkflowAgentState = z.infer<typeof workflowAgentStateSchema>;
 
@@ -71,9 +62,7 @@ export type WorkflowAgentState = z.infer<typeof workflowAgentStateSchema>;
  * for "n/m agents" progress counts and for deriving the render-time
  * "interrupted" display state (a settled workflow with unsettled agents).
  */
-export function isSettledWorkflowAgentState(
-  state: WorkflowAgentState,
-): boolean {
+export function isSettledWorkflowAgentState(state: WorkflowAgentState): boolean {
   switch (state) {
     case "done":
     case "failed":
@@ -129,9 +118,7 @@ export const workflowProgressSnapshotSchema = z.object({
   phases: z.array(workflowPhaseSnapshotSchema),
   agents: z.array(workflowAgentSnapshotSchema),
 });
-export type WorkflowProgressSnapshot = z.infer<
-  typeof workflowProgressSnapshotSchema
->;
+export type WorkflowProgressSnapshot = z.infer<typeof workflowProgressSnapshotSchema>;
 
 export const backgroundTaskUsageSchema = z.object({
   totalTokens: z.number(),
@@ -170,8 +157,6 @@ export function backgroundTaskItemStatus(
  * completion patch arrived before its terminal notification is completed, not
  * interrupted.
  */
-export function isSettledBackgroundTaskStatus(
-  taskStatus: BackgroundTaskStatus,
-): boolean {
+export function isSettledBackgroundTaskStatus(taskStatus: BackgroundTaskStatus): boolean {
   return backgroundTaskItemStatus(taskStatus) !== "pending";
 }

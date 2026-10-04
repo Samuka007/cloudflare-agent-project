@@ -32,17 +32,11 @@ export const realtimeSubscriptionTargetSchema = z.discriminatedUnion("kind", [
     .strict(),
   z.object({ kind: z.literal("thread-list") }).strict(),
 ]);
-export type RealtimeSubscriptionTarget = z.infer<
-  typeof realtimeSubscriptionTargetSchema
->;
+export type RealtimeSubscriptionTarget = z.infer<typeof realtimeSubscriptionTargetSchema>;
 
 /** Canonical target key (bb `realtimeSubscriptionTargetKey`). */
-export function realtimeSubscriptionTargetKey(
-  target: RealtimeSubscriptionTarget,
-): string {
-  return target.kind === "thread-list"
-    ? "thread-list"
-    : `thread-detail:${target.threadId}`;
+export function realtimeSubscriptionTargetKey(target: RealtimeSubscriptionTarget): string {
+  return target.kind === "thread-list" ? "thread-list" : `thread-detail:${target.threadId}`;
 }
 
 export const realtimeClientMessageSchema = z.discriminatedUnion("type", [
@@ -67,9 +61,7 @@ export const realtimeThreadChangeMetadataSchema = z
     latestSeq: z.number().int().min(0).optional(),
   })
   .strict();
-export type RealtimeThreadChangeMetadata = z.infer<
-  typeof realtimeThreadChangeMetadataSchema
->;
+export type RealtimeThreadChangeMetadata = z.infer<typeof realtimeThreadChangeMetadataSchema>;
 
 /** The thread-change broadcast only; acks excluded. */
 export const realtimeThreadChangedSchema = z

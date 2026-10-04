@@ -14,27 +14,17 @@ export const environmentStatusValues = [
 export const environmentStatusSchema = z.enum(environmentStatusValues);
 export type EnvironmentStatus = z.infer<typeof environmentStatusSchema>;
 
-export const WORKSPACE_PROVISION_TYPES = [
-  "unmanaged",
-  "managed-worktree",
-  "personal",
-] as const;
+export const WORKSPACE_PROVISION_TYPES = ["unmanaged", "managed-worktree", "personal"] as const;
 export const workspaceProvisionTypeSchema = z.enum(WORKSPACE_PROVISION_TYPES);
-export type WorkspaceProvisionType = z.infer<
-  typeof workspaceProvisionTypeSchema
->;
+export type WorkspaceProvisionType = z.infer<typeof workspaceProvisionTypeSchema>;
 
 export const environmentWorkspaceDisplayKindValues = [
   "managed-worktree",
   "unmanaged-worktree",
   "other",
 ] as const;
-export const environmentWorkspaceDisplayKindSchema = z.enum(
-  environmentWorkspaceDisplayKindValues,
-);
-export type EnvironmentWorkspaceDisplayKind = z.infer<
-  typeof environmentWorkspaceDisplayKindSchema
->;
+export const environmentWorkspaceDisplayKindSchema = z.enum(environmentWorkspaceDisplayKindValues);
+export type EnvironmentWorkspaceDisplayKind = z.infer<typeof environmentWorkspaceDisplayKindSchema>;
 
 export interface ResolveEnvironmentWorkspaceDisplayKindArgs {
   environment: {
@@ -68,9 +58,7 @@ export const discoveredWorkspacePropertiesSchema = z.object({
   branchName: z.string().nullable(),
   defaultBranch: z.string().nullable(),
 });
-export type DiscoveredWorkspaceProperties = z.infer<
-  typeof discoveredWorkspacePropertiesSchema
->;
+export type DiscoveredWorkspaceProperties = z.infer<typeof discoveredWorkspacePropertiesSchema>;
 
 export const environmentSchema = z.object({
   id: z.string(),

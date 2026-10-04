@@ -106,13 +106,20 @@ function devVars(): Record<string, string> {
   return vars;
 }
 
-async function fetchJson(path: string, init?: RequestInit): Promise<{ status: number; body: unknown }> {
+async function fetchJson(
+  path: string,
+  init?: RequestInit,
+): Promise<{ status: number; body: unknown }> {
   let text = "";
   let status = 0;
   for (let attempt = 0; attempt < 3; attempt++) {
     const response = await fetch(`${baseUrl}${path}`, {
       ...init,
-      headers: { "content-type": "application/json", authorization: `Bearer ${HOST_KEY}`, ...init?.headers },
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${HOST_KEY}`,
+        ...init?.headers,
+      },
     });
     status = response.status;
     text = await response.text();
@@ -157,16 +164,22 @@ async function waitTurnTerminal(
 ): Promise<{ events: AgentEvent[]; latestSeq: number }> {
   let snapshot: AgentEvent[] = [];
   let latestSeq = sinceSeq;
-  await waitFor(async () => {
-    const page = await events(sinceSeq);
-    snapshot = page.events;
-    latestSeq = page.latestSeq;
-    return snapshot.some(
-      (event) =>
-        (event.type === "turn.completed" || event.type === "turn.failed" || event.type === "turn.cancelled") &&
-        event.data.turnId === turnId,
-    );
-  }, `terminal event of ${turnId}`, timeoutMs);
+  await waitFor(
+    async () => {
+      const page = await events(sinceSeq);
+      snapshot = page.events;
+      latestSeq = page.latestSeq;
+      return snapshot.some(
+        (event) =>
+          (event.type === "turn.completed" ||
+            event.type === "turn.failed" ||
+            event.type === "turn.cancelled") &&
+          event.data.turnId === turnId,
+      );
+    },
+    `terminal event of ${turnId}`,
+    timeoutMs,
+  );
   return { events: snapshot, latestSeq };
 }
 
@@ -189,7 +202,9 @@ function assertCoreSequence(slice: AgentEvent[], label: string, firstOnThread = 
     if (wanted === "thread.created" && !firstOnThread) continue;
     const found = types.indexOf(wanted, cursor);
     if (found === -1) {
-      throw new Error(`${label}: expected ${wanted} after position ${cursor}, got ${types.join(" → ")}`);
+      throw new Error(
+        `${label}: expected ${wanted} after position ${cursor}, got ${types.join(" → ")}`,
+      );
     }
     cursor = found + 1;
   }
@@ -202,7 +217,9 @@ function assertCoreSequence(slice: AgentEvent[], label: string, firstOnThread = 
 function terminalEventOf(slice: AgentEvent[], turnId: string): AgentEvent {
   const terminal = slice.find(
     (event) =>
-      (event.type === "turn.completed" || event.type === "turn.failed" || event.type === "turn.cancelled") &&
+      (event.type === "turn.completed" ||
+        event.type === "turn.failed" ||
+        event.type === "turn.cancelled") &&
       event.data.turnId === turnId,
   );
   if (terminal === undefined) throw new Error(`no terminal event for ${turnId}`);
@@ -259,13 +276,21 @@ function startWrangler(): ChildProcess {
 }
 
 function startClient(base: string, dataDir: string): ChildProcess {
-  const child = spawn("bun", ["src/client/index.ts", "--url", base, "--dataDir", dataDir, "--sandbox", SANDBOX], {
-    cwd: CLIENT_PACKAGE,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, POC_ENROLL_KEY: ENROLL_KEY },
+  const child = spawn(
+    "bun",
+    ["src/client/index.ts", "--url", base, "--dataDir", dataDir, "--sandbox", SANDBOX],
+    {
+      cwd: CLIENT_PACKAGE,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, POC_ENROLL_KEY: ENROLL_KEY },
+    },
+  );
+  child.stdout?.on("data", (chunk: Buffer) => {
+    captureClient("client", chunk);
   });
-  child.stdout?.on("data", (chunk: Buffer) => captureClient("client", chunk));
-  child.stderr?.on("data", (chunk: Buffer) => captureClient("client!", chunk));
+  child.stderr?.on("data", (chunk: Buffer) => {
+    captureClient("client!", chunk);
+  });
   return child;
 }
 
@@ -280,12 +305,12 @@ function captureClient(prefix: string, chunk: Buffer): void {
 async function sessionSynced(): Promise<boolean> {
   const { body } = await fetchJson("/agent/session");
   const session = (body as { session: { syncing: boolean } | null }).session;
-  return session !== null && session.syncing === false;
+  return session !== null && !session.syncing;
 }
 
 async function journalOps(executionId: string): Promise<string> {
   const { body } = await fetchJson(`/agent/journal?executionId=${encodeURIComponent(executionId)}`);
-  const ops = (body as { ops: Array<{ kind: string; at: number }> }).ops;
+  const ops = (body as { ops: { kind: string; at: number }[] }).ops;
   return ops.map((op) => op.kind).join(" → ");
 }
 
@@ -332,13 +357,17 @@ async function main(): Promise<void> {
   // 1. Composed worker up.
   log("starting composed worker (wrangler dev) …");
   wrangler = startWrangler();
-  await waitFor(async () => {
-    try {
-      return (await fetch(`${baseUrl}/health`)).ok;
-    } catch {
-      return false;
-    }
-  }, "wrangler dev /health", 90_000);
+  await waitFor(
+    async () => {
+      try {
+        return (await fetch(`${baseUrl}/health`)).ok;
+      } catch {
+        return false;
+      }
+    },
+    "wrangler dev /health",
+    90_000,
+  );
   log("composed worker is up (AgentDO + real DaemonServiceDO)");
 
   // 2. REAL daemon client process.
@@ -354,7 +383,11 @@ async function main(): Promise<void> {
     "Use the bash tool to run exactly this command, then report the exact output line it printed: echo poc-$(date +%s)",
     "poc-drive-turn-1",
   );
-  const { events: turn1All, latestSeq: turn1Latest } = await waitTurnTerminal(turn1, sinceTurn1, 180_000);
+  const { events: turn1All, latestSeq: turn1Latest } = await waitTurnTerminal(
+    turn1,
+    sinceTurn1,
+    180_000,
+  );
   const turn1Slice = sliceOf(turn1All, sinceTurn1);
   assertCoreSequence(turn1Slice, "turn 1", true);
   note("");
@@ -368,14 +401,20 @@ async function main(): Promise<void> {
     throw new Error(`turn 1 tool.result not ok: ${JSON.stringify(turn1Result?.data)}`);
   }
   if (markerMatch === null) {
-    throw new Error(`turn 1 tool.result output has no poc-<epoch> marker: ${JSON.stringify(turn1Output)}`);
+    throw new Error(
+      `turn 1 tool.result output has no poc-<epoch> marker: ${JSON.stringify(turn1Output)}`,
+    );
   }
   const marker = markerMatch[0];
   const turn1Final = finalTextOf(turn1Slice);
   if (!turn1Final.includes(marker)) {
-    throw new Error(`turn 1 final model answer does not echo ${marker}: ${JSON.stringify(turn1Final.slice(0, 400))}`);
+    throw new Error(
+      `turn 1 final model answer does not echo ${marker}: ${JSON.stringify(turn1Final.slice(0, 400))}`,
+    );
   }
-  log(`turn 1 OK: real bash produced ${marker}; final answer echoes it (${turn1Slice.length} events)`);
+  log(
+    `turn 1 OK: real bash produced ${marker}; final answer echoes it (${turn1Slice.length} events)`,
+  );
 
   // 4. Disconnect drill — kill the client mid-exec.
   const drillCommand = "sleep 120 && echo late-drill";
@@ -387,21 +426,31 @@ async function main(): Promise<void> {
   );
   const drillExecId = await (async () => {
     let executionId: string | null = null;
-    await waitFor(async () => {
-      const page = await events(drillSince);
-      const started = page.events.find((event) => event.type === "tool.exec_started");
-      executionId = started ? String(started.data.executionId) : null;
-      return executionId !== null;
-    }, "drill tool.exec_started", 60_000);
+    await waitFor(
+      async () => {
+        const page = await events(drillSince);
+        const started = page.events.find((event) => event.type === "tool.exec_started");
+        executionId = started ? String(started.data.executionId) : null;
+        return executionId !== null;
+      },
+      "drill tool.exec_started",
+      60_000,
+    );
     if (executionId === null) throw new Error("unreachable");
     return executionId;
   })();
   client?.kill("SIGKILL");
   client = null;
   const killAt = Date.now();
-  log(`client SIGKILLed mid-exec (drill execution ${drillExecId} left orphaned) — turn must fail explicitly, not hang`);
+  log(
+    `client SIGKILLed mid-exec (drill execution ${drillExecId} left orphaned) — turn must fail explicitly, not hang`,
+  );
 
-  const { events: drillAll, latestSeq: drillLatest } = await waitTurnTerminal(drillTurn, drillSince, 280_000);
+  const { events: drillAll, latestSeq: drillLatest } = await waitTurnTerminal(
+    drillTurn,
+    drillSince,
+    280_000,
+  );
   const drillSlice = sliceOf(drillAll, drillSince);
   note("");
   note(`## drill turn events (${drillTurn}) — client killed at ${new Date(killAt).toISOString()}`);
@@ -412,10 +461,14 @@ async function main(): Promise<void> {
     (event) => event.type === "tool.dispatch" && Number(event.data.attempt ?? 1) > 1,
   );
   if (drillResult === undefined || drillResult.data.status !== "error") {
-    throw new Error(`drill: expected explicit error tool.result, got ${JSON.stringify(drillResult?.data)}`);
+    throw new Error(
+      `drill: expected explicit error tool.result, got ${JSON.stringify(drillResult?.data)}`,
+    );
   }
   if (String(drillResult.data.output) !== "host_offline") {
-    note(`drill: error output is ${JSON.stringify(drillResult.data.output)} (expected host_offline)`);
+    note(
+      `drill: error output is ${JSON.stringify(drillResult.data.output)} (expected host_offline)`,
+    );
   }
   const drillTerminal = terminalEventOf(drillSlice, drillTurn);
   const drillSeconds = Math.round((Date.now() - killAt) / 1000);
@@ -436,7 +489,9 @@ async function main(): Promise<void> {
     note(`drill execution journal: ${drillJournal}`);
     log(`drill journal: ${drillJournal}`);
   } catch (error) {
-    note(`drill journal read failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
+    note(
+      `drill journal read failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 
   // 6. Post-restart turn runs clean.
@@ -453,12 +508,17 @@ async function main(): Promise<void> {
   note(`## post-restart turn events (${cleanTurn})`);
   for (const line of renderEvents(cleanSlice)) note(line);
   const cleanResult = cleanSlice.find((event) => event.type === "tool.result");
-  if (cleanResult?.data.status !== "ok" || String(cleanResult.data.output).trim() !== "poc-clean-restart") {
+  if (
+    cleanResult?.data.status !== "ok" ||
+    String(cleanResult.data.output).trim() !== "poc-clean-restart"
+  ) {
     throw new Error(`post-restart turn not clean: ${JSON.stringify(cleanResult?.data)}`);
   }
   const cleanFinal = finalTextOf(cleanSlice);
   if (!cleanFinal.includes("poc-clean-restart")) {
-    throw new Error(`post-restart final answer missing marker: ${JSON.stringify(cleanFinal.slice(0, 400))}`);
+    throw new Error(
+      `post-restart final answer missing marker: ${JSON.stringify(cleanFinal.slice(0, 400))}`,
+    );
   }
   log("post-restart turn OK: clean end-to-end roundtrip after the drill");
 
@@ -470,7 +530,9 @@ async function main(): Promise<void> {
   note("");
   note("## summary");
   note(`turn1 marker (real bash output): ${marker}`);
-  note(`drill: tool.result status=error, output=${JSON.stringify(drillResult.data.output)}, terminal=${drillTerminal.type}, ${drillSeconds}s`);
+  note(
+    `drill: tool.result status=error, output=${JSON.stringify(drillResult.data.output)}, terminal=${drillTerminal.type}, ${drillSeconds}s`,
+  );
   note(`post-restart: clean roundtrip, output poc-clean-restart`);
   log("POC FULL CHAIN OK");
 }
@@ -501,14 +563,22 @@ async function stagingLeg(vars: Record<string, string>, marker: string): Promise
   try {
     // Readiness = the DO-backed route answering JSON, not just /health: a
     // fresh deploy propagates its workers.dev route for a few seconds.
-    await waitFor(async () => {
-      try {
-        const response = await fetch(`${url}/agent/session`, { headers: { authorization: `Bearer ${HOST_KEY}` } });
-        return response.ok && (await response.json() as { session: unknown }).session !== undefined;
-      } catch {
-        return false;
-      }
-    }, "staging DO-backed readiness", 90_000);
+    await waitFor(
+      async () => {
+        try {
+          const response = await fetch(`${url}/agent/session`, {
+            headers: { authorization: `Bearer ${HOST_KEY}` },
+          });
+          return (
+            response.ok && ((await response.json()) as { session: unknown }).session !== undefined
+          );
+        } catch {
+          return false;
+        }
+      },
+      "staging DO-backed readiness",
+      90_000,
+    );
     rmSync(STAGING_DATA_DIR, { recursive: true, force: true });
     client = startClient(url, STAGING_DATA_DIR);
     await waitFor(sessionSynced, "staging client enroll → sync", 60_000);
@@ -530,7 +600,9 @@ async function stagingLeg(vars: Record<string, string>, marker: string): Promise
     if (!stagingFinal.includes(stageMarker)) {
       throw new Error(`staging final answer does not echo ${stageMarker}`);
     }
-    log(`staging turn OK: real bash produced ${stageMarker} on the deployed worker (local marker was ${marker})`);
+    log(
+      `staging turn OK: real bash produced ${stageMarker} on the deployed worker (local marker was ${marker})`,
+    );
     note(`staging marker: ${stageMarker}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -545,12 +617,18 @@ async function stagingLeg(vars: Record<string, string>, marker: string): Promise
     await captureWrangler(["delete", "--name", STAGING_NAME], token, accountId, "y\n");
     log(`staging worker ${STAGING_NAME} deleted (relay key not left on the edge)`);
   } catch (error) {
-    log(`staging delete FAILED (manual cleanup needed): ${error instanceof Error ? error.message : String(error)}`);
+    log(
+      `staging delete FAILED (manual cleanup needed): ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
 /** `wrangler deploy` with the relay/watchdog vars inline; resolves the URL. */
-async function deployStaging(token: string, accountId: string, vars: Record<string, string>): Promise<string> {
+async function deployStaging(
+  token: string,
+  accountId: string,
+  vars: Record<string, string>,
+): Promise<string> {
   const args = [
     "deploy",
     "-c",
@@ -597,7 +675,9 @@ async function captureWrangler(
   child.stderr?.on("data", (chunk: Buffer) => {
     out += chunk.toString("utf8");
   });
-  child.on("close", (code) => resolve(code ?? -1));
+  child.on("close", (code) => {
+    resolve(code ?? -1);
+  });
   if (stdin !== undefined) child.stdin?.write(stdin);
   child.stdin?.end();
   const code = await promise;

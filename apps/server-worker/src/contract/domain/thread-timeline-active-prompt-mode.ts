@@ -12,6 +12,4 @@ export const threadTimelineActivePromptModeSchema = z
   })
   .strict();
 
-export type ThreadTimelineActivePromptMode = z.infer<
-  typeof threadTimelineActivePromptModeSchema
->;
+export type ThreadTimelineActivePromptMode = z.infer<typeof threadTimelineActivePromptModeSchema>;

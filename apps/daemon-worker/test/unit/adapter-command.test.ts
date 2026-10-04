@@ -4,10 +4,7 @@ import {
   flattenPromptInputGroups,
   type AdapterCommand,
 } from "../../src/provider-adapter.js";
-import {
-  fakeExecutionContext,
-  fakeExecutionOptions,
-} from "../../src/testing/fake-provider.js";
+import { fakeExecutionContext, fakeExecutionOptions } from "../../src/testing/fake-provider.js";
 import type {
   CommandDispatchOutcome,
   HostDaemonCommandRow,
@@ -61,9 +58,7 @@ describe("AdapterCommand suite (provider route, typed in-process seam)", () => {
       { type: "initialize" },
       {
         type: "skills/configure",
-        skillRoots: [
-          { id: "sr-1", providerId: "codex", skillDirectoryRootPath: "/skills" },
-        ],
+        skillRoots: [{ id: "sr-1", providerId: "codex", skillDirectoryRootPath: "/skills" }],
       },
       { type: "model/list", cwd: "/workspace" },
       {
@@ -144,9 +139,7 @@ describe("AdapterCommand suite (provider route, typed in-process seam)", () => {
     }
 
     // The fake saw every command, in journal order.
-    expect(fakes.provider.commands.map((c) => c.type)).toEqual(
-      seq.map((c) => c.type),
-    );
+    expect(fakes.provider.commands.map((c) => c.type)).toEqual(seq.map((c) => c.type));
 
     // Journal audit: completed with result payload + timestamps + one ok
     // attempt each; thread/stop with activeTurnId poisoned the session.
@@ -309,12 +302,8 @@ describe("AdapterCommand suite (provider route, typed in-process seam)", () => {
     const classify = (next: RuntimeThreadExecutionOptions) =>
       provider.classifyExecutionSettingsChange({ current, next });
     expect(classify(fakeExecutionOptions({ model: "fake-other" }))).toBe("live");
-    expect(classify(fakeExecutionOptions({ reasoningLevel: "high" }))).toBe(
-      "live",
-    );
-    expect(classify(fakeExecutionOptions({ permissionMode: "full" }))).toBe(
-      "session",
-    );
+    expect(classify(fakeExecutionOptions({ reasoningLevel: "high" }))).toBe("live");
+    expect(classify(fakeExecutionOptions({ permissionMode: "full" }))).toBe("session");
     expect(classify(fakeExecutionOptions())).toBe("unchanged");
   });
 });

@@ -6,8 +6,7 @@ import { z } from "zod";
 
 export const CLIENT_TURN_REQUEST_ID_PREFIX = "creq_";
 export const CLIENT_TURN_REQUEST_ID_SUFFIX_LENGTH = 10;
-export const CLIENT_TURN_REQUEST_ID_ALPHABET =
-  "23456789abcdefghijkmnpqrstuvwxyz";
+export const CLIENT_TURN_REQUEST_ID_ALPHABET = "23456789abcdefghijkmnpqrstuvwxyz";
 
 export interface FormatClientTurnRequestIdSuffixArgs {
   suffix: string;
@@ -29,9 +28,7 @@ export type ClientTurnRequestId = z.infer<typeof clientTurnRequestIdSchema>;
 export function formatClientTurnRequestIdSuffix(
   args: FormatClientTurnRequestIdSuffixArgs,
 ): ClientTurnRequestId {
-  return clientTurnRequestIdSchema.parse(
-    `${CLIENT_TURN_REQUEST_ID_PREFIX}${args.suffix}`,
-  );
+  return clientTurnRequestIdSchema.parse(`${CLIENT_TURN_REQUEST_ID_PREFIX}${args.suffix}`);
 }
 
 export function encodeClientTurnRequestIdAlphabetIndexes(
@@ -45,11 +42,7 @@ export function encodeClientTurnRequestIdAlphabetIndexes(
 
   let suffix = "";
   for (const index of args.indexes) {
-    if (
-      !Number.isInteger(index) ||
-      index < 0 ||
-      index >= CLIENT_TURN_REQUEST_ID_ALPHABET.length
-    ) {
+    if (!Number.isInteger(index) || index < 0 || index >= CLIENT_TURN_REQUEST_ID_ALPHABET.length) {
       throw new Error(`Invalid client turn request id alphabet index ${index}`);
     }
     suffix += CLIENT_TURN_REQUEST_ID_ALPHABET.charAt(index);
@@ -62,18 +55,12 @@ export function encodeClientTurnRequestIdNumber(
   args: EncodeClientTurnRequestIdNumberArgs,
 ): ClientTurnRequestId {
   if (!Number.isSafeInteger(args.value) || args.value < 0) {
-    throw new Error(
-      "Client turn request id number must be a safe non-negative integer",
-    );
+    throw new Error("Client turn request id number must be a safe non-negative integer");
   }
 
   let value = args.value;
   let suffix = "";
-  for (
-    let index = 0;
-    index < CLIENT_TURN_REQUEST_ID_SUFFIX_LENGTH;
-    index += 1
-  ) {
+  for (let index = 0; index < CLIENT_TURN_REQUEST_ID_SUFFIX_LENGTH; index += 1) {
     const alphabetIndex = value % CLIENT_TURN_REQUEST_ID_ALPHABET.length;
     suffix = CLIENT_TURN_REQUEST_ID_ALPHABET.charAt(alphabetIndex) + suffix;
     value = Math.floor(value / CLIENT_TURN_REQUEST_ID_ALPHABET.length);

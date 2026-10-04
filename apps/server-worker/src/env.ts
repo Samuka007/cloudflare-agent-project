@@ -1,4 +1,3 @@
-
 /**
  * Worker bindings. `AgentDO` is owned by ticket #29 (packages/agent-do);
  * this control plane only programs against the seam in `src/seam/agent-do.ts`.
@@ -23,6 +22,16 @@ export interface Env {
   MANAGER?: DurableObjectNamespace;
   /** Per-machine daemon service DO (#30) — the agent DO's execution seam. */
   DAEMON_SERVICE?: DurableObjectNamespace;
+  /**
+   * Edge-shield auth-hash cache (#36) for the composed daemon face. The DO
+   * mirror is the authority; this is a pure cache. Optional: env-key-only
+   * deployments run without it.
+   */
+  readonly DAEMON_EDGE_KV?: KVNamespace;
+  /** Edge-shield tunables (#36); unset = named-constant defaults. */
+  readonly DAEMON_NEGATIVE_CACHE_MS?: string;
+  readonly DAEMON_RATE_LIMIT_CAPACITY?: string;
+  readonly DAEMON_RATE_LIMIT_REFILL_PER_SEC?: string;
   /** Static SPA bundle (bb apps/app dist). */
   ASSETS: Fetcher;
 

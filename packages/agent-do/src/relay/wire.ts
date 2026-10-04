@@ -1,8 +1,4 @@
-import type {
-  ModelRequest,
-  PriorModelCall,
-  SteerContribution,
-} from "../provider.js";
+import type { ModelRequest, PriorModelCall, SteerContribution } from "../provider.js";
 
 /**
  * Anthropic Message wire assembly (#28 ruling ③ translation layer, omp §1.5
@@ -38,9 +34,7 @@ export interface AnthropicMessage {
   content: AnthropicUserBlock[] | AnthropicAssistantBlock[];
 }
 
-export type ThinkingConfig =
-  | { type: "disabled" }
-  | { type: "enabled"; budget_tokens: number };
+export type ThinkingConfig = { type: "disabled" } | { type: "enabled"; budget_tokens: number };
 
 export interface AnthropicRequestBody {
   model: string;
@@ -186,9 +180,7 @@ export function anthropicRequestBody(
       });
     });
     if (content.length === 0) {
-      throw new WireAssemblyError(
-        `call ${call.modelCallId}: assistant message has no content`,
-      );
+      throw new WireAssemblyError(`call ${call.modelCallId}: assistant message has no content`);
     }
     return { role: "assistant", content };
   };

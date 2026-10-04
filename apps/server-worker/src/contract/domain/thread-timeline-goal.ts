@@ -10,9 +10,7 @@ export const threadTimelineGoalStatusSchema = z.enum([
   "budgetLimited",
   "complete",
 ]);
-export type ThreadTimelineGoalStatus = z.infer<
-  typeof threadTimelineGoalStatusSchema
->;
+export type ThreadTimelineGoalStatus = z.infer<typeof threadTimelineGoalStatusSchema>;
 
 export const threadTimelineGoalSchema = z.object({
   sourceSeq: z.number().int().nonnegative(),

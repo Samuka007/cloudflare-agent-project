@@ -6,13 +6,9 @@
   "durable_objects": {
     "bindings": [
       { "name": "MANAGER", "class_name": "ManagerDo" },
-      { "name": "AGENT_DO", "class_name": "AgentDO" }
-    ]
+      { "name": "AGENT_DO", "class_name": "AgentDO" },
+    ],
   },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["ManagerDo", "AgentDO"] }
-  ],
-  "r2_buckets": [
-    { "binding": "BLOBS", "bucket_name": "provider-app-blobs" }
-  ]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ManagerDo", "AgentDO"] }],
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "provider-app-blobs" }],
 }

@@ -117,8 +117,7 @@ export interface ThreadLifecycleRowState {
 export type ThreadLifecycleNoopReason = "illegal-transition" | "superseded";
 
 export type ThreadLifecycleEvaluation =
-  | { to: ThreadStatus }
-  | { noop: ThreadLifecycleNoopReason; detail: string };
+  { to: ThreadStatus } | { noop: ThreadLifecycleNoopReason; detail: string };
 
 export interface EvaluateThreadLifecycleEventArgs {
   event: ThreadLifecycleEvent;

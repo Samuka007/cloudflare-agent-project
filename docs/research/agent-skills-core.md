@@ -29,11 +29,11 @@ frontmatter 必填字段只有两个：`name`（≤64 字符，小写字母/数�
 
 ### 1.3 Progressive disclosure 的三个层级
 
-| 层级 | 何时加载 | token 成本 | 内容 |
-| --- | --- | --- | --- |
-| L1 元数据 | 启动，恒载 | ~100/skill | frontmatter 的 name + description |
-| L2 指令正文 | 触发时（模型认为相关） | 建议 <5k | SKILL.md body |
-| L3+ 资源 | 正文引用到时才读 | 未访问前为零 | references/、assets/ 读进上下文；scripts/ **执行** |
+| 层级        | 何时加载               | token 成本   | 内容                                               |
+| ----------- | ---------------------- | ------------ | -------------------------------------------------- |
+| L1 元数据   | 启动，恒载             | ~100/skill   | frontmatter 的 name + description                  |
+| L2 指令正文 | 触发时（模型认为相关） | 建议 <5k     | SKILL.md body                                      |
+| L3+ 资源    | 正文引用到时才读       | 未访问前为零 | references/、assets/ 读进上下文；scripts/ **执行** |
 
 关键句："When you request something that matches a Skill's description, Claude reads SKILL.md **from the filesystem using bash**. Only then does this content enter the context window." 触发机制就是模型自己调一次文件读取——没有独立触发引擎。[来源：同上 overview 页]
 
@@ -57,13 +57,13 @@ frontmatter 必填字段只有两个：`name`（≤64 字符，小写字母/数�
 
 Claude Code 对 skill 的全部"执行"支持都是**宿主侧的文本预处理或权限门**，不是 skill 运行时：
 
-| 机制 | 实质 | 归属层 |
-| --- | --- | --- |
-| `` !`cmd` `` 动态上下文注入 | harness 在渲染时跑一次 shell，把输出**替换进文本**再给模型（"Claude receives actual data, not the command itself"）；失败则整个 skill 调用中止 | 宿主预处理；禁用后占位符原样透传，skill 退化为纯文本 |
-| `context: fork` + `agent` | 把 skill 正文作为 prompt 交给一个 subagent——"The subagent receives the skill content as its prompt" | 仍是文本注入，只是注入目标换成隔离子代理 |
-| `allowed-tools` | 调用该 skill 的那一 turn 内预批准若干工具，"the grant clears when you send your next message" | 宿主权限策略，不是 skill 能力 |
-| `disable-model-invocation` / permission 规则 `Skill(name)` | 控制目录可见性与模型调用权 | 访问控制 |
-| `hooks` frontmatter | skill 被调用时注册事件拦截器 | 宿主 hook 系统，与 skill 正文正交 |
+| 机制                                                       | 实质                                                                                                                                           | 归属层                                               |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `` !`cmd` `` 动态上下文注入                                | harness 在渲染时跑一次 shell，把输出**替换进文本**再给模型（"Claude receives actual data, not the command itself"）；失败则整个 skill 调用中止 | 宿主预处理；禁用后占位符原样透传，skill 退化为纯文本 |
+| `context: fork` + `agent`                                  | 把 skill 正文作为 prompt 交给一个 subagent——"The subagent receives the skill content as its prompt"                                            | 仍是文本注入，只是注入目标换成隔离子代理             |
+| `allowed-tools`                                            | 调用该 skill 的那一 turn 内预批准若干工具，"the grant clears when you send your next message"                                                  | 宿主权限策略，不是 skill 能力                        |
+| `disable-model-invocation` / permission 规则 `Skill(name)` | 控制目录可见性与模型调用权                                                                                                                     | 访问控制                                             |
+| `hooks` frontmatter                                        | skill 被调用时注册事件拦截器                                                                                                                   | 宿主 hook 系统，与 skill 正文正交                    |
 
 官方文档把 Claude Code 扩展字段与标准字段分表列出，并明确：claude.ai/API 上传路径只接受标准的 6 个字段，多余字段直接报错——**标准核不含任何执行语义**。连 `!` 注入在 synced skill / 终端会话中都被禁用或原样透传（"reaches Claude as literal text"）。[来源：同上 skills 页（frontmatter reference、"Using skill frontmatter outside Claude Code"、"Inject dynamic context"、"Run skills in a subagent" 各节）]
 

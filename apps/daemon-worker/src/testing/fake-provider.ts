@@ -36,7 +36,7 @@ interface FakeProviderThread {
   poisoned: boolean;
   title: string | null;
   archived: boolean;
-  steers: Array<{ expectedTurnId: string; clientRequestId: string }>;
+  steers: { expectedTurnId: string; clientRequestId: string }[];
 }
 
 export class FakeProviderAdapter implements ProviderAdapter {
@@ -112,7 +112,7 @@ export class FakeProviderAdapter implements ProviderAdapter {
     command: AdapterCommand,
     options: { timeoutMs: number },
   ): Promise<AdapterCommandOutcome> {
-    void options;
+    options;
     this.commands.push(command);
     if (this.hangCommandTypes.has(command.type)) {
       return this.hangUntilReleased();
@@ -224,7 +224,9 @@ export class FakeProviderAdapter implements ProviderAdapter {
     return body();
   }
 
-  private startThread(command: Extract<AdapterCommand, { type: "thread/start" }>): AdapterCommandOutcome {
+  private startThread(
+    command: Extract<AdapterCommand, { type: "thread/start" }>,
+  ): AdapterCommandOutcome {
     this.providerThreadCounter += 1;
     const providerThreadId = `pthr_${this.providerThreadCounter}`;
     const ompRecovery = {
@@ -248,7 +250,9 @@ export class FakeProviderAdapter implements ProviderAdapter {
     };
   }
 
-  private resumeThread(command: Extract<AdapterCommand, { type: "thread/resume" }>): AdapterCommandOutcome {
+  private resumeThread(
+    command: Extract<AdapterCommand, { type: "thread/resume" }>,
+  ): AdapterCommandOutcome {
     const thread = this.threadsByProviderId.get(command.providerThreadId);
     if (thread === undefined) {
       return this.threadNotFound(command.providerThreadId);
@@ -271,7 +275,9 @@ export class FakeProviderAdapter implements ProviderAdapter {
     };
   }
 
-  private forkThread(command: Extract<AdapterCommand, { type: "thread/fork" }>): AdapterCommandOutcome {
+  private forkThread(
+    command: Extract<AdapterCommand, { type: "thread/fork" }>,
+  ): AdapterCommandOutcome {
     const source = this.threadsByProviderId.get(command.sourceProviderThreadId);
     if (source === undefined) {
       return this.threadNotFound(command.sourceProviderThreadId);
@@ -299,7 +305,9 @@ export class FakeProviderAdapter implements ProviderAdapter {
     };
   }
 
-  private startTurn(command: Extract<AdapterCommand, { type: "turn/start" }>): AdapterCommandOutcome {
+  private startTurn(
+    command: Extract<AdapterCommand, { type: "turn/start" }>,
+  ): AdapterCommandOutcome {
     const thread = this.threadsByProviderId.get(command.providerThreadId);
     if (thread === undefined) {
       return this.threadNotFound(command.providerThreadId);
@@ -319,7 +327,9 @@ export class FakeProviderAdapter implements ProviderAdapter {
     };
   }
 
-  private steerTurn(command: Extract<AdapterCommand, { type: "turn/steer" }>): AdapterCommandOutcome {
+  private steerTurn(
+    command: Extract<AdapterCommand, { type: "turn/steer" }>,
+  ): AdapterCommandOutcome {
     const thread = this.threadsByProviderId.get(command.providerThreadId);
     if (thread === undefined) {
       return this.threadNotFound(command.providerThreadId);
@@ -339,7 +349,9 @@ export class FakeProviderAdapter implements ProviderAdapter {
     return { ok: true, result: { steered: true } };
   }
 
-  private stopThread(command: Extract<AdapterCommand, { type: "thread/stop" }>): AdapterCommandOutcome {
+  private stopThread(
+    command: Extract<AdapterCommand, { type: "thread/stop" }>,
+  ): AdapterCommandOutcome {
     const thread = this.threadsByProviderId.get(command.providerThreadId);
     if (thread === undefined) {
       return this.threadNotFound(command.providerThreadId);
@@ -376,9 +388,7 @@ export class FakeMachineDispatcher {
     this.outcomes.push(outcome);
   }
 
-  async dispatch(
-    request: MachineCommandDispatchRequest,
-  ): Promise<MachineCommandDispatchOutcome> {
+  async dispatch(request: MachineCommandDispatchRequest): Promise<MachineCommandDispatchOutcome> {
     this.requests.push(request);
     return this.outcomes.shift() ?? { kind: "accepted" };
   }
@@ -389,7 +399,9 @@ export class FakeMachineDispatcher {
  * required by ProviderExecutionContext, so tests share one lockstep factory.
  */
 export function fakeExecutionOptions(
-  overrides?: Partial<Pick<RuntimeThreadExecutionOptions, "model" | "reasoningLevel" | "serviceTier">> & {
+  overrides?: Partial<
+    Pick<RuntimeThreadExecutionOptions, "model" | "reasoningLevel" | "serviceTier">
+  > & {
     permissionMode?: RuntimeThreadExecutionOptions["permissionMode"];
   },
 ): RuntimeThreadExecutionOptions {
@@ -447,4 +459,3 @@ function delay(ms: number): Promise<void> {
   setTimeout(resolve, ms);
   return promise;
 }
-

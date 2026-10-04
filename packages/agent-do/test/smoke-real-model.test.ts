@@ -1,8 +1,5 @@
 import { expect, test } from "vitest";
-import {
-  AnthropicRelayProvider,
-  modelRequestFromEvents,
-} from "../src/index.js";
+import { AnthropicRelayProvider, modelRequestFromEvents } from "../src/index.js";
 import { anthropicRequestBody } from "../src/relay/wire.js";
 import { createRig, typeList, type Rig } from "./helpers.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";

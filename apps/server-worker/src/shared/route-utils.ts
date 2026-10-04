@@ -8,9 +8,12 @@ export { ApiError };
  * Parse helper used by every route: zod failures become bb 422
  * validation_failed; anything else rethrows for the app error handler.
  */
-export function parseOr422<T>(schema: {
-  safeParse(input: unknown): { success: true; data: T } | { success: false; error: ZodError };
-}, input: unknown): T {
+export function parseOr422<T>(
+  schema: {
+    safeParse(input: unknown): { success: true; data: T } | { success: false; error: ZodError };
+  },
+  input: unknown,
+): T {
   const result = schema.safeParse(input);
   if (!result.success) {
     throw new ZodErrorHolder(
@@ -23,9 +26,12 @@ export function parseOr422<T>(schema: {
   return result.data;
 }
 
-export function requireJsonBody<T>(ctx: Context, schema: {
-  safeParse(input: unknown): { success: true; data: T } | { success: false; error: ZodError };
-}): Promise<T> {
+export function requireJsonBody<T>(
+  ctx: Context,
+  schema: {
+    safeParse(input: unknown): { success: true; data: T } | { success: false; error: ZodError };
+  },
+): Promise<T> {
   return ctx.req
     .json()
     .then((body) => parseOr422(schema, body))

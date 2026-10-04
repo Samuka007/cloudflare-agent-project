@@ -50,16 +50,10 @@ export const ENVIRONMENT_CHANGE_KINDS = [
 ] as const;
 export type EnvironmentChangeKind = (typeof ENVIRONMENT_CHANGE_KINDS)[number];
 
-export const HOST_CHANGE_KINDS = [
-  "host-connected",
-  "host-disconnected",
-] as const;
+export const HOST_CHANGE_KINDS = ["host-connected", "host-disconnected"] as const;
 export type HostChangeKind = (typeof HOST_CHANGE_KINDS)[number];
 
-export const SYSTEM_CHANGE_KINDS = [
-  "config-changed",
-  "plugins-changed",
-] as const;
+export const SYSTEM_CHANGE_KINDS = ["config-changed", "plugins-changed"] as const;
 export type SystemChangeKind = (typeof SYSTEM_CHANGE_KINDS)[number];
 
 export const threadChangeKindSchema = z.enum(THREAD_CHANGE_KINDS);
@@ -119,9 +113,7 @@ export const realtimeSubscriptionTargetSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
 ]);
-export type RealtimeSubscriptionTarget = z.infer<
-  typeof realtimeSubscriptionTargetSchema
->;
+export type RealtimeSubscriptionTarget = z.infer<typeof realtimeSubscriptionTargetSchema>;
 
 export const subscribeMessageSchema = z.object({
   type: z.literal("subscribe"),
@@ -145,9 +137,7 @@ function assertUnhandledRealtimeSubscriptionTarget(target: never): never {
   throw new Error(`Unhandled realtime subscription target: ${target}`);
 }
 
-export function realtimeSubscriptionTargetKey(
-  target: RealtimeSubscriptionTarget,
-): string {
+export function realtimeSubscriptionTargetKey(target: RealtimeSubscriptionTarget): string {
   switch (target.kind) {
     case "thread-detail":
       return `thread-detail:${target.threadId}`;
@@ -221,9 +211,7 @@ export const environmentChangedMessageSchema = z
     changes: z.array(environmentChangeKindSchema).readonly(),
   })
   .strict();
-export type EnvironmentChangedMessage = z.infer<
-  typeof environmentChangedMessageSchema
->;
+export type EnvironmentChangedMessage = z.infer<typeof environmentChangedMessageSchema>;
 
 export const hostChangedMessageSchema = z
   .object({
@@ -265,23 +253,17 @@ function lenientKinds<TKind extends string>(kinds: readonly TKind[]) {
   const known: ReadonlySet<string> = new Set(kinds);
   return z
     .array(z.string())
-    .transform((values) =>
-      values.filter((value): value is TKind => known.has(value)),
-    );
+    .transform((values) => values.filter((value): value is TKind => known.has(value)));
 }
 
-const knownThreadEventTypes: ReadonlySet<string> = new Set(
-  threadEventTypeValues,
-);
+const knownThreadEventTypes: ReadonlySet<string> = new Set(threadEventTypeValues);
 
 const threadChangeMetadataLenientSchema = z.object({
   backgroundActivityChanged: z.boolean().optional(),
   eventTypes: z
     .array(z.string())
     .transform((values) =>
-      values.filter((value): value is ThreadEventType =>
-        knownThreadEventTypes.has(value),
-      ),
+      values.filter((value): value is ThreadEventType => knownThreadEventTypes.has(value)),
     )
     .optional(),
   hasPendingInteraction: z.boolean().optional(),

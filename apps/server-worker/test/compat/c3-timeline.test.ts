@@ -91,7 +91,7 @@ describe("criterion 3: timeline contract", () => {
       `https://example.com/api/v1/threads/${thread.id}/events?afterSeq=${query.afterSeq}&limit=${query.limit}`,
     );
     expect(response.status).toBe(200);
-    const rows = (await response.json()) as Array<{ seq: number; id: string }>;
+    const rows = (await response.json()) as { seq: number; id: string }[];
     const seqs = rows.map((row) => row.seq);
     for (let index = 1; index < seqs.length; index += 1) {
       const previous = seqs[index - 1];

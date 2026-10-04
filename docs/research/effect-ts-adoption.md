@@ -57,16 +57,16 @@ v4 起的结构性变化（[MIGRATION.md](https://github.com/Effect-TS/effect/bl
 
 ### 2.2 workerd 专项 issue 实证（全部一手，按主题归档）
 
-| 主题 | Issue | 状态 | 与我们的距离 |
-|---|---|---|---|
-| 全局作用域禁 `setTimeout`/`setImmediate` → Scheduler 加 microtask 回退（`Disallowed operation called within global scope`） | [#7930](https://github.com/Effect-TS/effect/issues/7930) | closed（已修） | 直接相关：Effect 的协作式让渡曾撞 workerd 全局 timer 禁令；修复后模块顶层运行受限 Effect 的坑已填。我们不在模块顶层跑 Effect（DO constructor/alarm 驱动），风险更低 |
-| `Effect.fn` 每个定义点构造 Error，约 1,600 个定义吃满 Workers 400 ms 启动 CPU 预算（每个 19–256 µs） | [#8038](https://github.com/Effect-TS/effect/issues/8038) | closed（已修） | 相关：agent DO 事件类型 + 工具错误类型若全用 `Effect.fn`/`Data` 类，定义点数量在千级；v4 已修，但保持「错误类型定义集中、避免无谓 `Effect.fn` 包装」是好纪律 |
-| Logger 用 `console.group` 在 workerd 不可用 | [#5429](https://github.com/Effect-TS/effect/issues/5429) | closed（已修） | 低 |
-| Web handler 冷启动优化（Cloudflare） | [#7927](https://github.com/Effect-TS/effect/issues/7927) | closed | 我们走 DO 类 + fetch handler，不经 HttpApp web handler 主路径 |
-| `HttpApp.toWebHandlerLayerWith` 首请求被 abort → layer 构建被 memoise，isolate 永久挂起（error 1101） | [#6319](https://github.com/Effect-TS/effect/issues/6319) | **open** | 注意项：若 M1+ 用 HttpApi 在 worker 上做路由需复核此坑；M0 的 DO RPC 面不受影响 |
-| FetchHttpClient 响应流转 workerd known-length capability 丢失 | [#8205](https://github.com/Effect-TS/effect/issues/8205) | **open** | 直接相关：relay SSE 消费走 fetch 流；影响限于长度元信息（分块/进度语义），不影响 SSE 行解析。列入 relay 模块的验证点 |
-| MCP 订阅 keepalive（Cloudflare Workers） | [#8651](https://github.com/Effect-TS/effect/issues/8651) / [#8653](https://github.com/Effect-TS/effect/issues/8653) | closed | 低 |
-| sql-pg/mysql2 prepared statement 名在 Hyperdrive/PgBouncer 后碰撞 | [#8320](https://github.com/Effect-TS/effect/issues/8320) / [#6509](https://github.com/Effect-TS/effect/issues/6509) | closed | 不走此路径（我们是 DO 内嵌 SQLite），列作旁证：CF 生态问题有人管、修得快 |
+| 主题                                                                                                                        | Issue                                                                                                               | 状态           | 与我们的距离                                                                                                                                                        |
+| --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 全局作用域禁 `setTimeout`/`setImmediate` → Scheduler 加 microtask 回退（`Disallowed operation called within global scope`） | [#7930](https://github.com/Effect-TS/effect/issues/7930)                                                            | closed（已修） | 直接相关：Effect 的协作式让渡曾撞 workerd 全局 timer 禁令；修复后模块顶层运行受限 Effect 的坑已填。我们不在模块顶层跑 Effect（DO constructor/alarm 驱动），风险更低 |
+| `Effect.fn` 每个定义点构造 Error，约 1,600 个定义吃满 Workers 400 ms 启动 CPU 预算（每个 19–256 µs）                        | [#8038](https://github.com/Effect-TS/effect/issues/8038)                                                            | closed（已修） | 相关：agent DO 事件类型 + 工具错误类型若全用 `Effect.fn`/`Data` 类，定义点数量在千级；v4 已修，但保持「错误类型定义集中、避免无谓 `Effect.fn` 包装」是好纪律        |
+| Logger 用 `console.group` 在 workerd 不可用                                                                                 | [#5429](https://github.com/Effect-TS/effect/issues/5429)                                                            | closed（已修） | 低                                                                                                                                                                  |
+| Web handler 冷启动优化（Cloudflare）                                                                                        | [#7927](https://github.com/Effect-TS/effect/issues/7927)                                                            | closed         | 我们走 DO 类 + fetch handler，不经 HttpApp web handler 主路径                                                                                                       |
+| `HttpApp.toWebHandlerLayerWith` 首请求被 abort → layer 构建被 memoise，isolate 永久挂起（error 1101）                       | [#6319](https://github.com/Effect-TS/effect/issues/6319)                                                            | **open**       | 注意项：若 M1+ 用 HttpApi 在 worker 上做路由需复核此坑；M0 的 DO RPC 面不受影响                                                                                     |
+| FetchHttpClient 响应流转 workerd known-length capability 丢失                                                               | [#8205](https://github.com/Effect-TS/effect/issues/8205)                                                            | **open**       | 直接相关：relay SSE 消费走 fetch 流；影响限于长度元信息（分块/进度语义），不影响 SSE 行解析。列入 relay 模块的验证点                                                |
+| MCP 订阅 keepalive（Cloudflare Workers）                                                                                    | [#8651](https://github.com/Effect-TS/effect/issues/8651) / [#8653](https://github.com/Effect-TS/effect/issues/8653) | closed         | 低                                                                                                                                                                  |
+| sql-pg/mysql2 prepared statement 名在 Hyperdrive/PgBouncer 后碰撞                                                           | [#8320](https://github.com/Effect-TS/effect/issues/8320) / [#6509](https://github.com/Effect-TS/effect/issues/6509) | closed         | 不走此路径（我们是 DO 内嵌 SQLite），列作旁证：CF 生态问题有人管、修得快                                                                                            |
 
 时间分布显示 workerd 专项修复集中在 2025-08 → 2026-09（#7927/#7930/#8038/#8275 均为近 14 个月），维护活跃度与响应速度有据可查。**已知 open 项 2 个（#6319/#8205），都不在 M0 关键路径。**
 
@@ -127,12 +127,12 @@ v4 unstable 模块 `workers` 的内容是 `Worker`/`WorkerRunner`/`Transferable`
 
 ### 4.4 事件溯源 FSM + DO 的先例盘点
 
-| 先例 | 性质 | 可抄什么 | 是否引依赖 |
-|---|---|---|---|
-| `@effect/experimental/EventLogServer/Cloudflare`（v3，官方） | 「Effect 事件日志跑在 DO」的完整源码先例 | Effect 在 DO 方法体内经 ManagedRuntime 驱动、WS 面保持裸 API、写入→ack→广播的顺序 | 否（v3 包，已停更该面） |
-| `effect/eventlog`（v4 core unstable） | 多副本加密事件日志 | handler 先跑成功才 commit 的语义（与我们「先落盘后副作用」同向） | 否（§3.2 判定不用） |
-| `effect-rpc-workers`（社区，TWIE 2026-07-17） | 「production-ready example of integrating @effect/rpc with Cloudflare Workers」 | @effect/rpc + CF Workers 的工程拼装参考 | 否（参照） |
-| Effect Cluster sharding on DO（#7322，open issue） | 社区诉求，未官方落地 | 证明有人在做，不证明能用 | 否 |
+| 先例                                                         | 性质                                                                            | 可抄什么                                                                          | 是否引依赖              |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------- |
+| `@effect/experimental/EventLogServer/Cloudflare`（v3，官方） | 「Effect 事件日志跑在 DO」的完整源码先例                                        | Effect 在 DO 方法体内经 ManagedRuntime 驱动、WS 面保持裸 API、写入→ack→广播的顺序 | 否（v3 包，已停更该面） |
+| `effect/eventlog`（v4 core unstable）                        | 多副本加密事件日志                                                              | handler 先跑成功才 commit 的语义（与我们「先落盘后副作用」同向）                  | 否（§3.2 判定不用）     |
+| `effect-rpc-workers`（社区，TWIE 2026-07-17）                | 「production-ready example of integrating @effect/rpc with Cloudflare Workers」 | @effect/rpc + CF Workers 的工程拼装参考                                           | 否（参照）              |
+| Effect Cluster sharding on DO（#7322，open issue）           | 社区诉求，未官方落地                                                            | 证明有人在做，不证明能用                                                          | 否                      |
 
 [来源：https://effect.website/blog/this-week-in-effect/2026/07/17/ ；https://github.com/Effect-TS/effect/issues/7322 ]
 
@@ -154,12 +154,12 @@ v4 unstable 模块 `workers` 的内容是 `Worker`/`WorkerRunner`/`Transferable`
 
 ### 5.2 一旦 Effect 化就难拆的结构（如实清单）
 
-| 结构 | 拆除成本 | 说明 |
-|---|---|---|
-| Stream 管线（relay 消费） | 中：重写为手写 async iterator + AbortController + 自管批处理缓冲 | 局部于 relay 模块 |
-| Fiber 并行 + interrupt（工具扇出） | 中：重写为 Promise 账本 + 手写取消传播 | 局部于 turn 编排 |
-| Layer/Context DI 图 | **高**：依赖图整体重写为手工构造注入 | 所以 §5.1-5 限幅是硬约束，不是风格偏好 |
-| Effect Schema 编事件 | **高**：事件编解码全网重写 | 已被「protocol 零依赖」挡住 |
+| 结构                               | 拆除成本                                                         | 说明                                   |
+| ---------------------------------- | ---------------------------------------------------------------- | -------------------------------------- |
+| Stream 管线（relay 消费）          | 中：重写为手写 async iterator + AbortController + 自管批处理缓冲 | 局部于 relay 模块                      |
+| Fiber 并行 + interrupt（工具扇出） | 中：重写为 Promise 账本 + 手写取消传播                           | 局部于 turn 编排                       |
+| Layer/Context DI 图                | **高**：依赖图整体重写为手工构造注入                             | 所以 §5.1-5 限幅是硬约束，不是风格偏好 |
+| Effect Schema 编事件               | **高**：事件编解码全网重写                                       | 已被「protocol 零依赖」挡住            |
 
 ### 5.3 回退面结论
 
@@ -171,22 +171,23 @@ v4 unstable 模块 `workers` 的内容是 `Worker`/`WorkerRunner`/`Transferable`
 
 ### 6.1 模块级裁定
 
-| 模块 | Effect？ | 内容 |
-|---|---|---|
-| agent DO · relay 消费 | **是** | Stream（SSE 解析/合并批量/timeout 帽）、typed errors（重试分类）、退避重试（≤2） |
-| agent DO · turn 编排 | **是** | Fiber 并行工具调用、interrupt（cancel/中止）、Fiber join（部分完成聚合） |
-| agent DO · 事件日志层 | 朴素（可换 §3.3(b)→(a)） | 裸 storage.sql + UNIQUE，或 `@effect/sql-sqlite-do@4.0.0` 事务 |
-| agent DO · 纯 reducer | 朴素 | I14 要求纯，天然朴素 |
-| agent DO · DO 壳/WS hibernation/alarm | 朴素 | 裸 CF API；Effect 在方法体内驱动 |
-| agent DO · R2 旁路 | 朴素 | fetch/R2 binding 直用 |
-| daemon service DO | 朴素（M0） | journal 逻辑为普通 SQL + 状态机；无流/并发甜点区 |
-| daemon client | 朴素 | 宿主机进程管理；引入 Effect 无收益 |
-| packages/protocol | 零 Effect | 冻结契约，永久朴素 |
-| 不用 | — | `effect/eventlog`、Effect Cluster、`@effect/ai`（M0）、`effect/workers`（名近实非） |
+| 模块                                  | Effect？                 | 内容                                                                                |
+| ------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------- |
+| agent DO · relay 消费                 | **是**                   | Stream（SSE 解析/合并批量/timeout 帽）、typed errors（重试分类）、退避重试（≤2）    |
+| agent DO · turn 编排                  | **是**                   | Fiber 并行工具调用、interrupt（cancel/中止）、Fiber join（部分完成聚合）            |
+| agent DO · 事件日志层                 | 朴素（可换 §3.3(b)→(a)） | 裸 storage.sql + UNIQUE，或 `@effect/sql-sqlite-do@4.0.0` 事务                      |
+| agent DO · 纯 reducer                 | 朴素                     | I14 要求纯，天然朴素                                                                |
+| agent DO · DO 壳/WS hibernation/alarm | 朴素                     | 裸 CF API；Effect 在方法体内驱动                                                    |
+| agent DO · R2 旁路                    | 朴素                     | fetch/R2 binding 直用                                                               |
+| daemon service DO                     | 朴素（M0）               | journal 逻辑为普通 SQL + 状态机；无流/并发甜点区                                    |
+| daemon client                         | 朴素                     | 宿主机进程管理；引入 Effect 无收益                                                  |
+| packages/protocol                     | 零 Effect                | 冻结契约，永久朴素                                                                  |
+| 不用                                  | —                        | `effect/eventlog`、Effect Cluster、`@effect/ai`（M0）、`effect/workers`（名近实非） |
 
 ### 6.2 22 条不变量逐条对照（unified-turn-state.md §7）
 
 **因 Effect 减少手写的（4 条）**：
+
 - **I13（封口后静默）**：封口后 fiber 已 interrupt，delta 只能来自活 fiber——「封口即无输出」由流生命周期结构性保证，不需要每个消费点手写哨兵。
 - **I12（模型尝试终态唯一）**：typed error union + `Exit` 使三个终态的互斥在类型层表达，exhaustive switch 由编译器查。
 - **I10（取消边界）**：cancel_requested 后不再有新调用/下发 = 先落盘 cancel、再 interrupt fiber 组；Fiber 的取消传播替代手写 abort 账本。
@@ -213,18 +214,18 @@ v4 unstable 模块 `workers` 的内容是 `Worker`/`WorkerRunner`/`Transferable`
 
 ## 附：证据索引（本次检索的全部一手来源）
 
-| 主题 | 来源 |
-|---|---|
-| 版本时间线 | https://registry.npmjs.org/effect （time 字段）；https://github.com/Effect-TS/effect/releases/tag/effect@4.0.0 |
-| v4 迁移与版本模型 | https://github.com/Effect-TS/effect/blob/main/MIGRATION.md |
-| v4 发布公告（LTS/零依赖/包体/内存） | https://effect.website/blog/releases/effect/40 |
-| 过渡期版本断层 | https://registry.npmjs.org/@effect/platform （latest 0.97.2）；https://registry.npmjs.org/@effect/sql （0.52.1） |
-| workerd 专项 | [#7930](https://github.com/Effect-TS/effect/issues/7930)、[#8038](https://github.com/Effect-TS/effect/issues/8038)、[#5429](https://github.com/Effect-TS/effect/issues/5429)、[#7927](https://github.com/Effect-TS/effect/issues/7927)、[#6319](https://github.com/Effect-TS/effect/issues/6319)（open）、[#8205](https://github.com/Effect-TS/effect/issues/8205)（open）、[#8651](https://github.com/Effect-TS/effect/issues/8651)、[#8320](https://github.com/Effect-TS/effect/issues/8320)、[#6509](https://github.com/Effect-TS/effect/issues/6509) |
-| DO SQLite 驱动 | https://github.com/Effect-TS/effect/blob/main/packages/sql/sqlite-do/src/SqliteClient.ts ；[#6006](https://github.com/Effect-TS/effect/issues/6006)（open）；[#8291](https://github.com/Effect-TS/effect/pull/8291)；https://www.npmjs.com/package/@effect/sql-sqlite-do |
-| DO + 事件日志先例 | https://github.com/Effect-TS/effect/blob/effect%403.22.2/packages/experimental/src/EventLogServer/Cloudflare.ts ；https://github.com/Effect-TS/effect/blob/main/migration/annotations/effect__experimental__EventLogServer__Cloudflare.yaml ；https://github.com/Effect-TS/effect/tree/main/packages/effect/src/eventlog |
-| 社区先例 | https://effect.website/blog/this-week-in-effect/2026/07/17/ ；[#7322](https://github.com/Effect-TS/effect/issues/7322) |
-| AI 兼容包 | https://github.com/Effect-TS/effect/tree/effect%404.0.0/packages/ai/openai-compat |
-| 文档（Stream/Fiber/typed errors/平台运行时清单） | https://github.com/Effect-TS/website/tree/main/apps/web/src/content/docs/v4/stream ；…/v4/concurrency/fibers.mdx ；…/v4/platform/introduction.mdx |
-| 本仓库现状 | `packages/agent-do/package.json`（effect 3.22.2 钉版、无 import）；`packages/protocol/package.json`（零 Effect 依赖） |
+| 主题                                             | 来源                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 版本时间线                                       | https://registry.npmjs.org/effect （time 字段）；https://github.com/Effect-TS/effect/releases/tag/effect@4.0.0                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| v4 迁移与版本模型                                | https://github.com/Effect-TS/effect/blob/main/MIGRATION.md                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| v4 发布公告（LTS/零依赖/包体/内存）              | https://effect.website/blog/releases/effect/40                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 过渡期版本断层                                   | https://registry.npmjs.org/@effect/platform （latest 0.97.2）；https://registry.npmjs.org/@effect/sql （0.52.1）                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| workerd 专项                                     | [#7930](https://github.com/Effect-TS/effect/issues/7930)、[#8038](https://github.com/Effect-TS/effect/issues/8038)、[#5429](https://github.com/Effect-TS/effect/issues/5429)、[#7927](https://github.com/Effect-TS/effect/issues/7927)、[#6319](https://github.com/Effect-TS/effect/issues/6319)（open）、[#8205](https://github.com/Effect-TS/effect/issues/8205)（open）、[#8651](https://github.com/Effect-TS/effect/issues/8651)、[#8320](https://github.com/Effect-TS/effect/issues/8320)、[#6509](https://github.com/Effect-TS/effect/issues/6509) |
+| DO SQLite 驱动                                   | https://github.com/Effect-TS/effect/blob/main/packages/sql/sqlite-do/src/SqliteClient.ts ；[#6006](https://github.com/Effect-TS/effect/issues/6006)（open）；[#8291](https://github.com/Effect-TS/effect/pull/8291)；https://www.npmjs.com/package/@effect/sql-sqlite-do                                                                                                                                                                                                                                                                                 |
+| DO + 事件日志先例                                | https://github.com/Effect-TS/effect/blob/effect%403.22.2/packages/experimental/src/EventLogServer/Cloudflare.ts ；https://github.com/Effect-TS/effect/blob/main/migration/annotations/effect__experimental__EventLogServer__Cloudflare.yaml ；https://github.com/Effect-TS/effect/tree/main/packages/effect/src/eventlog                                                                                                                                                                                                                                 |
+| 社区先例                                         | https://effect.website/blog/this-week-in-effect/2026/07/17/ ；[#7322](https://github.com/Effect-TS/effect/issues/7322)                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| AI 兼容包                                        | https://github.com/Effect-TS/effect/tree/effect%404.0.0/packages/ai/openai-compat                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 文档（Stream/Fiber/typed errors/平台运行时清单） | https://github.com/Effect-TS/website/tree/main/apps/web/src/content/docs/v4/stream ；…/v4/concurrency/fibers.mdx ；…/v4/platform/introduction.mdx                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 本仓库现状                                       | `packages/agent-do/package.json`（effect 3.22.2 钉版、无 import）；`packages/protocol/package.json`（零 Effect 依赖）                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 > AGENT GENERATED: by zhipu-coding-plan/glm-5.3-flash (research subagent)

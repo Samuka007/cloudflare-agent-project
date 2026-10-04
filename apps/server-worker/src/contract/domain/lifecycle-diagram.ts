@@ -21,19 +21,13 @@ export interface LifecycleDiagramPathDependentTarget {
   withoutWorkspacePath: string;
 }
 
-export type LifecycleDiagramTarget =
-  | string
-  | LifecycleDiagramPathDependentTarget;
+export type LifecycleDiagramTarget = string | LifecycleDiagramPathDependentTarget;
 
-export type LifecycleDiagramRow = Readonly<
-  Partial<Record<string, LifecycleDiagramTarget>>
->;
+export type LifecycleDiagramRow = Readonly<Partial<Record<string, LifecycleDiagramTarget>>>;
 
 export type LifecycleDiagramTable = Readonly<Record<string, LifecycleDiagramRow>>;
 
-export type LifecycleDiagramPredicateNames = Readonly<
-  Record<string, readonly string[]>
->;
+export type LifecycleDiagramPredicateNames = Readonly<Record<string, readonly string[]>>;
 
 export type LifecyclePredicateRecord = Readonly<Record<string, object>>;
 
@@ -61,9 +55,7 @@ export interface RenderLifecycleMermaidArgs {
   table: LifecycleDiagramTable;
 }
 
-export function renderLifecycleMermaid(
-  args: RenderLifecycleMermaidArgs,
-): string {
+export function renderLifecycleMermaid(args: RenderLifecycleMermaidArgs): string {
   const lines = ["flowchart LR", "    __start((start))"];
   for (const status of Object.keys(args.table)) {
     lines.push(`    ${status}["${status}"]`);
@@ -71,9 +63,7 @@ export function renderLifecycleMermaid(
   lines.push(`    __start --> ${args.initial}`);
   for (const group of createLifecycleDiagramTransitionGroups(args)) {
     lines.push(
-      `    ${group.from} -->|${quoteMermaidEdgeLabel(
-        group.labels.join("<br/>"),
-      )}| ${group.to}`,
+      `    ${group.from} -->|${quoteMermaidEdgeLabel(group.labels.join("<br/>"))}| ${group.to}`,
     );
   }
   return `${lines.join("\n")}\n`;
@@ -93,8 +83,7 @@ function createLifecycleDiagramTransitionGroups(
         continue;
       }
       const predicates = args.predicateNames[event] ?? [];
-      const label =
-        predicates.length > 0 ? `${event} ⟨${predicates.join(", ")}⟩` : event;
+      const label = predicates.length > 0 ? `${event} ⟨${predicates.join(", ")}⟩` : event;
       if (typeof to === "string") {
         appendLifecycleDiagramTransitionGroup({
           groups,
@@ -160,9 +149,6 @@ export function lifecyclePredicateNames(
   predicates: LifecyclePredicateRecord,
 ): LifecycleDiagramPredicateNames {
   return Object.fromEntries(
-    Object.entries(predicates).map(([event, flags]) => [
-      event,
-      Object.keys(flags),
-    ]),
+    Object.entries(predicates).map(([event, flags]) => [event, Object.keys(flags)]),
   );
 }

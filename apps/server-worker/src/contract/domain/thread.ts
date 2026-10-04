@@ -16,15 +16,9 @@ import { threadOriginKindSchema } from "./thread-origin-kind.js";
 import { threadVisibilitySchema } from "./thread-visibility.js";
 export { threadStatusSchema, threadStatusValues } from "./thread-status.js";
 export type { ThreadStatus } from "./thread-status.js";
-export {
-  threadOriginKindSchema,
-  threadOriginKindValues,
-} from "./thread-origin-kind.js";
+export { threadOriginKindSchema, threadOriginKindValues } from "./thread-origin-kind.js";
 export type { ThreadOriginKind } from "./thread-origin-kind.js";
-export {
-  threadVisibilitySchema,
-  threadVisibilityValues,
-} from "./thread-visibility.js";
+export { threadVisibilitySchema, threadVisibilityValues } from "./thread-visibility.js";
 export type { ThreadVisibility } from "./thread-visibility.js";
 
 export const threadRuntimeDisplayStatusValues = [
@@ -33,12 +27,8 @@ export const threadRuntimeDisplayStatusValues = [
   "host-reconnecting",
   "waiting-for-host",
 ] as const;
-export const threadRuntimeDisplayStatusSchema = z.enum(
-  threadRuntimeDisplayStatusValues,
-);
-export type ThreadRuntimeDisplayStatus = z.infer<
-  typeof threadRuntimeDisplayStatusSchema
->;
+export const threadRuntimeDisplayStatusSchema = z.enum(threadRuntimeDisplayStatusValues);
+export type ThreadRuntimeDisplayStatus = z.infer<typeof threadRuntimeDisplayStatusSchema>;
 
 export const threadRuntimeStateSchema = z.object({
   displayStatus: threadRuntimeDisplayStatusSchema,
@@ -79,9 +69,7 @@ export const workspaceFileStatusKindSchema = z.enum([
    */
   "?",
 ]);
-export type WorkspaceFileStatusKind = z.infer<
-  typeof workspaceFileStatusKindSchema
->;
+export type WorkspaceFileStatusKind = z.infer<typeof workspaceFileStatusKindSchema>;
 
 export const workspaceFileStatusSchema = z.object({
   path: z.string(),
@@ -103,9 +91,7 @@ export const workspaceCommitSummarySchema = z.object({
   authorName: z.string(),
   authoredAt: z.number(),
 });
-export type WorkspaceCommitSummary = z.infer<
-  typeof workspaceCommitSummarySchema
->;
+export type WorkspaceCommitSummary = z.infer<typeof workspaceCommitSummarySchema>;
 
 /**
  * Fields shared by any surface that reports changed files plus the line totals
@@ -160,9 +146,7 @@ export const gitHostPullRequestCheckStatusSchema = z.enum([
   "completed",
   "unknown",
 ]);
-export type GitHostPullRequestCheckStatus = z.infer<
-  typeof gitHostPullRequestCheckStatusSchema
->;
+export type GitHostPullRequestCheckStatus = z.infer<typeof gitHostPullRequestCheckStatusSchema>;
 
 export const gitHostPullRequestCheckConclusionSchema = z.enum([
   "success",
@@ -189,9 +173,7 @@ export const gitHostPullRequestCheckSchema = z
     startedAt: z.string().datetime().nullable(),
   })
   .strict();
-export type GitHostPullRequestCheck = z.infer<
-  typeof gitHostPullRequestCheckSchema
->;
+export type GitHostPullRequestCheck = z.infer<typeof gitHostPullRequestCheckSchema>;
 
 export const gitHostPullRequestReviewDecisionSchema = z.enum([
   "APPROVED",
@@ -216,14 +198,8 @@ export type GitHostPullRequestMergeStateStatus = z.infer<
   typeof gitHostPullRequestMergeStateStatusSchema
 >;
 
-export const gitHostPullRequestMergeableSchema = z.enum([
-  "CONFLICTING",
-  "MERGEABLE",
-  "UNKNOWN",
-]);
-export type GitHostPullRequestMergeable = z.infer<
-  typeof gitHostPullRequestMergeableSchema
->;
+export const gitHostPullRequestMergeableSchema = z.enum(["CONFLICTING", "MERGEABLE", "UNKNOWN"]);
+export type GitHostPullRequestMergeable = z.infer<typeof gitHostPullRequestMergeableSchema>;
 
 /**
  * Pull request data normalized from the host git-host CLI (`gh pr view`).
@@ -249,12 +225,7 @@ export const gitHostPullRequestSchema = z
   .strict();
 export type GitHostPullRequest = z.infer<typeof gitHostPullRequestSchema>;
 
-export const pullRequestStateSchema = z.enum([
-  "draft",
-  "open",
-  "merged",
-  "closed",
-]);
+export const pullRequestStateSchema = z.enum(["draft", "open", "merged", "closed"]);
 export type PullRequestState = z.infer<typeof pullRequestStateSchema>;
 
 export const threadPullRequestChecksStateSchema = z.enum([
@@ -264,9 +235,7 @@ export const threadPullRequestChecksStateSchema = z.enum([
   "no_checks",
   "unknown",
 ]);
-export type ThreadPullRequestChecksState = z.infer<
-  typeof threadPullRequestChecksStateSchema
->;
+export type ThreadPullRequestChecksState = z.infer<typeof threadPullRequestChecksStateSchema>;
 
 export const threadPullRequestChecksSchema = z
   .object({
@@ -277,9 +246,7 @@ export const threadPullRequestChecksSchema = z
     pendingCount: z.number().int().nonnegative(),
   })
   .strict();
-export type ThreadPullRequestChecks = z.infer<
-  typeof threadPullRequestChecksSchema
->;
+export type ThreadPullRequestChecks = z.infer<typeof threadPullRequestChecksSchema>;
 
 export const threadPullRequestReviewStateSchema = z.enum([
   "approved",
@@ -288,9 +255,7 @@ export const threadPullRequestReviewStateSchema = z.enum([
   "review_requested",
   "none",
 ]);
-export type ThreadPullRequestReviewState = z.infer<
-  typeof threadPullRequestReviewStateSchema
->;
+export type ThreadPullRequestReviewState = z.infer<typeof threadPullRequestReviewStateSchema>;
 
 export const threadPullRequestReviewSchema = z
   .object({
@@ -298,9 +263,7 @@ export const threadPullRequestReviewSchema = z
     reviewRequestCount: z.number().int().nonnegative(),
   })
   .strict();
-export type ThreadPullRequestReview = z.infer<
-  typeof threadPullRequestReviewSchema
->;
+export type ThreadPullRequestReview = z.infer<typeof threadPullRequestReviewSchema>;
 
 export const threadPullRequestMergeabilityStateSchema = z.enum([
   "mergeable",
@@ -320,9 +283,7 @@ export const threadPullRequestMergeabilitySchema = z
     mergeable: gitHostPullRequestMergeableSchema.nullable(),
   })
   .strict();
-export type ThreadPullRequestMergeability = z.infer<
-  typeof threadPullRequestMergeabilitySchema
->;
+export type ThreadPullRequestMergeability = z.infer<typeof threadPullRequestMergeabilitySchema>;
 
 export const threadPullRequestAttentionStateSchema = z.enum([
   "checks_failed",
@@ -337,9 +298,7 @@ export const threadPullRequestAttentionStateSchema = z.enum([
   "closed",
   "none",
 ]);
-export type ThreadPullRequestAttentionState = z.infer<
-  typeof threadPullRequestAttentionStateSchema
->;
+export type ThreadPullRequestAttentionState = z.infer<typeof threadPullRequestAttentionStateSchema>;
 
 /**
  * A pull request associated with a thread's branch, assembled by the server

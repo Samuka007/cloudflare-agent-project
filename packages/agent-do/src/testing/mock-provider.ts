@@ -15,7 +15,7 @@ import {
 export interface MockTurn {
   deltas?: string[];
   /** Terminal tool-calls chunk (complete calls only — §2.2). */
-  toolCalls?: Array<{ name: string; arguments: Record<string, unknown> }>;
+  toolCalls?: { name: string; arguments: Record<string, unknown> }[];
   /** Throw before any byte (retryable-class failure, §4.2.3). */
   failBeforeFirstByte?: { message: string; retryable?: boolean };
   /** Yield this many deltas, then throw a post-first-byte stream break. */

@@ -42,11 +42,7 @@ const RETRYABLE_BY_CODE: Record<ApiErrorCode, boolean> = {
   internal: true,
 };
 
-export function apiError(
-  code: ApiErrorCode,
-  message: string,
-  details?: unknown,
-): ApiError {
+export function apiError(code: ApiErrorCode, message: string, details?: unknown): ApiError {
   return {
     code,
     message,

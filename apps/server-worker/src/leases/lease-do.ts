@@ -16,16 +16,9 @@ interface LeaseRecord {
 }
 
 export class LeaseStoreDO extends DurableObject {
-
-  async createLease(args: {
-    leaseId: string;
-    ttlMs: number;
-  }): Promise<{ expiresAtMs: number }> {
+  async createLease(args: { leaseId: string; ttlMs: number }): Promise<{ expiresAtMs: number }> {
     const expiresAtMs = Date.now() + Math.max(0, args.ttlMs);
-    await this.ctx.storage.put<LeaseRecord>(
-      `${LEASE_KEY_PREFIX}${args.leaseId}`,
-      { expiresAtMs },
-    );
+    await this.ctx.storage.put<LeaseRecord>(`${LEASE_KEY_PREFIX}${args.leaseId}`, { expiresAtMs });
     await this.scheduleEvictionAlarm();
     return { expiresAtMs };
   }
@@ -70,7 +63,7 @@ export class LeaseStoreDO extends DurableObject {
     if (remaining.size > 0) {
       await this.scheduleEvictionAlarm();
     }
-    void result;
+    result;
   }
 
   private async scheduleEvictionAlarm(): Promise<void> {
@@ -80,9 +73,7 @@ export class LeaseStoreDO extends DurableObject {
     if (entries.size === 0) {
       return;
     }
-    const soonest = Math.min(
-      ...[...entries.values()].map((record) => record.expiresAtMs),
-    );
+    const soonest = Math.min(...[...entries.values()].map((record) => record.expiresAtMs));
     const current = await this.ctx.storage.getAlarm();
     if (current === null || current > soonest) {
       await this.ctx.storage.setAlarm(soonest);

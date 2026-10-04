@@ -20,15 +20,10 @@
  * DB row order).
  */
 
-import type {
-  DaemonWatchSetWire,
-  WatchSetReplaceMessageWire,
-} from "./session-contract.js";
+import type { DaemonWatchSetWire, WatchSetReplaceMessageWire } from "./session-contract.js";
 
-export type DaemonWatchSetWorkspaceTarget =
-  DaemonWatchSetWire["workspaceTargets"][number];
-export type DaemonWatchSetThreadStorageTarget =
-  DaemonWatchSetWire["threadStorageTargets"][number];
+export type DaemonWatchSetWorkspaceTarget = DaemonWatchSetWire["workspaceTargets"][number];
+export type DaemonWatchSetThreadStorageTarget = DaemonWatchSetWire["threadStorageTargets"][number];
 export type DaemonWatchSet = DaemonWatchSetWire;
 export type WatchSetReplaceMessage = WatchSetReplaceMessageWire;
 
@@ -39,7 +34,7 @@ export type WatchInterest =
 
 export interface WatchSetApplyArgs {
   /** Add or replace interests by key. */
-  upserts: Array<{ key: string; interest: WatchInterest }>;
+  upserts: { key: string; interest: WatchInterest }[];
   /** Remove interests by key (unknown keys ignored, bb unsubscribe shape). */
   removals: string[];
 }
@@ -101,14 +96,8 @@ export class WatchSetAggregator {
 
   /** Resolve the current targets into a watch set at the given generation. */
   resolve(generation: number): DaemonWatchSet {
-    const workspaceTargets = new Map<
-      string,
-      DaemonWatchSetWorkspaceTarget
-    >();
-    const threadStorageTargets = new Map<
-      string,
-      DaemonWatchSetThreadStorageTarget
-    >();
+    const workspaceTargets = new Map<string, DaemonWatchSetWorkspaceTarget>();
+    const threadStorageTargets = new Map<string, DaemonWatchSetThreadStorageTarget>();
     for (const interest of this.interests.values()) {
       if (interest.kind === "environment-detail") {
         workspaceTargets.set(interest.target.environmentId, interest.target);

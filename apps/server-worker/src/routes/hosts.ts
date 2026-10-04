@@ -6,11 +6,7 @@ import {
 import { hostSchema } from "../contract/domain/host.js";
 import { ApiError } from "../shared/api-error.js";
 import { requireJsonBody } from "../shared/route-utils.js";
-import {
-  getHostRow,
-  listNonDestroyedHostRows,
-  updateHostRow,
-} from "../db/hosts.js";
+import { getHostRow, listNonDestroyedHostRows, updateHostRow } from "../db/hosts.js";
 import type { Env, HonoBindings } from "../app-types.js";
 
 /**

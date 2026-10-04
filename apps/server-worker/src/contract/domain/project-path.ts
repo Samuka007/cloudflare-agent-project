@@ -6,8 +6,7 @@ const WINDOWS_DRIVE_ROOT_PATTERN = /^[A-Za-z]:(?:[\\/]+)?$/u;
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[A-Za-z]:(?:[\\/]+)/u;
 const WINDOWS_UNC_PATH_PATTERN = /^\\\\[^\\/]+(?:[\\/]+)[^\\/]+/u;
 
-export const INVALID_PROJECT_PATH_MESSAGE =
-  "Project path must be an absolute path.";
+export const INVALID_PROJECT_PATH_MESSAGE = "Project path must be an absolute path.";
 export const PROJECT_PATH_ROOT_MESSAGE =
   "Project path must point to a project directory, not the filesystem root.";
 export const UNSUPPORTED_NATIVE_WINDOWS_PROJECT_PATH_MESSAGE =

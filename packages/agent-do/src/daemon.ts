@@ -34,12 +34,7 @@ export type DispatchOutcome =
   /** No live client session: explicit, persisted, never a hang (§5.1). */
   | { kind: "host_offline" };
 
-export type ToolResultStatus =
-  | "ok"
-  | "error"
-  | "timeout"
-  | "cancelled"
-  | "outcome_unknown";
+export type ToolResultStatus = "ok" | "error" | "timeout" | "cancelled" | "outcome_unknown";
 
 export interface ToolResultPayload {
   status: ToolResultStatus;
@@ -73,5 +68,5 @@ export interface DaemonServiceClient {
    * COMPLETED but not yet tombstoned (no ack). The agent DO re-ingests or
    * re-acks each — this is how a lost ack closes without a second spawn.
    */
-  queryUnacked(threadId: string): Promise<Array<{ executionId: string; result: ToolResultPayload }>>;
+  queryUnacked(threadId: string): Promise<{ executionId: string; result: ToolResultPayload }[]>;
 }

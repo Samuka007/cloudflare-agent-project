@@ -40,7 +40,9 @@ export class TestDaemonServiceDO extends DurableObject<TestDaemonEnv> {
   constructor(ctx: DurableObjectState, env: TestDaemonEnv) {
     super(ctx, env);
     this.service.useOs(this.os);
-    this.service.useJournalSink((op) => this.persistJournalOp(op));
+    this.service.useJournalSink((op) => {
+      this.persistJournalOp(op);
+    });
     this.restoreJournalFromStorage();
     this.clientInstance = new FakeDaemonClient(this.os, this.service);
   }
@@ -65,9 +67,7 @@ export class TestDaemonServiceDO extends DurableObject<TestDaemonEnv> {
       .exec<{ op_json: string }>("SELECT op_json FROM service_journal ORDER BY rowid")
       .toArray();
     if (rows.length === 0) return;
-    this.service.restoreJournal(
-      rows.map((row) => JSON.parse(row.op_json) as FakeJournalOp),
-    );
+    this.service.restoreJournal(rows.map((row) => JSON.parse(row.op_json) as FakeJournalOp));
   }
 
   private client(): FakeDaemonClient {
@@ -105,7 +105,7 @@ export class TestDaemonServiceDO extends DurableObject<TestDaemonEnv> {
 
   async queryUnacked(
     threadId: string,
-  ): Promise<Array<{ executionId: string; result: ToolResultPayload }>> {
+  ): Promise<{ executionId: string; result: ToolResultPayload }[]> {
     return this.service.queryUnacked(threadId);
   }
 
@@ -197,7 +197,7 @@ export class TestDaemonServiceDO extends DurableObject<TestDaemonEnv> {
   }
 
   async clientKills(): Promise<
-    Array<{ executionId: string; pid: number; pidStartedAt: number; verified: boolean }>
+    { executionId: string; pid: number; pidStartedAt: number; verified: boolean }[]
   > {
     return [...this.client().kills];
   }
@@ -257,7 +257,9 @@ export type TestDaemonServiceStub = DurableObjectStub<TestDaemonServiceDO> &
     tombstoned(executionId: string): Promise<boolean>;
     derivedState(executionId: string): Promise<string>;
     clientSpawnCalls(): Promise<string[]>;
-    clientKills(): Promise<Array<{ executionId: string; pid: number; pidStartedAt: number; verified: boolean }>>;
+    clientKills(): Promise<
+      { executionId: string; pid: number; pidStartedAt: number; verified: boolean }[]
+    >;
     clientBootId(): Promise<string>;
     evictAndReplayState(executionIds: string[]): Promise<{
       statesBefore: Record<string, string>;

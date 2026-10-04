@@ -1,8 +1,5 @@
 import { z } from "zod";
-import {
-  promptContentSchema,
-  threadEventEnvelopeSchema,
-} from "./events.js";
+import { promptContentSchema, threadEventEnvelopeSchema } from "./events.js";
 
 /**
  * Frozen HTTP surface (`/api/v1`), bb-shaped so the bb SPA can be pointed at
@@ -14,13 +11,7 @@ import {
 
 export const API_PREFIX = "/api/v1";
 
-export const threadStatusSchema = z.enum([
-  "idle",
-  "starting",
-  "active",
-  "stopping",
-  "error",
-]);
+export const threadStatusSchema = z.enum(["idle", "starting", "active", "stopping", "error"]);
 export type ThreadStatus = z.infer<typeof threadStatusSchema>;
 
 // ---------------------------------------------------------------------------
@@ -93,12 +84,7 @@ export type ThreadEventsResponse = z.infer<typeof threadEventsResponseSchema>;
 // Timeline — the SPA-facing rendered view (bb `thread-timeline.ts` subset).
 // ---------------------------------------------------------------------------
 
-export const timelineRowStatusSchema = z.enum([
-  "pending",
-  "completed",
-  "error",
-  "interrupted",
-]);
+export const timelineRowStatusSchema = z.enum(["pending", "completed", "error", "interrupted"]);
 export type TimelineRowStatus = z.infer<typeof timelineRowStatusSchema>;
 
 const timelineRowBaseSchema = z.object({
@@ -167,9 +153,7 @@ export const sidebarBootstrapResponseSchema = z.object({
   projects: z.array(sidebarProjectSchema),
   threads: z.array(threadSummarySchema),
 });
-export type SidebarBootstrapResponse = z.infer<
-  typeof sidebarBootstrapResponseSchema
->;
+export type SidebarBootstrapResponse = z.infer<typeof sidebarBootstrapResponseSchema>;
 
 // ---------------------------------------------------------------------------
 // Frozen route table. Paths are relative to API_PREFIX. This list is the

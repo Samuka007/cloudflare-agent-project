@@ -61,9 +61,7 @@ export const systemExecutionOptionsResponseSchema = z.object({
    */
   modelLoadError: systemExecutionOptionsModelLoadErrorSchema.nullable(),
 });
-export type SystemExecutionOptionsResponse = z.infer<
-  typeof systemExecutionOptionsResponseSchema
->;
+export type SystemExecutionOptionsResponse = z.infer<typeof systemExecutionOptionsResponseSchema>;
 
 const systemProviderHostQueryFields = {
   hostId: z.string().min(1),
@@ -99,21 +97,15 @@ export const systemExecutionOptionsQuerySchema = z
   })
   .partial()
   .superRefine(rejectMultipleProviderHostSelectors);
-export type SystemExecutionOptionsQuery = z.infer<
-  typeof systemExecutionOptionsQuerySchema
->;
+export type SystemExecutionOptionsQuery = z.infer<typeof systemExecutionOptionsQuerySchema>;
 
 /** Omission preserves the existing behavior of reading the primary machine. */
 export const systemUsageLimitsQuerySchema = z.object({
   hostId: z.string().min(1).optional(),
 });
-export type SystemUsageLimitsQuery = z.infer<
-  typeof systemUsageLimitsQuerySchema
->;
+export type SystemUsageLimitsQuery = z.infer<typeof systemUsageLimitsQuerySchema>;
 
-export interface SystemVoiceTranscriptionForm {
-  [key: string]: string | Blob;
-}
+export type SystemVoiceTranscriptionForm = Record<string, string | Blob>;
 
 // SystemProviderInfo is the same shape as ProviderInfo from domain.
 // Re-export with the API-facing name for backward compatibility.
@@ -152,17 +144,13 @@ export type OnboardingAgent = z.infer<typeof onboardingAgentSchema>;
 export const onboardingAgentOverviewSchema = z.object({
   agents: z.array(onboardingAgentSchema),
 });
-export type OnboardingAgentOverview = z.infer<
-  typeof onboardingAgentOverviewSchema
->;
+export type OnboardingAgentOverview = z.infer<typeof onboardingAgentOverviewSchema>;
 
 /** Omission reads the primary machine, matching the usage-limits route. */
 export const systemOnboardingReposQuerySchema = z.object({
   hostId: z.string().min(1).optional(),
 });
-export type SystemOnboardingReposQuery = z.infer<
-  typeof systemOnboardingReposQuerySchema
->;
+export type SystemOnboardingReposQuery = z.infer<typeof systemOnboardingReposQuerySchema>;
 
 /**
  * Onboarding funnel events, reported by the app and forwarded to the server's
@@ -194,9 +182,7 @@ export const onboardingTelemetryEventSchema = z.discriminatedUnion("name", [
     step: z.enum(["agents", "projects"]),
   }),
 ]);
-export type OnboardingTelemetryEvent = z.infer<
-  typeof onboardingTelemetryEventSchema
->;
+export type OnboardingTelemetryEvent = z.infer<typeof onboardingTelemetryEventSchema>;
 
 export const systemConfigResponseSchema = z.object({
   /** App-wide Settings → General preferences, persisted server-side. */
@@ -239,9 +225,7 @@ export type SystemConfigResponse = z.infer<typeof systemConfigResponseSchema>;
 export const systemAttentionResponseSchema = z.object({
   hasAttention: z.boolean(),
 });
-export type SystemAttentionResponse = z.infer<
-  typeof systemAttentionResponseSchema
->;
+export type SystemAttentionResponse = z.infer<typeof systemAttentionResponseSchema>;
 
 /**
  * Theme catalog: the on-disk custom-theme directory plus the discovered custom
@@ -290,21 +274,14 @@ export const systemConfigReloadResponseSchema = z.object({
  * server would install. "unknown" covers a disconnected machine or one that
  * could not be asked.
  */
-export const cliSkillMachineStatusSchema = z.enum([
-  "installed",
-  "outdated",
-  "missing",
-  "unknown",
-]);
+export const cliSkillMachineStatusSchema = z.enum(["installed", "outdated", "missing", "unknown"]);
 export type CliSkillMachineStatus = z.infer<typeof cliSkillMachineStatusSchema>;
 
 export const systemCliSkillsStatusQuerySchema = z.object({
   /** Comma-separated machine ids; omit for every enrolled machine. */
   hostIds: z.string().optional(),
 });
-export type SystemCliSkillsStatusQuery = z.infer<
-  typeof systemCliSkillsStatusQuerySchema
->;
+export type SystemCliSkillsStatusQuery = z.infer<typeof systemCliSkillsStatusQuerySchema>;
 
 export const systemCliSkillsStatusResponseSchema = z.object({
   machines: z.array(
@@ -315,17 +292,13 @@ export const systemCliSkillsStatusResponseSchema = z.object({
     }),
   ),
 });
-export type SystemCliSkillsStatusResponse = z.infer<
-  typeof systemCliSkillsStatusResponseSchema
->;
+export type SystemCliSkillsStatusResponse = z.infer<typeof systemCliSkillsStatusResponseSchema>;
 
 /** The machines to copy the built-in bb CLI skills onto. */
 export const systemInstallCliSkillsRequestSchema = z.object({
   hostIds: z.array(z.string().min(1)).min(1).max(64),
 });
-export type SystemInstallCliSkillsRequest = z.infer<
-  typeof systemInstallCliSkillsRequestSchema
->;
+export type SystemInstallCliSkillsRequest = z.infer<typeof systemInstallCliSkillsRequestSchema>;
 
 /**
  * One entry per requested machine. A machine that is offline or otherwise
@@ -355,9 +328,5 @@ export const systemInstallCliSkillsResponseSchema = z.object({
     ]),
   ),
 });
-export type SystemInstallCliSkillsResponse = z.infer<
-  typeof systemInstallCliSkillsResponseSchema
->;
-export type SystemConfigReloadResponse = z.infer<
-  typeof systemConfigReloadResponseSchema
->;
+export type SystemInstallCliSkillsResponse = z.infer<typeof systemInstallCliSkillsResponseSchema>;
+export type SystemConfigReloadResponse = z.infer<typeof systemConfigReloadResponseSchema>;

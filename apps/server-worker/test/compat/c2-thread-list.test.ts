@@ -37,9 +37,7 @@ describe("criterion 2: thread list bare array", () => {
     const params = new URLSearchParams(
       Object.entries(query).map(([key, value]) => [key, String(value)]),
     );
-    const response = await SELF.fetch(
-      `https://example.com/api/v1/threads?${params.toString()}`,
-    );
+    const response = await SELF.fetch(`https://example.com/api/v1/threads?${params.toString()}`);
     expect(response.status).toBe(200);
     expect(Array.isArray(await response.json())).toBe(true);
   });

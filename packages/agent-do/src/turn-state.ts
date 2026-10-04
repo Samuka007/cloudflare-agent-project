@@ -17,13 +17,7 @@ export class FsmViolationError extends Error {
 }
 
 export type TurnFsmStatus =
-  | "queued"
-  | "model_call"
-  | "tools_running"
-  | "cancelling"
-  | "completed"
-  | "failed"
-  | "cancelled";
+  "queued" | "model_call" | "tools_running" | "cancelling" | "completed" | "failed" | "cancelled";
 
 export const TERMINAL_TURN_STATUSES: readonly TurnFsmStatus[] = [
   "completed",
@@ -280,7 +274,7 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       // the backoff's next `model.call_started` is a legal transition.
       if (
         event.type === "model.call_failed" &&
-        event.data.retryable === true &&
+        event.data.retryable &&
         !TERMINAL_TURN_STATUSES.includes(runtime.status)
       ) {
         runtime.status = "queued";
@@ -298,8 +292,7 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
         throw new FsmViolationError(`tool.call from ${runtime.status}`);
       }
       const lastCallId = runtime.modelCallIds[runtime.modelCallIds.length - 1];
-      const call =
-        lastCallId === undefined ? undefined : state.modelCalls.get(lastCallId);
+      const call = lastCallId === undefined ? undefined : state.modelCalls.get(lastCallId);
       if (call === undefined || call.status !== "completed") {
         throw new FsmViolationError("tool.call without a completed model call");
       }
@@ -397,14 +390,16 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
     case "turn.failed":
     case "turn.cancelled": {
       const runtime = turn(state, event.data.turnId);
-      if (runtime.status === "completed" || runtime.status === "failed" || runtime.status === "cancelled") {
+      if (
+        runtime.status === "completed" ||
+        runtime.status === "failed" ||
+        runtime.status === "cancelled"
+      ) {
         throw new FsmViolationError(`terminal event on already-${runtime.status} turn (I10)`);
       }
       const allExecutionsTerminal = runtime.executionIds.every((id) => {
         const execution = state.executions.get(id);
-        return (
-          execution !== undefined && TERMINAL_EXECUTION_STATUSES.includes(execution.status)
-        );
+        return execution !== undefined && TERMINAL_EXECUTION_STATUSES.includes(execution.status);
       });
       if (event.type === "turn.cancelled") {
         if (runtime.status !== "cancelling") {
@@ -446,11 +441,7 @@ export interface DueWork {
  * fails turns that outlive the total backstop. Everything is recomputed from
  * replayed state; the alarm itself carries no state.
  */
-export function computeDueWork(
-  state: ReplayState,
-  config: WatchdogConfig,
-  now: number,
-): DueWork {
+export function computeDueWork(state: ReplayState, config: WatchdogConfig, now: number): DueWork {
   const due: DueWork = {
     sealedModelCallIds: [],
     reaskExecutionIds: [],
@@ -468,8 +459,7 @@ export function computeDueWork(
     if (executionTerminal(execution) || execution.lastDispatchAt === null) continue;
     const turnRuntime = state.turns.get(execution.turnId);
     if (turnRuntime === undefined || turnTerminal(turnRuntime)) continue;
-    const deadline =
-      execution.lastDispatchAt + execution.timeoutMs + config.execGraceMs;
+    const deadline = execution.lastDispatchAt + execution.timeoutMs + config.execGraceMs;
     if (now >= deadline && execution.attempts < config.maxDispatchAttempts) {
       due.reaskExecutionIds.push(execution.executionId);
       deadlines.push(now + config.execGraceMs);
@@ -477,8 +467,7 @@ export function computeDueWork(
       deadlines.push(deadline);
     }
   }
-  const activeTurn =
-    state.activeTurnId === null ? undefined : state.turns.get(state.activeTurnId);
+  const activeTurn = state.activeTurnId === null ? undefined : state.turns.get(state.activeTurnId);
   if (activeTurn !== undefined && !turnTerminal(activeTurn)) {
     const deadline = activeTurn.inputCreatedAt + config.turnWatchdogMs;
     if (now >= deadline) due.turnWatchdogExpiredTurnIds.push(activeTurn.turnId);

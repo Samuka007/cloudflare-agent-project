@@ -15,17 +15,9 @@ export const threadEventScopeSchema = z.discriminatedUnion("kind", [
 ]);
 export type ThreadEventScope = z.infer<typeof threadEventScopeSchema>;
 
-export const threadEventScopePolicyValues = [
-  "thread",
-  "turn",
-  "thread-or-turn",
-] as const;
-export const threadEventScopePolicySchema = z.enum(
-  threadEventScopePolicyValues,
-);
-export type ThreadEventScopePolicy = z.infer<
-  typeof threadEventScopePolicySchema
->;
+export const threadEventScopePolicyValues = ["thread", "turn", "thread-or-turn"] as const;
+export const threadEventScopePolicySchema = z.enum(threadEventScopePolicyValues);
+export type ThreadEventScopePolicy = z.infer<typeof threadEventScopePolicySchema>;
 
 export interface ValidateThreadEventScopeArgs {
   scope: ThreadEventScope;
@@ -53,18 +45,14 @@ interface ThreadScopedThreadEventScopePolicyDefinition {
 }
 
 type ThreadEventScopePolicyDefinition =
-  | TurnOnlyThreadEventScopePolicyDefinition
-  | ThreadScopedThreadEventScopePolicyDefinition;
+  TurnOnlyThreadEventScopePolicyDefinition | ThreadScopedThreadEventScopePolicyDefinition;
 
 type ThreadEventScopePolicyDefinitionByType = Record<
   ThreadEventType,
   ThreadEventScopePolicyDefinition
 >;
 
-type ThreadEventScopePolicyByType = Record<
-  ThreadEventType,
-  ThreadEventScopePolicy
->;
+type ThreadEventScopePolicyByType = Record<ThreadEventType, ThreadEventScopePolicy>;
 
 type ThreadScopeRationaleByType = Partial<Record<ThreadEventType, string>>;
 
@@ -80,16 +68,14 @@ export const threadEventScopeDefinitionByType = {
   },
   "thread/identity": {
     policy: "thread",
-    rationale:
-      "Thread metadata event; it identifies the provider thread outside turn chronology.",
+    rationale: "Thread metadata event; it identifies the provider thread outside turn chronology.",
   },
   "turn/started": { policy: "turn" },
   "turn/completed": { policy: "turn" },
   "turn/input/accepted": { policy: "turn" },
   "thread/name/updated": {
     policy: "thread",
-    rationale:
-      "Thread metadata event; names are not part of a specific turn transcript.",
+    rationale: "Thread metadata event; names are not part of a specific turn transcript.",
   },
   "thread/compacted": { policy: "turn" },
   "thread/context/cleared": { policy: "turn" },
@@ -211,17 +197,13 @@ export const threadEventScopeDefinitionByType = {
 } as const satisfies ThreadEventScopePolicyDefinitionByType;
 
 function getThreadEventScopePolicyDefinitionEntries(): ThreadEventScopePolicyDefinitionEntry[] {
-  return Object.entries(threadEventScopeDefinitionByType).map(
-    ([type, definition]) => ({
-      type: type as ThreadEventType,
-      definition,
-    }),
-  );
+  return Object.entries(threadEventScopeDefinitionByType).map(([type, definition]) => ({
+    type: type as ThreadEventType,
+    definition,
+  }));
 }
 
-function getThreadEventTypesForScopePolicy(
-  policy: ThreadEventScopePolicy,
-): ThreadEventType[] {
+function getThreadEventTypesForScopePolicy(policy: ThreadEventScopePolicy): ThreadEventType[] {
   return getThreadEventScopePolicyDefinitionEntries()
     .filter((entry) => entry.definition.policy === policy)
     .map((entry) => entry.type);
@@ -245,19 +227,16 @@ function buildThreadScopeRationaleByType(): ThreadScopeRationaleByType {
   return rationales;
 }
 
-export const turnOnlyThreadEventTypes =
-  getThreadEventTypesForScopePolicy("turn");
-export const threadOnlyThreadEventTypes =
-  getThreadEventTypesForScopePolicy("thread");
-export const threadOrTurnThreadEventTypes =
-  getThreadEventTypesForScopePolicy("thread-or-turn");
+export const turnOnlyThreadEventTypes = getThreadEventTypesForScopePolicy("turn");
+export const threadOnlyThreadEventTypes = getThreadEventTypesForScopePolicy("thread");
+export const threadOrTurnThreadEventTypes = getThreadEventTypesForScopePolicy("thread-or-turn");
 export const threadEventScopePolicyByType = buildThreadEventScopePolicyByType();
 export const threadScopeRationaleByType = buildThreadScopeRationaleByType();
 
 type ThreadEventTypeForScopePolicy<Policy extends ThreadEventScopePolicy> = {
-  [Type in ThreadEventType]: (typeof threadEventScopeDefinitionByType)[Type]["policy"] extends Policy
-    ? Type
-    : never;
+  [
+    Type in ThreadEventType
+  ]: (typeof threadEventScopeDefinitionByType)[Type]["policy"] extends Policy ? Type : never;
 }[ThreadEventType];
 
 /**
@@ -276,19 +255,13 @@ export function turnScope(turnId: string): ThreadEventScope {
   return { kind: "turn", turnId };
 }
 
-export function getThreadEventScopeTurnId(
-  scope: ThreadEventScope,
-): string | undefined {
+export function getThreadEventScopeTurnId(scope: ThreadEventScope): string | undefined {
   return scope.kind === "turn" ? scope.turnId : undefined;
 }
 
-export function requireThreadEventScopeTurnId(
-  args: RequireThreadEventScopeTurnIdArgs,
-): string {
+export function requireThreadEventScopeTurnId(args: RequireThreadEventScopeTurnIdArgs): string {
   if (args.scope.kind !== "turn") {
-    throw new Error(
-      `${args.type} requires turn scope but received ${args.scope.kind} scope`,
-    );
+    throw new Error(`${args.type} requires turn scope but received ${args.scope.kind} scope`);
   }
   return args.scope.turnId;
 }
@@ -312,9 +285,7 @@ export function validateThreadEventScope(
   return { valid: true };
 }
 
-export function assertThreadEventScope(
-  args: ValidateThreadEventScopeArgs,
-): void {
+export function assertThreadEventScope(args: ValidateThreadEventScopeArgs): void {
   const result = validateThreadEventScope(args);
   if (!result.valid) {
     throw new Error(result.message ?? "Invalid thread event scope");

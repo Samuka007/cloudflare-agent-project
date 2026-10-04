@@ -56,9 +56,7 @@ export const uiCodeThemeDeclarationSchema = z
     light: z.string().min(1).max(256).optional(),
   })
   .strict();
-export type UiCodeThemeDeclaration = z.infer<
-  typeof uiCodeThemeDeclarationSchema
->;
+export type UiCodeThemeDeclaration = z.infer<typeof uiCodeThemeDeclarationSchema>;
 
 /**
  * Code-theme pair that follows each built-in appearance palette. Custom and
@@ -95,10 +93,7 @@ export function isCodeThemeFilePath(value: string): boolean {
   return value.includes("/") || value.toLowerCase().endsWith(".json");
 }
 
-export function formatRegisteredCodeThemeName(
-  sourceId: string,
-  side: "dark" | "light",
-): string {
+export function formatRegisteredCodeThemeName(sourceId: string, side: "dark" | "light"): string {
   return `bb:${sourceId}:${side}`;
 }
 
@@ -129,9 +124,7 @@ export function parseVscodeThemeJson(value: unknown): VscodeThemeJson | null {
 
 export function paletteCodeThemeFallback(paletteId: string): CodeThemePair {
   if (Object.hasOwn(builtInPaletteCodeThemes, paletteId)) {
-    return builtInPaletteCodeThemes[
-      paletteId as keyof typeof builtInPaletteCodeThemes
-    ];
+    return builtInPaletteCodeThemes[paletteId as keyof typeof builtInPaletteCodeThemes];
   }
   return builtInPaletteCodeThemes.default;
 }
@@ -148,10 +141,7 @@ const builtInPaletteCodeThemeFiles: Partial<
  * Author files keep a display name ("Ocean Dark"); stamp the wire id before
  * `registerCustomTheme` so the highlighter does not fall back to pierre-light.
  */
-export function stampRegisteredThemeName(
-  name: string,
-  file: JsonObject,
-): JsonObject {
+export function stampRegisteredThemeName(name: string, file: JsonObject): JsonObject {
   if (file.name === name) return file;
   return { ...file, name };
 }
@@ -166,9 +156,7 @@ export function resolveCodeTheme(
   const files: Record<string, JsonObject> = {};
   const builtInFiles =
     paletteId in builtInPaletteCodeThemeFiles
-      ? builtInPaletteCodeThemeFiles[
-          paletteId as keyof typeof builtInPaletteCodeThemeFiles
-        ]
+      ? builtInPaletteCodeThemeFiles[paletteId as keyof typeof builtInPaletteCodeThemeFiles]
       : undefined;
   if (builtInFiles !== undefined) {
     for (const [name, file] of Object.entries(builtInFiles)) {

@@ -26,9 +26,7 @@ export const workspaceOpenTargetCapabilitiesSchema = z.object({
   openFileAtLine: z.boolean(),
   openFileAtColumn: z.boolean().optional(),
 });
-export type WorkspaceOpenTargetCapabilities = z.infer<
-  typeof workspaceOpenTargetCapabilitiesSchema
->;
+export type WorkspaceOpenTargetCapabilities = z.infer<typeof workspaceOpenTargetCapabilitiesSchema>;
 
 export const workspaceOpenTargetKindValues = [
   "editor",
@@ -37,12 +35,8 @@ export const workspaceOpenTargetKindValues = [
   "default-app",
   "native-app",
 ] as const;
-export const workspaceOpenTargetKindSchema = z.enum(
-  workspaceOpenTargetKindValues,
-);
-export type WorkspaceOpenTargetKind = z.infer<
-  typeof workspaceOpenTargetKindSchema
->;
+export const workspaceOpenTargetKindSchema = z.enum(workspaceOpenTargetKindValues);
+export type WorkspaceOpenTargetKind = z.infer<typeof workspaceOpenTargetKindSchema>;
 
 export const WORKSPACE_OPEN_TARGET_ICON_DATA_URL_MAX_LENGTH = 200_000;
 
@@ -70,9 +64,7 @@ export const workspaceOpenTargetIconSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
 ]);
-export type WorkspaceOpenTargetIcon = z.infer<
-  typeof workspaceOpenTargetIconSchema
->;
+export type WorkspaceOpenTargetIcon = z.infer<typeof workspaceOpenTargetIconSchema>;
 
 export const workspaceOpenTargetSchema = z.object({
   id: workspaceOpenTargetIdSchema,
@@ -87,16 +79,12 @@ export type WorkspaceOpenTarget = z.infer<typeof workspaceOpenTargetSchema>;
 export const workspaceOpenTargetsResponseSchema = z.object({
   targets: z.array(workspaceOpenTargetSchema),
 });
-export type WorkspaceOpenTargetsResponse = z.infer<
-  typeof workspaceOpenTargetsResponseSchema
->;
+export type WorkspaceOpenTargetsResponse = z.infer<typeof workspaceOpenTargetsResponseSchema>;
 
 export const workspaceOpenTargetsQuerySchema = z.object({
   path: z.string().min(1).optional(),
 });
-export type WorkspaceOpenTargetsQuery = z.infer<
-  typeof workspaceOpenTargetsQuerySchema
->;
+export type WorkspaceOpenTargetsQuery = z.infer<typeof workspaceOpenTargetsQuerySchema>;
 
 const openTargetPathSchema = z.string().min(1);
 const openTargetLineNumberSchema = z.number().int().positive().nullable();
@@ -174,41 +162,19 @@ export const providerCliKeyValues = ["codex", "claudeCode", "cursor"] as const;
 export const providerCliKeySchema = z.enum(providerCliKeyValues);
 export type ProviderCliKey = z.infer<typeof providerCliKeySchema>;
 
-export const providerCliInstallOutputStreamValues = [
-  "stdout",
-  "stderr",
-] as const;
-export const providerCliInstallOutputStreamSchema = z.enum(
-  providerCliInstallOutputStreamValues,
-);
+export const providerCliInstallOutputStreamValues = ["stdout", "stderr"] as const;
+export const providerCliInstallOutputStreamSchema = z.enum(providerCliInstallOutputStreamValues);
 
-export const providerCliInstallSourceValues = [
-  "notInstalled",
-  "npmGlobal",
-  "external",
-] as const;
-export const providerCliInstallSourceSchema = z.enum(
-  providerCliInstallSourceValues,
-);
-export type ProviderCliInstallSource = z.infer<
-  typeof providerCliInstallSourceSchema
->;
+export const providerCliInstallSourceValues = ["notInstalled", "npmGlobal", "external"] as const;
+export const providerCliInstallSourceSchema = z.enum(providerCliInstallSourceValues);
+export type ProviderCliInstallSource = z.infer<typeof providerCliInstallSourceSchema>;
 
-export const providerCliInstallActionKindValues = [
-  "install",
-  "update",
-] as const;
-export const providerCliInstallActionKindSchema = z.enum(
-  providerCliInstallActionKindValues,
-);
-export type ProviderCliInstallActionKind = z.infer<
-  typeof providerCliInstallActionKindSchema
->;
+export const providerCliInstallActionKindValues = ["install", "update"] as const;
+export const providerCliInstallActionKindSchema = z.enum(providerCliInstallActionKindValues);
+export type ProviderCliInstallActionKind = z.infer<typeof providerCliInstallActionKindSchema>;
 
 export const providerCliInstallCommandKindValues = ["exec", "shell"] as const;
-export const providerCliInstallCommandKindSchema = z.enum(
-  providerCliInstallCommandKindValues,
-);
+export const providerCliInstallCommandKindSchema = z.enum(providerCliInstallCommandKindValues);
 
 export const providerCliInstallActionSchema = z.object({
   kind: providerCliInstallActionKindSchema,
@@ -216,9 +182,7 @@ export const providerCliInstallActionSchema = z.object({
   commandKind: providerCliInstallCommandKindSchema,
   command: z.string().min(1),
 });
-export type ProviderCliInstallAction = z.infer<
-  typeof providerCliInstallActionSchema
->;
+export type ProviderCliInstallAction = z.infer<typeof providerCliInstallActionSchema>;
 
 export const providerCliStatusSchema = z.object({
   displayName: z.string().min(1),
@@ -241,17 +205,13 @@ export const providerCliStatusResponseSchema = z.record(
   providerCliKeySchema,
   providerCliStatusSchema,
 );
-export type ProviderCliStatusResponse = z.infer<
-  typeof providerCliStatusResponseSchema
->;
+export type ProviderCliStatusResponse = z.infer<typeof providerCliStatusResponseSchema>;
 
 export const providerCliInstallRequestSchema = z.object({
   provider: providerCliKeySchema,
   actionKind: providerCliInstallActionKindSchema,
 });
-export type ProviderCliInstallRequest = z.infer<
-  typeof providerCliInstallRequestSchema
->;
+export type ProviderCliInstallRequest = z.infer<typeof providerCliInstallRequestSchema>;
 
 export const providerCliInstallStartedEventSchema = z.object({
   type: z.literal("started"),
@@ -289,9 +249,7 @@ export const providerCliInstallEventSchema = z.discriminatedUnion("type", [
   providerCliInstallCompletedEventSchema,
   providerCliInstallErrorEventSchema,
 ]);
-export type ProviderCliInstallEvent = z.infer<
-  typeof providerCliInstallEventSchema
->;
+export type ProviderCliInstallEvent = z.infer<typeof providerCliInstallEventSchema>;
 
 // ---------------------------------------------------------------------------
 // Route type definition for Hono typed client
@@ -305,16 +263,13 @@ export type ProviderCliInstallEvent = z.infer<
  * exposed through server routes and forwarded to the connected daemon over
  * WebSocket RPC.
  */
-export type HostDaemonLocalSchema = {
+export interface HostDaemonLocalSchema {
   [DEFAULT_HOST_DAEMON_LOCAL_HEALTH_PATH]: {
     $get: Endpoint<EmptyInput, HealthResponse>;
   };
   /** client-machine-local: discover editor/app launch targets on the UI machine. */
   "/workspace-open-targets": {
-    $get: Endpoint<
-      { query?: WorkspaceOpenTargetsQuery },
-      WorkspaceOpenTargetsResponse
-    >;
+    $get: Endpoint<{ query?: WorkspaceOpenTargetsQuery }, WorkspaceOpenTargetsResponse>;
   };
   /** client-machine-local: open a path in an editor/app on the UI machine. */
   "/open-in-target": {
@@ -324,12 +279,12 @@ export type HostDaemonLocalSchema = {
   "/status": {
     $get: Endpoint<EmptyInput, StatusResponse>;
   };
-};
+}
 
 // Verbatim bb type: Hono's blank env for the daemon-local app. The `{}` is
 // Hono's own API shape here, not a loose object type.
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export type HostDaemonLocalRoutes = Hono<{}, HostDaemonLocalSchema, "/">;
+export type HostDaemonLocalRoutes = Hono<{}, HostDaemonLocalSchema>;
 
 // ---------------------------------------------------------------------------
 // Client factory

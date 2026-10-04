@@ -37,9 +37,7 @@ function isValidGitBranchName(name: GitBranchNameCandidate) {
     !name.endsWith(".") &&
     components.every(
       (component) =>
-        component.length > 0 &&
-        !component.startsWith(".") &&
-        !component.endsWith(".lock"),
+        component.length > 0 && !component.startsWith(".") && !component.endsWith(".lock"),
     )
   );
 }
@@ -100,9 +98,7 @@ export const gitBranchRefClassificationSchema = z.object({
   name: z.string().min(1),
   kind: z.enum(["local", "remote", "missing"]),
 });
-export type GitBranchRefClassification = z.infer<
-  typeof gitBranchRefClassificationSchema
->;
+export type GitBranchRefClassification = z.infer<typeof gitBranchRefClassificationSchema>;
 
 export const defaultBranchRelationSchema = z.enum([
   "equal",
@@ -111,9 +107,7 @@ export const defaultBranchRelationSchema = z.enum([
   "diverged",
   "unknown",
 ]);
-export type DefaultBranchRelation = z.infer<
-  typeof defaultBranchRelationSchema
->;
+export type DefaultBranchRelation = z.infer<typeof defaultBranchRelationSchema>;
 
 export const projectSourceCheckoutSchema = z.object({
   /** Local branches under refs/heads, safe for checkout and write targets. */

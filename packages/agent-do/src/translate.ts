@@ -37,7 +37,7 @@ interface CallSlice {
   steers: SteerContribution[];
   text: string;
   /** toolCalls in `tool.call` seq order; index-aligned with `executionIds`. */
-  toolCalls: Array<{ name: string; arguments: Record<string, unknown> }>;
+  toolCalls: { name: string; arguments: Record<string, unknown> }[];
   executionIds: string[];
   toolNameByExecutionId: Map<string, string>;
   /** Terminal results by executionId (each fills its `tool.call` slot). */
@@ -152,9 +152,7 @@ export function modelRequestFromEvents(
     for (const seq of slice.steerSeqs) {
       const text = steerTexts.get(seq);
       if (text === undefined) {
-        throw new ProjectionError(
-          `call ${slice.modelCallId} consumes unknown steer seq ${seq}`,
-        );
+        throw new ProjectionError(`call ${slice.modelCallId} consumes unknown steer seq ${seq}`);
       }
       slice.steers.push({ seq, text });
     }
@@ -162,9 +160,7 @@ export function modelRequestFromEvents(
 
   const current = slices.get(modelCallId);
   if (current === undefined) {
-    throw new ProjectionError(
-      `turn ${turnId}: no model.call_started for call ${modelCallId}`,
-    );
+    throw new ProjectionError(`turn ${turnId}: no model.call_started for call ${modelCallId}`);
   }
 
   // "Prior" is temporal: only calls whose boundary precedes the current

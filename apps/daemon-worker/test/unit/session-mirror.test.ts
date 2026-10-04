@@ -2,12 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { runDurableObjectAlarm } from "cloudflare:test";
 import { DAEMON_PROTOCOL_VERSION, DAEMON_WS_SUBPROTOCOL } from "../../src/constants.js";
 import type { OrchestratorStub } from "../helpers.js";
-import {
-  alarmStubFor,
-  installFakes,
-  openRequest,
-  orchestratorFor,
-} from "../helpers.js";
+import { alarmStubFor, installFakes, openRequest, orchestratorFor } from "../helpers.js";
 
 /**
  * Session mirror semantics, aligned test-by-test with bb-daemon-protocol.md
@@ -15,17 +10,14 @@ import {
  * (disconnect). Named after the protocol facts they pin.
  */
 
-const orchestrator = (): OrchestratorStub =>
-  orchestratorFor();
+const orchestrator = (): OrchestratorStub => orchestratorFor();
 
 beforeEach(() => {
   installFakes();
 });
 
 async function open(overrides?: Parameters<typeof openRequest>[0]) {
-  return orchestrator().openSession(
-    openRequest({ leaseTimeoutMs: 400, ...overrides }),
-  );
+  return orchestrator().openSession(openRequest({ leaseTimeoutMs: 400, ...overrides }));
 }
 
 describe("session open (bb §2.1 + §3)", () => {

@@ -13,11 +13,7 @@ import {
 } from "../contract/domain/app-theme.js";
 import { DEFAULT_APP_KEYBINDINGS } from "../services/system/app-keybindings.js";
 import { defaultFeatureFlags } from "../contract/domain/feature-flags.js";
-import {
-  ApiError,
-  parseOr422,
-  requireJsonBody,
-} from "../shared/route-utils.js";
+import { ApiError, parseOr422, requireJsonBody } from "../shared/route-utils.js";
 import {
   getAppSettingsRow,
   getExperiments,
@@ -145,13 +141,11 @@ export function registerSystemRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
         message: "Unknown theme id",
       });
     }
-        const stored = await getStoredAppearance(ctx.env);
+    const stored = await getStoredAppearance(ctx.env);
     const fallbackThemeId = builtInThemeIdSchema.options[0] ?? defaultAppTheme.themeId;
     const themeId = payload.themeId ?? stored?.themeId ?? fallbackThemeId;
     const faviconColor =
-      payload.faviconColor !== undefined
-        ? payload.faviconColor
-        : stored?.faviconColor ?? null;
+      payload.faviconColor !== undefined ? payload.faviconColor : (stored?.faviconColor ?? null);
     await setStoredAppearance(ctx.env, { themeId, faviconColor });
     await hub(ctx.env).notifySystem(["config-changed"]);
     return ctx.json(toAppSettings(await getAppSettingsRow(ctx.env)));
@@ -168,7 +162,7 @@ export function registerSystemRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       z.object({ force: z.enum(["true", "false"]).optional() }),
       ctx.req.query(),
     );
-    void query;
+    query;
     const currentVersion = ctx.env.SERVER_VERSION ?? "0.0.0-dev";
     return ctx.json(
       systemVersionResponseSchema.parse({

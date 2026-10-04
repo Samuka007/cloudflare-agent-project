@@ -39,8 +39,6 @@ describe("frozen protocol + frame-budget constants (scheme A)", () => {
 
   it("keeps the chunk arithmetic consistent (chunks ≤ frame ≤ reassembled)", () => {
     expect(OMP_RPC_MAX_FRAME_BYTES % OMP_RPC_CHUNK_BYTES).toBe(0);
-    expect(OMP_RPC_MAX_FRAME_BYTES).toBeLessThan(
-      OMP_RPC_MAX_REASSEMBLED_FRAME_BYTES,
-    );
+    expect(OMP_RPC_MAX_FRAME_BYTES).toBeLessThan(OMP_RPC_MAX_REASSEMBLED_FRAME_BYTES);
   });
 });

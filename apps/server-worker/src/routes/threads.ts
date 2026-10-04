@@ -48,10 +48,7 @@ import {
   getProject,
 } from "../db/control-plane.js";
 import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs.js";
-import {
-  toThreadListEntry,
-  toThreadResponseWithSpawnCheck,
-} from "../services/runtime-display.js";
+import { toThreadListEntry, toThreadResponseWithSpawnCheck } from "../services/runtime-display.js";
 import {
   buildConversationOutline,
   buildTimelinePage,
@@ -84,21 +81,40 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     const limitRaw = query.limit !== undefined ? Number(query.limit) : undefined;
     const offsetRaw = query.offset !== undefined ? Number(query.offset) : undefined;
     if (limitRaw !== undefined && limitRaw <= 0) {
-      throw new ApiError({ status: 400, code: "invalid_request", message: "limit must be positive" });
+      throw new ApiError({
+        status: 400,
+        code: "invalid_request",
+        message: "limit must be positive",
+      });
     }
     if (offsetRaw !== undefined && offsetRaw < 0) {
-      throw new ApiError({ status: 400, code: "invalid_request", message: "offset must be non-negative" });
+      throw new ApiError({
+        status: 400,
+        code: "invalid_request",
+        message: "offset must be non-negative",
+      });
     }
     if (query.projectId !== undefined) {
       const project = await getProject(ctx.env, query.projectId);
       if (!project || project.deletedAt !== null) {
-        throw new ApiError({ status: 404, code: "project_not_found", message: "Project not found" });
+        throw new ApiError({
+          status: 404,
+          code: "project_not_found",
+          message: "Project not found",
+        });
       }
     }
     if (query.sectionId !== undefined && query.unsectioned === "true") {
-      throw new ApiError({ status: 400, code: "invalid_request", message: "sectionId and unsectioned cannot be used together" });
+      throw new ApiError({
+        status: 400,
+        code: "invalid_request",
+        message: "sectionId and unsectioned cannot be used together",
+      });
     }
-    if (query.sectionId !== undefined && (await getThreadSection(ctx.env, query.sectionId)) === null) {
+    if (
+      query.sectionId !== undefined &&
+      (await getThreadSection(ctx.env, query.sectionId)) === null
+    ) {
       throw new ApiError({ status: 404, code: "section_not_found", message: "Section not found" });
     }
     const rows = await listThreads(ctx.env, {
@@ -129,7 +145,11 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     }
     if (payload.sectionId !== null && payload.sectionId !== undefined) {
       if ((await getThreadSection(ctx.env, payload.sectionId)) === null) {
-        throw new ApiError({ status: 404, code: "section_not_found", message: "Section not found" });
+        throw new ApiError({
+          status: 404,
+          code: "section_not_found",
+          message: "Section not found",
+        });
       }
     }
     let parentThreadId: string | null = null;
@@ -151,7 +171,9 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     const threadId = createThreadId();
     const visibility =
       payload.visibility ??
-      (parentThreadId !== null ? (await getThreadRow(ctx.env, parentThreadId))?.visibility ?? "visible" : "visible");
+      (parentThreadId !== null
+        ? ((await getThreadRow(ctx.env, parentThreadId))?.visibility ?? "visible")
+        : "visible");
     const row = await createThreadRecord(ctx.env, {
       id: threadId,
       projectId: payload.projectId,
@@ -188,7 +210,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // M0: environment/host includes resolve to null — the environment family
     // is OUT (ruling #7); the response fields exist and are nullable (bb
     // threadWithIncludesResponseSchema).
-    void includes;
+    includes;
     return ctx.json(response);
   });
 
@@ -197,7 +219,11 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     const row = await requirePublicThread(ctx);
     if (payload.sectionId !== undefined && payload.sectionId !== null) {
       if ((await getThreadSection(ctx.env, payload.sectionId)) === null) {
-        throw new ApiError({ status: 404, code: "section_not_found", message: "Section not found" });
+        throw new ApiError({
+          status: 404,
+          code: "section_not_found",
+          message: "Section not found",
+        });
       }
     }
     const updated = await updateThreadRecord(ctx.env, row.id, {
@@ -210,7 +236,9 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
     }
     if (updated.changedKinds.length > 0) {
-      await hub(ctx).notifyThread(row.id, updated.changedKinds, { projectId: updated.row.projectId });
+      await hub(ctx).notifyThread(row.id, updated.changedKinds, {
+        projectId: updated.row.projectId,
+      });
     }
     return ctx.json(await toThreadResponseWithSpawnCheck(ctx.env, updated.row));
   });
@@ -245,7 +273,9 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // has no clientRequestId field.
     const clientRequestId = formatClientTurnRequestIdSuffix({
       suffix: Array.from(crypto.getRandomValues(new Uint8Array(10)))
-        .map((byte) => CLIENT_TURN_REQUEST_ID_ALPHABET.charAt(byte % CLIENT_TURN_REQUEST_ID_ALPHABET.length))
+        .map((byte) =>
+          CLIENT_TURN_REQUEST_ID_ALPHABET.charAt(byte % CLIENT_TURN_REQUEST_ID_ALPHABET.length),
+        )
         .join(""),
     });
     const content = payload.input.map((entry) => {
@@ -285,7 +315,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // bb stopThreadForCurrentState (thread-lifecycle.ts:1470-1522): with no
     // attached environment the stop is a no-op release — M0 threads have no
     // environment (family OUT), so the route is exactly that path.
-    void row;
+    row;
     return ctx.json({ ok: true });
   });
 
@@ -298,7 +328,11 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     if (query.segmentLimit !== undefined) {
       const parsed = Number(query.segmentLimit);
       if (!Number.isInteger(parsed) || parsed <= 0 || parsed > THREAD_TIMELINE_SEGMENT_LIMIT_MAX) {
-        throw new ApiError({ status: 400, code: "invalid_request", message: "segmentLimit out of range" });
+        throw new ApiError({
+          status: 400,
+          code: "invalid_request",
+          message: "segmentLimit out of range",
+        });
       }
       segmentLimit = parsed;
     }
@@ -312,11 +346,14 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       const anchorId = query.beforeAnchorId;
       const anchorExists = allRows.some(
         (candidate) =>
-          candidate.id === anchorId &&
-          candidate.sourceSeqStart === Number(query.beforeAnchorSeq),
+          candidate.id === anchorId && candidate.sourceSeqStart === Number(query.beforeAnchorSeq),
       );
       if (!anchorExists) {
-        throw new ApiError({ status: 400, code: "invalid_request", message: "Unknown timeline anchor" });
+        throw new ApiError({
+          status: 400,
+          code: "invalid_request",
+          message: "Unknown timeline anchor",
+        });
       }
     }
     const includeNestedRows = query.includeNestedRows !== "false";
@@ -595,10 +632,7 @@ export function resolveSendMode(
 }
 
 /** bb requirePublicThread (entity-lookup.ts): 404 on missing or deleted. */
-async function requirePublicThread(ctx: {
-  env: Env;
-  req: { param(name: string): string };
-}) {
+async function requirePublicThread(ctx: { env: Env; req: { param(name: string): string } }) {
   const thread = await getThreadRow(ctx.env, ctx.req.param("id"));
   if (!thread || thread.deletedAt !== null) {
     throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
@@ -613,7 +647,11 @@ async function requirePublicThread(ctx: {
 function hub(ctx: { env: Env }) {
   const stub = ctx.env.HUB.get(ctx.env.HUB.idFromName("hub"));
   return stub as DurableObjectStub & {
-    notifyThread(threadId: string, changes: string[], metadata?: unknown): Promise<{ delivered: number }>;
+    notifyThread(
+      threadId: string,
+      changes: string[],
+      metadata?: unknown,
+    ): Promise<{ delivered: number }>;
     notifyProject(projectId: string, changes: string[]): Promise<{ delivered: number }>;
     notifyHost(hostId: string, changes: string[]): Promise<{ delivered: number }>;
     notifySystem(changes: string[]): Promise<{ delivered: number }>;

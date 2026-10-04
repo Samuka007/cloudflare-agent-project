@@ -1,8 +1,4 @@
-import {
-  buildThreadEvent,
-  parseThreadEvent,
-  type ThreadEventEnvelope,
-} from "@cap/protocol";
+import { buildThreadEvent, parseThreadEvent, type ThreadEventEnvelope } from "@cap/protocol";
 import type { AnyAgentEvent } from "./fsm-events.js";
 import { executionIdFor } from "./ids.js";
 
@@ -18,9 +14,7 @@ import { executionIdFor } from "./ids.js";
  * the SPA rebuilds state from item lifecycle instead.
  */
 
-export function projectToUxEvents(
-  events: readonly AnyAgentEvent[],
-): ThreadEventEnvelope[] {
+export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEventEnvelope[] {
   const out: ThreadEventEnvelope[] = [];
   const firstModelCallByTurn = new Map<string, number>();
   const toolByExecution = new Map<string, string>();

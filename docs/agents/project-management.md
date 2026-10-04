@@ -25,12 +25,12 @@ Or via the web UI: **Projects → New project → Table → Add repositories** �
 
 ### Recommended views
 
-| View | Filter | Purpose |
-|------|--------|---------|
-| **All open** | `is:open` | Everything across both repos |
-| **bb only** | `repo:Samuka007/bb is:open` | bb submodule focus |
-| **Worker agent** | `label:scope:worker-agent is:open` | Cloudflare agent loop only |
-| **Frontier** | `label:wayfinder:* is:open no:assignee` | Unclaimed wayfinder tickets |
+| View             | Filter                                  | Purpose                      |
+| ---------------- | --------------------------------------- | ---------------------------- |
+| **All open**     | `is:open`                               | Everything across both repos |
+| **bb only**      | `repo:Samuka007/bb is:open`             | bb submodule focus           |
+| **Worker agent** | `label:scope:worker-agent is:open`      | Cloudflare agent loop only   |
+| **Frontier**     | `label:wayfinder:* is:open no:assignee` | Unclaimed wayfinder tickets  |
 
 ### Daily driver
 

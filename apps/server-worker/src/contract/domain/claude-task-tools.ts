@@ -13,33 +13,17 @@ export const claudeTaskToolNameValues = [
 export const claudeTaskToolNameSchema = z.enum(claudeTaskToolNameValues);
 export type ClaudeTaskToolName = z.infer<typeof claudeTaskToolNameSchema>;
 
-export const claudeTaskStatusValues = [
-  "pending",
-  "in_progress",
-  "completed",
-] as const;
+export const claudeTaskStatusValues = ["pending", "in_progress", "completed"] as const;
 export const claudeTaskStatusSchema = z.enum(claudeTaskStatusValues);
 export type ClaudeTaskStatus = z.infer<typeof claudeTaskStatusSchema>;
 
-export const claudeTaskUpdateStatusValues = [
-  ...claudeTaskStatusValues,
-  "deleted",
-] as const;
-export const claudeTaskUpdateStatusSchema = z.enum(
-  claudeTaskUpdateStatusValues,
-);
-export type ClaudeTaskUpdateStatus = z.infer<
-  typeof claudeTaskUpdateStatusSchema
->;
+export const claudeTaskUpdateStatusValues = [...claudeTaskStatusValues, "deleted"] as const;
+export const claudeTaskUpdateStatusSchema = z.enum(claudeTaskUpdateStatusValues);
+export type ClaudeTaskUpdateStatus = z.infer<typeof claudeTaskUpdateStatusSchema>;
 
-export const claudeTaskListStatusValues = [
-  ...claudeTaskStatusValues,
-  "deleted",
-] as const;
+export const claudeTaskListStatusValues = [...claudeTaskStatusValues, "deleted"] as const;
 export const claudeTaskListStatusSchema = z.enum(claudeTaskListStatusValues);
-export type ClaudeTaskListStatus = z.infer<
-  typeof claudeTaskListStatusSchema
->;
+export type ClaudeTaskListStatus = z.infer<typeof claudeTaskListStatusSchema>;
 
 export const claudeTaskCreateArgsSchema = z
   .object({
@@ -47,9 +31,7 @@ export const claudeTaskCreateArgsSchema = z
     subject: z.string(),
   })
   .passthrough();
-export type ClaudeTaskCreateArgs = z.infer<
-  typeof claudeTaskCreateArgsSchema
->;
+export type ClaudeTaskCreateArgs = z.infer<typeof claudeTaskCreateArgsSchema>;
 
 export const claudeTaskGetArgsSchema = z
   .object({
@@ -66,9 +48,7 @@ export const claudeTaskUpdateArgsSchema = z
     taskId: z.string(),
   })
   .passthrough();
-export type ClaudeTaskUpdateArgs = z.infer<
-  typeof claudeTaskUpdateArgsSchema
->;
+export type ClaudeTaskUpdateArgs = z.infer<typeof claudeTaskUpdateArgsSchema>;
 
 export const claudeTaskCreateOutputSchema = z
   .object({
@@ -80,9 +60,7 @@ export const claudeTaskCreateOutputSchema = z
       .passthrough(),
   })
   .passthrough();
-export type ClaudeTaskCreateOutput = z.infer<
-  typeof claudeTaskCreateOutputSchema
->;
+export type ClaudeTaskCreateOutput = z.infer<typeof claudeTaskCreateOutputSchema>;
 
 export const claudeTaskGetOutputTaskSchema = z
   .object({
@@ -91,9 +69,7 @@ export const claudeTaskGetOutputTaskSchema = z
     subject: z.string(),
   })
   .passthrough();
-export type ClaudeTaskGetOutputTask = z.infer<
-  typeof claudeTaskGetOutputTaskSchema
->;
+export type ClaudeTaskGetOutputTask = z.infer<typeof claudeTaskGetOutputTaskSchema>;
 
 export const claudeTaskGetOutputSchema = z
   .object({
@@ -108,9 +84,7 @@ export const claudeTaskUpdateOutputSchema = z
     taskId: z.string(),
   })
   .passthrough();
-export type ClaudeTaskUpdateOutput = z.infer<
-  typeof claudeTaskUpdateOutputSchema
->;
+export type ClaudeTaskUpdateOutput = z.infer<typeof claudeTaskUpdateOutputSchema>;
 
 export const claudeTaskListItemSchema = z
   .object({

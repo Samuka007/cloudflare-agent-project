@@ -14,10 +14,7 @@
  * keeps one mental model.
  */
 
-import type {
-  AdapterCommand,
-  AdapterCommandResultValue,
-} from "../provider-adapter.js";
+import type { AdapterCommand, AdapterCommandResultValue } from "../provider-adapter.js";
 
 export interface MachineCommandDispatchRequest {
   /**
@@ -40,9 +37,7 @@ export type MachineCommandDispatchOutcome =
   | { kind: "host_offline" };
 
 export interface MachineCommandDispatcher {
-  dispatch(
-    request: MachineCommandDispatchRequest,
-  ): Promise<MachineCommandDispatchOutcome>;
+  dispatch(request: MachineCommandDispatchRequest): Promise<MachineCommandDispatchOutcome>;
 }
 
 /**

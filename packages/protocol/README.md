@@ -24,18 +24,18 @@ Full consumed REST face (~180 routes, grouped; evidence: scout inventory over
 `apps/app/src/hooks/queries|mutations`, `lib/sdk.ts`, `lib/api.ts` against
 `public-api.ts`):
 
-| Group | Routes | Frozen here (M0 face) |
-|---|---|---|
-| projects + sidebar | ~25 (GET/POST /projects, /sidebar-bootstrap, sources, files, skills, branches, attachments…) | `GET /sidebar-bootstrap` (minimal shape) |
-| files / previews | 9 | — (host-file face, deferred) |
-| hosts | 12 (join-codes, provider-clis…) | — (machine-side, deferred) |
-| terminals | 8 + terminal WS | — (deferred) |
-| environments | 12 (diff/actions/PR…) | — (deferred) |
-| thread sections | 3 | — |
-| **threads** | ~40 | **create/get/delete/list/send/stop/events/timeline** |
-| queued messages, interactions, pins, tabs, read-state, edit-message, fork, rate-limit-recovery | ~20 | — (additive growth) |
-| system / settings | ~20 | `GET /system/version` |
-| plugins / marketplaces / skills-registry (sdk hand-written paths) | ~25 | — |
+| Group                                                                                          | Routes                                                                                       | Frozen here (M0 face)                                |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| projects + sidebar                                                                             | ~25 (GET/POST /projects, /sidebar-bootstrap, sources, files, skills, branches, attachments…) | `GET /sidebar-bootstrap` (minimal shape)             |
+| files / previews                                                                               | 9                                                                                            | — (host-file face, deferred)                         |
+| hosts                                                                                          | 12 (join-codes, provider-clis…)                                                              | — (machine-side, deferred)                           |
+| terminals                                                                                      | 8 + terminal WS                                                                              | — (deferred)                                         |
+| environments                                                                                   | 12 (diff/actions/PR…)                                                                        | — (deferred)                                         |
+| thread sections                                                                                | 3                                                                                            | —                                                    |
+| **threads**                                                                                    | ~40                                                                                          | **create/get/delete/list/send/stop/events/timeline** |
+| queued messages, interactions, pins, tabs, read-state, edit-message, fork, rate-limit-recovery | ~20                                                                                          | — (additive growth)                                  |
+| system / settings                                                                              | ~20                                                                                          | `GET /system/version`                                |
+| plugins / marketplaces / skills-registry (sdk hand-written paths)                              | ~25                                                                                          | —                                                    |
 
 M0 relevance rule (spec #17 UX line): thread 列表、对话、流式渲染. The threads
 group + version + sidebar bootstrap is exactly that face; everything else is
@@ -45,7 +45,7 @@ recorded above and grows additively without reshaping what is frozen.
 
 The bb SPA does **not** consume a payload event stream. It uses:
 
-1. one reconnecting WebSocket to `/ws` carrying *change notifications only*
+1. one reconnecting WebSocket to `/ws` carrying _change notifications only_
    (`apps/app/src/lib/ws.ts:36`), consumed leniently and mapped to TanStack
    Query invalidations (`hooks/realtime-cache-effects.ts`);
 2. HTTP refetch of `GET /threads/:id/events?afterSeq=N` (long-poll variant

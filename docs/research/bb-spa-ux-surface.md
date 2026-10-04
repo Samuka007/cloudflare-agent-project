@@ -16,17 +16,17 @@
 
 路由常量集中在 `apps/app/src/lib/route-paths.ts`；装配在 `apps/app/src/App.tsx`（`AppRoutes`，216-330 行）：
 
-| 路由 | 组件 | 说明 |
-|---|---|---|
-| `/` | `SplitWorkspaceRoute` → 新线程 compose | 应用根 = 新建对话（`ROOT_COMPOSE_ROUTE_PATH`） |
-| `/threads/:threadId`、`/projects/:projectId/threads/:threadId` | `SplitWorkspaceRoute` → 线程详情 | 个人项目无线程归属前缀（`isProjectlessProjectId`） |
-| `/plugins/:pluginId/:panelPath/*` | `SplitWorkspaceRoute` → 插件面板 | 插件自有 UI 挂载点 |
-| `/settings`、`/settings/:section`、`/settings/providers/:providerId`、`/settings/plugins(/:pluginId)` | `SettingsView`（lazy） | 设置 |
-| `/settings/machines/:hostId` | `MachineSettingsView`（lazy） | 多机 fleet 的单机页 |
-| `/projects/:projectId/settings` | `ProjectSettingsView`（lazy） | 项目设置 |
-| `/extensions…`（及 legacy `/tools/*` 重定向） | `ToolsView`（lazy） | 插件/技能管理 |
-| `/auth/callback` | `AuthCallbackView` | 仅是「OAuth 弹窗完成，可关窗」提示页（`AuthCallbackView.tsx:15-35`） |
-| `*` | `SplitWorkspaceRoute`（lazy） | 工作区兜底路由 |
+| 路由                                                                                                  | 组件                                   | 说明                                                                 |
+| ----------------------------------------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------- |
+| `/`                                                                                                   | `SplitWorkspaceRoute` → 新线程 compose | 应用根 = 新建对话（`ROOT_COMPOSE_ROUTE_PATH`）                       |
+| `/threads/:threadId`、`/projects/:projectId/threads/:threadId`                                        | `SplitWorkspaceRoute` → 线程详情       | 个人项目无线程归属前缀（`isProjectlessProjectId`）                   |
+| `/plugins/:pluginId/:panelPath/*`                                                                     | `SplitWorkspaceRoute` → 插件面板       | 插件自有 UI 挂载点                                                   |
+| `/settings`、`/settings/:section`、`/settings/providers/:providerId`、`/settings/plugins(/:pluginId)` | `SettingsView`（lazy）                 | 设置                                                                 |
+| `/settings/machines/:hostId`                                                                          | `MachineSettingsView`（lazy）          | 多机 fleet 的单机页                                                  |
+| `/projects/:projectId/settings`                                                                       | `ProjectSettingsView`（lazy）          | 项目设置                                                             |
+| `/extensions…`（及 legacy `/tools/*` 重定向）                                                         | `ToolsView`（lazy）                    | 插件/技能管理                                                        |
+| `/auth/callback`                                                                                      | `AuthCallbackView`                     | 仅是「OAuth 弹窗完成，可关窗」提示页（`AuthCallbackView.tsx:15-35`） |
+| `*`                                                                                                   | `SplitWorkspaceRoute`（lazy）          | 工作区兜底路由                                                       |
 
 关键结构事实（`SplitWorkspaceRoute.tsx:15-68`）：所有可进分屏工作区的 URL 都匹配同一个外层 `*` 路由，URL 变化只更新 `routeContent`（`new-thread | thread | plugin-panel` 三种 `PaneContent`），**不重挂载分屏树**——插件面板与 compose 状态在路由切换间存活。
 
@@ -115,15 +115,15 @@
 
 削减原则：**SPA 是一个 bundle，App.tsx 全量装配路由；干净的做法是数据面裁剪（假脑返回空集合），不是删代码。**
 
-| 表面 | 驱动数据 | M0 假脑做法 |
-|---|---|---|
-| 插件系统（Extensions/ToolsView、插件面板路由、`usePluginFrontendBoot`、marketplace） | `/system/config` 的插件 inventory + `plugins-changed`；前端 bundle 由服务端 inventory 过滤后按需加载（`usePluginFrontendBoot.ts:13-19`） | inventory 返回空 ⇒ 不加载任何插件 bundle，面板路由自然无入口 |
-| 机器/fleet（`MachineSettingsView`、侧栏机器分组、`SidebarUpdatesBadge`、host-daemon 访问） | `useHosts`、host inventory、`host-changed` | hosts 返回空数组 ⇒ 机器分区消失（`machineThreadGroups.ts:35-57` 对空 hosts 直接无分组） |
-| 终端面板（xterm、`/ws/terminals/*`） | `terminals` REST + 独立 WS | 不暴露入口即可；面板仅在二级面板打开时查询（`ThreadDetailView.tsx:643-645` `enabled: isSecondaryPanelOpen`） |
-| 语音输入 | `/system/config.voiceTranscriptionEnabled`（`system-config-atoms.ts:37`） | 配 false ⇒ 入口隐藏 |
-| Onboarding 引导 | experiment flag（`OnboardingHost` 自门控，`App.tsx:362-364`） | 配置不带 flag ⇒ 不出现 |
-| 桌面壳同步（`useDesktopThemeSync`、`bb-desktop` 全局、窗口状态） | `window.bbDesktop` | 浏览器里全部惰性无操作，零成本保留 |
-| settings 内的 providers/machines/plugins 分区 | 各自查询 | 不影响核心对话面，留着无害（lazy chunk 不点不加载） |
+| 表面                                                                                       | 驱动数据                                                                                                                                 | M0 假脑做法                                                                                                  |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 插件系统（Extensions/ToolsView、插件面板路由、`usePluginFrontendBoot`、marketplace）       | `/system/config` 的插件 inventory + `plugins-changed`；前端 bundle 由服务端 inventory 过滤后按需加载（`usePluginFrontendBoot.ts:13-19`） | inventory 返回空 ⇒ 不加载任何插件 bundle，面板路由自然无入口                                                 |
+| 机器/fleet（`MachineSettingsView`、侧栏机器分组、`SidebarUpdatesBadge`、host-daemon 访问） | `useHosts`、host inventory、`host-changed`                                                                                               | hosts 返回空数组 ⇒ 机器分区消失（`machineThreadGroups.ts:35-57` 对空 hosts 直接无分组）                      |
+| 终端面板（xterm、`/ws/terminals/*`）                                                       | `terminals` REST + 独立 WS                                                                                                               | 不暴露入口即可；面板仅在二级面板打开时查询（`ThreadDetailView.tsx:643-645` `enabled: isSecondaryPanelOpen`） |
+| 语音输入                                                                                   | `/system/config.voiceTranscriptionEnabled`（`system-config-atoms.ts:37`）                                                                | 配 false ⇒ 入口隐藏                                                                                          |
+| Onboarding 引导                                                                            | experiment flag（`OnboardingHost` 自门控，`App.tsx:362-364`）                                                                            | 配置不带 flag ⇒ 不出现                                                                                       |
+| 桌面壳同步（`useDesktopThemeSync`、`bb-desktop` 全局、窗口状态）                           | `window.bbDesktop`                                                                                                                       | 浏览器里全部惰性无操作，零成本保留                                                                           |
+| settings 内的 providers/machines/plugins 分区                                              | 各自查询                                                                                                                                 | 不影响核心对话面，留着无害（lazy chunk 不点不加载）                                                          |
 
 不需要削的：`apps/web`（营销站）根本不在 SPA 构建里；landing/blog 资产不会进 Worker Assets。
 

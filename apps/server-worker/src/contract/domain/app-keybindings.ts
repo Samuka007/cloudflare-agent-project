@@ -170,9 +170,7 @@ export function normalizeAppShortcutInputKey(input: AppShortcutInput): string {
     const fromCode = baseKeyFromCode(input.code);
     if (fromCode !== null) return fromCode;
   }
-  return input.shiftKey
-    ? (SHIFTED_KEY_BASES[input.key] ?? input.key)
-    : input.key;
+  return input.shiftKey ? (SHIFTED_KEY_BASES[input.key] ?? input.key) : input.key;
 }
 
 export function isMacKeyboardPlatform(platform: string): boolean {
@@ -187,8 +185,7 @@ export function matchesAppShortcut(
   const expectedMeta = shortcut.meta || (shortcut.mod && useMetaForMod);
   const expectedControl = shortcut.control || (shortcut.mod && !useMetaForMod);
   return (
-    normalizeAppShortcutInputKey(input).toLowerCase() ===
-      shortcut.key.toLowerCase() &&
+    normalizeAppShortcutInputKey(input).toLowerCase() === shortcut.key.toLowerCase() &&
     input.metaKey === expectedMeta &&
     input.ctrlKey === expectedControl &&
     input.altKey === shortcut.alt &&
@@ -226,8 +223,7 @@ export function isAppKeybindingAvailableForClient(
 ): boolean {
   if (binding.desktopOnly && !client.isDesktop) return false;
   if (binding.when.all.includes("webSurface") && client.isDesktop) return false;
-  if (binding.when.none.includes("webSurface") && !client.isDesktop)
-    return false;
+  if (binding.when.none.includes("webSurface") && !client.isDesktop) return false;
   if (binding.when.all.includes("macPlatform") && !client.isMac) return false;
   if (binding.when.none.includes("macPlatform") && client.isMac) return false;
   return true;
@@ -236,9 +232,7 @@ export function isAppKeybindingAvailableForClient(
 export const appKeybindingsSchema = z.array(appKeybindingSchema).max(256);
 export type AppKeybindings = z.infer<typeof appKeybindingsSchema>;
 
-export const appDefaultKeybindingsSchema = z
-  .array(appDefaultKeybindingSchema)
-  .max(256);
+export const appDefaultKeybindingsSchema = z.array(appDefaultKeybindingSchema).max(256);
 export type AppDefaultKeybindings = z.infer<typeof appDefaultKeybindingsSchema>;
 
 export const appKeybindingOverrideSchema = z
@@ -266,20 +260,15 @@ export const appKeybindingOverridesSchema = z
       seen.add(override.command);
     }
   });
-export type AppKeybindingOverrides = z.infer<
-  typeof appKeybindingOverridesSchema
->;
+export type AppKeybindingOverrides = z.infer<typeof appKeybindingOverridesSchema>;
 
 export function applyAppKeybindingOverrides(
   defaults: AppDefaultKeybindings,
   overrides: AppKeybindingOverrides,
 ): AppKeybindings {
   return defaults.flatMap((binding) => {
-    const override = overrides.find(
-      (candidate) => candidate.command === binding.command,
-    );
-    const shortcut =
-      override === undefined ? binding.shortcut : override.shortcut;
+    const override = overrides.find((candidate) => candidate.command === binding.command);
+    const shortcut = override === undefined ? binding.shortcut : override.shortcut;
     return shortcut === null ? [] : [{ ...binding, shortcut }];
   });
 }

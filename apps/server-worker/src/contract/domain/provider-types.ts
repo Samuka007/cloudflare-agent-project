@@ -41,12 +41,13 @@ export type ProviderCapabilities = z.infer<typeof providerCapabilitiesSchema>;
 
 export const providerComposerCommandSchema = z.object({
   trigger: promptMentionCommandTriggerSchema,
-  name: z.string().min(1).regex(/^[^\s/$]+$/u),
+  name: z
+    .string()
+    .min(1)
+    .regex(/^[^\s/$]+$/u),
   trailingText: z.string().regex(/^\s*$/u),
 });
-export type ProviderComposerCommand = z.infer<
-  typeof providerComposerCommandSchema
->;
+export type ProviderComposerCommand = z.infer<typeof providerComposerCommandSchema>;
 
 export const providerComposerActionSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -62,9 +63,7 @@ export const providerComposerActionSchema = z.discriminatedUnion("kind", [
     command: providerComposerCommandSchema,
   }),
 ]);
-export type ProviderComposerAction = z.infer<
-  typeof providerComposerActionSchema
->;
+export type ProviderComposerAction = z.infer<typeof providerComposerActionSchema>;
 
 export const providerInfoSchema = z.object({
   id: z.string(),

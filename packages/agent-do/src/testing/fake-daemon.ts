@@ -96,8 +96,9 @@ export class FakeHostOS {
 
 export class FakeDaemonClient {
   readonly spawnCalls: string[] = [];
-  readonly kills: Array<{ executionId: string; pid: number; pidStartedAt: number; verified: boolean }> = [];
-  bootId: string = `boot_${crypto.randomUUID()}`;
+  readonly kills: { executionId: string; pid: number; pidStartedAt: number; verified: boolean }[] =
+    [];
+  bootId = `boot_${crypto.randomUUID()}`;
   disconnected = false;
   /** Buffers are the retransmit source (§8.1): executionId → accumulated bytes. */
   private readonly buffers = new Map<string, { bytes: string; sentOffset: number }>();
@@ -289,7 +290,11 @@ export class FakeDaemonService implements DaemonServiceClient {
     if (record.state === "COMPLETED" || record.state === "TOMBSTONE") {
       return {
         kind: "completed_cached",
-        result: record.result ?? { status: "error", exitCode: null, output: "cached-result-missing" },
+        result: record.result ?? {
+          status: "error",
+          exitCode: null,
+          output: "cached-result-missing",
+        },
       };
     }
     if (!this.hostOnline) return { kind: "host_offline" };
@@ -304,7 +309,10 @@ export class FakeDaemonService implements DaemonServiceClient {
       record.bootId = this.client?.bootId ?? "?";
     }
     if (this.client === null) return { kind: "accepted" };
-    if (record.state === "RUNNING" && this.journal.some((op) => op.op === "spawn_ack" && op.executionId === request.executionId)) {
+    if (
+      record.state === "RUNNING" &&
+      this.journal.some((op) => op.op === "spawn_ack" && op.executionId === request.executionId)
+    ) {
       return { kind: "accepted" }; // re-attach; journal already has the spawn (§3.5)
     }
     this.client.spawnCalls.push(request.executionId);
@@ -354,13 +362,13 @@ export class FakeDaemonService implements DaemonServiceClient {
 
   async queryUnacked(
     threadId: string,
-  ): Promise<Array<{ executionId: string; result: ToolResultPayload }>> {
-    void threadId;
+  ): Promise<{ executionId: string; result: ToolResultPayload }[]> {
+    threadId;
     return [...this.derived.entries()]
       .filter(([, record]) => record.state === "COMPLETED" && record.result !== null)
       .map(([executionId, record]) => ({
         executionId,
-        result: record.result as ToolResultPayload,
+        result: record.result!,
       }));
   }
 
@@ -453,12 +461,12 @@ export class FakeDaemonService implements DaemonServiceClient {
 
   // -- I18/I22: kill-list over old boots ------------------------------------
 
-  killListForPreviousBoots(currentBootId: string): Array<{
+  killListForPreviousBoots(currentBootId: string): {
     executionId: string;
     pid: number;
     pidStartedAt: number;
-  }> {
-    const killList: Array<{ executionId: string; pid: number; pidStartedAt: number }> = [];
+  }[] {
+    const killList: { executionId: string; pid: number; pidStartedAt: number }[] = [];
     const seenBoots = new Set<string>();
     for (const op of this.journal) {
       if (op.op === "dispatch" && op.bootId !== currentBootId) seenBoots.add(op.bootId);
@@ -484,7 +492,7 @@ export class FakeDaemonService implements DaemonServiceClient {
   }
 
   async applyKillListOutcome(
-    killList: Array<{ executionId: string; pid: number; pidStartedAt: number }>,
+    killList: { executionId: string; pid: number; pidStartedAt: number }[],
   ): Promise<void> {
     for (const entry of killList) {
       this.record({ op: "outcome_unknown", executionId: entry.executionId });
@@ -499,12 +507,9 @@ export class FakeDaemonService implements DaemonServiceClient {
   }
 
   /** I20: same-boot resume — client resends buffered bytes from ackedOffset. */
-  resumeFromBuffers(
-    observed: Array<{ executionId: string }>,
-    client: FakeDaemonClient,
-  ): void {
-    void client;
-    void observed;
+  resumeFromBuffers(observed: { executionId: string }[], client: FakeDaemonClient): void {
+    client;
+    observed;
     // Buffered-byte resend is driven directly in tests by calling
     // upstreamOutput with explicit offsets; the journal carries the dedup
     // decisions (output vs output_dup_dropped), which is what I20 asserts.
@@ -513,7 +518,8 @@ export class FakeDaemonService implements DaemonServiceClient {
   // -- test observability ----------------------------------------------------
 
   spawnAckCount(executionId: string): number {
-    return this.journal.filter((op) => op.op === "spawn_ack" && op.executionId === executionId).length;
+    return this.journal.filter((op) => op.op === "spawn_ack" && op.executionId === executionId)
+      .length;
   }
 
   tombstoned(executionId: string): boolean {

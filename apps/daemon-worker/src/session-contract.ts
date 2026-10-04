@@ -15,9 +15,7 @@ import { z } from "zod";
 export const hostDaemonActiveThreadSchema = z.object({
   threadId: z.string().min(1),
 });
-export type HostDaemonActiveThread = z.infer<
-  typeof hostDaemonActiveThreadSchema
->;
+export type HostDaemonActiveThread = z.infer<typeof hostDaemonActiveThreadSchema>;
 
 export const hostDaemonLoadedEnvironmentSchema = z.object({
   environmentId: z.string().min(1),
@@ -41,25 +39,15 @@ export const hostDaemonSessionOpenRequestSchema = z.object({
   activeThreads: z.array(hostDaemonActiveThreadSchema),
   loadedEnvironments: z.array(hostDaemonLoadedEnvironmentSchema).optional(),
 });
-export type HostDaemonSessionOpenRequest = z.infer<
-  typeof hostDaemonSessionOpenRequestSchema
->;
+export type HostDaemonSessionOpenRequest = z.infer<typeof hostDaemonSessionOpenRequestSchema>;
 
 // ---------------------------------------------------------------------------
 // Close reasons + server→daemon WS messages (M0 subset).
 // ---------------------------------------------------------------------------
 
-export const DAEMON_SESSION_CLOSE_REASONS = [
-  "replaced",
-  "expired",
-  "daemon-disconnect",
-] as const;
-export const daemonSessionCloseReasonSchema = z.enum(
-  DAEMON_SESSION_CLOSE_REASONS,
-);
-export type DaemonSessionCloseReason = z.infer<
-  typeof daemonSessionCloseReasonSchema
->;
+export const DAEMON_SESSION_CLOSE_REASONS = ["replaced", "expired", "daemon-disconnect"] as const;
+export const daemonSessionCloseReasonSchema = z.enum(DAEMON_SESSION_CLOSE_REASONS);
+export type DaemonSessionCloseReason = z.infer<typeof daemonSessionCloseReasonSchema>;
 
 export const daemonWatchSetWorkspaceTargetSchema = z.object({
   environmentId: z.string().min(1),
@@ -82,9 +70,7 @@ export type DaemonWatchSetWire = z.infer<typeof daemonWatchSetSchema>;
 export const watchSetReplaceMessageSchema = daemonWatchSetSchema.extend({
   type: z.literal("watch-set.replace"),
 });
-export type WatchSetReplaceMessageWire = z.infer<
-  typeof watchSetReplaceMessageSchema
->;
+export type WatchSetReplaceMessageWire = z.infer<typeof watchSetReplaceMessageSchema>;
 
 export const sessionCloseMessageSchema = z.object({
   type: z.literal("session-close"),

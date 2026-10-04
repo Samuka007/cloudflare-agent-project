@@ -10,7 +10,7 @@ export async function apiGet(path: string, init?: RequestInit): Promise<Response
   return SELF.fetch(`${BASE}${path}`, {
     ...init,
     headers: { ...(init?.headers ?? {}) },
-  }) as unknown as Promise<Response>;
+  });
 }
 
 export interface CreatedThread {
@@ -22,7 +22,7 @@ export async function createThread(args?: {
   projectId?: string;
   title?: string;
   sectionId?: string;
-  input?: Array<{ type: "text"; text: string }>;
+  input?: { type: "text"; text: string }[];
 }): Promise<CreatedThread> {
   await ensureMigrations();
   const response = await SELF.fetch(`${BASE}/api/v1/threads`, {
@@ -36,10 +36,9 @@ export async function createThread(args?: {
       ...(args?.sectionId !== undefined ? { sectionId: args.sectionId } : {}),
       // bb requires input ≥ 1 for user-originated creates (the SPA composer
       // always ships the first message with the create call).
-      input:
-        args?.input ?? [{ type: "text", text: "first message from L1 suite" }],
+      input: args?.input ?? [{ type: "text", text: "first message from L1 suite" }],
     }),
-  }) as unknown as Response;
+  });
   if (response.status !== 201) {
     throw new Error(`createThread failed: ${response.status} ${await response.text()}`);
   }
@@ -55,7 +54,7 @@ export async function send(threadId: string): Promise<void> {
       input: [{ type: "text", text: "hello from the L1 suite" }],
       mode: "auto",
     }),
-  }) as unknown as Response;
+  });
   if (response.status !== 200) {
     throw new Error(`send failed: ${response.status} ${await response.text()}`);
   }
@@ -70,9 +69,9 @@ export async function openWebSocket(path: string): Promise<WebSocket> {
     throw new Error(`unsupported websocket path: ${path}`);
   }
   const stub = env.HUB.get(env.HUB.idFromName("hub"));
-  const response = (await stub.fetch("https://hub/ws", {
+  const response = await stub.fetch("https://hub/ws", {
     headers: { upgrade: "websocket" },
-  })) as unknown as Response;
+  });
   if (response.status !== 101) {
     throw new Error(`websocket upgrade failed: ${response.status}`);
   }

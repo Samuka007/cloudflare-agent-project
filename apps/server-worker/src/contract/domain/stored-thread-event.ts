@@ -10,10 +10,7 @@ import {
   turnRequestEventDataSchema,
   turnRequestTargetSchema,
 } from "./thread-events.js";
-import {
-  threadEventScopeSchema,
-  type ThreadEventScope,
-} from "./thread-event-scope.js";
+import { threadEventScopeSchema, type ThreadEventScope } from "./thread-event-scope.js";
 import type { ThreadEvent, ThreadEventType } from "./provider-event.js";
 import type { TurnRequestTarget } from "./thread-events.js";
 
@@ -21,8 +18,7 @@ type ThreadEventByType = {
   [TType in ThreadEventType]: Extract<ThreadEvent, { type: TType }>;
 };
 
-type ThreadEventForType<TType extends ThreadEventType> =
-  ThreadEventByType[TType];
+type ThreadEventForType<TType extends ThreadEventType> = ThreadEventByType[TType];
 
 type StoredThreadEventDataFromEvent<TEvent extends ThreadEvent> = Omit<
   TEvent,
@@ -51,22 +47,20 @@ export interface StoredThreadEventParseArgs {
 }
 
 export type StoredThreadEventDataByType = {
-  [TType in ThreadEventType]: StoredThreadEventDataFromEvent<
-    ThreadEventForType<TType>
-  >;
+  [TType in ThreadEventType]: StoredThreadEventDataFromEvent<ThreadEventForType<TType>>;
 };
 
 export type StoredThreadEventDataForType<TType extends ThreadEventType> =
   StoredThreadEventDataByType[TType];
 
-type ThreadEventRowFromEvent<TEvent extends ThreadEvent> =
-  ThreadEventRowBase & {
-    type: TEvent["type"];
-    data: StoredThreadEventDataFromEvent<TEvent>;
-  };
+type ThreadEventRowFromEvent<TEvent extends ThreadEvent> = ThreadEventRowBase & {
+  type: TEvent["type"];
+  data: StoredThreadEventDataFromEvent<TEvent>;
+};
 
-export type ThreadEventRowOfType<TType extends ThreadEventType> =
-  ThreadEventRowFromEvent<ThreadEventForType<TType>>;
+export type ThreadEventRowOfType<TType extends ThreadEventType> = ThreadEventRowFromEvent<
+  ThreadEventForType<TType>
+>;
 
 export type ThreadEventRow = {
   [TType in ThreadEventType]: ThreadEventRowOfType<TType>;
@@ -82,9 +76,7 @@ const threadEventRowInputSchema = z.object({
   createdAt: z.number(),
 });
 
-const storedTurnRequestTypeSet = new Set<ThreadEventType>([
-  "client/turn/requested",
-]);
+const storedTurnRequestTypeSet = new Set<ThreadEventType>(["client/turn/requested"]);
 
 const LEGACY_TURN_REQUEST_TARGET = {
   kind: "new-turn",
@@ -118,16 +110,12 @@ function toStoredThreadEventData<TEvent extends ThreadEvent>(
   return data;
 }
 
-function omitStoredScopeFields(
-  data: Record<string, unknown>,
-): Record<string, unknown> {
+function omitStoredScopeFields(data: Record<string, unknown>): Record<string, unknown> {
   const { scope: _scope, turnId: _turnId, ...rest } = data;
   return rest;
 }
 
-export function parseStoredThreadEvent(
-  args: StoredThreadEventParseArgs,
-): ThreadEvent {
+export function parseStoredThreadEvent(args: StoredThreadEventParseArgs): ThreadEvent {
   const scopeResult = threadEventScopeSchema.safeParse(args.scope);
   if (!scopeResult.success) {
     throw new Error("Stored thread event is missing valid scope");
@@ -139,9 +127,7 @@ export function parseStoredThreadEvent(
 
   return threadEventSchema.parse({
     ...omitStoredScopeFields(eventData),
-    ...(args.providerThreadId != null
-      ? { providerThreadId: args.providerThreadId }
-      : {}),
+    ...(args.providerThreadId != null ? { providerThreadId: args.providerThreadId } : {}),
     scope,
     threadId: args.threadId,
     type: args.type,
@@ -168,8 +154,7 @@ export function buildThreadEventRow<TEvent extends ThreadEvent>(
 export function buildThreadEvent(row: ThreadEventRow): ThreadEvent {
   return parseStoredThreadEvent({
     data: row.data,
-    providerThreadId:
-      "providerThreadId" in row.data ? row.data.providerThreadId : undefined,
+    providerThreadId: "providerThreadId" in row.data ? row.data.providerThreadId : undefined,
     scope: row.scope,
     threadId: row.threadId,
     type: row.type,
@@ -197,7 +182,6 @@ export function parseThreadEventRow(value: unknown): ThreadEventRow {
   return parseThreadEventRowInput(row);
 }
 
-export const threadEventRowSchema =
-  threadEventRowInputSchema.transform<ThreadEventRow>((row) =>
-    parseThreadEventRowInput(row),
-  );
+export const threadEventRowSchema = threadEventRowInputSchema.transform<ThreadEventRow>((row) =>
+  parseThreadEventRowInput(row),
+);

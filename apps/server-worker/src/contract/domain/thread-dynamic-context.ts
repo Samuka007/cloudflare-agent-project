@@ -9,5 +9,4 @@ export const threadDynamicContextFileStatusValues = [
   "non_utf8",
 ] as const;
 
-export type ThreadDynamicContextFileStatus =
-  (typeof threadDynamicContextFileStatusValues)[number];
+export type ThreadDynamicContextFileStatus = (typeof threadDynamicContextFileStatusValues)[number];

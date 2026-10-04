@@ -59,9 +59,7 @@ export const createProjectSourceRequestSchema = z.discriminatedUnion("type", [
   createLocalPathProjectSourceRequestSchema,
   cloneProjectSourceRequestSchema,
 ]);
-export type CreateProjectSourceRequest = z.infer<
-  typeof createProjectSourceRequestSchema
->;
+export type CreateProjectSourceRequest = z.infer<typeof createProjectSourceRequestSchema>;
 
 export const createProjectRequestSchema = z.object({
   name: z.string().min(1),
@@ -84,9 +82,7 @@ export const createThreadSectionRequestSchema = z
     name: z.string().min(1),
   })
   .strict();
-export type CreateThreadSectionRequest = z.infer<
-  typeof createThreadSectionRequestSchema
->;
+export type CreateThreadSectionRequest = z.infer<typeof createThreadSectionRequestSchema>;
 
 export const updateThreadSectionRequestSchema = z
   .object({
@@ -94,18 +90,14 @@ export const updateThreadSectionRequestSchema = z
     name: z.string().min(1),
   })
   .strict();
-export type UpdateThreadSectionRequest = z.infer<
-  typeof updateThreadSectionRequestSchema
->;
+export type UpdateThreadSectionRequest = z.infer<typeof updateThreadSectionRequestSchema>;
 
 export const deleteThreadSectionRequestSchema = z
   .object({
     id: z.string().min(1),
   })
   .strict();
-export type DeleteThreadSectionRequest = z.infer<
-  typeof deleteThreadSectionRequestSchema
->;
+export type DeleteThreadSectionRequest = z.infer<typeof deleteThreadSectionRequestSchema>;
 
 export const threadSectionMutationResponseSchema = z
   .object({
@@ -114,9 +106,7 @@ export const threadSectionMutationResponseSchema = z
     updatedThreadCount: z.number().int().nonnegative(),
   })
   .strict();
-export type ThreadSectionMutationResponse = z.infer<
-  typeof threadSectionMutationResponseSchema
->;
+export type ThreadSectionMutationResponse = z.infer<typeof threadSectionMutationResponseSchema>;
 
 export const reorderProjectRequestSchema = z.object({
   previousProjectId: z.string().min(1).nullable(),
@@ -125,9 +115,7 @@ export const reorderProjectRequestSchema = z.object({
 export type ReorderProjectRequest = z.infer<typeof reorderProjectRequestSchema>;
 
 export const projectListIncludeOptionSchema = z.enum(["threads"]);
-export type ProjectListIncludeOption = z.infer<
-  typeof projectListIncludeOptionSchema
->;
+export type ProjectListIncludeOption = z.infer<typeof projectListIncludeOptionSchema>;
 
 export const projectListQuerySchema = z.object({
   include: z
@@ -176,9 +164,7 @@ export const projectWorkspaceRoutingQuerySchema = z
   .object(projectWorkspaceRoutingFields)
   .partial()
   .superRefine(rejectMultipleProjectWorkspaceSelectors);
-export type ProjectWorkspaceRoutingQuery = z.infer<
-  typeof projectWorkspaceRoutingQuerySchema
->;
+export type ProjectWorkspaceRoutingQuery = z.infer<typeof projectWorkspaceRoutingQuerySchema>;
 
 export const projectFilesQuerySchema = z
   .object({
@@ -214,9 +200,7 @@ export const projectFileContentQuerySchema = z
   })
   .partial({ hostId: true, environmentId: true })
   .superRefine(rejectMultipleProjectWorkspaceSelectors);
-export type ProjectFileContentQuery = z.infer<
-  typeof projectFileContentQuerySchema
->;
+export type ProjectFileContentQuery = z.infer<typeof projectFileContentQuerySchema>;
 
 export const projectBranchesQuerySchema = branchListQuerySchema.extend({
   hostId: z.string().min(1),
@@ -224,21 +208,15 @@ export const projectBranchesQuerySchema = branchListQuerySchema.extend({
 });
 export type ProjectBranchesQuery = z.infer<typeof projectBranchesQuerySchema>;
 
-export const projectBranchesResponseSchema = projectSourceCheckoutSchema.extend(
-  {
-    defaultWorktreeBaseBranch: z.string().min(1).nullable(),
-  },
-);
-export type ProjectBranchesResponse = z.infer<
-  typeof projectBranchesResponseSchema
->;
+export const projectBranchesResponseSchema = projectSourceCheckoutSchema.extend({
+  defaultWorktreeBaseBranch: z.string().min(1).nullable(),
+});
+export type ProjectBranchesResponse = z.infer<typeof projectBranchesResponseSchema>;
 
 export const projectAttachmentContentQuerySchema = z.object({
   path: z.string().min(1),
 });
-export type ProjectAttachmentContentQuery = z.infer<
-  typeof projectAttachmentContentQuerySchema
->;
+export type ProjectAttachmentContentQuery = z.infer<typeof projectAttachmentContentQuerySchema>;
 
 export const projectDefaultExecutionOptionsQuerySchema = z.object({});
 export type ProjectDefaultExecutionOptionsQuery = z.infer<
@@ -262,10 +240,7 @@ export const updateProjectRequestSchema = z
     name: z.string().min(1),
   })
   .partial()
-  .refine(
-    (value) => value.name !== undefined,
-    "At least one field must be provided",
-  );
+  .refine((value) => value.name !== undefined, "At least one field must be provided");
 export type UpdateProjectRequest = z.infer<typeof updateProjectRequestSchema>;
 
 export const updateProjectSourceRequestSchema = z
@@ -279,19 +254,13 @@ export const updateProjectSourceRequestSchema = z
     (value) => value.path !== undefined || value.isDefault !== undefined,
     "At least one field besides type must be provided",
   );
-export type UpdateProjectSourceRequest = z.infer<
-  typeof updateProjectSourceRequestSchema
->;
+export type UpdateProjectSourceRequest = z.infer<typeof updateProjectSourceRequestSchema>;
 
 /** `command` = Claude Code legacy slash command (`.claude/commands/*.md`). */
 export const providerCommandSourceSchema = z.enum(["skill", "command"]);
 export type ProviderCommandSource = z.infer<typeof providerCommandSourceSchema>;
 
-export const providerCommandOriginSchema = z.enum([
-  "builtin",
-  "project",
-  "user",
-]);
+export const providerCommandOriginSchema = z.enum(["builtin", "project", "user"]);
 export type ProviderCommandOrigin = z.infer<typeof providerCommandOriginSchema>;
 
 export const providerCommandSchema = z.object({
@@ -394,11 +363,7 @@ export const skillScopeSchema = z.enum([
 export type SkillScope = z.infer<typeof skillScopeSchema>;
 
 /** Command-surface provider a skill is discovered under. */
-export const skillProviderSchema = z.enum([
-  "claude-code",
-  "codex",
-  "acp-cursor",
-]);
+export const skillProviderSchema = z.enum(["claude-code", "codex", "acp-cursor"]);
 export type SkillProvider = z.infer<typeof skillProviderSchema>;
 
 /** Opaque, deterministic identity issued by authoritative host discovery. */
@@ -488,17 +453,12 @@ export const projectSkillFilesQuerySchema = z.object({
     z.string().min(1).nullable(),
   ),
 });
-export type ProjectSkillFilesQuery = z.infer<
-  typeof projectSkillFilesQuerySchema
->;
+export type ProjectSkillFilesQuery = z.infer<typeof projectSkillFilesQuerySchema>;
 
-export const projectSkillContentQuerySchema =
-  projectSkillFilesQuerySchema.extend({
-    path: z.string().min(1).max(4_096),
-  });
-export type ProjectSkillContentQuery = z.infer<
-  typeof projectSkillContentQuerySchema
->;
+export const projectSkillContentQuerySchema = projectSkillFilesQuerySchema.extend({
+  path: z.string().min(1).max(4_096),
+});
+export type ProjectSkillContentQuery = z.infer<typeof projectSkillContentQuerySchema>;
 
 export const skillContentResponseSchema = z.object({
   content: z.string(),
@@ -539,18 +499,14 @@ export const projectWithThreadsResponseSchema = projectResponseSchema.extend({
    */
   defaultExecutionOptions: projectExecutionDefaultsSchema.nullable(),
 });
-export type ProjectWithThreadsResponse = z.infer<
-  typeof projectWithThreadsResponseSchema
->;
+export type ProjectWithThreadsResponse = z.infer<typeof projectWithThreadsResponseSchema>;
 
 export const sidebarBootstrapResponseSchema = z.object({
   sections: z.array(threadSectionSchema),
   projects: z.array(projectWithThreadsResponseSchema),
   personalProject: projectWithThreadsResponseSchema,
 });
-export type SidebarBootstrapResponse = z.infer<
-  typeof sidebarBootstrapResponseSchema
->;
+export type SidebarBootstrapResponse = z.infer<typeof sidebarBootstrapResponseSchema>;
 
 export const uploadedPromptAttachmentSchema = z.object({
   type: z.enum(["localImage", "localFile"]),
@@ -559,9 +515,7 @@ export const uploadedPromptAttachmentSchema = z.object({
   mimeType: z.string().optional(),
   sizeBytes: z.number(),
 });
-export type UploadedPromptAttachment = z.infer<
-  typeof uploadedPromptAttachmentSchema
->;
+export type UploadedPromptAttachment = z.infer<typeof uploadedPromptAttachmentSchema>;
 
 export const copyProjectAttachmentsRequestSchema = z
   .object({
@@ -569,6 +523,4 @@ export const copyProjectAttachmentsRequestSchema = z
     paths: z.array(z.string().min(1)).min(1).max(100),
   })
   .strict();
-export type CopyProjectAttachmentsRequest = z.infer<
-  typeof copyProjectAttachmentsRequestSchema
->;
+export type CopyProjectAttachmentsRequest = z.infer<typeof copyProjectAttachmentsRequestSchema>;

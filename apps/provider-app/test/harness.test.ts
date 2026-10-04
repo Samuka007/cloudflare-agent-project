@@ -7,10 +7,7 @@ import {
   snapshotHarness,
 } from "../src/harness.js";
 import type { HarnessEnv } from "../src/harness.js";
-import {
-  EdgeAgentProviderAdapter,
-  type ManagerFacade,
-} from "../src/adapter.js";
+import { EdgeAgentProviderAdapter, type ManagerFacade } from "../src/adapter.js";
 import type {
   AdapterCommand,
   AdapterCommandOutcome,
@@ -90,9 +87,9 @@ describe("classifyExecutionSettingsChange (bb face)", () => {
 
   test("permission policy change → session; live fields → live; none → unchanged", () => {
     const current = executionOptions();
-    expect(
-      adapter.classifyExecutionSettingsChange({ current, next: { ...current } }),
-    ).toBe("unchanged");
+    expect(adapter.classifyExecutionSettingsChange({ current, next: { ...current } })).toBe(
+      "unchanged",
+    );
     expect(
       adapter.classifyExecutionSettingsChange({
         current,
@@ -164,9 +161,9 @@ describe("classifyHarnessChange (three-key face)", () => {
     const next = resolveHarness({ MODEL_RELAY_API_KEY: "rotated" });
     // Key rotation changes presence-only semantics? No: both present → unchanged.
     expect(adapter.classifyHarnessChange(current, next)).toBe("unchanged");
-    expect(
-      classifyHarnessProjection(projectHarness(current), projectHarness(next)),
-    ).toBe("unchanged");
+    expect(classifyHarnessProjection(projectHarness(current), projectHarness(next))).toBe(
+      "unchanged",
+    );
     const gainedKey = resolveHarness({});
     expect(adapter.classifyHarnessChange(gainedKey, next)).toBe("live");
   });
@@ -186,7 +183,7 @@ describe("adapter direct answers", () => {
     expect(init.ok).toBe(true);
     const list = await adapter.handleCommand({ type: "model/list" }, { timeoutMs: 1_000 });
     expect(list.ok).toBe(true);
-    const result = list.ok ? (list.result as { models: Array<{ model: string }> }) : undefined;
+    const result = list.ok ? (list.result as { models: { model: string }[] }) : undefined;
     expect(result?.models[0]?.model).toBe("glm-5.3");
     expect(seen).toEqual([]);
   });

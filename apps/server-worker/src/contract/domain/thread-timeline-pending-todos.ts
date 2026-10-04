@@ -28,15 +28,11 @@ export const threadTimelinePendingTodoItemSchema = z.object({
   text: z.string(),
   status: threadTimelinePendingTodoItemStatusSchema,
 });
-export type ThreadTimelinePendingTodoItem = z.infer<
-  typeof threadTimelinePendingTodoItemSchema
->;
+export type ThreadTimelinePendingTodoItem = z.infer<typeof threadTimelinePendingTodoItemSchema>;
 
 export const threadTimelinePendingTodosSchema = z.object({
   sourceSeq: z.number().int().nonnegative(),
   updatedAt: z.number(),
   items: z.array(threadTimelinePendingTodoItemSchema),
 });
-export type ThreadTimelinePendingTodos = z.infer<
-  typeof threadTimelinePendingTodosSchema
->;
+export type ThreadTimelinePendingTodos = z.infer<typeof threadTimelinePendingTodosSchema>;

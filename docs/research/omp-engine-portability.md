@@ -10,14 +10,14 @@
 
 ## 0. 结论速览
 
-| 问题 | 一句话结论 |
-|---|---|
-| ① 引擎架构 | loop 是**单文件双层 while + 三队列 + 标志位状态**（无枚举状态机），纯 TS；系统提示是 `string[]` 有序块、模板+数据一次性渲染、签名门控重建；工具契约 = 数据（schema 极小）+ description 文本承载协议；消息装配 = append-only 确定性投影，配对不变量是硬约束 |
-| ② `--mode rpc` | **换行分隔 JSONL 帧（非 JSON-RPC 2.0）**；单进程=单会话、帧内无 threadId；无 thread/list、无 shutdown；完成语义三段式 ack→`prompt_result`→`session_settled`；恢复面 = `open_session`/`switch_session`/`get_entries{since}` |
-| ③ 绑定清单 | TS→Rust 唯一通道是 **napi-rs 单 addon**（pi-natives，~130 导出）；**agent loop 本体零 Rust 依赖**（仅 tokenizer 有降级）；`child_process` 零使用（全 Bun.spawn / Rust 内嵌 shell）；provider 主路径是全局 `fetch` |
-| ④ 可嵌入性 | `@oh-my-pi/pi-coding-agent` 以**裸 TS 源码**发布，`createAgentSession()` 全可选参数、`hasUI` 默认 false，headless 是一等路径；**四条注入缝**（StreamFn 传输 / getApiKey 鉴权 / SessionStorage 存储 / customTools+host-tools 工具）证明引擎可脱离终端与真实 fs 运行 |
-| ⑤ 移植策略 | 三案均可行但死点不同：(a) 整包嵌入 = 垫片工程（Bun/sqlite/natives/fs 四债）；(b) 形状照抄 = 零垫片但语义转录风险；(c) 混合 = 只嵌 loop+provider 核心、工具走 host-tool 回桥，**与 omp 自身的缝完全同构**，证据最厚 |
-| ⑥ 工具集 | 源码权威 = **30 内建 + 3 隐藏 = 33**（README 的"31"过时）；13 核心 essential + 17 discoverable + 3 条件激活 |
+| 问题           | 一句话结论                                                                                                                                                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ① 引擎架构     | loop 是**单文件双层 while + 三队列 + 标志位状态**（无枚举状态机），纯 TS；系统提示是 `string[]` 有序块、模板+数据一次性渲染、签名门控重建；工具契约 = 数据（schema 极小）+ description 文本承载协议；消息装配 = append-only 确定性投影，配对不变量是硬约束         |
+| ② `--mode rpc` | **换行分隔 JSONL 帧（非 JSON-RPC 2.0）**；单进程=单会话、帧内无 threadId；无 thread/list、无 shutdown；完成语义三段式 ack→`prompt_result`→`session_settled`；恢复面 = `open_session`/`switch_session`/`get_entries{since}`                                         |
+| ③ 绑定清单     | TS→Rust 唯一通道是 **napi-rs 单 addon**（pi-natives，~130 导出）；**agent loop 本体零 Rust 依赖**（仅 tokenizer 有降级）；`child_process` 零使用（全 Bun.spawn / Rust 内嵌 shell）；provider 主路径是全局 `fetch`                                                  |
+| ④ 可嵌入性     | `@oh-my-pi/pi-coding-agent` 以**裸 TS 源码**发布，`createAgentSession()` 全可选参数、`hasUI` 默认 false，headless 是一等路径；**四条注入缝**（StreamFn 传输 / getApiKey 鉴权 / SessionStorage 存储 / customTools+host-tools 工具）证明引擎可脱离终端与真实 fs 运行 |
+| ⑤ 移植策略     | 三案均可行但死点不同：(a) 整包嵌入 = 垫片工程（Bun/sqlite/natives/fs 四债）；(b) 形状照抄 = 零垫片但语义转录风险；(c) 混合 = 只嵌 loop+provider 核心、工具走 host-tool 回桥，**与 omp 自身的缝完全同构**，证据最厚                                                 |
+| ⑥ 工具集       | 源码权威 = **30 内建 + 3 隐藏 = 33**（README 的"31"过时）；13 核心 essential + 17 discoverable + 3 条件激活                                                                                                                                                        |
 
 ---
 
@@ -42,12 +42,12 @@ packages/wire    (@oh-my-pi/pi-wire)        ← RPC 线协议纯类型（零依�
 ```ts
 // agent-loop.ts:620-626
 export function agentLoop(
-	prompts: AgentMessage[],
-	context: AgentContext,
-	config: AgentLoopConfig,
-	signal?: AbortSignal,
-	streamFn?: StreamFn,
-): EventStream<AgentEvent, AgentMessage[]>
+  prompts: AgentMessage[],
+  context: AgentContext,
+  config: AgentLoopConfig,
+  signal?: AbortSignal,
+  streamFn?: StreamFn,
+): EventStream<AgentEvent, AgentMessage[]>;
 ```
 
 - `agentLoopContinue(context, ...)`（agent-loop.ts:682-712）：无新 prompt 的续跑（重试/恢复队列）；空 context 报错（:688-690），**结尾 assistant 带未配对 toolCall 才允许续跑**（`unpairedToolCallTail` :661-670）——重放/恢复场景的守门规则。
@@ -72,16 +72,16 @@ while (true) {
 
 ```ts
 export interface AgentState {
-	systemPrompt: string[];
-	model: Model;
-	thinkingLevel?: Effort;
-	disableReasoning?: boolean;
-	tools: AgentTool<any>[];
-	messages: AgentMessage[];
-	isStreaming: boolean;
-	streamMessage: AgentMessage | null;
-	pendingToolCalls: Set<string>;
-	error?: string;
+  systemPrompt: string[];
+  model: Model;
+  thinkingLevel?: Effort;
+  disableReasoning?: boolean;
+  tools: AgentTool<any>[];
+  messages: AgentMessage[];
+  isStreaming: boolean;
+  streamMessage: AgentMessage | null;
+  pendingToolCalls: Set<string>;
+  error?: string;
 }
 ```
 
@@ -126,10 +126,10 @@ AgentMessage[] → transformContext() → convertToLlm() → per-provider normal
 ```ts
 // agent.ts:73-78
 function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
-	return messages.filter((m): m is Message => {
-		if (m.role === "assistant") return !isProviderRefusalMessage(m);
-		return m.role === "user" || m.role === "developer" || m.role === "toolResult";
-	});
+  return messages.filter((m): m is Message => {
+    if (m.role === "assistant") return !isProviderRefusalMessage(m);
+    return m.role === "user" || m.role === "developer" || m.role === "toolResult";
+  });
 }
 ```
 
@@ -140,9 +140,9 @@ function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
 **流式事件 → 内部事件**：provider 的 `AssistantMessageEvent`（start/text_delta/toolcall_delta/...）在 `streamAssistantResponse` 的 switch（:2352-2495）映射为 AgentEvent；流结束经 `retainCompletedToolCalls`（:2591-2603）——**error/abort 时只保留 `toolcall_end` 完成的工具调用**（未完成参数不安全，:2758-2760）。AgentEvent 全集（types.ts:1230-1252）：
 
 ```ts
-agent_start | agent_end | turn_start | turn_end
-message_start | message_update | message_end
-tool_execution_start | tool_execution_update | tool_stream_update | tool_execution_end
+agent_start | agent_end | turn_start | turn_end;
+message_start | message_update | message_end;
+tool_execution_start | tool_execution_update | tool_stream_update | tool_execution_end;
 ```
 
 **工具批次**：一个 assistant 消息 = 一个 batch；`concurrency: "shared"|"exclusive"`（或按参函数）调度（:3771-3797），`Promise.allSettled` 收集（:3799）——单工具失败不炸批次；**结果按批次 index 顺序入 history**（`flushResultMessages` :3381-3391，先完成也等槽位）。错误统一 `{ content: [{type:"text", text: e.message}], isError: true }`（:3595-3602）；`coerceToolResult`（:540-603）兜底畸形返回，空 error 内容补哨兵文本（Anthropic 拒绝空 error tool_result）。
@@ -220,10 +220,10 @@ export type AgentToolExecFn<...> = (
 const BASH_TIMEOUT_DESCRIPTION = `timeout in seconds; 0 disables the command deadline; nonzero values are clamped to ${TOOL_TIMEOUTS.bash.min}-${TOOL_TIMEOUTS.bash.max}`;
 
 const bashSchemaBase = type({
-	command: type("string"),
-	"timeout?": type("number").describe(BASH_TIMEOUT_DESCRIPTION),
-	"cwd?": "string",
-	"pty?": "boolean",
+  command: type("string"),
+  "timeout?": type("number").describe(BASH_TIMEOUT_DESCRIPTION),
+  "cwd?": "string",
+  "pty?": "boolean",
 });
 ```
 
@@ -260,15 +260,15 @@ No `head`/`tail`/redirection; output trunc by default, full result at `artifact:
 
 bb 侧每个 JSON-RPC 方法对应的 omp 原生帧：
 
-| bb 方法 | omp 原生帧 | 委托（AgentSession 方法） | 证据 |
-|---|---|---|---|
-| `initialize` | 读 `ready` 帧 + 可选 `negotiate_protocol` | — | rpc-mode.ts:1719-1723 |
-| `model/list` | `get_available_models` | `session.getAvailableModels` | rpc-mode.ts:2092-2125 |
-| `thread/start` | （spawn 新进程即新会话，无显式 new）| — | §2.4 |
-| `thread/resume` | `open_session {sessionDir}` 或 `switch_session {sessionPath}` | `openRpcSession` / `session.switchSession` | rpc-mode.ts:819-848, :789-792 |
-| `turn/start` | `prompt {message, images?, streamingBehavior?}` | `session.prompt` | rpc-mode.ts:1729-1751; agent-session.ts:6888 |
-| `turn/steer` | `steer {message, images?}` | `session.steer` | rpc-mode.ts:1753-1757; agent-session.ts:7829 |
-| `thread/stop` | `abort` + 关 stdin | `session.abort({reason})` | rpc-mode.ts:1778-1781; agent-session.ts:9109 |
+| bb 方法         | omp 原生帧                                                    | 委托（AgentSession 方法）                  | 证据                                         |
+| --------------- | ------------------------------------------------------------- | ------------------------------------------ | -------------------------------------------- |
+| `initialize`    | 读 `ready` 帧 + 可选 `negotiate_protocol`                     | —                                          | rpc-mode.ts:1719-1723                        |
+| `model/list`    | `get_available_models`                                        | `session.getAvailableModels`               | rpc-mode.ts:2092-2125                        |
+| `thread/start`  | （spawn 新进程即新会话，无显式 new）                          | —                                          | §2.4                                         |
+| `thread/resume` | `open_session {sessionDir}` 或 `switch_session {sessionPath}` | `openRpcSession` / `session.switchSession` | rpc-mode.ts:819-848, :789-792                |
+| `turn/start`    | `prompt {message, images?, streamingBehavior?}`               | `session.prompt`                           | rpc-mode.ts:1729-1751; agent-session.ts:6888 |
+| `turn/steer`    | `steer {message, images?}`                                    | `session.steer`                            | rpc-mode.ts:1753-1757; agent-session.ts:7829 |
+| `thread/stop`   | `abort` + 关 stdin                                            | `session.abort({reason})`                  | rpc-mode.ts:1778-1781; agent-session.ts:9109 |
 
 omp 原生命令全集远大于此（分发 switch rpc-mode.ts:1715-2424；机器可读命令表 `modes/rpc/wire/commands.ts:34-329`，codegen 源 = `wire/rpc-wire.schema.json`，6224 行 JSON Schema 2020-12）：`follow_up`/`remove_queued_message`/`promote_queued_message`/`abort_and_prompt`/`new_session`/`branch`/`fork`/`get_state`/`set_model`/`set_thinking_level` 族/`set_steering_mode`/`compact`/`bash`/`get_entries`/`get_tree`/`get_messages(_page)`/`set_event_filter`/`get_subagents` 族/`set_host_tools`/`set_host_uri_schemes` 等。**没有 `thread/list`、没有 `shutdown` 命令**——omp RPC 进程就是一个会话。
 
@@ -305,17 +305,17 @@ omp 原生命令全集远大于此（分发 switch rpc-mode.ts:1715-2424；机�
 
 唯一 TS→Rust 通道是 **napi-rs 单 addon**（`pi_natives.<platform>-<arch>[.variant].node`；发布为 per-platform optionalDependency 叶子包，docs/native-crates.md:9-22、natives-architecture.md:51-68）。`bun:ffi` 与 pi-* crate **完全无关**——只有 7 处 OS 库小调用（prctl/dup2/kernel32/user32 等，packages/utils/src/process-name.ts:17 等）。
 
-| crate | 用途 | workerd 兼容 |
-|---|---|---|
-| `pi-natives` | 唯一 N-API 出口 cdylib（~130 导出：Shell/PtySession/EditStore/grep/glob/countTokens/ast/...） | ❌ addon 无法加载 |
-| `pi-shell` + vendor/brush | 内嵌 bash 解释器（运行时无关、持久会话）+ 输出最小化器 | ❌ |
-| `pi-builtins` | ~100 个进程内 coreutils（cat/grep/sed/ls/find/jq...），"永不 fork" | ❌ |
-| `pi-ast` | tree-sitter/ast-grep 匹配与编辑 | ❌（tree-sitter C 库） |
-| `pi-edit` | 全部 edit 模式解析/匹配/应用；错误串与旧 TS 实现 "byte-identical" | ⚠️ 算法可移植（TS 祖先在 pi-mono） |
-| `pi-diff` | jsdiff v9 兼容 Myers diff，**N-API-free** | ✅ 语义可直移 |
-| `pi-vcs` | gitoxide/jj 进程内 VCS | ⚠️ 需退化 |
-| `pi-vfs`/`pi-walker` | 可注入 fs facade / 并行目录遍历 | ⚠️ 抽象可映射，性能降级 |
-| `pi-iso`/`pi-voice`/`pi-predict` | 工作树隔离/语音/输入补全 | ❌（内核/设备依赖，agent 语义无关） |
+| crate                            | 用途                                                                                          | workerd 兼容                        |
+| -------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `pi-natives`                     | 唯一 N-API 出口 cdylib（~130 导出：Shell/PtySession/EditStore/grep/glob/countTokens/ast/...） | ❌ addon 无法加载                   |
+| `pi-shell` + vendor/brush        | 内嵌 bash 解释器（运行时无关、持久会话）+ 输出最小化器                                        | ❌                                  |
+| `pi-builtins`                    | ~100 个进程内 coreutils（cat/grep/sed/ls/find/jq...），"永不 fork"                            | ❌                                  |
+| `pi-ast`                         | tree-sitter/ast-grep 匹配与编辑                                                               | ❌（tree-sitter C 库）              |
+| `pi-edit`                        | 全部 edit 模式解析/匹配/应用；错误串与旧 TS 实现 "byte-identical"                             | ⚠️ 算法可移植（TS 祖先在 pi-mono）  |
+| `pi-diff`                        | jsdiff v9 兼容 Myers diff，**N-API-free**                                                     | ✅ 语义可直移                       |
+| `pi-vcs`                         | gitoxide/jj 进程内 VCS                                                                        | ⚠️ 需退化                           |
+| `pi-vfs`/`pi-walker`             | 可注入 fs facade / 并行目录遍历                                                               | ⚠️ 抽象可映射，性能降级             |
+| `pi-iso`/`pi-voice`/`pi-predict` | 工作树隔离/语音/输入补全                                                                      | ❌（内核/设备依赖，agent 语义无关） |
 
 ### 3.2 Node 内建使用分桶（agent / ai / coding-agent / utils 四包）
 
@@ -356,12 +356,12 @@ omp 原生命令全集远大于此（分发 switch rpc-mode.ts:1715-2424；机�
 
 ### 4.3 四条注入缝（脱离终端/fs 的证据）
 
-| 缝 | 接口 | 证据 |
-|---|---|---|
-| 传输 | `StreamFn`（= streamSimple 签名）经 `AgentOptions.streamFn` 注入（"Custom stream function (for proxy backends, etc.)"，agent.ts:158） | agent/src/types.ts:31-33; agent.ts:158。**注意：`CreateAgentSessionOptions` 不暴露 streamFn**（sdk.ts 未列）——换传输须自建 Agent 或改 base，这是 Workers 的天然切口 |
-| 鉴权 | `options.getApiKey`（sdk.ts:2105-2106）+ `SimpleStreamOptions.apiKey`（静态串或 resolver，ai/types.ts:699-703）；KeyCascade 六级优先级可整体跳过 | cascade.ts:142 |
-| 会话存储 | `SessionStorage` 接口（session-storage.ts:119-207，含 `SessionStorageWriter` append/flush + `expectedSize` 乐观并发锁）；实现 File/Memory/**Indexed+Redis/SQL**（indexed-session-storage.ts:144；sql-session-storage.ts:269-295 自动探测 Postgres/MySQL）；`SessionManager` 构造接受注入 storage（:909），`inMemory()` :4151；SDK 注入点 `options.sessionManager`（sdk.ts:787-788） | Redis/SQL 后端先例 = **远端会话后端是官方支持的形态**；DO 版需实现 writeTextAtomic 乐观锁 |
-| 工具 | `customTools`（SDK 选项）+ RPC 层 `set_host_tools`（宿主注册工具，引擎调用时回发 `host_tool_call`、宿主回 `host_tool_result`，rpc-types.ts:689-718） | **引擎原生支持工具执行体在宿主进程**——bash 在 DO 外执行的合法形态 |
+| 缝       | 接口                                                                                                                                                                                                                                                                                                                                                                                | 证据                                                                                                                                                                |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 传输     | `StreamFn`（= streamSimple 签名）经 `AgentOptions.streamFn` 注入（"Custom stream function (for proxy backends, etc.)"，agent.ts:158）                                                                                                                                                                                                                                               | agent/src/types.ts:31-33; agent.ts:158。**注意：`CreateAgentSessionOptions` 不暴露 streamFn**（sdk.ts 未列）——换传输须自建 Agent 或改 base，这是 Workers 的天然切口 |
+| 鉴权     | `options.getApiKey`（sdk.ts:2105-2106）+ `SimpleStreamOptions.apiKey`（静态串或 resolver，ai/types.ts:699-703）；KeyCascade 六级优先级可整体跳过                                                                                                                                                                                                                                    | cascade.ts:142                                                                                                                                                      |
+| 会话存储 | `SessionStorage` 接口（session-storage.ts:119-207，含 `SessionStorageWriter` append/flush + `expectedSize` 乐观并发锁）；实现 File/Memory/**Indexed+Redis/SQL**（indexed-session-storage.ts:144；sql-session-storage.ts:269-295 自动探测 Postgres/MySQL）；`SessionManager` 构造接受注入 storage（:909），`inMemory()` :4151；SDK 注入点 `options.sessionManager`（sdk.ts:787-788） | Redis/SQL 后端先例 = **远端会话后端是官方支持的形态**；DO 版需实现 writeTextAtomic 乐观锁                                                                           |
+| 工具     | `customTools`（SDK 选项）+ RPC 层 `set_host_tools`（宿主注册工具，引擎调用时回发 `host_tool_call`、宿主回 `host_tool_result`，rpc-types.ts:689-718）                                                                                                                                                                                                                                | **引擎原生支持工具执行体在宿主进程**——bash 在 DO 外执行的合法形态                                                                                                   |
 
 ### 4.4 依赖判定与断裂顺序
 
@@ -385,14 +385,14 @@ import 顺序即断裂顺序（workerd）：
 
 ### 5.1 证据矩阵
 
-| 维度 | (a) 整包嵌入 | (b) 形状照抄 | (c) 混合（嵌内核+适配工具） |
-|---|---|---|---|
-| 必须垫/换的面 | pi-utils import 期 Bun.env 副作用；`from "bun"`/bun:sqlite ×22；pi-natives ×3 直接 import；node:fs 同步族；sdk.ts discovery×9 全换预喂 | 无垫片；但要转录 §1 全部语义为代码+测试 | 仅 agent-core 三 API（env/sleep/hash）+ pi-ai 少量 Bun 指纹（目标 provider 路径）；SessionStorage→DO 适配器（有 Redis/SQL 先例可抄） |
-| 语义保真 | 结构性高（同代码） | 取决于转录测试覆盖；omp loop 体 ~1800 行、边界情形密集（§1.4-1.6 的 peek/dequeue/收账/占位规则） | loop 同代码=高；工具语义按需抄数据（schema+description 原文在 §1.9） |
-| workerd 风险 | 断裂顺序 §4.4 全中；长尾 Bun 使用不可枚举尽 | 无运行时风险 | 中低；风险集中在 SessionStorage 并发语义与 ArkType（纯 TS，可跑） |
-| 上游同步 | fork 面大（垫片层随上游漂移） | 无 fork；语义漂移靠测试钉 | fork 面 = agent-core+ai 子集；接口缝（StreamFn/SessionStorage）稳定 |
-| 死点 | workerd 无法加载 .node → pi-natives 全家必死 → bash/grep/edit/read 增强全失；等于"有脑无手"，工具必须外置——而外置即走向 (c) | live-steering/aside/pause 三轴 + 配对不变量 + append-only 重建是隐性契约，漏一条即静默行为差 | pi-tui/tools 语义件与 SDK 耦合需抽型；`CreateAgentSessionOptions` 不暴露 streamFn → 必须绕 SDK 自建 Agent |
-| 与既有裁定的关系 | 与 #28 M0 范围（bash-only+Anthropic）错配（带入大量用不到的面） | 与 M0 完全同构；future 全量工具时重抄面大 | M0 用 (b) 的窄面起手、future 工具扩张时自然滑向 (c) |
+| 维度             | (a) 整包嵌入                                                                                                                           | (b) 形状照抄                                                                                     | (c) 混合（嵌内核+适配工具）                                                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 必须垫/换的面    | pi-utils import 期 Bun.env 副作用；`from "bun"`/bun:sqlite ×22；pi-natives ×3 直接 import；node:fs 同步族；sdk.ts discovery×9 全换预喂 | 无垫片；但要转录 §1 全部语义为代码+测试                                                          | 仅 agent-core 三 API（env/sleep/hash）+ pi-ai 少量 Bun 指纹（目标 provider 路径）；SessionStorage→DO 适配器（有 Redis/SQL 先例可抄） |
+| 语义保真         | 结构性高（同代码）                                                                                                                     | 取决于转录测试覆盖；omp loop 体 ~1800 行、边界情形密集（§1.4-1.6 的 peek/dequeue/收账/占位规则） | loop 同代码=高；工具语义按需抄数据（schema+description 原文在 §1.9）                                                                 |
+| workerd 风险     | 断裂顺序 §4.4 全中；长尾 Bun 使用不可枚举尽                                                                                            | 无运行时风险                                                                                     | 中低；风险集中在 SessionStorage 并发语义与 ArkType（纯 TS，可跑）                                                                    |
+| 上游同步         | fork 面大（垫片层随上游漂移）                                                                                                          | 无 fork；语义漂移靠测试钉                                                                        | fork 面 = agent-core+ai 子集；接口缝（StreamFn/SessionStorage）稳定                                                                  |
+| 死点             | workerd 无法加载 .node → pi-natives 全家必死 → bash/grep/edit/read 增强全失；等于"有脑无手"，工具必须外置——而外置即走向 (c)            | live-steering/aside/pause 三轴 + 配对不变量 + append-only 重建是隐性契约，漏一条即静默行为差     | pi-tui/tools 语义件与 SDK 耦合需抽型；`CreateAgentSessionOptions` 不暴露 streamFn → 必须绕 SDK 自建 Agent                            |
+| 与既有裁定的关系 | 与 #28 M0 范围（bash-only+Anthropic）错配（带入大量用不到的面）                                                                        | 与 M0 完全同构；future 全量工具时重抄面大                                                        | M0 用 (b) 的窄面起手、future 工具扩张时自然滑向 (c)                                                                                  |
 
 ### 5.2 证据指向的结构事实（供裁决，不代裁决）
 
@@ -411,39 +411,39 @@ import 顺序即断裂顺序（workerd）：
 
 ### 核心 13（essential，永远 top-level；essential-tools.ts:23-37）
 
-| 工具 | 一句话 |
-|---|---|
-| `read` | 文件/目录/URL/内部 URI 读取；行选择器、归档/SQLite/PDF/图片/视频分派 |
-| `write` | 文件创建/覆盖；同时是 `xd://` 设备的唯一执行传输 |
-| `bash` | 持久 shell：单事实命令/管道；timeout/cwd/pty/async/service 模式 |
-| `edit` | 外科手术式编辑（apply_patch 风格 envelope，hashline 锚） |
-| `glob` | 按模式列文件/目录（gitignore 感知） |
-| `find` | 语义 grep（jfind）：按"这段代码做什么"找文件+行段 |
-| `eval` | JS/Python 内核执行 + batch LLM/judge 助手 |
-| `task` | 派生子代理（worktree 隔离可选），递归深度门控 |
-| `wait` | 等待后台 job/服务/peer 消息 |
-| `learn` | 可复用经验写入长期记忆（可升级为 managed skill） |
-| `manage_skill` | 创建/更新/删除隔离 managed skill |
-| `context_notes` | 读/替换持久上下文笔记本 |
-| `new_context` | 请求全新上下文窗口 |
+| 工具            | 一句话                                                               |
+| --------------- | -------------------------------------------------------------------- |
+| `read`          | 文件/目录/URL/内部 URI 读取；行选择器、归档/SQLite/PDF/图片/视频分派 |
+| `write`         | 文件创建/覆盖；同时是 `xd://` 设备的唯一执行传输                     |
+| `bash`          | 持久 shell：单事实命令/管道；timeout/cwd/pty/async/service 模式      |
+| `edit`          | 外科手术式编辑（apply_patch 风格 envelope，hashline 锚）             |
+| `glob`          | 按模式列文件/目录（gitignore 感知）                                  |
+| `find`          | 语义 grep（jfind）：按"这段代码做什么"找文件+行段                    |
+| `eval`          | JS/Python 内核执行 + batch LLM/judge 助手                            |
+| `task`          | 派生子代理（worktree 隔离可选），递归深度门控                        |
+| `wait`          | 等待后台 job/服务/peer 消息                                          |
+| `learn`         | 可复用经验写入长期记忆（可升级为 managed skill）                     |
+| `manage_skill`  | 创建/更新/删除隔离 managed skill                                     |
+| `context_notes` | 读/替换持久上下文笔记本                                              |
+| `new_context`   | 请求全新上下文窗口                                                   |
 
 ### 其余 17（discoverable——xdev 开启时降为 `xd://` 设备，从 wire tools 数组摘下、经 read/write 传输派发；xdev.ts:61-67, :228-241；read/write 永不摘除）
 
-| 工具 | 一句话 |
-|---|---|
-| `grep` | 正则/目标搜索文件内容 |
-| `ast_grep` | AST 结构化搜索（50+ tree-sitter 语法） |
-| `ast_edit` | AST 感知结构化改写，staged 预览+裁决 |
-| `lsp` | LSP 查询 14 ops（诊断/hover/定义/重命名…） |
-| `debug` | DAP 调试器（断点/单步/变量/内存） |
-| `ida` | 跨 agent 共享 IDA Pro 数据库 |
-| `github` | gh 包装（repo/PR/issue/code search/Actions） |
-| `checkpoint` | git 快照保存会话状态（与 rewind 成对自动补齐） |
-| `rewind` | 回滚到 checkpoint |
-| `todo` | 结构化 todo 列表（exclusive 并发） |
-| `web_search` | 多后端联网搜索 |
-| `ask` | 向用户结构化提问 |
-| `security_scan` | 原生安全审查 + Codex Security 云操作 |
+| 工具                                            | 一句话                                                |
+| ----------------------------------------------- | ----------------------------------------------------- |
+| `grep`                                          | 正则/目标搜索文件内容                                 |
+| `ast_grep`                                      | AST 结构化搜索（50+ tree-sitter 语法）                |
+| `ast_edit`                                      | AST 感知结构化改写，staged 预览+裁决                  |
+| `lsp`                                           | LSP 查询 14 ops（诊断/hover/定义/重命名…）            |
+| `debug`                                         | DAP 调试器（断点/单步/变量/内存）                     |
+| `ida`                                           | 跨 agent 共享 IDA Pro 数据库                          |
+| `github`                                        | gh 包装（repo/PR/issue/code search/Actions）          |
+| `checkpoint`                                    | git 快照保存会话状态（与 rewind 成对自动补齐）        |
+| `rewind`                                        | 回滚到 checkpoint                                     |
+| `todo`                                          | 结构化 todo 列表（exclusive 并发）                    |
+| `web_search`                                    | 多后端联网搜索                                        |
+| `ask`                                           | 向用户结构化提问                                      |
+| `security_scan`                                 | 原生安全审查 + Codex Security 云操作                  |
 | `memory_edit` / `retain` / `recall` / `reflect` | 记忆四件套（backend 可插拔：local/Hindsight/Mnemopi） |
 
 ### 隐藏 3（条件激活）

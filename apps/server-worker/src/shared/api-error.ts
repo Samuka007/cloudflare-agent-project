@@ -36,9 +36,7 @@ export function apiErrorHandler(error: unknown, ctx: Context): Response {
         code: error.code,
         message: error.message,
         ...(error.details !== undefined ? { details: error.details } : {}),
-        ...(error.retryable !== undefined
-          ? { retryable: error.retryable }
-          : {}),
+        ...(error.retryable !== undefined ? { retryable: error.retryable } : {}),
       },
       error.status as 400,
     );
@@ -55,10 +53,7 @@ export function apiErrorHandler(error: unknown, ctx: Context): Response {
     );
   }
   console.error("unhandled error", error);
-  return ctx.json(
-    { code: "internal", message: "Internal server error", retryable: true },
-    500,
-  );
+  return ctx.json({ code: "internal", message: "Internal server error", retryable: true }, 500);
 }
 
 /** Carries zod issues through the throw path without importing zod here. */
@@ -77,13 +72,8 @@ interface ZodLikeError {
 }
 
 export function toApiError(error: unknown): Error {
-  if (
-    error &&
-    typeof error === "object" &&
-    "issues" in error &&
-    Array.isArray((error as ZodLikeError).issues)
-  ) {
-    return new ZodErrorHolder((error as ZodLikeError).issues);
+  if (error && typeof error === "object" && "issues" in error && Array.isArray(error.issues)) {
+    return new ZodErrorHolder(error.issues);
   }
   if (error instanceof Error) {
     return error;

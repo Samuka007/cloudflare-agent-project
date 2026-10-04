@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { runDurableObjectAlarm } from "cloudflare:test";
-import {
-  fakeExecutionContext,
-  fakeExecutionOptions,
-} from "../../src/testing/fake-provider.js";
+import { fakeExecutionContext, fakeExecutionOptions } from "../../src/testing/fake-provider.js";
 import type { AdapterCommand } from "../../src/provider-adapter.js";
 import { executionIdFor } from "../../src/seam/machine-dispatch.js";
 import {
@@ -50,10 +47,7 @@ const turnStart = (clientRequestId: string): AdapterCommand => ({
  * fake timers cannot reach into the runtime, so ordering can only be awaited
  * against the platform clock (same exception as server-worker's lease suite).
  */
-async function waitUntil(
-  condition: () => Promise<boolean>,
-  label: string,
-): Promise<void> {
+async function waitUntil(condition: () => Promise<boolean>, label: string): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (!(await condition())) {
     if (Date.now() > deadline) {
@@ -64,7 +58,6 @@ async function waitUntil(
     await promise;
   }
 }
-
 
 describe("command lifecycle and audit rows", () => {
   it("walks pending → fetched → completed with one ok attempt and a monotonic cursor", async () => {

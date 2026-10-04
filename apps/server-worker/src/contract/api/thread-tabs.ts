@@ -148,6 +148,4 @@ export const updateThreadTabsRequestSchema = z
     tabs: threadTabsSchema,
   })
   .strict();
-export type UpdateThreadTabsRequest = z.infer<
-  typeof updateThreadTabsRequestSchema
->;
+export type UpdateThreadTabsRequest = z.infer<typeof updateThreadTabsRequestSchema>;

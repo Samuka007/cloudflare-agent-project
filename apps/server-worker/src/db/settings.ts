@@ -1,18 +1,12 @@
 import type { Env } from "../env.js";
-import {
-  defaultAppSettings,
-  type AppSettings,
-} from "../contract/domain/app-settings.js";
+import { defaultAppSettings, type AppSettings } from "../contract/domain/app-settings.js";
 import {
   defaultExperiments,
   experimentsSchema,
   type Experiments,
 } from "../contract/domain/experiments.js";
 import type { AppKeybindingOverrides } from "../contract/domain/app-keybindings.js";
-import {
-  toAppSettingsDbRow,
-  type AppSettingsDbRow,
-} from "./rows.js";
+import { toAppSettingsDbRow, type AppSettingsDbRow } from "./rows.js";
 
 /**
  * app_settings / system_experiments / app_theme persistence, ported from bb
@@ -68,9 +62,7 @@ export async function setAppSettings(env: Env, settings: AppSettings): Promise<v
     .run();
 }
 
-export async function getKeybindingOverrides(
-  env: Env,
-): Promise<AppKeybindingOverrides> {
+export async function getKeybindingOverrides(env: Env): Promise<AppKeybindingOverrides> {
   const row = await getAppSettingsRow(env);
   if (!row) {
     return [];
@@ -102,9 +94,7 @@ export async function setKeybindingOverrides(
 
 export async function getExperiments(env: Env): Promise<Experiments> {
   const merged: Experiments = { ...defaultExperiments };
-  const { results } = await env.DB.prepare(
-    "SELECT key, value FROM system_experiments",
-  ).all();
+  const { results } = await env.DB.prepare("SELECT key, value FROM system_experiments").all();
   for (const row of results) {
     const key = row.key;
     if (typeof key === "string" && key in merged) {
@@ -116,12 +106,11 @@ export async function getExperiments(env: Env): Promise<Experiments> {
 
 export async function setExperiments(env: Env, experiments: Experiments): Promise<void> {
   const now = Date.now();
-  const stmts = (Object.keys(experiments) as Array<keyof Experiments>).map((key) =>
+  const stmts = (Object.keys(experiments) as (keyof Experiments)[]).map((key) =>
     env.DB.prepare(
       `INSERT INTO system_experiments (key, value, updated_at) VALUES (?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-    )
-      .bind(key, experiments[key] ? 1 : 0, now),
+    ).bind(key, experiments[key] ? 1 : 0, now),
   );
   await env.DB.batch(stmts);
 }
@@ -136,7 +125,10 @@ export async function getStoredAppearance(env: Env): Promise<StoredAppearance | 
     "SELECT theme_id, favicon_color FROM app_theme WHERE id = 'app_theme'",
   ).first();
   return row
-    ? { themeId: String(row.theme_id), faviconColor: row.favicon_color === null ? null : String(row.favicon_color) }
+    ? {
+        themeId: String(row.theme_id),
+        faviconColor: row.favicon_color === null ? null : String(row.favicon_color),
+      }
     : null;
 }
 
@@ -149,6 +141,4 @@ export async function setStoredAppearance(env: Env, appearance: StoredAppearance
     .run();
 }
 
-export {
-  applyAppKeybindingOverrides,
-} from "../contract/domain/app-keybindings.js";
+export { applyAppKeybindingOverrides } from "../contract/domain/app-keybindings.js";

@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  watchSetFingerprint,
-  type WatchInterest,
-} from "../../src/watch-set.js";
+import { watchSetFingerprint, type WatchInterest } from "../../src/watch-set.js";
 import type { OrchestratorStub } from "../helpers.js";
 import { openRequest, orchestratorFor } from "../helpers.js";
 
@@ -13,8 +10,7 @@ import { openRequest, orchestratorFor } from "../helpers.js";
  * open) resolves without emitting.
  */
 
-const orchestrator = (): OrchestratorStub =>
-  orchestratorFor();
+const orchestrator = (): OrchestratorStub => orchestratorFor();
 
 const workspace = (environmentId: string): WatchInterest => ({
   kind: "environment-detail",
@@ -48,9 +44,7 @@ describe("watch-set generation+fingerprint machine (bb §1.5)", () => {
       {
         type: "watch-set.replace",
         generation: 1,
-        workspaceTargets: [
-          { environmentId: "env-1", workspaceContext: "ctx:env-1" },
-        ],
+        workspaceTargets: [{ environmentId: "env-1", workspaceContext: "ctx:env-1" }],
         threadStorageTargets: [],
       },
     ]);
@@ -111,9 +105,7 @@ describe("watch-set generation+fingerprint machine (bb §1.5)", () => {
     if (opened.kind !== "opened") return;
     expect(opened.watchSet).toEqual({
       generation: 1,
-      workspaceTargets: [
-        { environmentId: "env-1", workspaceContext: "ctx:env-1" },
-      ],
+      workspaceTargets: [{ environmentId: "env-1", workspaceContext: "ctx:env-1" }],
       threadStorageTargets: [],
     });
     expect(await orch.drainDaemonOutbox()).toEqual([]);
@@ -131,14 +123,8 @@ describe("watch-set generation+fingerprint machine (bb §1.5)", () => {
       removals: [],
     });
     const set = await orch.reconcileWatchSet();
-    expect(set.workspaceTargets.map((t) => t.environmentId)).toEqual([
-      "env-1",
-      "env-2",
-    ]);
-    expect(set.threadStorageTargets.map((t) => t.threadId)).toEqual([
-      "thr_1",
-      "thr_2",
-    ]);
+    expect(set.workspaceTargets.map((t) => t.environmentId)).toEqual(["env-1", "env-2"]);
+    expect(set.threadStorageTargets.map((t) => t.threadId)).toEqual(["thr_1", "thr_2"]);
     expect(watchSetFingerprint(set)).toBe(
       JSON.stringify({
         workspaceTargets: set.workspaceTargets,

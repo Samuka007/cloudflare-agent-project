@@ -8,16 +8,22 @@
       { "name": "AGENT_DO", "class_name": "AgentDO" },
       // The composed hookup: the REAL per-machine service DO (#30) — the
       // production binding shape — instead of the in-package fake.
-      { "name": "DAEMON_SERVICE", "class_name": "DaemonServiceDO" }
-    ]
+      { "name": "DAEMON_SERVICE", "class_name": "DaemonServiceDO" },
+    ],
   },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["AgentDO", "DaemonServiceDO"] }
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AgentDO", "DaemonServiceDO"] }],
+  "kv_namespaces": [
+    {
+      // Edge shield (#36): hostKey-hash auth cache for the daemon face this
+      // rig composes. Optional at runtime; bound here to match production.
+      "binding": "DAEMON_EDGE_KV",
+      "id": "5b39e87d559b424a8f6432e6a2bc9ff7",
+    },
   ],
   "vars": {
     "ENROLL_KEY": "[REDACTED-staging-secret]",
     "DAEMON_HOST_KEY": "[REDACTED-staging-secret]",
     "DAEMON_HOST_ID": "local",
-    "DAEMON_MACHINE_ID": "local"
-  }
+    "DAEMON_MACHINE_ID": "local",
+  },
 }

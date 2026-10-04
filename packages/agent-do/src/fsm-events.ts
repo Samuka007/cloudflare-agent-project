@@ -31,13 +31,7 @@ export function isBlobRef(value: unknown): value is BlobRef {
   return blobRefSchema.safeParse(value).success;
 }
 
-const toolResultStatusSchema = z.enum([
-  "ok",
-  "error",
-  "timeout",
-  "cancelled",
-  "outcome_unknown",
-]);
+const toolResultStatusSchema = z.enum(["ok", "error", "timeout", "cancelled", "outcome_unknown"]);
 export type ToolResultStatus = z.infer<typeof toolResultStatusSchema>;
 
 export const turnFailedReasonSchema = z.enum([
@@ -47,11 +41,7 @@ export const turnFailedReasonSchema = z.enum([
 ]);
 export type TurnFailedReason = z.infer<typeof turnFailedReasonSchema>;
 
-export const dispatchOutcomeSchema = z.enum([
-  "accepted",
-  "completed_cached",
-  "host_offline",
-]);
+export const dispatchOutcomeSchema = z.enum(["accepted", "completed_cached", "host_offline"]);
 
 const toolCallDataSchema = z.object({
   name: z.string().min(1),
@@ -192,10 +182,10 @@ export interface AgentEventRecord<TType extends AgentEventType = AgentEventType>
 }
 
 /** Envelope fields minus server-owned `seq` (append input). */
-export type AgentEventInput<TType extends AgentEventType = AgentEventType> = {
+export interface AgentEventInput<TType extends AgentEventType = AgentEventType> {
   type: TType;
   data: AgentEventDataByType[TType];
-};
+}
 
 /** Fully discriminated event union — narrowing works in switch on `type`. */
 export type AnyAgentEvent = {
