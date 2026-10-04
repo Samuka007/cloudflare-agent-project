@@ -190,6 +190,17 @@ export function anthropicRequestBody(
     return { role: "assistant", content };
   };
 
+  // #147 completed-rewind branch cut: the summary replaces the hidden
+  // exploration span — omp session-context.ts:339-343 emits the summary
+  // first ("entry = compaction"), then the kept tail. It opens the request
+  // as user-side material of the first user message ([async-result] tag
+  // family: model-side recognition without a second message role).
+  if (request.branchCut !== undefined) {
+    pendingUserBlocks.push({
+      type: "text",
+      text: `[branch-summary] ${request.branchCut.summary}`,
+    });
+  }
   // turn input opens the history.
   pendingUserBlocks.push({ type: "text", text: request.input });
 
@@ -243,7 +254,9 @@ export function anthropicRequestBody(
     // tool) rides the surface, native reasoning is pinned OFF regardless of
     // the caller's thinking config — the two must never coexist.
     thinking:
-      request.forceReasoningOff === true ? { type: "disabled" } : (options.thinking ?? { type: "disabled" }),
+      request.forceReasoningOff === true
+        ? { type: "disabled" }
+        : (options.thinking ?? { type: "disabled" }),
     system: SYSTEM_PROMPT_BLOCKS.map((block) => ({ type: "text", text: block })),
     // The tool surface renders from the compile-time registry only — the
     // single schema authority (control-plane-layer.md §1.1, M1.5 T1). The
@@ -255,7 +268,9 @@ export function anthropicRequestBody(
           ? subagentWireTools(request.spawnPolicyBlocked === true)
           : MAIN_WIRE_TOOLS;
       const gated =
-        request.experimentalGates === undefined ? surface : enabledToolNames(surface, request.experimentalGates);
+        request.experimentalGates === undefined
+          ? surface
+          : enabledToolNames(surface, request.experimentalGates);
       return wireToolSet(M0_RENDER_FLAGS, gated);
     })(),
     // M1.5 T17: the ladder's forced attempt pins `yield` as the tool choice
