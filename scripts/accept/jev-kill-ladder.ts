@@ -824,7 +824,10 @@ async function main(): Promise<void> {
   }
 }
 
-const invokedDirectly = process.argv[1]?.includes("jev-kill-ladder");
+// endWith and NOT includes: `bun test test/jev-kill-ladder.test.ts` also has
+// "jev-kill-ladder" in argv[1], and importing the module must not run the CLI
+// (main() sets process.exitCode, which fails the test run even at 41/41 pass).
+const invokedDirectly = process.argv[1]?.endsWith("jev-kill-ladder.ts");
 if (invokedDirectly === true) {
   await main();
 }
