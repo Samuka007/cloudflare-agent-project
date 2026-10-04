@@ -1,0 +1,44 @@
+# 工具执行管线（tool execution）
+
+一次 tool_use 从模型到结果的完整路径的**单一正本**。四份上游：[control-plane-layer.md](control-plane-layer.md)（注册表/帧/设置的原设计）、[decomposition.md](decomposition.md)（模块边界）、[m15-ticket-set.md](../proposals/m15-ticket-set.md) §0（约束）、[omp-runtime-embedding.md](../research/omp-runtime-embedding.md)（spike 判决，2026-10-04 起生效）。
+
+## 管线（高层）
+
+```
+模型 tool_use
+  → AgentDO 回合循环：TOOL_REGISTRY 行校验（schema=omp verbatim，单 schema 权威）
+  → 按 class 路由：
+     edge  ── runEdgeTool（DO 本地执行器；journal 追加=DO storage 写，零 daemon）        [#91 已落地]
+     host  ── 工具无关派发帧 {tool, arguments, executionId, machineId, timeoutMs}
+               → DaemonService（租约会话）→ 宿主 daemon client（Bun）
+               → 宿主执行器 = **嵌入的 omp 工具运行时**（vendored，spike #125 判决）
+                 + 123 LoC 适配垫（executionId→toolCallId / content[]→output /
+                   truncation→outputTruncated / onUpdate→ExecutionUpdate）
+                 + native addon 版本钉死门禁（stale 拒启）
+               例外：bash 保留我方子进程执行体（omp=brush-core 内嵌 Rust shell，
+                 换引擎=推翻 M0 沙箱语义）；只 embed 其纯 TS 件               [#128 在做]
+     hybrid ─ 拆缝规则（分类表 §3.3）：控制/状态面归 AgentDO，执行体（fs/进程/natives）
+               归 daemon——按工具逐个拆（task=编排 DO/隔离工作区 daemon）
+  → 结果回灌：tool.result 落 journal（persist-then-wake），executionId 去重，
+     驱逐重放语义不变（replay 一致性=每票 L1 断言）
+```
+
+wire 面：`tools:` 数组只从注册表行渲染（wireToolSet），intent 字段按行策略注入（omp injectIntentIntoSchema 逐字）。
+
+## 不变量
+
+1. **派发帧永久工具无关**——加工具零 daemon 协议变更；daemon 链不知道工具语义
+2. **注册表=唯一 schema 权威**（编译期常量，零请求组装——实践 11）
+3. **先日志后应用**；已提交部分流永不重放（#71）
+4. 上游化：bb 面零改动（工具 wire 经 providerOwnsRuntimeSurface 透传——实践 10）
+5. omp 运行时 vendoring 钉版本 + native 门禁；Settings.loadIsolated 隔离目录
+
+## 状态（2026-10-04）
+
+- edge 三件+注册表骨架：**已落地**（#91/PR #120）
+- T2 wait（JobRegistry 接口）：#92 在跑
+- host 嵌入运行时 bring-up：#128 在跑（关键路径——10 张激活票 gated 于它）
+- T3 会话树（edge）：#93 在跑
+- 波 5 工具（github/lsp/debug 等）：激活票，等 #128
+
+历史注：嵌入路线是 spike #125 对"逐工具手工移植"的推翻（复用优先=实践 13；adapter 实测 123 LoC vs 15+ 工具各自重写）。
