@@ -18,6 +18,7 @@
 
 import { runClient } from "./connection.js";
 import type { ClientConfig } from "./identity.js";
+import { decodeTaskIsolationConfig } from "./task-isolation.js";
 
 function argValue(flag: string): string | undefined {
   const index = process.argv.indexOf(flag);
@@ -30,6 +31,7 @@ const config: ClientConfig = {
   dataDir: argValue("--dataDir") ?? process.env.POC_DAEMON_DATA ?? "/tmp/poc-daemon-data",
   sandboxRoot: argValue("--sandbox") ?? process.env.POC_SANDBOX_ROOT ?? "/tmp/poc-sandbox",
   enrollKey: process.env.POC_ENROLL_KEY ?? "poc-dev-enroll-key",
+  taskIsolation: decodeTaskIsolationConfig(process.env.DAEMON_TASK_ISOLATION),
 };
 
 await runClient(config);

@@ -230,6 +230,11 @@ const taskSchema = type({
   "schemaMode?": type("'permissive' | 'strict'").describe(
     "default permissive warns after retries; strict fails",
   ),
+  // omp task schema `"isolated?": "boolean"` (task/types.ts:81); the
+  // describe text is omp docs/tools/task.md:51 semantics at this policy.
+  "isolated?": type("boolean").describe(
+    "run in an isolated workspace copy; successful changes apply to the parent checkout; keep-alive agents retain the workspace across park",
+  ),
 });
 
 // omp yield.ts:262-269 (buildYieldParameters base, no outputSchema): the
@@ -451,10 +456,12 @@ User-authored skills separate; tool NEVER edits them.
 \`description\`: specific; drives discovery.
 No frontmatter in \`body\`; generated from \`name\` and \`description\`.`;
 // omp prompts/tools/task.md rendered at the M1.5 fixed policy: asyncEnabled,
-// batch/isolation/effort/evalTools/scout/IRC off, no model mentions, bundled
-// `task` agent only. The template's nested/`unless` conditionals exceed the
-// single-level {{#if}} resolver, so the resolved text is stored directly —
-// every clause is verbatim from the source template at that policy.
+// batch/effort/evalTools/scout/IRC off, isolation ON (T20 #110 — the
+// isolationEnabled+applyIsolatedChanges clause is the omp render at the
+// apply-gate default), no model mentions, bundled `task` agent only. The
+// template's nested/`unless` conditionals exceed the single-level {{#if}}
+// resolver, so the resolved text is stored directly — every clause is
+// verbatim from the source template at that policy.
 const TASK_DESCRIPTION_TEMPLATE = `Spawn one agent; ID returns immediately.
 
 # Results
@@ -468,6 +475,7 @@ Shared edits need one integration owner. Set interfaces in the task. Every task 
 \`name\`: CamelCase ≤32, auto-generated if omitted; address agent by name. \`outputSchema\` overrides agent/session schemas.
 \`solutionSpace\`: describe how open-ended the child's problem is: whether the fix or design is given, or which causes or designs remain open. Volume of work does not widen it; NEVER mention sibling agents or coordination. (\`one fix: rename, names given\`; \`one fix: slice end in paginate\`; \`single-flight cache load; races easy to miss\`; \`several retry API shapes; error classes to choose\`; \`deadlock cause open, no repro\`)
 \`schemaMode\`: default permissive warns after retries; strict fails.
+\`isolated\`: worktree; successful changes apply to parent.
 Children start blank; large payloads via \`local://<path>\`, NEVER inline.
 
 # Format

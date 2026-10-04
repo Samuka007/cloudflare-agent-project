@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync } from "n
 import { join } from "node:path";
 import { negotiationFailure } from "./backoff.js";
 import { log } from "./log.js";
+import type { TaskIsolationConfig } from "./task-isolation.js";
 
 /**
  * Client identity (§8.1): the ONLY persisted client state — hostId + hostKey
@@ -14,6 +15,8 @@ export interface ClientConfig {
   dataDir: string;
   sandboxRoot: string;
   enrollKey: string;
+  /** T20 #110 isolation policy — decoded from DAEMON_TASK_ISOLATION. */
+  taskIsolation: TaskIsolationConfig;
 }
 
 export interface ClientIdentity {

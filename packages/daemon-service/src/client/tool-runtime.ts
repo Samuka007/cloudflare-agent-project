@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { EvalKernelRuntime } from "./eval-kernel.js";
 import { threadIdFromExecutionId } from "../execution-id.js";
+import { IsolationManager, type TaskIsolationConfig } from "./task-isolation.js";
 
 /**
  * Vendored omp tool runtime (M1.5/T5' #128): host construction, native-addon
@@ -84,6 +85,8 @@ export interface ToolHost {
   settings: Settings;
   session: Record<string, unknown>;
   tools: Record<string, OmpTool>;
+  /** Daemon-private artifact root (T20 #110: isolation delta artifacts). */
+  artifactsRoot: string;
   /**
    * Per-frame bash tool view keyed by the thread-scoped shell sessionKey
    * (T9 #99): a fresh BashTool per dispatch carries `getSessionId` returning
@@ -92,6 +95,13 @@ export interface ToolHost {
    * createToolHost (the class is captured there — omp loads lazily).
    */
   bashView: (sessionKey: string) => OmpTool;
+  /**
+   * Per-cwd host view (T20 #110): omp tools rebuilt against a session
+   * clone whose cwd is the isolated workspace — same settings, artifacts,
+   * and agentDir, different path resolution. Cached per resolved cwd;
+   * sessions are few (one per isolated child), so the map stays small.
+   */
+  viewFor(cwd: string): ToolHost;
 }
 
 /**
@@ -231,28 +241,73 @@ export async function createToolHost(
     getArtifactsDir: () => artifacts.dir,
     allocateOutputArtifact: (toolType: string) => artifacts.allocatePath(toolType),
   };
-  const session = sessionBase as never;
-  const candidates: OmpTool[] = [
-    new GlobTool(session),
-    new GrepTool(session),
-    // T11 (#101): the judge role resolves through the session's model
-    // registry — absent here, every find degrades with the precise
-    // ToolError ("find has no model registry to resolve a judge from")
-    // until the daemon-side provider channel lands (ticket-large gap).
-    new FindTool(session),
-    new ReadTool(session),
-    new WriteTool(session),
-    new EditTool(session),
-  ];
-  const tools: Record<string, OmpTool> = {};
-  for (const tool of candidates) tools[tool.name] = tool;
-  // manage_skill rides omp's own enablement gate (autolearn.enabled pinned
-  // on above); when the gate closes the tool is simply absent from the map.
-  const manageSkill = ManageSkillTool.createIf(session);
-  if (manageSkill !== null) tools[manageSkill.name] = manageSkill;
-  const bashView = (sessionKey: string): OmpTool =>
-    new BashTool({ ...sessionBase, getSessionId: () => sessionKey });
-  return { machineId, workspaceRoot: cwd, settings, session, tools, bashView };
+  // Tool assembly is parameterized by cwd so isolation views (T20) rebuild
+  // the same candidate set against a session clone rooted in the workspace
+  // copy — omp tools capture `session.cwd` at construction.
+  const buildTools = (
+    sessionCwd: string,
+  ): { tools: Record<string, OmpTool>; bashView: (sessionKey: string) => OmpTool } => {
+    const viewBase = { ...sessionBase, cwd: sessionCwd };
+    const session = viewBase as never;
+    const candidates: OmpTool[] = [
+      new GlobTool(session),
+      new GrepTool(session),
+      // T11 (#101): the judge role resolves through the session's model
+      // registry — absent here, every find degrades with the precise
+      // ToolError ("find has no model registry to resolve a judge from")
+      // until the daemon-side provider channel lands (ticket #145).
+      new FindTool(session),
+      new ReadTool(session),
+      new WriteTool(session),
+      new EditTool(session),
+    ];
+    const tools: Record<string, OmpTool> = {};
+    for (const tool of candidates) tools[tool.name] = tool;
+    // manage_skill rides omp's own enablement gate (autolearn.enabled pinned
+    // on above); when the gate closes the tool is simply absent from the map.
+    const manageSkill = ManageSkillTool.createIf(session);
+    if (manageSkill !== null) tools[manageSkill.name] = manageSkill;
+    const bashView = (sessionKey: string): OmpTool =>
+      new BashTool({ ...viewBase, getSessionId: () => sessionKey });
+    return { tools, bashView };
+  };
+  const baseTools = buildTools(cwd);
+  // Per-cwd view cache (T20 #110) — closed over, never on the host object;
+  // sessions are few (one per isolated child), so the map stays small.
+  const viewCache = new Map<string, ToolHost>();
+  const viewFor = (viewCwd: string): ToolHost => {
+    const resolved = resolve(viewCwd);
+    const cached = viewCache.get(resolved);
+    if (cached !== undefined) return cached;
+    const built = buildTools(resolved);
+    const view: ToolHost = {
+      machineId,
+      workspaceRoot: resolved,
+      settings,
+      // The view session keeps the base's session-file/artifact bindings
+      // but resolves paths in the isolation workspace (omp tools read cwd).
+      session: { ...sessionBase, cwd: resolved },
+      tools: built.tools,
+      artifactsRoot: artifacts.dir,
+      bashView: built.bashView,
+      // Views do not nest: an isolated workspace is a plain directory, so
+      // every view shares the same resolver.
+      viewFor,
+    };
+    viewCache.set(resolved, view);
+    return view;
+  };
+  const host: ToolHost = {
+    machineId,
+    workspaceRoot: cwd,
+    settings,
+    session: sessionBase,
+    tools: baseTools.tools,
+    artifactsRoot: artifacts.dir,
+    bashView: baseTools.bashView,
+    viewFor,
+  };
+  return host;
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +480,8 @@ export interface ToolRuntimeConfig {
   /** Daemon-private settings directory (dataDir/omp-agent). */
   agentDir: string;
   machineId: string;
+  /** T20 #110 isolation policy (omp defaults; DAEMON_TASK_ISOLATION patch). */
+  taskIsolation: TaskIsolationConfig;
 }
 
 export class ToolRuntime {
@@ -432,6 +489,8 @@ export class ToolRuntime {
   private hostPromise: Promise<ToolHost> | null = null;
   /** Eval kernel seam (T10' #100) — lazily constructed, shares this config. */
   private evalRuntime: EvalKernelRuntime | null = null;
+  /** Task isolation backend (T20 #110) — lazily constructed over the host. */
+  private isolation: IsolationManager | null = null;
   /** Live runs by executionId (abort handle + idempotent re-forward answer). */
   readonly running = new Map<string, RunningTool>();
 
@@ -458,14 +517,24 @@ export class ToolRuntime {
     const live = this.running.get(frame.executionId);
     if (live !== undefined) return live.done;
     const controller = new AbortController();
-    const done = this.ensureHost().then((host) =>
-      frame.tool === "eval"
-        ? (this.evalRuntime ??= new EvalKernelRuntime(this.config)).execute(host, frame, {
-            onOutput,
-            cancelSignal: controller.signal,
-          })
-        : executeDispatch(host, frame, { onOutput, cancelSignal: controller.signal }),
-    );
+    const done = this.ensureHost().then((host) => {
+      // T20 #110: reserved isolation verbs route to the manager; every other
+      // frame resolves against the thread's isolation view when its child is
+      // workspace-isolated, else the base host.
+      this.isolation ??= new IsolationManager(host, this.config.taskIsolation);
+      const isolation = this.isolation;
+      const routedHost = isolation.hostFor(threadIdFromExecutionId(frame.executionId)) ?? host;
+      return isolation.execute(frame).then(
+        (handled) =>
+          handled ??
+          (frame.tool === "eval"
+            ? (this.evalRuntime ??= new EvalKernelRuntime(this.config)).execute(routedHost, frame, {
+                onOutput,
+                cancelSignal: controller.signal,
+              })
+            : executeDispatch(routedHost, frame, { onOutput, cancelSignal: controller.signal })),
+      );
+    });
     this.running.set(frame.executionId, { controller, done });
     void done
       .catch(() => undefined)

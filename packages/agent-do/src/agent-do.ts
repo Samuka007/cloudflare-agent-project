@@ -36,6 +36,7 @@ import type {
   DaemonServiceClient,
   DispatchOutcome,
   ExecutionUpdate,
+  IsolationOpOutcome,
   ToolResultPayload,
 } from "./daemon.js";
 import { ModelProviderError, type ModelRequest, type ModelStreamChunk } from "./provider.js";
@@ -54,6 +55,7 @@ import {
 import { WAIT_LIMIT_REACHED, type WaitToolContext, type WaitWake } from "./tools/wait.js";
 import {
   settleSpawn,
+  isolationRetainedNote,
   type RunSubagentRequest,
   type SubagentSpawnHost,
   type TaskToolContext,
@@ -62,6 +64,7 @@ import {
   canSpawnAtDepth,
   projectSpawnPlans,
   settlementForSpawn,
+  type SpawnPlanRecord,
 } from "./tools/task/types.js";
 import {
   childAssignment,
@@ -650,6 +653,35 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     if (settlementForSpawn(events, request.spawnId) !== undefined) {
       return { duplicated: true };
     }
+    // T20 #110 isolation closure rides the settlement (journal-first: the
+    // blocking caller wakes on the settle row, so the release outcome must
+    // be IN that row). omp split (isolation-runner.ts:377-381, 468-473):
+    // blocking agents are one-shot — release captures-merges at run end;
+    // background/keep-alive agents retain the workspace across park and
+    // only an explicit release captures-merges. Release failures settle
+    // failed (the delta did not land) and name the retained workspace.
+    let output = request.output;
+    if (plan.isolated && plan.isolation !== undefined) {
+      if (plan.mode === "blocking") {
+        const outcome =
+          this.env.DAEMON_SERVICE === undefined
+            ? ({ kind: "host_offline" } as const)
+            : await this.daemon().isolationOp({
+                machineId: plan.machineId,
+                threadId: this.requireThread(),
+                op: "release",
+                arguments: { threadId: plan.childThreadId },
+                timeoutMs: this.cfg.execTimeoutMs,
+              });
+        if (outcome.kind === "ok") {
+          output += `\n\n${outcome.result.output}`;
+        } else {
+          return this.settleIsolatedReleaseFailure(plan, request, outcome);
+        }
+      } else {
+        output += `\n\n${isolationRetainedNote(plan.isolation)}`;
+      }
+    }
     // Journal-first settlement (delivery text arrives summary-capped from the
     // child's rendering path — settleSpawn on the parent caps it defensively).
     await settleSpawn(this.taskSpawnSink(), {
@@ -658,24 +690,58 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       agentId: plan.agentId,
       childThreadId: plan.childThreadId,
       status: request.status,
-      output: request.output,
+      output,
     });
     if (plan.mode === "background" && plan.jobId !== null) {
       // Backflow marker for the parent's next run boundary; settleSpawn's
       // registry.settle already woke blocked waits, so ordering here is
       // journal-visible before the next turn's projection reads it.
+      // The T20 isolation suffix rides along — the parent agent needs the
+      // retention note in the model-visible backflow too.
       await this.appendEvent("task.async_result", {
         spawnId: plan.spawnId,
         agentId: plan.agentId,
         jobId: plan.jobId,
         status: request.status,
-        output: request.output,
+        output,
       });
     }
     this.wakeEdgeWaiter(plan.executionId, { kind: "job" });
     // M1.5 T17 supersession chain: when THIS DO is itself a subagent, the
     // settlement may void a terminal yield (stale) or resolve the last park.
     // The gate fold decides from the journal — a no-op when Main.
+    if (this.state.subagentIdentity !== null) {
+      await this.advanceChildRun();
+    }
+    return { duplicated: false };
+  }
+
+  /**
+   * T20 failure path: an isolated blocking spawn whose release failed (merge
+   * conflict, patch refused, capture write) settles the spawn failed with
+   * the daemon's error text — the workspace/branch/patch artifacts survive
+   * and are named in it (omp merge-failure semantics).
+   */
+  private async settleIsolatedReleaseFailure(
+    plan: SpawnPlanRecord,
+    request: { spawnId: string; status: "ok" | "error"; output: string },
+    outcome: Extract<IsolationOpOutcome, { kind: "error" | "host_offline" }>,
+  ): Promise<{ duplicated: false }> {
+    const detail = outcome.kind === "error" ? outcome.error : "daemon host offline";
+    const output = `${request.output}\n\n[isolated changes NOT applied: ${detail}]`;
+    // Blocking spawns are the only released-at-settle path; their jobId is
+    // always null (no JobRegistry row to settle, no async-result backflow).
+    await settleSpawn(this.taskSpawnSink(), {
+      spawnId: plan.spawnId,
+      jobId: plan.jobId,
+      agentId: plan.agentId,
+      childThreadId: plan.childThreadId,
+      status: "error",
+      output,
+    });
+    this.wakeEdgeWaiter(plan.executionId, { kind: "job" });
+    // T17 supersession chain runs on the failure path too — a subagent
+    // parent's stale-yield/park fold must see the failed settlement.
     if (this.state.subagentIdentity !== null) {
       await this.advanceChildRun();
     }
@@ -707,6 +773,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       maxOutputBytes: this.cfg.taskMaxOutputBytes,
       maxOutputLines: this.cfg.taskMaxOutputLines,
       inlineSummaryCapChars: this.cfg.taskInlineSummaryCapChars,
+      isolationOpTimeoutMs: this.cfg.execTimeoutMs,
     };
   }
 
@@ -2428,6 +2495,11 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
             outputSchemaJson?: string;
           }),
           depth: plan.depth,
+          ...((plan.isolation === undefined
+            ? {}
+            : { isolationJson: JSON.stringify(plan.isolation) }) as {
+            isolationJson?: string;
+          }),
         });
       },
       recordSpawnSettlement: async (settlement) => {
@@ -2438,6 +2510,20 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         settle: (jobId: string, settlement: JobSettlement) => this.settleJob(jobId, settlement),
       },
       subagentHost,
+      // T20 #110: the daemon isolation seam rides the DAEMON_SERVICE binding
+      // (same machine-named DO the dispatch path uses); unbound deployments
+      // leave it undefined and isolated spawns fail loudly.
+      isolationOp:
+        this.env.DAEMON_SERVICE === undefined
+          ? undefined
+          : (request) =>
+              this.daemon().isolationOp({
+                machineId: request.machineId,
+                threadId: request.threadId,
+                op: request.op,
+                arguments: request.arguments,
+                timeoutMs: request.timeoutMs,
+              }),
       wake: () => {
         const { promise, resolve } = Promise.withResolvers<WaitWake>();
         this.edgeWaiters.set(execution.executionId, { resolve });
