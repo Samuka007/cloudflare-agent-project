@@ -107,6 +107,10 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
       "todo",
       "think",
       "write",
+      // T10' merge — omp builtin-names.ts order: eval precedes github/glob;
+      // this host has no github/ida/ask rows yet, so eval lands after write
+      // (append-only registry discipline: existing rows never move).
+      "eval",
       // T6 #96 — omp builtin wire order #30 (last builtin); the T16 hidden
       // yield closes the wire after it (HIDDEN_TOOL_NAMES tail).
       "manage_skill",
@@ -215,10 +219,13 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
     expect(order.indexOf("glob")).toBeLessThan(order.indexOf("grep"));
     expect(order.indexOf("grep")).toBeLessThan(order.indexOf("find"));
     expect(order.indexOf("find")).toBeLessThan(order.indexOf("context_notes"));
-    // omp: write is the last of the host/builtin five; manage_skill (T6 #96)
-    // is the last BUILTIN row after it; the T16 hidden `yield`
-    // (HIDDEN_TOOL_NAMES) closes the wire.
-    expect(order.indexOf("write")).toBe(order.length - 3);
+    // omp order union: grep < find (T4 activation #143), the T5' host five,
+    // then the T10' eval row (kept after write — append-only: existing rows
+    // never move), then manage_skill (T6 #96, last builtin #30); the T16
+    // hidden `yield` closes the wire.
+    expect(order.indexOf("write")).toBe(order.length - 4);
+    expect(order.indexOf("eval")).toBe(order.length - 3);
+    expect(order[order.length - 2]).toBe("manage_skill");
     expect(order[order.length - 1]).toBe("yield");
   });
 
@@ -264,6 +271,52 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
         "`description`: specific; drives discovery.",
         "No frontmatter in `body`; generated from `name` and `description`.",
       ].join("\n"),
+    );
+  });
+
+  test("M1.5/T10' — eval row: host class, daemon routing, omp eval.ts verbatim schema", () => {
+    const row = toolRegistryRow("eval");
+    expect(row?.class).toBe("host");
+    expect(row?.backend).toEqual({ kind: "daemon-dispatch" });
+    expect(row?.intent).toBe("require");
+    const tools = wireToolSet(M0_RENDER_FLAGS);
+    const evalWire = tools.find((tool) => tool.name === "eval");
+    expect(evalWire?.input_schema).toEqual({
+      type: "object",
+      properties: {
+        i: INTENT_FIELD,
+        // arktype renders the `'py' | 'js'` union as anyOf consts (both
+        // carrying the field description — omp's describe lands on the union).
+        language: {
+          anyOf: [
+            { const: "js", description: '"py": IPython; "js": Bun' },
+            { const: "py", description: '"py": IPython; "js": Bun' },
+          ],
+          description: '"py": IPython; "js": Bun',
+        },
+        code: {
+          type: "string",
+          description: "Code or standalone % command; top-level await works.",
+        },
+        title: { type: "string", description: "Short transcript label." },
+        timeout: { type: "number", description: "Cell deadline in seconds; 0 disables it." },
+        reset: { type: "boolean", description: "Wipe only this kernel." },
+      },
+      // arktype orders required keys its own way ([code, language]); the
+      // intent field appends last (injectIntentField, agent-loop.ts:985 form).
+      required: ["code", "language", "i"],
+    });
+    // omp prompts/tools/eval.md rendered at the host render context — the
+    // kernel-persistence headline and both backend lines are load-bearing.
+    expect(evalWire?.description).toContain(
+      "One cell per call; top-level state persists, including across compaction.",
+    );
+    expect(evalWire?.description).toContain(
+      "Python: top-level `await` works; `asyncio.run(…)` fails.",
+    );
+    expect(evalWire?.description).toContain("JS: Bun (`Bun.file`, `Bun.write`, `Bun.$`)");
+    expect(evalWire?.description).toContain(
+      "NEVER repeat successful setup. Kernel-loss notice means reload setup.",
     );
   });
 

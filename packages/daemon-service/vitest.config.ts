@@ -7,12 +7,13 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } })],
   test: {
-    // tool-runtime.test.ts + the per-tool semantic suites run under
-    // `bun test` (the omp runtime needs Bun); the Workers-side L1 suites
-    // stay here.
+    // tool-runtime.test.ts + eval-kernel.test.ts + the per-tool semantic
+    // suites run under `bun test` (the omp runtime + eval kernel library
+    // need Bun); the Workers-side L1 suites stay here.
     exclude: [
       "**/node_modules/**",
       "test/tool-runtime.test.ts",
+      "test/eval-kernel.test.ts",
       "test/l1-read-semantics.test.ts",
       "test/l1-glob-grep-semantics.test.ts",
       "test/l1-edit-semantics.test.ts",

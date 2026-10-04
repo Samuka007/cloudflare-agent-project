@@ -1,7 +1,8 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import { EvalKernelRuntime } from "./eval-kernel.js";
 
 /**
  * Vendored omp tool runtime (M1.5/T5' #128): host construction, native-addon
@@ -312,6 +313,8 @@ export interface ToolRuntimeConfig {
 export class ToolRuntime {
   private host: ToolHost | null = null;
   private hostPromise: Promise<ToolHost> | null = null;
+  /** Eval kernel seam (T10' #100) — lazily constructed, shares this config. */
+  private evalRuntime: EvalKernelRuntime | null = null;
   /** Live runs by executionId (abort handle + idempotent re-forward answer). */
   readonly running = new Map<string, RunningTool>();
 
@@ -339,7 +342,12 @@ export class ToolRuntime {
     if (live !== undefined) return live.done;
     const controller = new AbortController();
     const done = this.ensureHost().then((host) =>
-      executeDispatch(host, frame, { onOutput, cancelSignal: controller.signal }),
+      frame.tool === "eval"
+        ? (this.evalRuntime ??= new EvalKernelRuntime(this.config)).execute(host, frame, {
+            onOutput,
+            cancelSignal: controller.signal,
+          })
+        : executeDispatch(host, frame, { onOutput, cancelSignal: controller.signal }),
     );
     this.running.set(frame.executionId, { controller, done });
     void done
