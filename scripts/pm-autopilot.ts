@@ -30,6 +30,17 @@
  *     await AP.cascade(92);            // dry-run: prints unlocks + Backlog→Todo callbacks
  *     await AP.cascade(92, { confirm: true });
  *
+ * Ticket filing (#151) — intake-classified creation, the inverse of cascade:
+ *
+ *     await AP.file({ title, body, blockedBy: [150] });
+ *                                      // dry-run: full plan preview, zero writes.
+ *                                      // jev classifies; dims <0.8 confidence are
+ *                                      // demoted to the pmReview list, never applied.
+ *     await AP.file(<same spec>, { confirm: true });
+ *                                      // creates the issue GraphQL-only (REST create
+ *                                      // auto-creates unknown labels — invariant 5);
+ *                                      // unregistered label ⇒ hard fail, zero writes.
+ *
  * Raw-ticket intake (judge-classified via the REAL jev model — #131
  * CRITICAL: the judge layer is a real API call, not the kernel judge):
  *
@@ -435,6 +446,24 @@ export const TEMPLATES = {
 }`,
   addLabels: `mutation($labelableId: ID!, $labelIds: [ID!]) {
   addLabelsToLabelable(input: { labelableId: $labelableId, labelIds: $labelIds }) { labelable { ... on Issue { number } } }
+}`,
+  /** #151: issue creation is GraphQL-only. CreateIssueInput carries no
+   *  labels at all, so creation can never trigger the REST auto-create-label
+   *  path (invariant 5); labels land afterwards via addLabels with
+   *  pre-resolved ids. */
+  createIssue: `mutation($repositoryId: ID!, $title: String!, $body: String!, $milestoneId: ID) {
+  createIssue(input: { repositoryId: $repositoryId, title: $title, body: $body, milestoneId: $milestoneId }) { issue { id number url } }
+}`,
+  /** #151 filing preflight: repository id + the FULL registered label
+   *  vocabulary (paginated) + the open milestone title → { id, number } map
+   *  — the number mapping is resolved at runtime, never hardcoded. */
+  repoVocabulary: `query($owner: String!, $repo: String!, $labelCursor: String) {
+  repository(owner: $owner, name: $repo) {
+    id
+    labels(first: 100, after: $labelCursor) { pageInfo { hasNextPage endCursor }
+      nodes { id name } }
+    milestones(first: 50, states: OPEN) { nodes { id number title } }
+  }
 }`,
 } as const;
 
@@ -851,6 +880,121 @@ export function planCascade(
     unblocked: unblockedTickets.map((t) => t.number).sort((a, b) => a - b),
     flips,
     dispatchableDelta,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Filing (#151): intake → create → closed-vocab labels → fields → edges → status
+// ---------------------------------------------------------------------------
+
+/** Confidence floor for auto-applying a classified dimension at filing time
+ *  (gateOf's auto-apply threshold, applied per-dimension). */
+export const FILE_CONFIDENCE_FLOOR = 0.8;
+
+/** Raw filing request. Everything else derives from intake or resolves live
+ *  — the caller never supplies labels/fields (that is how vocabulary drifts). */
+export interface FileSpec {
+  title: string;
+  body: string;
+  /** Issue numbers the new ticket is blocked by (dependency axis only). */
+  blockedBy?: number[];
+}
+
+/** The complete write plan for one filing — every value board-truth. */
+export interface FilePlan {
+  /** Derived labels, ALL registered in the repository vocabulary. */
+  labels: string[];
+  /** Milestone title; the id is resolved live for the write, the number for
+   *  the report (title → { id, number } map — runtime-resolved, never
+   *  hardcoded). */
+  milestone: string | null;
+  milestoneNumber: number | null;
+  priority: PriorityName | null;
+  /** Wave scheduling: needs_human → Wait for user (ready-for-human
+   *  derivation) · scheduled → Todo · unscheduled → Backlog — mirrors the
+   *  sync derivation so milestone and Status intent agree. */
+  status: StatusName;
+  blockedBy: number[];
+}
+
+export type FileDimension =
+  | "milestone"
+  | "block"
+  | "type"
+  | "priority"
+  | "needs_probe"
+  | "needs_human";
+
+/** A classified dimension below the confidence floor: PM re-rules it. */
+export interface FileReviewItem {
+  dimension: FileDimension;
+  suggested: string | null;
+  confidence: number;
+}
+
+export interface FileReport {
+  ok: boolean;
+  dryRun: boolean;
+  /** Raw judge verdict the plan was derived from (audit trail). */
+  intake: IntakeResult;
+  plan: FilePlan;
+  /** Dimensions below FILE_CONFIDENCE_FLOOR — suggested, never auto-applied. */
+  pmReview: FileReviewItem[];
+  errors: string[];
+  /** Set only after a confirmed filing passed post-write verification. */
+  created?: { number: number; id: string; url: string | null };
+}
+
+const FILE_DIMENSIONS = [
+  "milestone",
+  "block",
+  "type",
+  "priority",
+  "needs_probe",
+  "needs_human",
+] as const satisfies readonly FileDimension[];
+
+/**
+ * Pure filing plan (no I/O): classified dimensions at/above the confidence
+ * floor become writes; anything below lands in pmReview untouched — a
+ * demoted dimension contributes NOTHING to the plan (its suggestion is
+ * listed for PM re-ruling instead). Status follows the APPLIED plan only:
+ * applied needs_human → Wait for user, else scheduled → Todo, else Backlog.
+ */
+export function planFile(
+  spec: Pick<FileSpec, "blockedBy">,
+  cls: IntakeResult,
+): { plan: Omit<FilePlan, "milestoneNumber">; pmReview: FileReviewItem[] } {
+  const confident = (d: FileDimension): boolean => cls.confidence[d] >= FILE_CONFIDENCE_FLOOR;
+  const labels: string[] = [];
+  if (cls.block !== null && cls.block !== "none" && confident("block")) labels.push(cls.block);
+  if (cls.type !== null && confident("type")) labels.push(cls.type);
+  if (cls.needs_human && confident("needs_human")) labels.push("ready-for-human");
+  const milestone =
+    cls.milestone !== null && cls.milestone !== "none" && confident("milestone")
+      ? cls.milestone
+      : null;
+  const priority = cls.priority !== null && confident("priority") ? cls.priority : null;
+  const status: StatusName =
+    cls.needs_human && confident("needs_human") ? "Wait for user" : milestone !== null ? "Todo" : "Backlog";
+  const suggestedOf = (d: FileDimension): string | null => {
+    const v: unknown = cls[d];
+    return typeof v === "string" ? v : typeof v === "boolean" ? String(v) : null;
+  };
+  const pmReview = FILE_DIMENSIONS.filter((d) => !confident(d)).map((d) => ({
+    dimension: d,
+    suggested: suggestedOf(d),
+    confidence: cls.confidence[d],
+  }));
+  return {
+    plan: {
+      labels,
+      milestone,
+      priority,
+      status,
+      blockedBy: [...new Set(spec.blockedBy ?? [])].sort((a, b) => a - b),
+    },
+    pmReview,
   };
 }
 
@@ -1318,6 +1462,282 @@ export async function cascade(
   return report;
 }
 
+interface VocabRepository {
+  id: string;
+  labels: {
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    nodes: { id: string; name: string }[];
+  };
+  milestones: { nodes: { id: string; number: number; title: string }[] };
+}
+
+function renderFileReport(spec: FileSpec, report: FileReport): string {
+  const lines = [
+    `== AP.file ${report.dryRun ? "preview (dry-run)" : "filing report"} ==`,
+    `  TITLE     ${spec.title}`,
+    `  LABELS    ${report.plan.labels.join(", ") || "(none)"}`,
+    `  MILESTONE ${report.plan.milestone ?? "(none)"}${
+      report.plan.milestoneNumber !== null ? ` (#${report.plan.milestoneNumber})` : ""
+    }`,
+    `  PRIORITY  ${report.plan.priority ?? "(unset)"}`,
+    `  STATUS    ${report.plan.status}`,
+    `  EDGES     blockedBy ${report.plan.blockedBy.map((n) => `#${n}`).join(", ") || "(none)"}`,
+  ];
+  for (const r of report.pmReview) {
+    lines.push(
+      `  REVIEW    ${r.dimension} → ${r.suggested ?? "(none)"} ` +
+        `(confidence ${r.confidence.toFixed(2)}) — below floor ${FILE_CONFIDENCE_FLOOR}, PM re-rules`,
+    );
+  }
+  for (const e of report.errors) lines.push(`  ERROR     ${e}`);
+  if (report.created !== undefined) lines.push(`  CREATED   #${report.created.number} (${report.created.url ?? "no url"})`);
+  return lines.join("\n");
+}
+
+/**
+ * Post-write verification of one fresh filing: re-reads the created issue
+ * and asserts the plan landed completely (labels/milestone/Priority/Status/
+ * edges) AND that zero unregistered labels exist on it (invariant 5, read-
+ * back form — GraphQL ids cannot fabricate labels, this catches drift).
+ */
+async function verifyFiling(
+  number: number,
+  plan: FilePlan,
+  vocabulary: Set<string>,
+): Promise<string[]> {
+  const { query, aliases } = verifyQuery([number]);
+  const data = await gql(query, { owner: REPO.split("/")[0], repo: REPO_DIR });
+  const repo = (data.repository as RefsShape["repository"] | null) ?? null;
+  const issue =
+    repo === null ? null : ((repo as unknown as Record<string, VerifyIssue | null>)[aliases[0] ?? ""] ?? null);
+  if (issue === null) return [`#${number}: not readable at post-filing verification`];
+  const errors: string[] = [];
+  const readLabels = (issue.labels?.nodes ?? []).map((l) => l.name);
+  for (const l of plan.labels) {
+    if (!readLabels.includes(l)) errors.push(`#${number}: label ${l} missing after filing`);
+  }
+  for (const l of readLabels) {
+    if (!vocabulary.has(l)) {
+      errors.push(`#${number}: UNREGISTERED label ${l} present — invariant 5 violated`);
+    }
+  }
+  const readMilestone = issue.milestone?.title ?? null;
+  if (readMilestone !== plan.milestone) {
+    errors.push(
+      `#${number}: milestone drift — expected ${plan.milestone ?? "null"}, read ${readMilestone ?? "null"}`,
+    );
+  }
+  const item = issue.projectItems.nodes.find((n) => n.project.id === PROJECT_ID) ?? null;
+  if (item === null) {
+    errors.push(`#${number}: not boarded after filing`);
+  } else {
+    if (item.status?.name !== plan.status) {
+      errors.push(
+        `#${number}: status drift — expected ${plan.status}, read ${item.status?.name ?? "null"}`,
+      );
+    }
+    if (plan.priority !== null && item.priority?.name !== plan.priority) {
+      errors.push(
+        `#${number}: priority drift — expected ${plan.priority}, read ${item.priority?.name ?? "null"}`,
+      );
+    }
+  }
+  for (const b of plan.blockedBy) {
+    if (!issue.blockedBy?.nodes?.some((e) => e.number === b)) {
+      errors.push(`#${number}: blockedBy #${b} edge missing after filing`);
+    }
+  }
+  return errors;
+}
+
+/**
+ * Ticket-filing automation (#151): body → AP.intake (jev classification) →
+ * issue creation → closed-vocabulary labels → field writes → optional
+ * blocking edges → wave Status. DRY-RUN default: `file(spec)` previews the
+ * complete plan with zero writes; `file(spec, { confirm: true })` creates.
+ *
+ * Invariant-5 guard: derived labels must exist in the repository vocabulary
+ * BEFORE anything is created — the REST create path auto-creates unknown
+ * label names, so filing goes GraphQL-only (createIssue carries no labels;
+ * addLabels uses pre-resolved ids) and hard-fails (zero writes, even on
+ * confirm) on any unregistered name. Dimensions the judge classified below
+ * FILE_CONFIDENCE_FLOOR never auto-apply: they are demoted to the pmReview
+ * list for PM re-ruling. The milestone title → number map is resolved from
+ * the live repository at runtime, never hardcoded.
+ */
+export async function file(
+  spec: FileSpec,
+  opts: { confirm?: boolean } = {},
+): Promise<FileReport> {
+  const cls = await intake(spec.body);
+  const { plan: derived, pmReview } = planFile(spec, cls);
+  const errors: string[] = [];
+  const plan: FilePlan = { ...derived, milestoneNumber: null };
+  const owner = REPO.split("/")[0];
+
+  // Runtime resolution: full label vocabulary + open milestones (id + number)
+  // + Status/Priority field option ids. Reads only — legal in dry-run.
+  let repoId: string | null = null;
+  const labelIds: Record<string, string> = {};
+  const vocabulary = new Set<string>();
+  let milestoneRef: { id: string; number: number } | null = null;
+  let labelCursor: string | null = null;
+  for (let page = 0; page < 5; page += 1) {
+    const data = await gql(TEMPLATES.repoVocabulary, { owner, repo: REPO_DIR, labelCursor });
+    const repo = (data.repository as VocabRepository | null) ?? null;
+    if (repo === null) {
+      errors.push("repository not readable — vocabulary resolution failed");
+      break;
+    }
+    repoId = repo.id;
+    for (const l of repo.labels.nodes) {
+      labelIds[l.name] = l.id;
+      vocabulary.add(l.name);
+    }
+    if (plan.milestone !== null) {
+      const m = repo.milestones.nodes.find((n) => n.title === plan.milestone);
+      if (m !== undefined) milestoneRef = { id: m.id, number: m.number };
+    }
+    if (!repo.labels.pageInfo.hasNextPage) break;
+    labelCursor = repo.labels.pageInfo.endCursor;
+  }
+  if (plan.milestone !== null && milestoneRef === null) {
+    errors.push(
+      `milestone "${plan.milestone}" not found among open milestones (closed vocabulary)`,
+    );
+  }
+  plan.milestoneNumber = milestoneRef?.number ?? null;
+
+  // Invariant-5 HARD guard: unregistered label → no filing at all.
+  const unresolvedLabels = plan.labels.filter((l) => labelIds[l] === undefined);
+  if (unresolvedLabels.length > 0) {
+    errors.push(
+      `labels ${unresolvedLabels.join(", ")} not registered in repository vocabulary — ` +
+        "add to tracker-schema.md first (invariant 5: REST auto-creates unknown labels)",
+    );
+  }
+
+  // Field option resolution against the live project (BoardSmith: ids are
+  // never guessed).
+  const selects = await resolveSingleSelects();
+  const statusOptionId = selects.statusOptions[plan.status];
+  let statusWrite: { optionId: string; value: StatusName } | null = null;
+  if (statusOptionId === undefined) {
+    errors.push(
+      `Status "${plan.status}" not in project closed vocabulary ${Object.keys(selects.statusOptions).join("/")}`,
+    );
+  } else {
+    statusWrite = { optionId: statusOptionId, value: plan.status };
+  }
+  let priorityWrite: { optionId: string; value: PriorityName } | null = null;
+  if (plan.priority !== null) {
+    const priorityOptionId = selects.priorityOptions[plan.priority];
+    if (priorityOptionId === undefined) {
+      errors.push(`Priority "${plan.priority}" not in project closed vocabulary`);
+    } else {
+      priorityWrite = { optionId: priorityOptionId, value: plan.priority };
+    }
+  }
+
+  // Blocker node ids (dependency axis; edges are the only cross-issue write).
+  const blockerIds: Record<number, string> = {};
+  for (const n of plan.blockedBy) {
+    const data = await gql(
+      `query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { issue(number: $number) { id } } }`,
+      { owner, repo: REPO_DIR, number: n },
+    );
+    const id = (data.repository as RefsShape["repository"] | null)?.issue?.id;
+    if (typeof id !== "string" || id === "") {
+      errors.push(`#${n}: blocker not found — cannot wire an edge to a nonexistent issue`);
+    } else {
+      blockerIds[n] = id;
+    }
+  }
+
+  const base: FileReport = { ok: false, dryRun: !opts.confirm, intake: cls, plan, pmReview, errors };
+  if (errors.length > 0 || !opts.confirm) {
+    console.log(renderFileReport(spec, base));
+    if (opts.confirm !== true) {
+      console.log("dry-run: zero writes issued (pass { confirm: true } to file)");
+    }
+    return { ...base, ok: errors.length === 0 };
+  }
+
+  // Confirmed path. Creation first (GraphQL carries no labels — invariant 5),
+  // then labels by pre-resolved id, then board/field/edge ops via the same
+  // batched exec path AP.apply uses.
+  const createData = await gql(TEMPLATES.createIssue, {
+    repositoryId: repoId,
+    title: spec.title,
+    body: spec.body,
+    milestoneId: milestoneRef?.id ?? null,
+  });
+  const payload = createData.createIssue as
+    | { issue: { id: string; number: number; url: string | null } | null }
+    | null;
+  const issue = payload?.issue ?? null;
+  if (issue === null) throw new Error("AP.file: createIssue returned no issue");
+
+  if (plan.labels.length > 0) {
+    const ids: string[] = [];
+    for (const l of plan.labels) {
+      const id = labelIds[l];
+      if (id === undefined) throw new Error(`AP.file: label ${l} lost between guard and write`);
+      ids.push(id);
+    }
+    await gql(TEMPLATES.addLabels, { labelableId: issue.id, labelIds: ids });
+  }
+
+  const ops: ResolvedOp[] = [{ kind: "addProjectItem", number: issue.number, issueNodeId: issue.id }];
+  if (priorityWrite !== null) {
+    ops.push({
+      kind: "setPriority",
+      number: issue.number,
+      itemId: "PENDING_BOARD",
+      fieldId: selects.priorityFieldId,
+      optionId: priorityWrite.optionId,
+      value: priorityWrite.value,
+    });
+  }
+  if (statusWrite === null) throw new Error("AP.file: status option lost between guard and write");
+  ops.push({
+    kind: "setStatus",
+    number: issue.number,
+    itemId: "PENDING_BOARD",
+    fieldId: selects.statusFieldId,
+    optionId: statusWrite.optionId,
+    value: statusWrite.value,
+  });
+  for (const n of plan.blockedBy) {
+    const blockerNodeId = blockerIds[n];
+    if (blockerNodeId === undefined) {
+      throw new Error(`AP.file: blocker #${n} lost between guard and write`);
+    }
+    ops.push({
+      kind: "addBlockedBy",
+      number: issue.number,
+      issueNodeId: issue.id,
+      blocker: n,
+      blockerNodeId,
+    });
+  }
+  const itemIds = new Map<number, string>();
+  for (const batch of batchOps(ops)) {
+    for (const op of batch) await execOp(op, itemIds);
+  }
+
+  const verifyErrors = await verifyFiling(issue.number, plan, vocabulary);
+  const created = { number: issue.number, id: issue.id, url: issue.url };
+  if (verifyErrors.length > 0) {
+    errors.push(...verifyErrors);
+    console.error(`AP.file: post-filing verification FAILED: ${verifyErrors.join("; ")}`);
+    return { ...base, errors, created };
+  }
+  const report: FileReport = { ...base, ok: true, created };
+  console.log(renderFileReport(spec, report));
+  return report;
+}
+
 /**
  * Atomic intake question set (#131 CRITICAL): milestone/block/type/priority +
  * dor_evidence as choice; needs_probe/needs_human as noul. Exactly these
@@ -1498,9 +1918,11 @@ export const AP = {
   preflight,
   apply,
   cascade,
+  file,
+  planFile,
   dispatchPackets,
   /** Pure internals, exposed for tests/inspection. */
-  pure: { slugify, planDiff, planCascade, budgetOf },
+  pure: { slugify, planDiff, planCascade, budgetOf, FILE_CONFIDENCE_FLOOR },
   /** Judge layer: question oracle + real transport (tests mock via fetch). */
   judge: { INTAKE_QUESTIONS, JEV_URL, JEV_MODEL, defaultJudge },
   /** Config actually in effect. */
