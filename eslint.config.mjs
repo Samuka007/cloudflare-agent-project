@@ -24,6 +24,10 @@ export default tseslint.config(
       // is likewise outside the lint surface.
       "**/vitest.config.ts",
       "**/vitest.*.config.ts",
+      // Research harness code under docs/research/spike/ is run-once
+      // evidence (omp-runtime spike #125), dynamically importing an external
+      // runtime: not product source, exempt from the type-aware battery.
+      "docs/research/spike/**",
     ],
   },
   ...tseslint.configs.strictTypeChecked.map((config) => ({
