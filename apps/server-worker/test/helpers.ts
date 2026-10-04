@@ -33,9 +33,13 @@ export async function createThread(args?: {
       environment: { type: "host", workspace: { type: "personal" } },
       ...(args?.title !== undefined ? { title: args.title } : {}),
       ...(args?.sectionId !== undefined ? { sectionId: args.sectionId } : {}),
-      // bb requires input ≥ 1 for user-originated creates (the SPA composer
-      // always ships the first message with the create call).
-      input: args?.input ?? [{ type: "text", text: "first message from L1 suite" }],
+      // #61: input ships the SPA composer's first message with the create
+      // call and the route dispatches turn 1 from it. Omitted input falls to
+      // the programmatic no-input shape (bb no-input-no-turn guard,
+      // thread-provisioning.ts:221-224 — originKind null would 422 on empty
+      // input), which starts no turn: the historical create+send two-step
+      // smoke pattern.
+      ...(args?.input !== undefined ? { input: args.input } : { input: [], originKind: "fork" }),
     }),
   });
   if (response.status !== 201) {

@@ -195,7 +195,61 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // bb createThread broadcasts (packages/db/src/data/threads.ts:337-340).
     await hub(ctx).notifyThread(threadId, ["thread-created"], { projectId: payload.projectId });
     await hub(ctx).notifyProject(payload.projectId, ["threads-changed"]);
-    return ctx.json(await toThreadResponseWithSpawnCheck(ctx.env, row), 201);
+    // bb create-with-input rides the first turn on the create call: the SPA
+    // composer ships input with POST /threads (ShowcaseHeroCarousel.tsx:367),
+    // createProvisioningThread hands args.request.input to
+    // requestThreadProvision (thread-create.ts:533-544), which appends the
+    // client/turn/requested event and dispatches requestThreadStart with that
+    // input once the environment is ready (thread-provisioning.ts:225-248).
+    // The M0 face has no provisioning FSM — the environment is always ready —
+    // so bb's advance-before-response branch (thread-create.ts:558-562) maps
+    // to inline dispatch before the 201 resolves. Empty input is bb's
+    // no-input-no-turn guard (thread-provisioning.ts:221-224): programmatic
+    // creates (fork/side-chat preloads) start no turn and stay starting.
+    let dispatchedRow = row;
+    if (payload.input.length > 0) {
+      const content = payload.input.map((entry) => {
+        if (entry.type !== "text") {
+          throw new ApiError({
+            status: 422,
+            code: "validation_failed",
+            message: `Unsupported prompt input type for M0: ${entry.type}`,
+          });
+        }
+        return { type: "text" as const, text: entry.text };
+      });
+      // bb generates the client turn request id server-side (thread-send.ts:
+      // 346-356) — the same shape the send route records for /send turns.
+      const clientRequestId = formatClientTurnRequestIdSuffix({
+        suffix: Array.from(crypto.getRandomValues(new Uint8Array(10)))
+          .map((byte) =>
+            CLIENT_TURN_REQUEST_ID_ALPHABET.charAt(byte % CLIENT_TURN_REQUEST_ID_ALPHABET.length),
+          )
+          .join(""),
+      });
+      const result = await agentDoFor(ctx.env, threadId).sendMessage({
+        clientRequestId,
+        content,
+        mode: "start",
+      });
+      if (!result.duplicated) {
+        // Coarse M0 status transition shared with the send route: the daemon
+        // lifecycle (#30) owns the real starting→active path; without it the
+        // control plane flips active on dispatch so SPA surfaces reflect an
+        // open turn.
+        await updateThreadRecord(ctx.env, threadId, { status: "active" });
+        dispatchedRow = (await getThreadRow(ctx.env, threadId)) ?? row;
+        await hub(ctx).notifyThread(threadId, ["status-changed"], {
+          projectId: payload.projectId,
+        });
+        await hub(ctx).notifyThread(threadId, ["events-appended"], {
+          eventTypes: [...SEND_EVENT_TYPES],
+          projectId: payload.projectId,
+        });
+        await hub(ctx).notifyProject(payload.projectId, ["threads-changed"]);
+      }
+    }
+    return ctx.json(await toThreadResponseWithSpawnCheck(ctx.env, dispatchedRow), 201);
   });
 
   // --- get / update / delete ------------------------------------------------------
