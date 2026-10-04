@@ -41,6 +41,11 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 **宣布即做**：回报文本只含已执行动作；"我即刻／下一步将派 X"写入报告 = 违规本身。确定性预裁按推荐即决并标 overridable（关账评论留翻转指引）；真口味项才挂 `ready-for-human`（决策评论含预裁与批准方式）——用户队列 = board 按 `ready-for-human`／Status `Wait for user` 过滤。
 
+**工作区纪律三条（用户裁决 2026-10-04，herdr 违例编码）**：
+①**主仓 checkout 钉 main**——主仓 checkout 永远停 main；一切分支工作（含 PM 文档/热修）= 派发 lane 或 herdr worktree，PM 不亲自 `checkout -b`。
+②**PM 零开发零编辑**——需要落盘的改动全部成票派发（复用三问照走）；PM 亲手改文件（决策记录豁免除外）= 违规。
+③**派发契约 isolated worktree**——task spawn 必带 `isolated: true`（独占 worktree）；未隔离的 subagent 共享主 repo，会移动主 HEAD——禁止。
+
 ### 验收关账
 
 1. 干净树复跑关键测试/命令。
