@@ -33,6 +33,15 @@ export const LEASE_TIMEOUT_MS = 30_000;
 export const DISCONNECT_GRACE_MS = 5_000;
 export const SPAWN_ACK_TIMEOUT_MS = 30_000;
 
+/**
+ * #62: minimum spacing between two hosts-registry last_seen_at writes
+ * (hosts-registry.ts). bb stamps per WS message into local SQLite; the port
+ * projects the 5s heartbeat into the registry D1 at most once per window so
+ * the liveness stamp cannot burn D1 write quota. Staleness ceiling while
+ * connected: this window (+5s heartbeat jitter).
+ */
+export const LIVENESS_PROJECTION_INTERVAL_MS = 30_000;
+
 /** Default execution timeout carried with each dispatch (M0 policy). */
 export const DEFAULT_EXEC_TIMEOUT_MS = 600_000;
 
