@@ -1,7 +1,11 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { systemConfigResponseSchema } from "../contract/api/system.js";
-import { systemVersionResponseSchema } from "../contract/api/system.js";
+import {
+  systemConfigResponseSchema,
+  systemExecutionOptionsQuerySchema,
+  systemExecutionOptionsResponseSchema,
+  systemVersionResponseSchema,
+} from "../contract/api/system.js";
 import { appSettingsSchema } from "../contract/domain/app-settings.js";
 import { appKeybindingOverridesSchema } from "../contract/domain/app-keybindings.js";
 import { experimentsSchema } from "../contract/domain/experiments.js";
@@ -31,8 +35,9 @@ import type { Env, HonoBindings } from "../app-types.js";
  * System + settings face (bb apps/server/src/routes/system.ts, commit
  * 8473d8c33): GET /system/config, PUT /settings/general, PUT
  * /settings/keyboard, PUT /settings/experiments, PUT /settings/appearance,
- * POST /system/config/reload, GET /system/version. Theme catalog faces are
- * reduced to the built-in catalog (no fs themeRoot, no plugin themes).
+ * POST /system/config/reload, GET /system/version, GET
+ * /system/execution-options. Theme catalog faces are reduced to the built-in
+ * catalog (no fs themeRoot, no plugin themes).
  */
 
 const appearancePutSchema = z
@@ -63,6 +68,64 @@ export function buildSystemConfig(env: Env, requestUrl: URL) {
     primaryHostPlatform: null,
     voiceTranscriptionEnabled: false,
     dataDir: env.DATA_DIR ?? "/data",
+  };
+}
+
+/**
+ * GET /system/execution-options (bb public-api.ts:1405-1409, route at
+ * apps/server/src/routes/system.ts:347-349). bb resolves the catalog by
+ * probing installed agents on the routed host
+ * (services/system/execution-options.ts:395-491); the Worker port has no host
+ * to probe, so M0 serves the static staging truth instead: one provider "omp"
+ * whose only model is the relay model turns actually run
+ * (MODEL_RELAY_MODEL, the same var packages/agent-do/src/worker.ts:41 reads).
+ * The response shape is bb-verbatim (server-contract/src/api/system.ts:35-58)
+ * so the SPA picker consumes it unmodified (shape fixture:
+ * apps/app/src/hooks/useThreadCreationOptions.test.tsx:44-114).
+ */
+export function buildExecutionOptions(env: Pick<Env, "MODEL_RELAY_MODEL">) {
+  const model = env.MODEL_RELAY_MODEL ?? "glm-5.3-anth";
+  return {
+    providers: [
+      {
+        id: "omp",
+        displayName: "omp",
+        logoUrl: null,
+        capabilities: {
+          supportsArchive: false,
+          supportsRename: false,
+          supportsServiceTier: false,
+          supportsUserQuestion: false,
+          supportsFork: false,
+          // min(1) required (domain/provider-types.ts:72); the harness turns
+          // run at the "full" default (env.ts HARNESS_PERMISSION_MODE).
+          supportedPermissionModes: ["full"],
+        },
+        composerActions: [],
+        available: true,
+      },
+    ],
+    // "full" is bb's value when the machine is uncapped or none routed
+    // (server-contract/src/api/system.ts:37-41) — the Worker has no machine
+    // permission cap.
+    permissionCeiling: "full",
+    models: [
+      {
+        id: model,
+        model,
+        displayName: model,
+        description: "",
+        // The glm relay runs thinking { type: "disabled" }
+        // (packages/agent-do/src/worker.ts:43); "none" is bb's level for no
+        // extended thinking (domain/shared-types.ts:13-20), so the picker
+        // offers exactly that.
+        supportedReasoningEfforts: [{ reasoningEffort: "none", description: "" }],
+        defaultReasoningEffort: "none",
+        isDefault: true,
+      },
+    ],
+    selectedOnlyModels: [],
+    modelLoadError: null,
   };
 }
 
@@ -172,6 +235,15 @@ export function registerSystemRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
         upgradeCommand: "npm install -g bb@latest",
       }),
     );
+  });
+
+  routes.get("/system/execution-options", (ctx) => {
+    // bb validates the query against systemExecutionOptionsQuerySchema
+    // (public-api.ts:1408-1409); hostId and environmentId are mutually
+    // exclusive. The Worker has no host routing, so the parsed value is
+    // discarded and the primary catalog is served regardless.
+    parseOr422(systemExecutionOptionsQuerySchema, ctx.req.query());
+    return ctx.json(systemExecutionOptionsResponseSchema.parse(buildExecutionOptions(ctx.env)));
   });
 
   app.route("/api/v1", routes);
