@@ -417,6 +417,11 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       if (state.activeTurnId === runtime.turnId) state.activeTurnId = null;
       return;
     }
+    case "experimental_context_notes": {
+      // Thread-scoped journal data, not FSM state; the notebook projection
+      // (tools/edge.ts latestContextNotes) folds it from the log.
+      return;
+    }
   }
 }
 
