@@ -59,6 +59,14 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       case "interaction.interrupted":
       case "tool.exec_started":
       case "tool.output":
+      // #148 (streaming contract §9.3): a host_offline dispatch renders as the
+      // tool card's placeholder result — `tool.result{status:"error",
+      // output:"host_offline"}` lands right after the dispatch and folds into
+      // the work row. The former system/error row here preempted the screen
+      // mid-turn (thr_jk45qe4786: work::error → system:host_offline:error) and
+      // is the banner-ish surface the §9.3 matrix forbids during an active
+      // turn; only model.call_sealed/call_failed keep terminal system rows.
+      case "tool.dispatch":
       case "turn.cancel_requested":
         break;
       case "turn.input": {
@@ -227,18 +235,6 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
             message: event.data.error,
             category: event.data.aborted === true ? "cancelled" : "internal",
           },
-          createdAt: event.createdAt,
-        });
-        break;
-      }
-      case "tool.dispatch": {
-        if (event.data.outcome !== "host_offline") break;
-        ux = buildThreadEvent({
-          id: event.id,
-          threadId: event.threadId,
-          seq: event.seq,
-          type: "system/error",
-          data: { message: "host_offline", category: "machine_disconnected" },
           createdAt: event.createdAt,
         });
         break;

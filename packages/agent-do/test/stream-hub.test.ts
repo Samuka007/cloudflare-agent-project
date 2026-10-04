@@ -101,38 +101,60 @@ async function waitTurnSettled(rig: Rig, turnId: string): Promise<AnyAgentEvent[
 
 /** Structural fingerprint of one expected hub call (latestSeq ignored). */
 function expectedFingerprint(events: readonly AnyAgentEvent[], threadId: string): string[] {
-  return events.map((event) => {
+  const out: string[] = [];
+  for (const event of events) {
     if (event.type === "model.delta") {
       const { turnId, modelCallId, text } = event.data;
-      return JSON.stringify({
-        kind: "delta",
-        type: "delta",
-        entity: "thread",
-        id: threadId,
-        turnId,
-        itemId: `itm-am-${turnId}:${modelCallId}`,
-        seq: event.seq,
-        ...(typeof text === "string" ? { text } : {}),
-      });
+      out.push(
+        JSON.stringify({
+          kind: "delta",
+          type: "delta",
+          entity: "thread",
+          id: threadId,
+          turnId,
+          itemId: `itm-am-${turnId}:${modelCallId}`,
+          seq: event.seq,
+          ...(typeof text === "string" ? { text } : {}),
+        }),
+      );
+      // #148 bridge: the delta row ALSO emits the Tier-B refetch pointer so
+      // the pinned (pre-S4) SPA refetches and the conversation row grows
+      // mid-turn. Retire this entry with the bridge (agent-do.ts notifyHub).
+      out.push(
+        JSON.stringify({
+          kind: "changed",
+          changes: ["events-appended"],
+          eventTypes: ["model.delta"],
+        }),
+      );
+      continue;
     }
     if (event.type === "turn.phase") {
-      return JSON.stringify({
-        kind: "changed",
-        changes: ["phase-changed"],
-        phase: {
-          turnId: event.data.turnId,
-          phase: event.data.phase,
-          ...(event.data.modelCallId !== undefined ? { modelCallId: event.data.modelCallId } : {}),
-          ...(event.data.reason !== undefined ? { reason: event.data.reason } : {}),
-        },
-      });
+      out.push(
+        JSON.stringify({
+          kind: "changed",
+          changes: ["phase-changed"],
+          phase: {
+            turnId: event.data.turnId,
+            phase: event.data.phase,
+            ...(event.data.modelCallId !== undefined
+              ? { modelCallId: event.data.modelCallId }
+              : {}),
+            ...(event.data.reason !== undefined ? { reason: event.data.reason } : {}),
+          },
+        }),
+      );
+      continue;
     }
-    return JSON.stringify({
-      kind: "changed",
-      changes: ["events-appended"],
-      eventTypes: [event.type],
-    });
-  });
+    out.push(
+      JSON.stringify({
+        kind: "changed",
+        changes: ["events-appended"],
+        eventTypes: [event.type],
+      }),
+    );
+  }
+  return out;
 }
 
 function recordedFingerprint(call: RecordedHubCall): string {
@@ -294,6 +316,25 @@ describe("#197 L2: journal append → hub frames", () => {
           (event.data as { outcome?: string }).outcome === "host_offline",
       ),
     ).toBe(true);
+
+    // #148 acceptance on the ux view (§9.3 row 2): the host_offline dispatch
+    // renders NO preempting system row — the offline placeholder lives on the
+    // tool card — and the pure-chat continuation still streamed ("recovered").
+    const ux = await rig.stub.getEvents({ project: "ux" });
+    const uxRows = ux.events as unknown as {
+      type: string;
+      data?: { item?: { type: string; status?: string; output?: string } };
+    }[];
+    expect(uxRows.some((row) => row.type === "system/error")).toBe(false);
+    const toolItem = uxRows.find(
+      (row) => row.type === "item/completed" && row.data?.item?.type === "toolCall",
+    )?.data?.item;
+    if (toolItem?.type !== "toolCall") {
+      throw new Error("ux projection lost the host_offline toolCall item");
+    }
+    expect(toolItem.status).toBe("failed");
+    expect(toolItem.output).toBe("host_offline");
+    expect(journalText(events, sent.turnId)).toContain("recovered");
   });
 
   test("stream_started repeats per model call; first_token stays once per turn", async () => {

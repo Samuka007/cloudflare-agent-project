@@ -13,10 +13,10 @@ import type { Env } from "../env.js";
  * The send route flips the coarse M0 execution status to `active` on
  * dispatch (routes/threads.ts), but nothing ever consumed the agent DO's
  * terminal `turn/completed` events, so the row never left `active`. The SPA
- * then derives a permanent busy state: `waiting-for-host` displayStatus
- * keeps the follow-up composer on the (absent) queue path and mounts the
- * Working... / Host disconnected surfaces that the census (#45 P0-3) shot
- * on completed and sealed-error threads alike.
+ * then derives a permanent busy state — the Working... surface never clears
+ * (the census (#45 P0-3) shot it on completed and sealed-error threads
+ * alike; with the #194 resolver it additionally mounted the
+ * waiting-for-host banner, removed by #148).
  *
  * bb closes the same loop with the thread lifecycle FSM
  * (contract/domain/thread-lifecycle.ts): `run.succeeded` → idle,
