@@ -31,6 +31,16 @@ export type JournalOp =
       protocolVersion: number;
     }
   | { kind: "session_replaced"; at: number; hostId: string; oldSessionId: string }
+  | {
+      /** #195 S4 delete terminal: the host was removed; the session closes
+       * server-side (bb handleHostRemoved → closeSession "expired",
+       * session-owner-side-effects.ts:184-216). */
+      kind: "session_closed";
+      at: number;
+      hostId: string;
+      sessionId: string;
+      reason: string;
+    }
   | { kind: "stale_session_rejected"; at: number; hostId: string; sessionId: string }
   | {
       kind: "dispatch";
@@ -229,6 +239,9 @@ export function foldOp(state: ServiceStateData, op: JournalOp): void {
       return;
     }
     case "session_replaced":
+      return;
+    case "session_closed":
+      state.session = null;
       return;
     case "stale_session_rejected":
       return;

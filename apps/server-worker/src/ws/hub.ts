@@ -27,6 +27,9 @@ import {
 export class NotificationHubDO extends DurableObject {
   private threadEventWaiters: ThreadEventWaiter[] = [];
   private daemonDisconnects: DaemonDisconnect[] = [];
+  /** Armed by POST /hosts/:id/retry-update, consumed by the next rejected
+   * handshake (bb hub.ts:851-860; in-memory like bb — one hub instance). */
+  private readonly hostProtocolUpdateRetryRequests = new Set<string>();
 
   // --- public /ws endpoint ---------------------------------------------------
 
@@ -260,6 +263,22 @@ export class NotificationHubDO extends DurableObject {
       return { inGrace: false, graceExpiresAt: null };
     }
     return { inGrace: true, graceExpiresAt: expiresAt };
+  }
+
+  // --- protocol-update retry flag (bb hostProtocolUpdateRetryRequests,
+  // hub.ts:851-860) -----------------------------------------------
+
+  /** POST /hosts/:id/retry-update arms the flag; the next protocol-rejected
+   * handshake consumes it and reports it back to the daemon in the 400
+   * details (bb internal/session.ts:56, routes/hosts.ts:184). */
+  requestHostProtocolUpdateRetry(args: { hostId: string }): { ok: true } {
+    this.hostProtocolUpdateRetryRequests.add(args.hostId);
+    return { ok: true };
+  }
+
+  takeHostProtocolUpdateRetry(args: { hostId: string }): { retryUpdate: boolean } {
+    const armed = this.hostProtocolUpdateRetryRequests.delete(args.hostId);
+    return { retryUpdate: armed };
   }
 
   alarm(): void {

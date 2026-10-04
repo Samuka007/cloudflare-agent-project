@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import {
   DAEMON_PROTOCOL_VERSION,
@@ -105,8 +106,11 @@ async function establishSession(
       "content-type": "application/json",
       authorization: `Bearer ${identity.hostKey}`,
     },
+    // hostName is the SPA's machine-name source (bb session/open
+    // hostDaemonSessionOpenRequestSchema:100 → upsertHost, internal/session.ts:93).
     body: JSON.stringify({
       hostId: identity.hostId,
+      hostName: hostname(),
       protocolVersion: DAEMON_PROTOCOL_VERSION,
       bootId: runtime.bootId,
     }),
