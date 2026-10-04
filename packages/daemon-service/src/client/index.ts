@@ -20,6 +20,8 @@ import { runClient } from "./connection.js";
 import type { ClientConfig } from "./identity.js";
 import { decodeAgentAuthConfig } from "./agent-auth.js";
 import { decodeTaskIsolationConfig } from "./task-isolation.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 function argValue(flag: string): string | undefined {
   const index = process.argv.indexOf(flag);
@@ -27,11 +29,20 @@ function argValue(flag: string): string | undefined {
   return process.argv[index + 1];
 }
 
+/** Enroll credentials are deployment secrets — refusing to ship a dev
+ * default (the POC's "[REDACTED-staging-secret]") means a misconfigured daemon
+ * fails at start instead of enrolling against whatever it can reach. */
+const enrollKey = process.env.DAEMON_ENROLL_KEY;
+if (enrollKey === undefined || enrollKey === "") {
+  console.error("[daemon-client] DAEMON_ENROLL_KEY is required (set it in the daemon env file)");
+  process.exit(1);
+}
+
 const config: ClientConfig = {
-  baseUrl: argValue("--url") ?? process.env.POC_SERVICE_URL ?? "http://127.0.0.1:8790",
-  dataDir: argValue("--dataDir") ?? process.env.POC_DAEMON_DATA ?? "/tmp/poc-daemon-data",
-  sandboxRoot: argValue("--sandbox") ?? process.env.POC_SANDBOX_ROOT ?? "/tmp/poc-sandbox",
-  enrollKey: process.env.POC_ENROLL_KEY ?? "[REDACTED-staging-secret]",
+  baseUrl: argValue("--url") ?? process.env.DAEMON_SERVICE_URL ?? "http://127.0.0.1:8790",
+  dataDir: argValue("--dataDir") ?? process.env.DAEMON_DATA_DIR ?? join(homedir(), ".local", "state", "cap-daemon"),
+  sandboxRoot: argValue("--sandbox") ?? process.env.DAEMON_SANDBOX_ROOT ?? "/tmp/cap-sandbox",
+  enrollKey,
   taskIsolation: decodeTaskIsolationConfig(process.env.DAEMON_TASK_ISOLATION),
   agentAuth: decodeAgentAuthConfig(process.env.DAEMON_AGENT_AUTH),
 };

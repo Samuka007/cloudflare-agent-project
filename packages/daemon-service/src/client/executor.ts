@@ -56,9 +56,9 @@ export class Executor {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
-        POC_DAEMON_MARKER: "1",
-        POC_EXECUTION_ID: executionId,
-        POC_SANDBOX_ROOT: this.sandboxRoot,
+        DAEMON_EXEC_MARKER: "1",
+        DAEMON_EXECUTION_ID: executionId,
+        DAEMON_SANDBOX_ROOT: this.sandboxRoot,
       },
     });
     const process_ = this.processes.get(executionId);
@@ -190,8 +190,8 @@ export function scanMarkerProcesses(): {
     if (!Number.isInteger(pid) || pid === self) continue;
     try {
       const env = readFileSync(`/proc/${pid}/environ`).toString("utf8");
-      if (!env.includes("POC_DAEMON_MARKER=1")) continue;
-      const match = /POC_EXECUTION_ID=([^\0]+)/.exec(env);
+      if (!env.includes("DAEMON_EXEC_MARKER=1")) continue;
+      const match = /DAEMON_EXECUTION_ID=([^\0]+)/.exec(env);
       if (match === null) continue;
       const markerExecutionId = match[1];
       if (markerExecutionId === undefined) continue;
