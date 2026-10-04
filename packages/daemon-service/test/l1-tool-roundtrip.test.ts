@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { ToolExecServiceFrame } from "../src/protocol.js";
+import type { ServiceFrame, ToolExecServiceFrame } from "../src/protocol.js";
 import {
   SimulatedClient,
   uniqueHostId,
@@ -102,7 +102,10 @@ describe("L1 tool roundtrip (T5')", () => {
     const view = await executionViewOf(hostId, executionId);
     expect(view.state).toBe("TOMBSTONE");
     expect(view.result).toBeNull();
-    await client.waitFor((frame) => frame.type === "exec.forget" && frame.executionId === executionId);
+    await client.waitFor(
+      (frame): frame is Extract<ServiceFrame, { type: "exec.forget" }> =>
+        frame.type === "exec.forget" && frame.executionId === executionId,
+    );
 
     // §3.5/E: re-dispatch is answered from the journal — no second forward.
     const again = await dispatchViaSeam(hostId, {

@@ -26,6 +26,8 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 派发同时把该票 board Status 置 **In Progress**（GraphQL 直写）。
 
+**派发谓词与自动清空（用户裁决 2026-10-04）**：dispatchable = open ∧ 无未关 blocking 边 ∧ Status=Todo ∧ ¬ready-for-human（**派生谓词，不是标签**——`ready-for-agent` 已废）。PM 每回合把 dispatchable 集清到并发预算满或空；Todo 非空且预算有余而未派 = PMGuard P1。Backlog=被挡/非当前波次（blocked 或未来里程碑），blocker 关闭的交付钩子里回调其 Backlog→Todo。语义正本见 [tracker-schema.md](tracker-schema.md)。
+
 ### 交付处理（交付钩子——同回合四步，判据在每步末尾）
 
 1. **亲验**：diff 对照 bb/omp 锚点抽查；lane 的指控类结论先在源头核实再立案。判据：关键主张逐条有"属实"判定。

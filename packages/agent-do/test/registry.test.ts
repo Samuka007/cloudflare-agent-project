@@ -91,6 +91,7 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
       "grep",
       "context_notes",
       "new_context",
+      "wait",
       "think",
       "write",
     ]);
@@ -273,6 +274,35 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
     const edit = tools.find((tool) => tool.name === "edit");
     expect(edit?.description).toContain("</ops>\n\n<rules>");
     expect(edit?.description).toContain("PUT 1*:");
+  });
+});
+
+describe("M1.5 T2 — wait registry row (edge essential)", () => {
+  test("wait row is edge/do-local with omp wait.ts:59 optional intent", () => {
+    const row = toolRegistryRow("wait");
+    expect(row?.name).toBe("wait");
+    expect(row?.class).toBe("edge");
+    expect(row?.backend).toEqual({ kind: "do-local" });
+    expect(row?.intent).toBe("optional");
+  });
+
+  test("wait definition is omp prompts/tools/wait.md verbatim; intent stays optional on the wire", () => {
+    const tools = wireToolSet(M0_RENDER_FLAGS);
+    const wait = tools.find((tool) => tool.name === "wait");
+    expect(wait?.description).toBe(
+      [
+        "Wait only when blocked with nothing else to do.",
+        "Blocks on background jobs/services you started; returns on the first result, a message sent to you, or a steering interrupt; a safety cap returns a still-running snapshot.",
+        "Nothing you started running? Errors; NEVER wait on other agents.",
+        "Results and messages auto-deliver. NEVER poll while work remains.",
+      ].join("\n"),
+    );
+    // omp waitSchema = type({}); the injected `i` rides in properties but is
+    // never required (mode "optional" appends no required entry).
+    expect(wait?.input_schema).toEqual({
+      type: "object",
+      properties: { i: INTENT_FIELD },
+    });
   });
 });
 

@@ -72,6 +72,7 @@ jobs:
             const option = statusField.options.find((o) => o.name === desiredState);
             if (!option) throw new Error(`Status option "${desiredState}" not found on project`);
 
+
             // Reuse the existing item when the issue is already on the board.
             const { repository } = await github.graphql(
               `query($owner: String!, $repo: String!, $number: Int!) {
@@ -106,6 +107,21 @@ jobs:
               );
               itemId = addProjectV2ItemById.item.id;
               core.info(`Added issue #${issue.number} to project as item ${itemId}`);
+            }
+
+            // PM-owned state guard: In Progress is written directly by the PM
+            // at dispatch time. A later label/milestone event must not derive
+            // it back down to Todo/Backlog while the lane still runs. Wait for
+            // user and terminal states still win (user queue takes precedence).
+            if (issue.state === 'open' && desiredState !== 'Wait for user') {
+              const { node: curItem } = await github.graphql(
+                `query($iid: ID!) { node(id: $iid) { ... on ProjectV2Item { fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } }`,
+                { iid: itemId },
+              );
+              if (curItem?.fieldValueByName?.name === 'In Progress') {
+                core.info(`Issue #${issue.number} is In Progress (PM-owned); keeping it, derived Status=${desiredState} skipped.`);
+                return;
+              }
             }
 
             const setFieldValue = (fieldId, optionId) => github.graphql(
