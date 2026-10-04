@@ -35,6 +35,8 @@
 
 **用户队列走 tracker（2026-10-04 用户裁决）**：待用户决策项一律落 issue 语义——决策票本体挂 `ready-for-human` + 决策评论内含预裁与批准方式；聊天回报**禁止枚举待决项**（那是二次账本，必然漂移），只指向"Project view 按 ready-for-human 过滤"。对用户提到票一律用 `#编号`，禁用提案局部编号（T13 这类黑话）。确定性预裁即决的 overridable 点：关账评论留翻转指引即可，**不入用户队列**（已决事项不制造噪音）；真未决才挂标签。
 
+**派发就绪定义 DoR（2026-10-04 用户裁决，反 NIH/未证实自信）**：lane 派发前票面必须五项齐——①**复用三问有字面答案**（上游有整库吗/环境同构吗/适配垫比重写薄吗——手工移植须给出三问否定论证，缺论证=NIH 违例不许派）②**未证实的自信已被 spike 退役**（任何"我能实现得特别好"的自信，无运行证据即不成立；spike 结论引用进票面）③验收产品面可观察④bb/omp 锚点⑤预算行。**估算纪律=参考类预测**：工期锚同类已完成票的实测基率（如"bb 路由移植 ≈ FixUxBatch 单项 ≈ 1h"），禁内部视角乐观估算。倒查义务：复用观/纪律升级时，存量 open 票全部重审（gated 注记或重构），不许"以后不再犯"式口头改进。
+
 派单上下文必含：
 
 **隔离强制（2026-10-04 劫持事故后立；同日升级为 herdr 托管）**：写 lane 的 worktree 由 **PM 经 herdr 预建**——`herdr worktree create --cwd <repo> --branch lane/<slug> --base origin/main --label <slug> --no-focus`，取 `.result.worktree.path`（确定性路径 `~/.herdr/worktrees/<repo>/<branch-as-dash>`，在 herdr 注册表可查），lane 只 cd 入内、禁自建/禁换。lane 关账后 PM `herdr worktree remove --workspace <其 workspace>`（含 --force 可清未净树）；存量盘点 `herdr worktree list`。lane 自建 worktree=违规（命名漂移/无注册/难回收是旧 /tmp 时代的三个病）。主仓 checkout 仅 PM 使用；PM 的提交/推送在钉住 origin/main 的净树进行并推送后核对 origin/main 实际移动。读 lane 默认无写面不适用。事故实例：v3/v4 分解文档提交落 sibling 分支被清理，main 从未收到。
