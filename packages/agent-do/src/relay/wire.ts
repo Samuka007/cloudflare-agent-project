@@ -1,4 +1,8 @@
-import type { ModelRequest, PriorModelCall, SteerContribution } from "../provider.js";
+import type {
+  ModelRequest,
+  PriorModelCall,
+  SteerContribution,
+} from "../provider.js";
 import {
   enabledToolNames,
   MAIN_WIRE_TOOLS,
@@ -201,7 +205,32 @@ export function anthropicRequestBody(
       text: `[branch-summary] ${request.branchCut.summary}`,
     });
   }
-  // turn input opens the history.
+  // Completed prior turns of the session (#228), oldest first: each turn's
+  // input is the user-side material before its first call slice; trailing
+  // tool results merge with whatever follows (roles strictly alternate).
+  for (const turn of request.priorTurns ?? []) {
+    pendingUserBlocks.push({ type: "text", text: turn.input });
+    for (const call of turn.calls) {
+      appendAsyncResults(call.asyncResults);
+      // This call's boundary steers merge into the user message that the API
+      // positionally places right before its assistant response.
+      appendSteers(call.steers);
+      flushUser();
+      messages.push(assistantOf(call));
+      // Terminal results answer this assistant's tool_use blocks; they open
+      // the next user message.
+      for (const result of call.toolResults) {
+        pendingUserBlocks.push({
+          type: "tool_result",
+          tool_use_id: toolUseIdFor(result.executionId),
+          content: result.output === "" ? EMPTY_OUTPUT_SENTINEL : result.output,
+          is_error: result.status !== "ok",
+        });
+      }
+    }
+  }
+  // The current turn's input follows the session history (merging into the
+  // trailing user-side material when the last prior call ended with results).
   pendingUserBlocks.push({ type: "text", text: request.input });
 
   for (const call of request.priorCalls) {

@@ -61,6 +61,22 @@ export interface AsyncResultContribution {
   text: string;
 }
 
+/**
+ * One completed PRIOR turn of the same session (#228): omp §1.5 rebuilds the
+ * context from the whole log, so a multi-turn session — child reminder
+ * turns, follow-up user messages — must carry every earlier turn's input and
+ * call history, not only the current turn's. Ordered oldest → newest; the
+ * wire folds each turn's input as the user-side material before its first
+ * call. Prior turns hidden by an armed rewind cut are excluded (the branch
+ * summary replaces them, #147).
+ */
+export interface PriorTurnHistory {
+  /** The prior turn's user input text. */
+  input: string;
+  /** Completed calls of the prior turn, in call order. */
+  calls: PriorModelCall[];
+}
+
 export interface ModelRequest {
   threadId: string;
   turnId: string;
@@ -81,6 +97,14 @@ export interface ModelRequest {
    * projects the same request.
    */
   priorCalls: PriorModelCall[];
+  /**
+   * Completed turns of the same session before this one, oldest first
+   * (#228). Absent = single-turn session (every request built before the
+   * multi-turn fold landed). The wire renders each prior turn's input as
+   * user-side material followed by its assistant slices — one contiguous
+   * append-only history.
+   */
+  priorTurns?: PriorTurnHistory[];
   /**
    * Wire surface (M1.5 T16): the Main thread renders MAIN_WIRE_TOOLS; a
    * subagent renders the subagent surface (hidden `yield` included). Absent
