@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { realtimeThreadDeltaSchema, type RealtimeThreadDelta } from "@cap/protocol";
 import {
   changedMessageSchema,
   clientMessageSchema,
@@ -91,6 +92,41 @@ export class NotificationHubDO extends DurableObject {
     const delivered = this.broadcastChanged(message);
     // bb notifyThread also resolves threadEventWaiters (hub.ts:714-735).
     this.resolveThreadWaiters(threadId);
+    return { delivered };
+  }
+
+  /**
+   * #197 D2 Tier-A: the agent-DO push RPC — one journal `model.delta` row per
+   * call, fanned out as a `delta` payload frame (spec §6.1). Unlike `changed`
+   * frames, a delta fans out to the `thread-detail:<id>` key ONLY: the thread
+   * list never renders stream text. Strict schema validation, invalid frames
+   * skipped not crashed on (broadcastChanged same posture); the call also
+   * resolves this thread's event waiters so `events/wait` wakes on stream
+   * progress (spec §5.2).
+   */
+  notifyThreadDelta(frame: RealtimeThreadDelta): { delivered: number } {
+    const validated = realtimeThreadDeltaSchema.safeParse(frame);
+    if (!validated.success) {
+      console.error("Skipping invalid realtime delta broadcast");
+      return { delivered: 0 };
+    }
+    const key = `thread-detail:${validated.data.id}`;
+    const payload = JSON.stringify(validated.data);
+    let delivered = 0;
+    for (const socket of this.ctx.getWebSockets()) {
+      if (!readAttachment(socket).keys.includes(key)) continue;
+      try {
+        socket.send(payload);
+        delivered += 1;
+      } catch {
+        try {
+          socket.close(1001, "server-shutdown");
+        } catch {
+          // already closed
+        }
+      }
+    }
+    this.resolveThreadWaiters(validated.data.id);
     return { delivered };
   }
 

@@ -115,9 +115,19 @@ bb-shaped: client sends ref-counted `{type:"subscribe"|"unsubscribe", target}`;
 server pushes `{type:"changed", entity:"thread", id, changes[...],
 metadata?{latestSeq}}`, plus `subscribed`/`unsubscribed` acks (additive; the
 bb SPA ignores unknown frames). M0 change kinds: `thread-created`,
-`thread-deleted`, `events-appended`, `status-changed`, `title-changed`
-(bb has 16; additive). Malformed client frames are ignored (the SPA parses
-leniently too); the socket carries no payloads.
+`thread-deleted`, `events-appended`, `phase-changed` (#197), `status-changed`,
+`title-changed` (bb has 16; additive). Malformed client frames are ignored
+(the SPA parses leniently too).
+
+#197 adds the Tier-A payload frame (streaming contract spec §6.1):
+`{type:"delta", entity:"thread", id, turnId, itemId, seq, text?, latestSeq}`
+— one journal `model.delta` row per frame, fanned to `thread-detail`
+subscribers only. Frames are at-least-once and unordered (DO→DO RPC);
+clients reconcile by `seq` (dedupe ≤ cursor; ambiguity → catch-up fetch
+`events?afterSeq`) — the journal is the only rendering authority.
+`phase-changed` frames carry `metadata.phase` = the `turn.phase` row's
+payload (`turnId`, one of `stream_started|first_token|terminal|settled|
+host_lost`, optional `modelCallId`/`reason`).
 
 ## 5. Error classification — `src/errors.ts`
 

@@ -28,6 +28,21 @@ export type ThreadEventItemStatus = z.infer<typeof threadEventItemStatusSchema>;
 export const turnStatusSchema = z.enum(["completed", "failed", "interrupted"]);
 export type TurnStatus = z.infer<typeof turnStatusSchema>;
 
+/**
+ * Turn phase vocabulary (#184 streaming contract, spec §3): the five journal
+ * `turn.phase` markers the agent DO writes around a turn's stream lifecycle.
+ * Shared verbatim by the UX envelope (`turn/phase` below) and the realtime
+ * `phase-changed` metadata so the three faces cannot drift.
+ */
+export const turnPhaseSchema = z.enum([
+  "stream_started",
+  "first_token",
+  "terminal",
+  "settled",
+  "host_lost",
+]);
+export type TurnPhase = z.infer<typeof turnPhaseSchema>;
+
 /** User input content items (bb `threadEventUserContentSchema`, M0 subset). */
 export const promptContentSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
@@ -102,6 +117,20 @@ export const threadEventDataSchemas = {
   }),
   "turn/started": z.object({
     turnId: turnIdField,
+  }),
+  /**
+   * #197 D3: 1:1 projection of the agent journal's `turn.phase` marker rows
+   * (spec §4) — additive; clients that ignore unknown types skip them. The
+   * `events?afterSeq` ux view therefore carries phases, which is what makes
+   * them part of the cursor catch-up authority (spec §8.3).
+   */
+  "turn/phase": z.object({
+    turnId: turnIdField,
+    phase: turnPhaseSchema,
+    /** stream_started / first_token belong to this model call. */
+    modelCallId: z.number().int().positive().optional(),
+    /** terminal phase outcome detail; host_lost is always "host_offline". */
+    reason: z.string().min(1).optional(),
   }),
   "turn/completed": z.object({
     turnId: turnIdField,

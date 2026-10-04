@@ -647,9 +647,10 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       if (remaining <= 0) {
         return ctx.body(null, 204);
       }
-      // The per-thread DO appends turn events without pinging the hub, so a
-      // single long hub nap can sleep straight past the target event; poll in
-      // bounded slices instead (bb's 10s in-process sweep analogue).
+      // Since #197 D2 the agent DO pings the hub per journal row (delta /
+      // phase-changed / events-appended notifies all resolveThreadWaiters),
+      // so a notify wakes this wait directly; the bounded slice remains only
+      // as the idle safety net (spec §7).
       await hub(ctx).waitThreadEvent({ threadId: row.id, waitMs: Math.min(remaining, 500) });
     }
   });

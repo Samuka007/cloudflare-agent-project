@@ -23,13 +23,20 @@ describe("smoke: worker wiring", () => {
     });
     expect(sent.duplicated).toBe(false);
     const events = await rig.waitTurnComplete(sent.turnId);
+    // #197 D3: the turn.phase markers (stream_started, first_token before
+    // the first delta; terminal, settled after the turn row) are part of the
+    // canonical journal shape now.
     expect(typeList(events)).toEqual([
       "thread.created",
       "turn.input",
       "model.call_started",
+      "turn.phase",
+      "turn.phase",
       "model.delta",
       "model.call_completed",
       "turn.completed",
+      "turn.phase",
+      "turn.phase",
     ]);
   });
 
