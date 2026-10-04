@@ -71,6 +71,10 @@ const contextNotesSchema = type({
 
 const newContextSchema = type({});
 
+// omp tools/wait.ts:24 — empty schema; the tool takes no arguments (the wire
+// `i` intent field rides in properties, never required — omp wait.ts:59).
+const waitSchema = type({});
+
 // omp packages/coding-agent/src/tools/think.ts:39-42
 const thinkSchema = type({
   thoughts: type("string").describe("private scratchpad; not shown to user"),
@@ -102,6 +106,12 @@ const NEW_CONTEXT_DESCRIPTION_TEMPLATE =
 
 // omp think.ts:56 — no prompt file exists; the tool's literal description.
 const THINK_DESCRIPTION = "private scratchpad; not shown to user";
+
+// omp prompts/tools/wait.md verbatim.
+const WAIT_DESCRIPTION_TEMPLATE = `Wait only when blocked with nothing else to do.
+Blocks on background jobs/services you started; returns on the first result, a message sent to you, or a steering interrupt; a safety cap returns a still-running snapshot.
+Nothing you started running? Errors; NEVER wait on other agents.
+Results and messages auto-deliver. NEVER poll while work remains.`;
 
 /** Conditional flags the bash template resolves against (omp render context). */
 export interface ToolRenderFlags {
@@ -174,6 +184,17 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "edge",
     backend: { kind: "do-local" },
     intent: "require",
+  },
+  {
+    // omp tools/wait.ts:49-59 — blocking wait over owned jobs + peer messages;
+    // executor in tools/wait.ts, journal-backed JobRegistry (M1.5 T2).
+    // omp declares `intent = "optional"` (wait.ts:59).
+    name: "wait",
+    schema: waitSchema,
+    descriptionTemplate: WAIT_DESCRIPTION_TEMPLATE,
+    class: "edge",
+    backend: { kind: "do-local" },
+    intent: "optional",
   },
   {
     // omp tools/think.ts:51-59 — private scratchpad, zero I/O; omp declares

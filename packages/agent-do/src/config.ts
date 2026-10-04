@@ -31,6 +31,16 @@ export interface WatchdogConfig {
   r2BypassBytes: number;
   /** Per-execution re-ask cap before the turn watchdog owns the decision. */
   maxDispatchAttempts: number;
+  /**
+   * Wait safety cap (M1.5 T2; omp wait.ts:25 WAIT_MAX_MS). No
+   * caller-selectable timeout (omp docs/tools/wait.md:16) — this is
+   * deployment-time input only, never model-reachable.
+   */
+  waitMaxMs: number;
+  /** Message-only wait window ladder (omp docs/tools/wait.md:17). */
+  peerWaitLadderMs: number[];
+  /** Consecutive-wait gap that resets the ladder (omp wait.md:17, ≥60s). */
+  peerLadderResetGapMs: number;
 }
 
 export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
@@ -44,6 +54,9 @@ export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
   deltaFlushMs: 100,
   r2BypassBytes: 100 * 1024,
   maxDispatchAttempts: 5,
+  waitMaxMs: 30 * 60_000,
+  peerWaitLadderMs: [5_000, 10_000, 30_000, 60_000, 300_000],
+  peerLadderResetGapMs: 60_000,
 };
 
 const configPatchSchema = z.object({
@@ -57,6 +70,9 @@ const configPatchSchema = z.object({
   deltaFlushMs: z.number().int().positive().optional(),
   r2BypassBytes: z.number().int().positive().optional(),
   maxDispatchAttempts: z.number().int().positive().optional(),
+  waitMaxMs: z.number().int().positive().optional(),
+  peerWaitLadderMs: z.array(z.number().int().positive()).min(1).optional(),
+  peerLadderResetGapMs: z.number().int().positive().optional(),
 });
 
 export type WatchdogConfigPatch = z.infer<typeof configPatchSchema>;
