@@ -2,12 +2,8 @@ import { describe, expect, test } from "vitest";
 import type { AgentEventDataByType, AgentEventType } from "../src/fsm-events.js";
 import { parseAgentEvent, type AnyAgentEvent } from "../src/fsm-events.js";
 import { modelRequestFromEvents, ProjectionError } from "../src/translate.js";
-import {
-  anthropicRequestBody,
-  BASH_TOOL,
-  toolUseIdFor,
-  SYSTEM_PROMPT_BLOCKS,
-} from "../src/relay/wire.js";
+import { anthropicRequestBody, toolUseIdFor, SYSTEM_PROMPT_BLOCKS } from "../src/relay/wire.js";
+import { M0_RENDER_FLAGS, wireToolSet } from "../src/tools/registry.js";
 
 /**
  * Translation-layer invariants (#28 ruling ③): model-visible trio only,
@@ -101,8 +97,10 @@ describe("translation: event log → model request", () => {
   test("wire body: alternating roles, omp-verbatim bash tool, derived ids", () => {
     const request = modelRequestFromEvents(toolTurnLog(), "t1", 10);
     const body = anthropicRequestBody(request, WIRE_OPTS);
-    expect(body.tools).toEqual([BASH_TOOL]);
-    expect(BASH_TOOL.input_schema.required).toEqual(["i", "command"]);
+    expect(body.tools).toEqual(wireToolSet(M0_RENDER_FLAGS));
+    const bash = body.tools.find((tool) => tool.name === "bash");
+    if (bash === undefined) throw new Error("bash missing from registry-rendered tool set");
+    expect(bash.input_schema.required).toEqual(["command", "i"]);
     expect(body.system.map((block) => block.type)).toEqual(["text", "text"]);
     expect(SYSTEM_PROMPT_BLOCKS).toHaveLength(2);
 

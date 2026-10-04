@@ -25,6 +25,7 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       // No UX rendering: the SPA rebuilds these from item lifecycle events.
       case "thread.created":
       case "model.call_retry":
+      case "experimental_context_notes":
       case "tool.exec_started":
       case "tool.output":
       case "turn.cancel_requested":

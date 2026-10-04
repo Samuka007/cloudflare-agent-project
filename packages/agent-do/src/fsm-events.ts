@@ -164,6 +164,17 @@ export const agentEventDataSchemas = {
     output: z.union([z.string(), blobRefSchema]),
     outputTruncated: z.boolean().optional(),
   }),
+
+  /**
+   * Edge `context_notes` journal entry — omp ContextNotesEntry verbatim
+   * (packages/coding-agent/src/session/context-notes.ts:8-11). Thread-scoped
+   * like thread.created: notebook revisions outlive turns and are projected
+   * by the edge executor (tools/edge.ts latestContextNotes), not by the FSM.
+   */
+  experimental_context_notes: z.object({
+    version: z.literal(1),
+    text: z.string(),
+  }),
 } as const;
 
 export type AgentEventType = keyof typeof agentEventDataSchemas;
