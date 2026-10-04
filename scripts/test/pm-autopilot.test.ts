@@ -6,11 +6,13 @@ import {
   defaultJudge,
   dispatchable,
   dispatchPackets,
+  dorChecklist,
   FILE_CONFIDENCE_FLOOR,
   file,
   gateOf,
   intake,
   INTAKE_QUESTIONS,
+  lane,
   JEV_MODEL,
   JEV_URL,
   planCascade,
@@ -231,15 +233,27 @@ class MockBoard {
       if (query.includes("updateIssue")) {
         const issue = this.issueByNumber(Number(String(variables.id).slice(1)));
         if (issue !== undefined) {
-          const title =
-            variables.milestoneId === null || variables.milestoneId === undefined
-              ? null
-              : (Object.entries(this.milestones).find(
-                  ([, id]) => id === variables.milestoneId,
-                )?.[0] ?? null);
-          issue.milestone = title === null ? null : { title };
+          // closeIssue passes state as a query literal, not a variable
+          if (variables.state === "CLOSED" || query.includes("state: CLOSED")) {
+            issue.state = "CLOSED";
+          }
+          // milestone only touched when the mutation carries it (closeIssue
+          // omits the key — a rollback close must not rewrite the milestone)
+          if ("milestoneId" in variables) {
+            const title =
+              variables.milestoneId === null
+                ? null
+                : (Object.entries(this.milestones).find(
+                    ([, id]) => id === variables.milestoneId,
+                  )?.[0] ?? null);
+            issue.milestone = title === null ? null : { title };
+          }
         }
         return { updateIssue: { issue: { number: issue?.number } } };
+      }
+      if (query.includes("deleteProjectV2ItemById")) {
+        this.items = this.items.filter((i) => i.itemId !== variables.itemId);
+        return { deleteProjectV2ItemById: { deletedItemId: variables.itemId } };
       }
       if (query.includes("addBlockedBy")) {
         const issue = this.issueByNumber(Number(String(variables.issueId).slice(1)));
@@ -1217,5 +1231,276 @@ describe("AP.file (mocked transport + judge)", () => {
     expect(rep.created).toBeUndefined();
     expect(board.mutations).toEqual([]);
     expect(rep.errors.join(" ")).toContain("#404");
+  });
+
+  // --- #151 fix: explicit spec fields are authoritative over the judge -----
+
+  it("explicit labels are verbatim-authoritative; the label axis skips the judge", async () => {
+    board.addIssue({ number: 7, title: "blocker", bodyText: "" });
+    injectJudge(replyAll(0.95)); // judge WOULD derive block:agent-harness
+    const rep = await file(
+      {
+        title: "explicit labels",
+        body: TICKET_BODY,
+        labels: ["type:implementation", "block:bb-ux"],
+        blockedBy: [7],
+      },
+      { confirm: true },
+    );
+    expect(rep.ok).toBe(true);
+    expect(rep.explicitDims).toContain("labels");
+    expect(rep.plan.labels).toEqual(["type:implementation", "block:bb-ux"]);
+    // only the audit pair + unpinned field dims were asked
+    expect(Object.keys(judgeCalls[0]?.questions ?? {}).sort()).toEqual([
+      "dor_evidence",
+      "milestone",
+      "needs_probe",
+      "priority",
+    ]);
+    const issue = board.issues.find((i) => i.number === rep.created?.number);
+    expect((issue?.labels.nodes ?? []).map((l) => l.name)).toEqual([
+      "type:implementation",
+      "block:bb-ux",
+    ]);
+  });
+
+  it("explicit milestone is authoritative: the judge's answer never wins", async () => {
+    injectJudge(replyAll(0.95, { milestone: choiceAnswer("M2", 0.95) }));
+    const rep = await file(
+      { title: "pinned milestone", body: TICKET_BODY, milestone: "M1" },
+      { confirm: true },
+    );
+    expect(rep.ok).toBe(true);
+    expect(rep.plan.milestone).toBe("M1");
+    expect(rep.plan.milestoneNumber).toBe(1);
+    expect(Object.keys(judgeCalls[0]?.questions ?? {})).not.toContain("milestone");
+    const create = board.mutations.find((m) => m.query.includes("createIssue"));
+    expect(create?.variables.milestoneId).toBe("M_m1");
+  });
+
+  it("explicit milestone absent from open milestones → exact-match error, ZERO writes (defect 2 repro)", async () => {
+    injectJudge(replyAll(0.95));
+    const rep = await file(
+      { title: "dead-branch ticket", body: TICKET_BODY, milestone: "M1.5: 产品化收尾" },
+      { confirm: true },
+    );
+    expect(rep.ok).toBe(false);
+    expect(rep.created).toBeUndefined();
+    expect(board.mutations).toEqual([]); // nothing created, nothing written
+    expect(board.issues).toHaveLength(0);
+    expect(rep.errors.join(" ")).toContain("M1.5: 产品化收尾");
+    expect(rep.errors.join(" ")).toContain("exact title match");
+  });
+
+  it("explicit priority/needsHuman pin wins over sub-floor judge answers", async () => {
+    injectJudge(
+      replyAll(0.95, { priority: choiceAnswer("P2", 0.5), needs_human: { type: "noul", noul: 0.2 } }),
+    );
+    const rep = await file(
+      { title: "pinned fields", body: TICKET_BODY, priority: "P0", needsHuman: true },
+      { confirm: true },
+    );
+    expect(rep.ok).toBe(true);
+    expect(rep.plan.priority).toBe("P0");
+    expect(rep.plan.status).toBe("Wait for user");
+    expect(rep.plan.labels).toContain("ready-for-human");
+    // pinned dims are never demoted into pmReview despite the low judge scores
+    expect(rep.pmReview).toEqual([]);
+    const item = board.items.find((it) => it.issueNumber === rep.created?.number);
+    expect(item?.priority).toBe("P0");
+    expect(item?.status).toBe("Wait for user");
+  });
+
+  // --- #151 fix: all-or-nothing rollback after creation --------------------
+
+  it("verify drift after creation rolls back: board item removed + issue closed, ok:false", async () => {
+    board.failStatusWrites = true;
+    injectJudge(replyAll(0.95));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const rep = await file({ title: "rollback me", body: TICKET_BODY }, { confirm: true });
+    errSpy.mockRestore();
+    logSpy.mockRestore();
+    expect(rep.ok).toBe(false);
+    expect(rep.created).toBeUndefined(); // caller never sees a fake success
+    expect(rep.errors.join(" ")).toContain("status drift");
+    expect(rep.rolledBack?.steps.join("; ")).toContain("board item");
+    expect(rep.rolledBack?.steps.join("; ")).toContain("closed as not_planned");
+    expect(rep.rolledBack?.failures).toEqual([]);
+    const issue = board.issues.find((i) => i.number === rep.rolledBack?.number);
+    expect(issue?.state).toBe("CLOSED");
+    expect(board.items).toHaveLength(0);
+  });
+
+  it("a hard write throw (edge mutation) also rolls back with the cause reported", async () => {
+    board.addIssue({ number: 7, title: "blocker", bodyText: "" });
+    _inject({
+      gql: (query, variables) =>
+        query.includes("addBlockedBy")
+          ? Promise.reject(new Error("edge boom"))
+          : board.gql(query, variables),
+      judge: () => Promise.resolve(replyAll(0.95)),
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const rep = await file(
+      { title: "throw rollback", body: TICKET_BODY, blockedBy: [7] },
+      { confirm: true },
+    );
+    errSpy.mockRestore();
+    logSpy.mockRestore();
+    expect(rep.ok).toBe(false);
+    expect(rep.errors.join(" ")).toContain("edge boom");
+    expect(rep.rolledBack?.number).toBe(8);
+    expect(board.issues.find((i) => i.number === 8)?.state).toBe("CLOSED");
+    expect(board.items).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AP.lane (#171): DoR preflight → worktree provision → isolated spawn packet
+// ---------------------------------------------------------------------------
+
+const FULL_DOR_BODY = [
+  "## DoR",
+  "- 三问：bb 有形状（reg 409 现行）、omp 无语义面、平台缝无证据",
+  "- 验收：面板 badge 翻转可见",
+  "- 锚点：bb src/routes/dispatch.ts:40；omp 未涉及",
+  "- 预算：墙钟 ≤ 60min；资源上限 1 lane；交付即回",
+  "- 参照往例：类比 #147 单票 ≈ 1h",
+].join("\n");
+
+const STRIPPED_DOR_BODY = FULL_DOR_BODY.split("\n")
+  .filter((l) => !/锚点|往例/.test(l))
+  .join("\n");
+
+function laneTicket(over: Partial<Ticket> = {}): Ticket {
+  return {
+    number: 200,
+    id: "I200",
+    title: "feat: demo lane",
+    body: FULL_DOR_BODY,
+    state: "OPEN",
+    milestone: "M1",
+    labels: [],
+    blockedBy: [],
+    itemId: "PVTItem_9",
+    status: "Todo",
+    priority: "P1",
+    ...over,
+  };
+}
+
+describe("dorChecklist (pure)", () => {
+  it("five items in ticket order, all pass on a complete body, budget carries the line", () => {
+    const dor = dorChecklist(FULL_DOR_BODY);
+    expect(dor.map((c) => c.key)).toEqual([
+      "three-questions",
+      "acceptance",
+      "anchors",
+      "budget",
+      "precedent",
+    ]);
+    expect(dor.every((c) => c.ok)).toBe(true);
+    expect(dor.find((c) => c.key === "budget")?.evidence).toContain("60min");
+    expect(dor.find((c) => c.key === "three-questions")?.evidence).toContain("三问");
+  });
+
+  it("missing items report ok:false with null evidence (skeleton budget = missing)", () => {
+    const dor = dorChecklist(STRIPPED_DOR_BODY);
+    expect(dor.filter((c) => !c.ok).map((c) => c.key)).toEqual(["anchors", "precedent"]);
+    expect(dor.find((c) => c.key === "anchors")?.evidence).toBeNull();
+    const noBudget = dorChecklist("三问：有\n验收：有\n锚点：bb:x\n往例：有");
+    expect(noBudget.find((c) => c.key === "budget")?.ok).toBe(false);
+  });
+});
+
+describe("AP.lane (runGit seam — zero filesystem side effects)", () => {
+  afterEach(() => {
+    _inject(null);
+  });
+
+  it("refuses on missing DoR items with zero side effects, even on confirm", () => {
+    const rep = lane(laneTicket({ body: STRIPPED_DOR_BODY }), {}, { confirm: true });
+    expect(rep.refused).toBe(true);
+    expect(rep.ok).toBe(false);
+    expect(rep.spawn).toBeNull(); // a refused ticket never yields a spawn packet
+    expect(rep.worktreeCreated).toBe(false);
+    const reasons = rep.refusalReasons.join(" ");
+    expect(reasons).toContain("③上游锚点");
+    expect(reasons).toContain("⑤参照往例");
+  });
+
+  it("refuses tickets that fail the board predicate even with a full DoR", () => {
+    const backlog = lane(laneTicket({ status: "Backlog" }), {}, { confirm: true });
+    expect(backlog.refused).toBe(true);
+    expect(backlog.refusalReasons[0]).toContain("board predicate");
+    const blocked = lane(
+      laneTicket({ blockedBy: [{ number: 9, state: "OPEN", title: "open blocker" }] }),
+      {},
+      { confirm: true },
+    );
+    expect(blocked.refused).toBe(true);
+  });
+
+  it("dry-run pass: full plan + isolated spawn packet, no worktree created", () => {
+    const rep = lane(laneTicket());
+    expect(rep.ok).toBe(true);
+    expect(rep.refused).toBe(false);
+    expect(rep.dryRun).toBe(true);
+    expect(rep.worktreeCreated).toBe(false);
+    expect(rep.dor.every((c) => c.ok)).toBe(true);
+    expect(rep.spawn).toMatchObject({ agent: "task", isolated: true, context: null });
+    // lane context reuses dispatchPackets: herdr-path worktree + branch discipline
+    expect(rep.spawn?.task).toContain("# Worktree");
+    expect(rep.spawn?.task).toContain("lane/200-feat-demo-lane");
+    expect(rep.spawn?.task).toContain("Branch discipline");
+    expect(rep.worktree.path).toContain(
+      "~/.herdr/worktrees/cloudflare-agent-project/lane-200-feat-demo-lane",
+    );
+  });
+
+  it("confirm: provisions the worktree through the git seam with herdr-path naming", () => {
+    const gitCalls: { args: string[]; cwd: string }[] = [];
+    _inject({
+      runGit: (args, cwd) => {
+        gitCalls.push({ args, cwd });
+        return "";
+      },
+    });
+    const rep = lane(
+      laneTicket(),
+      { agent: "task", context: "# Contract\nshared interfaces" },
+      { confirm: true },
+    );
+    expect(rep.ok).toBe(true);
+    expect(rep.worktreeCreated).toBe(true);
+    expect(gitCalls).toHaveLength(1);
+    expect(gitCalls[0]?.args).toEqual([
+      "worktree",
+      "add",
+      expect.stringContaining(".herdr/worktrees/cloudflare-agent-project/lane-200-feat-demo-lane"),
+      "-b",
+      "lane/200-feat-demo-lane",
+      "origin/main",
+    ]);
+    expect(rep.spawn).toMatchObject({
+      agent: "task",
+      isolated: true,
+      context: "# Contract\nshared interfaces",
+    });
+  });
+
+  it("confirm: git failure surfaces as an explicit error without a spawn lie", () => {
+    _inject({
+      runGit: () => {
+        throw new Error("fatal: a branch named 'lane/200-feat-demo-lane' already exists");
+      },
+    });
+    const rep = lane(laneTicket(), {}, { confirm: true });
+    expect(rep.ok).toBe(false);
+    expect(rep.worktreeCreated).toBe(false);
+    expect(rep.errors[0]).toContain("git worktree add failed");
+    expect(rep.errors[0]).toContain("already exists");
   });
 });
