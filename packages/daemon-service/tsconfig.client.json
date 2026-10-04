@@ -5,5 +5,8 @@
     "types": ["node"],
     "lib": ["ES2024", "DOM"]
   },
-  "include": ["src/client/**/*.ts", "scripts/**/*.ts"]
+  // l1-ws-close-reconnect exercises the REAL client session/socket wiring, so
+  // it typechecks against the Node ambient set its imports resolve to (the
+  // Workers-side program's workers-types ambients conflict with node globals).
+  "include": ["src/client/**/*.ts", "scripts/**/*.ts", "test/l1-ws-close-reconnect.test.ts"]
 }
