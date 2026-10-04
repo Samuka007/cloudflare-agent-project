@@ -71,6 +71,16 @@ export interface DaemonServiceEnv {
    * the binding and the projection skips. Optional for exactly that reason.
    */
   HOSTS_DB?: D1Database;
+  /**
+   * #193 S1 host changed broadcast: the realtime hub DO
+   * (server-worker NotificationHubDO). The DO's six host-change moments
+   * (session attach, replace, close; rename/ceiling/delete ride the routes)
+   * fan out through its notifyHost + markDaemon* RPC surface, bb
+   * registerDaemon (hub.ts:456-476) / closeSession (data/sessions.ts:128).
+   * Optional — standalone rigs (L1, hookup) omit it and the broadcast skips,
+   * exactly the HOSTS_DB posture above.
+   */
+  HUB?: DurableObjectNamespace;
 }
 
 interface SocketAttachment {
@@ -557,6 +567,11 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
       leaseTimeoutMs: LEASE_TIMEOUT_MS,
     });
     void this.scheduleNextAlarm();
+    // bb onDaemonSocketOpen → registerDaemon (daemon-protocol.ts:91): the
+    // host-connected broadcast fires only now that the socket is registered
+    // (hub.ts:471-475) — an earlier frame would race clients into refetching
+    // a still-"disconnected" /hosts and caching that as fresh.
+    this.notifyHubHostLiveness(hostId, true);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
@@ -644,6 +659,15 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     const attachment = attachmentOf(ws);
     if (attachment !== null) {
       void this.projectLiveness(attachment.hostId);
+      // bb handleDaemonSocketClosed (session-owner-side-effects.ts:134-176):
+      // only a session that is still the active one broadcasts host-
+      // disconnected and schedules the disconnect grace (:147-149 guard) —
+      // a replaced session's late close event is a no-op, so the 顶替 flow
+      // produces exactly one host-connected (the new attach), never a
+      // spurious disconnected in between.
+      if (attachment.sessionId === this.state.session?.sessionId) {
+        this.notifyHubHostLiveness(attachment.hostId, false);
+      }
     }
   }
 
@@ -661,6 +685,40 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     } catch (error) {
       console.error(`host liveness projection failed for ${hostId}:`, error);
     }
+  }
+
+  /**
+   * #193 S1: the DO-internal host-change moments (WS attach; close of the
+   * live session's socket) broadcast into the hub — notifyHost changed frame
+   * plus the markDaemon* grace bookkeeping, best-effort by the #49 bridge's
+   * contract: failures are logged, never fatal (the /hosts read derives
+   * status from this DO's live socket, not from the broadcast). Ordering is
+   * bb's exactly: connect runs markDaemonConnected (cancelPendingDaemon
+   * Disconnect, hub.ts:457) before the broadcast (hub.ts:475); disconnect
+   * broadcasts (data/sessions.ts:128) before markDaemonDisconnected arms
+   * the active-work grace (session-owner-side-effects.ts:160-175). The
+   * register-before-broadcast race rule (hub.ts:471-475) lives with the
+   * callers: this only fires after the socket is registered.
+   */
+  private notifyHubHostLiveness(hostId: string, connected: boolean): void {
+    const hub = this.env.HUB;
+    if (hub === undefined) return;
+    const stub = hub.get(hub.idFromName("hub")) as DurableObjectStub & {
+      notifyHost(hostId: string, changes: string[]): Promise<{ delivered: number }>;
+      markDaemonConnected(args: { hostId: string }): Promise<{ ok: true }>;
+      markDaemonDisconnected(args: { hostId: string }): Promise<{ ok: true }>;
+    };
+    void (
+      connected
+        ? stub
+            .markDaemonConnected({ hostId })
+            .then(() => stub.notifyHost(hostId, ["host-connected"]))
+        : stub
+            .notifyHost(hostId, ["host-disconnected"])
+            .then(() => stub.markDaemonDisconnected({ hostId }))
+    ).catch((error: unknown) => {
+      console.error(`host liveness broadcast failed for ${hostId}:`, error);
+    });
   }
 
   /**
