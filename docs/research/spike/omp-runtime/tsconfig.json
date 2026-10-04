@@ -1,0 +1,13 @@
+{
+	"compilerOptions": {
+		"target": "esnext",
+		"module": "esnext",
+		"moduleResolution": "bundler",
+		"allowImportingTsExtensions": true,
+		"verbatimModuleSyntax": false,
+		"paths": {
+			"bun": ["./bun-shim.ts"]
+		}
+	},
+	"include": ["*.ts"]
+}
