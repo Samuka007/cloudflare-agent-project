@@ -10,11 +10,13 @@ import {
   wireToolSet,
 } from "../src/tools/registry.js";
 import { runEdgeTool, type EdgeToolContext } from "../src/tools/edge.js";
+import { anthropicRequestBody } from "../src/relay/wire.js";
 import {
   TODO_PHASES_ENTRY_TYPE,
   activeBranchAfterRewind,
   checkpointRewindState,
   latestTodoPhases,
+  rewindContextCut,
   todoJournalState,
 } from "../src/tools/session-tree.js";
 import {
@@ -516,6 +518,66 @@ describe("M1.5 T3 — session-tree projections (T:checkpoint.ts rehydrate/apply 
     function cpActiveJournal(): AnyAgentEvent[] {
       return [call("checkpoint", 3, { goal: "g" }), result("checkpoint", 3, 4, "ok")];
     }
+  });
+
+  test("rewindContextCut: arms only for a turn after the terminalized rewind turn", () => {
+    // t1: checkpoint → think → rewind → turn.completed; t2 starts after.
+    const journal = [
+      ev("thread.created", 1, { title: "t", machineId: "m" }),
+      ev("turn.input", 2, { turnId: "t1", inputId: "in1", content: [] }),
+      call("checkpoint", 3, { goal: "g" }),
+      result("checkpoint", 3, 4, "ok"),
+      call("think", 5, { thoughts: "dig" }),
+      result("think", 5, 6, "ok"),
+      call("rewind", 7, { report: "  findings here  " }),
+      result("rewind", 7, 8, "ok"),
+      ev("turn.completed", 9, { turnId: "t1" }),
+      ev("turn.input", 10, { turnId: "t2", inputId: "in2", content: [] }),
+    ];
+    // Armed for the post-cut turn: boundary, hidden-span end, trimmed report.
+    expect(rewindContextCut(journal, THREAD, "t2")).toEqual({
+      checkpointResultSeq: 4,
+      rewindResultSeq: 8,
+      hideThroughSeq: 9,
+      summary: "findings here",
+    });
+    // The rewind turn's own replay projects uncut (omp applies the cut at
+    // turn end — "Rewind requested." stays in that turn's live context).
+    expect(rewindContextCut(journal, THREAD, "t1")).toBeUndefined();
+    // No completed rewind → nothing arms.
+    expect(rewindContextCut([], THREAD, "t2")).toBeUndefined();
+  });
+
+  test("rewindContextCut: unarmed until the rewind turn terminalizes (crash window)", () => {
+    const journal = [
+      ev("thread.created", 1, { title: "t", machineId: "m" }),
+      ev("turn.input", 2, { turnId: "t1", inputId: "in1", content: [] }),
+      call("checkpoint", 3, { goal: "g" }),
+      result("checkpoint", 3, 4, "ok"),
+      call("rewind", 5, { report: "findings" }),
+      result("rewind", 5, 6, "ok"),
+      // No terminal row for t1 — the DO died before turn end. The cut arms
+      // only at turn end, so even a synthetic later turn projects uncut.
+      ev("turn.input", 7, { turnId: "t2", inputId: "in2", content: [] }),
+    ];
+    expect(rewindContextCut(journal, THREAD, "t2")).toBeUndefined();
+  });
+
+  test("rewindContextCut: root fallback arms with a null boundary", () => {
+    const journal = [
+      ev("thread.created", 1, { title: "t", machineId: "m" }),
+      ev("turn.input", 2, { turnId: "t1", inputId: "in1", content: [] }),
+      call("rewind", 5, { report: "from the root" }),
+      result("rewind", 5, 6, "ok"),
+      ev("turn.completed", 7, { turnId: "t1" }),
+      ev("turn.input", 8, { turnId: "t2", inputId: "in2", content: [] }),
+    ];
+    expect(rewindContextCut(journal, THREAD, "t2")).toEqual({
+      checkpointResultSeq: null,
+      rewindResultSeq: 6,
+      hideThroughSeq: 7,
+      summary: "from the root",
+    });
   });
 
   test("todoJournalState folds previous from the newest foreign entry and flags the execution's own snapshot", () => {
@@ -1075,5 +1137,51 @@ describe("M1.5 T3 — checkpoint/rewind end-to-end (branchWithSummary 同构 pro
     expect(replayedState.phase === "completed" ? replayedState.report : undefined).toBe(
       "report survives",
     );
+  });
+
+  test("context assembly consumes the cut (#147): post-rewind wire request = summary, not the span", async () => {
+    const REPORT = "leak is in the drain path";
+    const EXPLORATION = "instrumentation drill: pump, trace, dump. ";
+    const rig = await createRig({
+      turns: [
+        { toolCalls: [{ name: "checkpoint", arguments: { goal: "find the leak" } }] },
+        { toolCalls: [{ name: "think", arguments: { thoughts: EXPLORATION } }] },
+        { toolCalls: [{ name: "rewind", arguments: { report: REPORT } }] },
+        { deltas: ["rewind turn closes"] },
+      ],
+    });
+    const sent = await rig.stub.sendMessage({
+      clientRequestId: "in-t3-cp-assembly",
+      content: [{ type: "text", text: "explore" }],
+      mode: "start",
+    });
+    await rig.waitTurnComplete(sent.turnId);
+    const second = await rig.stub.sendMessage({
+      clientRequestId: "in-t3-cp-assembly-2",
+      content: [{ type: "text", text: "continue" }],
+      mode: "start",
+    });
+    await rig.waitTurnComplete(second.turnId);
+
+    // Turn 1 made three calls (checkpoint, think, rewind) + a closing call;
+    // turn 2's first request is the mock's 5th captured call.
+    const postRewind = rig.mock().calls[4];
+    if (postRewind === undefined) throw new Error("no post-rewind request captured");
+    const cut = postRewind.branchCut;
+    expect(cut?.summary).toBe(REPORT);
+    expect(cut?.checkpointResultSeq).toBeGreaterThan(0);
+    expect(cut?.rewindResultSeq).toBeGreaterThan(cut?.checkpointResultSeq ?? 0);
+
+    const body = anthropicRequestBody(postRewind, {
+      model: "m",
+      maxTokens: 64,
+      thinking: { type: "disabled" },
+    });
+    const wire = JSON.stringify(body.messages);
+    expect(wire).toContain(`[branch-summary] ${REPORT}`);
+    // The exploration span (and the rewind execution) never reach the wire.
+    expect(wire).not.toContain("instrumentation drill");
+    // The turn 2 input rides after the overlay.
+    expect(wire).toContain("continue");
   });
 });

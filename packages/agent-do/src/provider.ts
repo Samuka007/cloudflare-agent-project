@@ -100,6 +100,19 @@ export interface ModelRequest {
    */
   asyncResults: AsyncResultContribution[];
   /**
+   * Completed-rewind context overlay (#147): the assembly consumed the
+   * checkpoint boundary — the summary replaces the hidden exploration span
+   * (omp branchWithSummary: "intermediate checkpoint messages removed from
+   * active context; replaced by report"). The wire renders it as the first
+   * user-side block of the opening user message (omp session-context.ts
+   * emits the summary first). Absent = no armed rewind cut for this turn.
+   */
+  branchCut?: {
+    checkpointResultSeq: number | null;
+    rewindResultSeq: number;
+    summary: string;
+  };
+  /**
    * Forced tool choice (M1.5 T17 reminder ladder, attempt 3): the subagent
    * run's final reminder forces `yield` as the only permitted next call.
    * Derived from the journal fold (translate projects the reminder marker
