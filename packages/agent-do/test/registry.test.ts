@@ -99,6 +99,8 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
       "todo",
       "think",
       "write",
+      // T6 #96 — omp builtin wire order #30 (last).
+      "manage_skill",
     ]);
 
     const bash = tools[0];
@@ -202,7 +204,52 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
     expect(order.indexOf("edit")).toBeLessThan(order.indexOf("glob"));
     expect(order.indexOf("glob")).toBeLessThan(order.indexOf("grep"));
     expect(order.indexOf("grep")).toBeLessThan(order.indexOf("context_notes"));
-    expect(order.indexOf("write")).toBe(order.length - 1);
+    expect(order.indexOf("write")).toBe(order.length - 2);
+  });
+
+  test("M1.5/T6 #96 — manage_skill row is host/daemon-dispatch, wire order #30, narrow-free schema", () => {
+    const row = toolRegistryRow("manage_skill");
+    expect(row?.class).toBe("host");
+    expect(row?.backend).toEqual({ kind: "daemon-dispatch" });
+    expect(row?.intent).toBe("require");
+    // omp builtin-names.ts: manage_skill is the last builtin (index 30); the
+    // registry is a suffix of that order, so the row closes the wire.
+    expect(TOOL_REGISTRY[TOOL_REGISTRY.length - 1]?.name).toBe("manage_skill");
+    const tools = wireToolSet(M0_RENDER_FLAGS);
+    const manageSkill = tools.find((tool) => tool.name === "manage_skill");
+    expect(manageSkill?.input_schema).toEqual({
+      type: "object",
+      properties: {
+        i: INTENT_FIELD,
+        action: { enum: ["create", "delete", "update"] },
+        name: { type: "string", description: "kebab-case skill name" },
+        description: {
+          type: "string",
+          description: "one-line description of when to use the skill (required for create/update)",
+        },
+        body: {
+          type: "string",
+          description: "the SKILL.md body in markdown, no frontmatter (required for create/update)",
+        },
+      },
+      required: ["action", "name", "i"],
+    });
+    expect(manageSkill?.description).toBe(
+      [
+        "Managed skill: `SKILL.md` in isolated `~/.omp/agent/managed-skills`; surfaced as a normal skill in future sessions.",
+        "",
+        "Use: repeatable procedures worth codifying — setup sequence, debugging recipe, project-specific workflow.",
+        "User-authored skills separate; tool NEVER edits them.",
+        "",
+        '- `action: "create"` — fails if skill exists.',
+        '- `action: "update"` — overwrites body; fails if skill absent.',
+        '- `action: "delete"` — fails if skill absent.',
+        "",
+        "`name`: kebab-case (lowercase letters, digits, hyphens).",
+        "`description`: specific; drives discovery.",
+        "No frontmatter in `body`; generated from `name` and `description`.",
+      ].join("\n"),
+    );
   });
 
   test("M1.5/T5' — read schema is omp read.ts verbatim (path only)", () => {

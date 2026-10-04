@@ -146,6 +146,23 @@ export const todoSchema = type({
   "reason?": type("string").describe("blocker note for block"),
 });
 
+// omp packages/coding-agent/src/tools/manage-skill.ts:16-32 (@oh-my-pi 18.6.0).
+// omp's cross-field narrow (create/update require description+body) is an
+// arktype predicate — it has no JSON-Schema projection (ToJsonSchemaError),
+// and omp's own wire serialization faces the same wall; the contract is
+// enforced execute-time by the tool itself (manage-skill.ts:70-72), so the
+// row carries the narrow-free field set. The narrow stays host-side truth.
+const manageSkillSchema = type({
+  action: type("'create' | 'update' | 'delete'"),
+  name: type("string").describe("kebab-case skill name"),
+  "description?": type("string").describe(
+    "one-line description of when to use the skill (required for create/update)",
+  ),
+  "body?": type("string").describe(
+    "the SKILL.md body in markdown, no frontmatter (required for create/update)",
+  ),
+});
+
 // ---------------------------------------------------------------------------
 // Description templates — omp prompts/tools/*.md verbatim
 // ---------------------------------------------------------------------------
@@ -280,6 +297,20 @@ Before work, init for 3+ steps, requested task sets, or new instructions. MUST l
 After successful mutation: no active means earliest pending starts (phase order); multiple active means only earliest stays. Blocked NEVER starts automatically; unblock returns pending. Done out of order may rewind pointer but NEVER reopen completed. Mark done immediately; follow phase order.
 External waits (user/agent/service): block with optional reason suppresses stop reminder, starts next pending. Unblock when actionable; append a clearing task for agent-actionable blocker.
 NEVER call todo alone: init with first work; done/start with next action.`;
+
+// omp packages/coding-agent/src/prompts/tools/manage-skill.md (18.6.0).
+const MANAGE_SKILL_DESCRIPTION_TEMPLATE = `Managed skill: \`SKILL.md\` in isolated \`~/.omp/agent/managed-skills\`; surfaced as a normal skill in future sessions.
+
+Use: repeatable procedures worth codifying — setup sequence, debugging recipe, project-specific workflow.
+User-authored skills separate; tool NEVER edits them.
+
+- \`action: "create"\` — fails if skill exists.
+- \`action: "update"\` — overwrites body; fails if skill absent.
+- \`action: "delete"\` — fails if skill absent.
+
+\`name\`: kebab-case (lowercase letters, digits, hyphens).
+\`description\`: specific; drives discovery.
+No frontmatter in \`body\`; generated from \`name\` and \`description\`.`;
 
 /** Conditional flags the bash template resolves against (omp render context). */
 export interface ToolRenderFlags {
@@ -509,6 +540,20 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     name: "write",
     schema: writeSchema,
     descriptionTemplate: WRITE_DESCRIPTION_TEMPLATE,
+    class: "host",
+    backend: { kind: "daemon-dispatch" },
+    intent: "require",
+  },
+  {
+    // M1.5/T6 #96: manage_skill — SKILL.md exclusive management under the
+    // daemon-private managed-skills root (agent-dir env isolation in the
+    // client runtime; symlink/hardlink escape checks are omp's own store).
+    // Builtin wire order #30 (last); host enablement rides the same
+    // autolearn.enabled flag omp's ManageSkillTool.createIf checks — the
+    // client pins it in the isolated settings, no capability negotiation.
+    name: "manage_skill",
+    schema: manageSkillSchema,
+    descriptionTemplate: MANAGE_SKILL_DESCRIPTION_TEMPLATE,
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",
