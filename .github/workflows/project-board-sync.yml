@@ -5,7 +5,7 @@ name: project-board-sync
 # membership (every issue boards) + Status
 # (Backlog when milestone-less, Todo when milestoned+open,
 #  Done when closed, Canceled when closed+wontfix)
-# + Priority mirror: priority:* label → board field (labels drive, field mirrors).
+# Priority 字段不经本 workflow（field 即唯一真相，PM/用户直写）。
 # labeled/unlabeled 仅影响 ready-for-human（→ Wait for user）；
 # 其余 label 事件幂等重算，成本可忽略。
 on:
@@ -47,15 +47,7 @@ jobs:
               core.info(`Issue #${issue.number} has no milestone; Status=${desiredState}.`);
             }
 
-            // Priority mirror: priority:p* label is the input surface (visible on
-            // the issue page); the board field is canonical for sort/filter.
-            // One-way only — no back-sync from field to labels.
-            const priorityLabel = issue.labels?.find((l) => /^priority:p[0-2]$/.test(l.name));
-            const desiredPriority = priorityLabel
-              ? priorityLabel.name.split(':')[1].toUpperCase()
-              : null;
-
-            // Resolve the Status + Priority single-select fields + option ids at runtime.
+            // Resolve the Status field + option ids at runtime.
             const { node: project } = await github.graphql(
               `query($id: ID!) {
                 node(id: $id) {
@@ -76,7 +68,6 @@ jobs:
             );
             const singleSelects = project.fields.nodes.filter(Boolean);
             const statusField = singleSelects.find((f) => f.name === 'Status');
-            const priorityField = singleSelects.find((f) => f.name === 'Priority');
             if (!statusField) throw new Error('Status field not found on project');
             const option = statusField.options.find((o) => o.name === desiredState);
             if (!option) throw new Error(`Status option "${desiredState}" not found on project`);
@@ -139,33 +130,3 @@ jobs:
             );
             await setFieldValue(statusField.id, option.id);
             core.info(`Set Status=${desiredState} for issue #${issue.number}`);
-
-            // Mirror Priority (skip silently if the field was never configured).
-            if (priorityField) {
-              const priorityOption = desiredPriority
-                ? priorityField.options.find((o) => o.name === desiredPriority)
-                : null;
-              if (desiredPriority && !priorityOption) {
-                core.warning(`Priority option "${desiredPriority}" not found on project; mirror skipped.`);
-              } else if (priorityOption) {
-                await setFieldValue(priorityField.id, priorityOption.id);
-                core.info(`Set Priority=${desiredPriority} for issue #${issue.number}`);
-              } else {
-                // No priority label → clear the mirror (labels drive).
-                await github.graphql(
-                  `mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
-                    clearProjectV2ItemFieldValue(
-                      input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId }
-                    ) {
-                      projectV2Item { id }
-                    }
-                  }`,
-                  {
-                    projectId: PROJECT_ID,
-                    itemId,
-                    fieldId: priorityField.id,
-                  },
-                );
-                core.info(`Cleared Priority for issue #${issue.number} (no priority label).`);
-              }
-            }
