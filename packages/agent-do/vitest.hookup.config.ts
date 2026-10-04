@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { existsSync, readFileSync } from "node:fs";
 import { defineConfig } from "vitest/config";

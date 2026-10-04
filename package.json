@@ -7,11 +7,15 @@
   },
   "scripts": {
     "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test"
   },
   "devDependencies": {
     "eslint": "^9.37.0",
+    "@types/node": "^22.20.5",
+    "prettier": "^3.6.2",
     "typescript-eslint": "^8.71.0"
   }
 }
