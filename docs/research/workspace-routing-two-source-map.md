@@ -15,12 +15,12 @@
 
 四张表构成绑定链（`packages/db/src/schema.ts`）：
 
-| 表 | 键与语义 | 位置 |
-| --- | --- | --- |
-| `hosts` | `id, name, type(HostType), connectMachineId, maxPermissionMode, destroyedAt, lastSeenAt` | `schema.ts:88-106` |
-| `project_sources` | 项目在某台 host 上的源 checkout：`(projectId, hostId, path)`，`type='local_path'`（CHECK 强制 hostId/path 非空），`isDefault`；唯一索引 `(projectId, hostId)` | `schema.ts:450-483` |
-| `environments` | **绑定单位**：`(projectId, hostId NOT NULL, path)`；`managed/isGitRepo/isWorktree/branchName/baseBranch/defaultBranch/mergeBaseBranch`、`workspaceProvisionType`、`status`（默认 `provisioning`）；唯一索引 `(projectId, hostId, path)`，注释明示「workspace path 按 project 声明，不全局占用；两个 project 可指向同一目录」 | `schema.ts:485-536` |
-| `threads` | `projectId NOT NULL` + `environmentId` **可空**，`ON DELETE SET NULL` | `schema.ts:538-547` |
+| 表                | 键与语义                                                                                                                                                                                                                                                                                                                     | 位置                |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| `hosts`           | `id, name, type(HostType), connectMachineId, maxPermissionMode, destroyedAt, lastSeenAt`                                                                                                                                                                                                                                     | `schema.ts:88-106`  |
+| `project_sources` | 项目在某台 host 上的源 checkout：`(projectId, hostId, path)`，`type='local_path'`（CHECK 强制 hostId/path 非空），`isDefault`；唯一索引 `(projectId, hostId)`                                                                                                                                                                | `schema.ts:450-483` |
+| `environments`    | **绑定单位**：`(projectId, hostId NOT NULL, path)`；`managed/isGitRepo/isWorktree/branchName/baseBranch/defaultBranch/mergeBaseBranch`、`workspaceProvisionType`、`status`（默认 `provisioning`）；唯一索引 `(projectId, hostId, path)`，注释明示「workspace path 按 project 声明，不全局占用；两个 project 可指向同一目录」 | `schema.ts:485-536` |
+| `threads`         | `projectId NOT NULL` + `environmentId` **可空**，`ON DELETE SET NULL`                                                                                                                                                                                                                                                        | `schema.ts:538-547` |
 
 要点：
 
@@ -54,13 +54,13 @@ server 侧每次下发 thread 命令都做同一步解析：
 
 ### 1.5 bb 侧小结
 
-| 维度 | 既定语义 | 证据 |
-| --- | --- | --- |
-| 绑定单位 | environment = (projectId, hostId, path) 唯一；thread 绑 environmentId（可空、可改） | `schema.ts:485-536`、`538-547`、`data/threads.ts:1638-1650` |
-| 路由 | turn → requireWorkspaceCommandTarget → hostId → daemon WS → per-env runtime → omp 子进程 `--cwd` | `workspace-command-target.ts:33-50`、`runtime-manager.ts:1361-1365` |
-| 防漂移 | 换 path = `workspace_type_mismatch`；跨 session.hostId = 403 | `command-dispatch-support.ts:229-234`、`internal/session.ts:171-175` |
-| 迁移 | 换绑 environment 支持（含 mid-turn）；provider 会话凭据 = host 本地 `sessionFile` 描述符 | `command-dispatch.test.ts:870-878`、`bridge.ts:161-165` |
-| 离线 | host 掉线 → 命令失败/顺延/排队；无跨 host 会话搬运 | `periodic-sweeps.ts:193-223`、`queued-messages.ts:344-427` |
+| 维度     | 既定语义                                                                                         | 证据                                                                 |
+| -------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| 绑定单位 | environment = (projectId, hostId, path) 唯一；thread 绑 environmentId（可空、可改）              | `schema.ts:485-536`、`538-547`、`data/threads.ts:1638-1650`          |
+| 路由     | turn → requireWorkspaceCommandTarget → hostId → daemon WS → per-env runtime → omp 子进程 `--cwd` | `workspace-command-target.ts:33-50`、`runtime-manager.ts:1361-1365`  |
+| 防漂移   | 换 path = `workspace_type_mismatch`；跨 session.hostId = 403                                     | `command-dispatch-support.ts:229-234`、`internal/session.ts:171-175` |
+| 迁移     | 换绑 environment 支持（含 mid-turn）；provider 会话凭据 = host 本地 `sessionFile` 描述符         | `command-dispatch.test.ts:870-878`、`bridge.ts:161-165`              |
+| 离线     | host 掉线 → 命令失败/顺延/排队；无跨 host 会话搬运                                               | `periodic-sweeps.ts:193-223`、`queued-messages.ts:344-427`           |
 
 **【GAP-bb】跨设备离线续聊**：thread 的对话正本在 server DB，但 provider 会话正本（omp session file）只在原 host 的 `thread-storage`/dataDir（§1.2 第 6 点、§1.3 描述符语义）。host 永久离线后，换新 host 重建 environment 只能靠 server 事件流重放上下文，**没有既定的「携带 session file 到新 host 续聊」机制**。这是空白，不是设计缺陷声明——bb 显然选择了「会话文件留在执行机」的模型。
 
@@ -97,13 +97,13 @@ server 侧每次下发 thread 命令都做同一步解析：
 
 ### 2.4 omp 侧小结
 
-| 维度 | 既定语义 | 证据 |
-| --- | --- | --- |
-| 默认绑定 | 单 cwd（启动 `--cwd`/resume 重绑），相对路径一律 `resolveToCwd` | `main.ts:1287`、`:879-937`、`path-utils.ts:307-308` |
-| per-call 覆盖 | 任何 path 参数可写内部 URL；`ssh://host/path` 即跨机读写；bash 另有 `cwd?` 参数（含 URL cwd） | `router.ts:84-88`、`ssh-protocol.ts:242-256`、`bash.ts:335`、`:1005-1031` |
-| 主机身份 | 无注册表：`ssh.json` capability 命名主机 + 不透明 OpenSSH destination；连接经共享 ControlMaster | `ssh-protocol.ts:94-98`、`:207-239`、header `:5-7` |
-| 权限 | 远端读写 = exec 档；read/write 档工具连接前硬拒 | `types.ts:115-116`、`ssh-url-approval*.test.ts` |
-| 会话持久 | 本机 session JSONL；resume 支持换 cwd 重根（moveTo），文件本身不跨机同步 | `main.ts:782-783`、`:868-874` |
+| 维度          | 既定语义                                                                                        | 证据                                                                      |
+| ------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 默认绑定      | 单 cwd（启动 `--cwd`/resume 重绑），相对路径一律 `resolveToCwd`                                 | `main.ts:1287`、`:879-937`、`path-utils.ts:307-308`                       |
+| per-call 覆盖 | 任何 path 参数可写内部 URL；`ssh://host/path` 即跨机读写；bash 另有 `cwd?` 参数（含 URL cwd）   | `router.ts:84-88`、`ssh-protocol.ts:242-256`、`bash.ts:335`、`:1005-1031` |
+| 主机身份      | 无注册表：`ssh.json` capability 命名主机 + 不透明 OpenSSH destination；连接经共享 ControlMaster | `ssh-protocol.ts:94-98`、`:207-239`、header `:5-7`                        |
+| 权限          | 远端读写 = exec 档；read/write 档工具连接前硬拒                                                 | `types.ts:115-116`、`ssh-url-approval*.test.ts`                           |
+| 会话持久      | 本机 session JSONL；resume 支持换 cwd 重根（moveTo），文件本身不跨机同步                        | `main.ts:782-783`、`:868-874`                                             |
 
 **【GAP-omp】跨设备离线续聊**：session 文件是本机 JSONL，`moveTo` 只解决「项目目录搬家后重根」，没有任何两台设备间的会话同步/拉取语义——在 B 设备续 A 设备的会话需要自行搬运文件。与 GAP-bb 同根：会话正本属地是执行机。
 
@@ -111,14 +111,14 @@ server 侧每次下发 thread 命令都做同一步解析：
 
 ## 3. 两源对照与 #73 残余空白
 
-| 维度 | bb | omp |
-| --- | --- | --- |
-| 绑定单位 | environment（DB 行：hostId+path+供给方式），thread 外键绑定、可换绑 | 进程 cwd（会话元数据记录），启动/续聊时绑定 |
-| host:path 覆盖层级 | **重量级**：换 = 新 environment provision + DB 换绑 + 事件流 | **轻量**：工具参数级 per-call URL，零状态变更 |
-| 远端执行面 | 常驻 host-daemon（hostKey enroll、WS 控制面、envLane 串行） | 无常驻：按需 ssh + 共享 ControlMaster，能力上限 1MiB 文本 |
-| 权限模型 | host 级 `maxPermissionMode` + provider permissionMode + 403 串机守卫 | tier 模型（read/write/exec），远端强制 exec 档 |
-| 会话正本 | server DB 事件流 + host 本地 thread-storage/omp session file | 本机 session JSONL |
-| 离线行为 | 命令失败/顺延/排队，等 host 回归 | 不适用（无服务端） |
+| 维度               | bb                                                                   | omp                                                       |
+| ------------------ | -------------------------------------------------------------------- | --------------------------------------------------------- |
+| 绑定单位           | environment（DB 行：hostId+path+供给方式），thread 外键绑定、可换绑  | 进程 cwd（会话元数据记录），启动/续聊时绑定               |
+| host:path 覆盖层级 | **重量级**：换 = 新 environment provision + DB 换绑 + 事件流         | **轻量**：工具参数级 per-call URL，零状态变更             |
+| 远端执行面         | 常驻 host-daemon（hostKey enroll、WS 控制面、envLane 串行）          | 无常驻：按需 ssh + 共享 ControlMaster，能力上限 1MiB 文本 |
+| 权限模型           | host 级 `maxPermissionMode` + provider permissionMode + 403 串机守卫 | tier 模型（read/write/exec），远端强制 exec 档            |
+| 会话正本           | server DB 事件流 + host 本地 thread-storage/omp session file         | 本机 session JSONL                                        |
+| 离线行为           | 命令失败/顺延/排队，等 host 回归                                     | 不适用（无服务端）                                        |
 
 **真正的空白（两源共同，且仅此一项）**：**跨设备离线续聊**——bb 换 host 后无 provider 会话搬运机制（sessionFile 属地主机的 `thread-storage`），omp 无会话文件跨机同步语义。其余问题（绑定形状、路由、per-call 覆盖、权限、迁移、UI 呈现）在两源中都是**已回答的既定语义**，#73 的 grilling 不应把它们当开放问题。
 

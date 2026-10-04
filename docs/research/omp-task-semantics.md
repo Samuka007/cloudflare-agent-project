@@ -8,14 +8,14 @@
 
 ## 0. 结论速览
 
-| 维度 | 一句话结论 |
-| --- | --- |
-| 派发形状 | **batch（`{context, tasks[]}`，默认开）每项一个子代理**；flat 单派发运行时仍收；执行模式按 item 定（`blocking: true` 内联、否则后台 job）；batch 流式期间逐项投机预启动（speculative launch，默认开） |
-| 隔离后端 | hybrid（#70 定类）：编排面进程内；`isolated` 工作区走 pi-natives PAL（`crates/pi-iso`）八后端候选降级，patch/branch 两种回收合并，基线快照 ≤1 GiB |
-| 结果回灌 | 子代理**必须经隐藏 `yield` 工具收尾**（≤3 次提醒，末次强制 toolChoice）；产出入 `agent://<id>` 工件族；后台完成的结果以 `async-result` follow-up 注入父会话，**且使早于它的 yield 失效** |
+| 维度      | 一句话结论                                                                                                                                                                                              |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 派发形状  | **batch（`{context, tasks[]}`，默认开）每项一个子代理**；flat 单派发运行时仍收；执行模式按 item 定（`blocking: true` 内联、否则后台 job）；batch 流式期间逐项投机预启动（speculative launch，默认开）   |
+| 隔离后端  | hybrid（#70 定类）：编排面进程内；`isolated` 工作区走 pi-natives PAL（`crates/pi-iso`）八后端候选降级，patch/branch 两种回收合并，基线快照 ≤1 GiB                                                       |
+| 结果回灌  | 子代理**必须经隐藏 `yield` 工具收尾**（≤3 次提醒，末次强制 toolChoice）；产出入 `agent://<id>` 工件族；后台完成的结果以 `async-result` follow-up 注入父会话，**且使早于它的 yield 失效**                |
 | 并发/取消 | 会话级 `Semaphore` 按 `task.maxConcurrency`（默认 32，0=无限）就地伸缩，跨 task 调用统一限流；取消三级：`proc://<id>/kill`、父调用 signal、预算/墙钟强制停；硬中止 → `aborted` 终态墓碑，预算中止可复活 |
-| wait 协作 | `wait` 只等**自己启动的** job/service（30 分钟安全帽），peer 消息/steering 中断即可唤醒；结果本来自动投递——wait 是"阻塞时的最后手段"，不是轮询通道 |
-| 生命周期 | 注册表四态 `running\|idle\|parked\|aborted`；完成（成功或失败）→ `idle` + adopt，TTL 7 min 后 park（session 释放、ref+sessionFile 保留），`write agent://<id>` / Agent Hub 复活；`aborted` 终态不可逆 |
+| wait 协作 | `wait` 只等**自己启动的** job/service（30 分钟安全帽），peer 消息/steering 中断即可唤醒；结果本来自动投递——wait 是"阻塞时的最后手段"，不是轮询通道                                                      |
+| 生命周期  | 注册表四态 `running\|idle\|parked\|aborted`；完成（成功或失败）→ `idle` + adopt，TTL 7 min 后 park（session 释放、ref+sessionFile 保留），`write agent://<id>` / Agent Hub 复活；`aborted` 终态不可逆   |
 
 ---
 
@@ -29,16 +29,16 @@
 
 ### 1.2 关键 item 字段语义
 
-| 字段 | 语义 | 证据 |
-| --- | --- | --- |
-| `name` | 稳定注册表/IRC id；提示层要求 CamelCase ≤32，wire 只要求 string；缺省生成 AdjectiveNoun 名，`AgentOutputManager` 会话内唯一化（重名 `-2`/`-3`，嵌套 `Parent.Child`） | docs/tools/task.md:42, :199; output-manager.ts:6-11, :83-87 |
-| `agent` | 类型选择（scout/reviewer/...）；缺省用 spawn policy 默认（通常 `task`） | docs/tools/task.md:43 |
-| `solutionSpace` | 问题开放度描述；**作为唯一输入喂子代理首 prompt 的 `auto` 思考分级器**（judge 只看此字段不看 task 正文）；schema 声明必填但宽松校验允许缺失（回落按 task 文本分级） | docs/tools/task.md:45 |
-| `effort` | 仅 `task.enableEffort=true`（默认 off）出现；lo/med/hi 映射到解析模型支持的档位；覆盖 agent 自身 selector 含 auto | docs/tools/task.md:46, :163 |
-| `model` | 一次 spawn 的**有序偏好**，不是封闭白名单：逐候选试凭据，全失败则 spawn 失败，**不回落父模型**（agent 定义/task.agentModelOverrides 的模型才有父回落）；歧义字面量 preflight 失败 | docs/tools/task.md:47, :53, :55 |
-| `outputSchema`/`schemaMode` | 调用点结构化契约 + 校验模式；优先级 per-call > agent frontmatter `output` > 继承父会话 schema；permissive 重试耗尽可带警告收无效 payload，strict 失败 | docs/tools/task.md:48-49, :109 |
-| `tools` | 父 eval 内核（Python/JS）已定义的命名工具；子代理调用**在父内核执行**；双内核同名、未知名、计划模式均 preflight 失败 | docs/tools/task.md:50, :135 |
-| `isolated` | 仅 `task.isolation.enabled=true` 且计划模式关闭时出现在 schema；keep-alive 的隔离代理跨 idle/parked 保留工作区 | docs/tools/task.md:51 |
+| 字段                        | 语义                                                                                                                                                                              | 证据                                                        |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `name`                      | 稳定注册表/IRC id；提示层要求 CamelCase ≤32，wire 只要求 string；缺省生成 AdjectiveNoun 名，`AgentOutputManager` 会话内唯一化（重名 `-2`/`-3`，嵌套 `Parent.Child`）              | docs/tools/task.md:42, :199; output-manager.ts:6-11, :83-87 |
+| `agent`                     | 类型选择（scout/reviewer/...）；缺省用 spawn policy 默认（通常 `task`）                                                                                                           | docs/tools/task.md:43                                       |
+| `solutionSpace`             | 问题开放度描述；**作为唯一输入喂子代理首 prompt 的 `auto` 思考分级器**（judge 只看此字段不看 task 正文）；schema 声明必填但宽松校验允许缺失（回落按 task 文本分级）               | docs/tools/task.md:45                                       |
+| `effort`                    | 仅 `task.enableEffort=true`（默认 off）出现；lo/med/hi 映射到解析模型支持的档位；覆盖 agent 自身 selector 含 auto                                                                 | docs/tools/task.md:46, :163                                 |
+| `model`                     | 一次 spawn 的**有序偏好**，不是封闭白名单：逐候选试凭据，全失败则 spawn 失败，**不回落父模型**（agent 定义/task.agentModelOverrides 的模型才有父回落）；歧义字面量 preflight 失败 | docs/tools/task.md:47, :53, :55                             |
+| `outputSchema`/`schemaMode` | 调用点结构化契约 + 校验模式；优先级 per-call > agent frontmatter `output` > 继承父会话 schema；permissive 重试耗尽可带警告收无效 payload，strict 失败                             | docs/tools/task.md:48-49, :109                              |
+| `tools`                     | 父 eval 内核（Python/JS）已定义的命名工具；子代理调用**在父内核执行**；双内核同名、未知名、计划模式均 preflight 失败                                                              | docs/tools/task.md:50, :135                                 |
+| `isolated`                  | 仅 `task.isolation.enabled=true` 且计划模式关闭时出现在 schema；keep-alive 的隔离代理跨 idle/parked 保留工作区                                                                    | docs/tools/task.md:51                                       |
 
 ### 1.3 执行模式判定与投机预启动
 
@@ -104,12 +104,12 @@
 
 三入口，后果分层：
 
-| 入口 | 作用 | 后果 | 证据 |
-| --- | --- | --- | --- |
-| `write proc://<jobId>/kill`（无 content） | 取消后台 job / owned 子代理 / 停服务 | 归属运行中的 subagent 被 abort 并释放 session | docs/tools/task.md:26, :158; wait.md:26 |
-| 父工具调用 signal | 取消 sync run；后台 job 不受父调用取消影响（已 detach） | call signal 传播到 SpawnRun | docs/tools/task.md:158 |
-| 预算/墙钟强制停 | 软中止 | keep-alive 且有 reviver ⇒ **可复活**：置 `idle` 走 follow-up/复活路径 | executor.ts:3246-3250 |
-| 内部硬中止 / call signal / 墙钟 | 真杀 | `aborted` **终态墓碑**：session 释放，延迟的复活/进度永不翻转墓碑 | executor.ts:3251-3281; agent-registry.ts:190-193 |
+| 入口                                      | 作用                                                    | 后果                                                                  | 证据                                             |
+| ----------------------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------ |
+| `write proc://<jobId>/kill`（无 content） | 取消后台 job / owned 子代理 / 停服务                    | 归属运行中的 subagent 被 abort 并释放 session                         | docs/tools/task.md:26, :158; wait.md:26          |
+| 父工具调用 signal                         | 取消 sync run；后台 job 不受父调用取消影响（已 detach） | call signal 传播到 SpawnRun                                           | docs/tools/task.md:158                           |
+| 预算/墙钟强制停                           | 软中止                                                  | keep-alive 且有 reviver ⇒ **可复活**：置 `idle` 走 follow-up/复活路径 | executor.ts:3246-3250                            |
+| 内部硬中止 / call signal / 墙钟           | 真杀                                                    | `aborted` **终态墓碑**：session 释放，延迟的复活/进度永不翻转墓碑     | executor.ts:3251-3281; agent-registry.ts:190-193 |
 
 关键不对称：**budget 中止是唯一可复活的 abort**（executor.ts:2144-2147 注释——"a soft stop that never escalated still identifies as a budget abort so the lifecycle can park the agent as resumable"）；其余一律终态。
 
@@ -130,7 +130,7 @@
  spawn ──► running ──(finish/失败)──► idle ──(TTL 7min)──► parked ──(write agent:// / Hub)──► idle
               │                                                                                        ▲
               ├──(硬中止：signal/墙钟/内部终止)──► aborted（终态墓碑）                                   │
-              └──(预算软停 + reviver)──► idle（可复活）──────┘（同上路径）                                 
+              └──(预算软停 + reviver)──► idle（可复活）──────┘（同上路径）
 ```
 
 - **注册表四态** `running | idle | parked | aborted`（pi-tui/overlays/agent-hub-types.ts:7）。`session` 字段**恰在 parked/aborted 时为 null**（agent-registry.ts:68-70）；`aborted` 终态不可逆，延迟回调只能确认不能翻转（:190-193）；注册走 CAS（`registerIfAvailable` 只认缺席或指定 parked ref，:161-170）。
@@ -145,24 +145,24 @@
 
 ## 6. 语义总表（#74 直接取用）
 
-| # | 行为面 | 语义 | 证据（omp @ `d4d49e7`） |
-| --- | --- | --- | --- |
-| 1 | 派发粒度 | 一次调用一 spawn；batch 形一次调用 N spawn（默认） | docs/tools/task.md:3, :35-36; task/settings.ts:195-199 |
-| 2 | 共享上下文 | batch `context` 必填，渲染进每个子代理系统提示 CONTEXT 节 | docs/tools/task.md:35, :40; task/index.ts:277-279 |
-| 3 | 执行模式 | per-item：`blocking: true` 内联，否则 async job；混合调用两轨并行 | task/index.ts:921-925, :1191-1194; docs/tools/task.md:3 |
-| 4 | 投机预启动 | batch 流式逐项闭合即启动，dispatch 收养或全弃 | docs/tools/task.md:132; task/settings.ts:209-213 |
-| 5 | 模型选择 | 有序偏好试凭据；显式选择器不回落父模型 | docs/tools/task.md:47, :55 |
-| 6 | 隔离 | PAL 八后端降级；基线 ≤1 GiB；patch/branch 回收；apply 门默认开 | worktree.ts:130, :481-484; isolation-runner.ts:503-505; task/settings.ts:101-119 |
-| 7 | 收尾门 | 唯一经 `yield`；≤3 提醒 + 末次强制 toolChoice；无 yield 注入 SYSTEM WARNING | executor.ts:2210, :2345-2375; docs/tools/task.md:186 |
-| 8 | 回灌 | 同步=SingleResult 合并；异步=async-result follow-up 注入 yield 队列 | agent-session.ts:1950-1963, :2809; async-job-delivery.ts:25 |
-| 9 | yield 失效 | 后到的 async-result 作废先前 yield，强制重 yield；stale 未刷新判 run 失败 | executor.ts:1673-1676, :2420-2424, :2524-2527 |
-| 10 | 工件 | `<id>.md/.jsonl/.json`；`agent://<id>` + JSON 路径/嵌套点号 id；500 KB/5000 行截断 | task/types.ts:29-32; output-manager.ts:6-11; docs/tools/task.md:89-94 |
-| 11 | 并发上限 | 会话级 Semaphore，`task.maxConcurrency` 默认 32，就地伸缩，跨调用统一 | task/index.ts:639-643; task/settings.ts:235-239; parallel.ts:131-135 |
-| 12 | 防自锁 | provider 流按单槽托架，spawn 树深度不再死锁 | provider-concurrency.ts:8-11, :74-78 |
-| 13 | 预算 | 200 请求软预算，1.5× 强停逼 yield；`maxRuntimeMs` 默认关 | settings.ts:337-346; executor.ts:1630-1632 |
-| 14 | 取消 | `proc://<id>/kill` / call signal / 硬中止=aborted 墓碑 / 预算软停=idle 可复活 | docs/tools/task.md:158; executor.ts:3246-3281 |
-| 15 | wait | 无参、只等自有 job/service；30 min 安全帽；消息/steering 即醒；结果自动投递，禁止轮询 | tools/wait.ts:25, :43-48, :136-144; docs/tools/wait.md:16-17, :20 |
-| 16 | 生命周期 | running→idle→parked(TTL 7min)→revive；aborted 终态；Main 永不 park；重启后转录恢复 parked 树 | agent-hub-types.ts:7; task/settings.ts:324-327; agent-lifecycle.ts:1-21; persisted-agents.ts:472-474 |
+| #   | 行为面     | 语义                                                                                         | 证据（omp @ `d4d49e7`）                                                                              |
+| --- | ---------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 1   | 派发粒度   | 一次调用一 spawn；batch 形一次调用 N spawn（默认）                                           | docs/tools/task.md:3, :35-36; task/settings.ts:195-199                                               |
+| 2   | 共享上下文 | batch `context` 必填，渲染进每个子代理系统提示 CONTEXT 节                                    | docs/tools/task.md:35, :40; task/index.ts:277-279                                                    |
+| 3   | 执行模式   | per-item：`blocking: true` 内联，否则 async job；混合调用两轨并行                            | task/index.ts:921-925, :1191-1194; docs/tools/task.md:3                                              |
+| 4   | 投机预启动 | batch 流式逐项闭合即启动，dispatch 收养或全弃                                                | docs/tools/task.md:132; task/settings.ts:209-213                                                     |
+| 5   | 模型选择   | 有序偏好试凭据；显式选择器不回落父模型                                                       | docs/tools/task.md:47, :55                                                                           |
+| 6   | 隔离       | PAL 八后端降级；基线 ≤1 GiB；patch/branch 回收；apply 门默认开                               | worktree.ts:130, :481-484; isolation-runner.ts:503-505; task/settings.ts:101-119                     |
+| 7   | 收尾门     | 唯一经 `yield`；≤3 提醒 + 末次强制 toolChoice；无 yield 注入 SYSTEM WARNING                  | executor.ts:2210, :2345-2375; docs/tools/task.md:186                                                 |
+| 8   | 回灌       | 同步=SingleResult 合并；异步=async-result follow-up 注入 yield 队列                          | agent-session.ts:1950-1963, :2809; async-job-delivery.ts:25                                          |
+| 9   | yield 失效 | 后到的 async-result 作废先前 yield，强制重 yield；stale 未刷新判 run 失败                    | executor.ts:1673-1676, :2420-2424, :2524-2527                                                        |
+| 10  | 工件       | `<id>.md/.jsonl/.json`；`agent://<id>` + JSON 路径/嵌套点号 id；500 KB/5000 行截断           | task/types.ts:29-32; output-manager.ts:6-11; docs/tools/task.md:89-94                                |
+| 11  | 并发上限   | 会话级 Semaphore，`task.maxConcurrency` 默认 32，就地伸缩，跨调用统一                        | task/index.ts:639-643; task/settings.ts:235-239; parallel.ts:131-135                                 |
+| 12  | 防自锁     | provider 流按单槽托架，spawn 树深度不再死锁                                                  | provider-concurrency.ts:8-11, :74-78                                                                 |
+| 13  | 预算       | 200 请求软预算，1.5× 强停逼 yield；`maxRuntimeMs` 默认关                                     | settings.ts:337-346; executor.ts:1630-1632                                                           |
+| 14  | 取消       | `proc://<id>/kill` / call signal / 硬中止=aborted 墓碑 / 预算软停=idle 可复活                | docs/tools/task.md:158; executor.ts:3246-3281                                                        |
+| 15  | wait       | 无参、只等自有 job/service；30 min 安全帽；消息/steering 即醒；结果自动投递，禁止轮询        | tools/wait.ts:25, :43-48, :136-144; docs/tools/wait.md:16-17, :20                                    |
+| 16  | 生命周期   | running→idle→parked(TTL 7min)→revive；aborted 终态；Main 永不 park；重启后转录恢复 parked 树 | agent-hub-types.ts:7; task/settings.ts:324-327; agent-lifecycle.ts:1-21; persisted-agents.ts:472-474 |
 
 ---
 

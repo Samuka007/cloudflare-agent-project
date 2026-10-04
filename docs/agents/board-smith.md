@@ -14,7 +14,7 @@
 
 ## 不变量（审计清单）
 
-- 每轴恰一个表示（真相源唯一）：phase=milestone 原生、importance=Priority 字段（无标签双胞胎）、lifecycle=Status 派生（sync workflow，仅 Status）、inbox=triage 五标签、territory=block:*+scope:infra、process=wayfinder:*、work-type=type:*。
+- 每轴恰一个表示（真相源唯一）：phase=milestone 原生、importance=Priority 字段（无标签双胞胎）、lifecycle=Status 派生（sync workflow，仅 Status）、inbox=triage 五标签、territory=block:_+scope:infra、process=wayfinder:_、work-type=type:*。
 - workflow 只写 Status；Priority/In Progress/Wait for user 由 PM 直写；**任何"无输入→清字段"逻辑禁止存在**（事故源）。
 - 派生方向单向且可重放：label/事件→Status，绝不反向。
 - blocking 边与提案 DAG 一致（新票集落地时同步补边）；伞票 sub-issue 层级完整。

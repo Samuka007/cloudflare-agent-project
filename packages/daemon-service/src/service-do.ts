@@ -568,8 +568,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     await this.ready();
     const session = this.state.session;
     return {
-      connected:
-        session !== null && session.hostId === args.hostId && this.liveSocket() !== null,
+      connected: session !== null && session.hostId === args.hostId && this.liveSocket() !== null,
     };
   }
 
