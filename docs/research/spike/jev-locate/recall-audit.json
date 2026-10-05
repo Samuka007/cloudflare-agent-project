@@ -1,0 +1,185 @@
+{
+  "status": "completed",
+  "preregistered": {
+    "frozen": "2026-10-05 (before first live run; jev-locator-converger.md §6 枚举审计块)",
+    "channels": "A=jev-loop snapshot SEL whitelist; B=CDP AX tree interactive roles; C=cursor/onclick/tabindex heuristic (audit-only)",
+    "honesty": "B/C hits are GAP CANDIDATES pending human inspection, not proven misses",
+    "axInteractiveRoles": [
+      "button",
+      "link",
+      "textbox",
+      "searchbox",
+      "checkbox",
+      "radio",
+      "switch",
+      "menuitem",
+      "menuitemcheckbox",
+      "menuitemradio",
+      "tab",
+      "combobox",
+      "option",
+      "slider"
+    ]
+  },
+  "totals": {
+    "pages": 3,
+    "aSum": 196,
+    "bOnlySum": 21,
+    "cOnlySum": 3
+  },
+  "pages": [
+    {
+      "url": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+      "title": "hello? 你的工具列表是？",
+      "gen": 1,
+      "aCount": 85,
+      "aTrimmed": 0,
+      "stateTokens": 1377,
+      "bInteractive": 85,
+      "gap": {
+        "matchedExact": 43,
+        "matchedByName": 0,
+        "bOnly": [
+          {
+            "role": "button",
+            "name": "Threads Collapse Threads section Sidebar display"
+          },
+          {
+            "role": "button",
+            "name": "Collapse Threads section"
+          },
+          {
+            "role": "button",
+            "name": "Sidebar display options"
+          },
+          {
+            "role": "button",
+            "name": "New project"
+          },
+          {
+            "role": "button",
+            "name": "New thread"
+          },
+          {
+            "role": "button",
+            "name": "Ran tool eval { code: import sys, platform, date"
+          },
+          {
+            "role": "textbox",
+            "name": "Ask for a follow-up. @ to mention files, folders"
+          }
+        ],
+        "cOnly": [
+          {
+            "tag": "DIV",
+            "role": "div",
+            "name": "New threadExtensions To pick up a draggable ite…",
+            "why": "onclick"
+          }
+        ]
+      }
+    },
+    {
+      "url": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+      "title": "Settings",
+      "gen": 2,
+      "aCount": 24,
+      "aTrimmed": 0,
+      "stateTokens": 514,
+      "bInteractive": 24,
+      "gap": {
+        "matchedExact": 22,
+        "matchedByName": 0,
+        "bOnly": [
+          {
+            "role": "link",
+            "name": "OpenAI Codex"
+          },
+          {
+            "role": "link",
+            "name": "Claude Claude Code"
+          }
+        ],
+        "cOnly": [
+          {
+            "tag": "DIV",
+            "role": "div",
+            "name": "Back to appSettingsGeneralAppearanceKeyboardUsa…",
+            "why": "onclick"
+          }
+        ]
+      }
+    },
+    {
+      "url": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+      "title": "hi，host现在在线吗？",
+      "gen": 3,
+      "aCount": 87,
+      "aTrimmed": 0,
+      "stateTokens": 1472,
+      "bInteractive": 87,
+      "gap": {
+        "matchedExact": 42,
+        "matchedByName": 0,
+        "bOnly": [
+          {
+            "role": "button",
+            "name": "Threads Collapse Threads section Sidebar display"
+          },
+          {
+            "role": "button",
+            "name": "Collapse Threads section"
+          },
+          {
+            "role": "button",
+            "name": "Sidebar display options"
+          },
+          {
+            "role": "button",
+            "name": "New project"
+          },
+          {
+            "role": "button",
+            "name": "New thread"
+          },
+          {
+            "role": "button",
+            "name": "Ran tool bash { command: echo ok; date -u, i: 检查"
+          },
+          {
+            "role": "button",
+            "name": "Running tool: ask { i: 询问用户要安装哪些常用软件, questions:"
+          },
+          {
+            "role": "button",
+            "name": "命令行工具 curl、wget、git、zip、unzip、htop 等常用基础工具"
+          },
+          {
+            "role": "button",
+            "name": "开发语言运行时 Python 3、pip、Node.js、npm 等开发环境"
+          },
+          {
+            "role": "button",
+            "name": "编译工具 gcc/g++、make、build-essential 等编译工具链"
+          },
+          {
+            "role": "button",
+            "name": "容器/虚拟化 docker、docker-compose 等容器相关工具"
+          },
+          {
+            "role": "button",
+            "name": "Other…"
+          }
+        ],
+        "cOnly": [
+          {
+            "tag": "DIV",
+            "role": "div",
+            "name": "New threadExtensions To pick up a draggable ite…",
+            "why": "onclick"
+          }
+        ]
+      }
+    }
+  ]
+}

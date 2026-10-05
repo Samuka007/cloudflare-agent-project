@@ -516,6 +516,15 @@ export class JevPage implements FlowPage {
   }
 
   /**
+   * Raw CDP domain call on this page's session (e.g. the recall audit's
+   * Accessibility.getFullAXTree, #242). Shares the executor's pending map, so
+   * replies stay ordered on the single WS; no second connection is opened.
+   */
+  async cdp<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    return this.send<T>(method, params);
+  }
+
+  /**
    * Real (trusted) click at a deref-validated point the element actually owns.
    * Occlusion-safe: an SVG icon overlaying the element center made
    * elementFromPoint miss the target (the Settings-link trap #177 hit live);

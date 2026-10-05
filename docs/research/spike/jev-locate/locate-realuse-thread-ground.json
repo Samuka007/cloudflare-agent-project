@@ -1,0 +1,384 @@
+{
+  "components": [
+    {
+      "ref": 10,
+      "role": "button",
+      "name": "New thread (Ctrl + Shift + O)",
+      "pRelevant": 0.99,
+      "orderStable": true
+    },
+    {
+      "ref": 1,
+      "role": "button",
+      "name": "Toggle sidebar (Ctrl + \\)",
+      "pRelevant": 0
+    },
+    {
+      "ref": 2,
+      "role": "button",
+      "name": "Go back",
+      "pRelevant": 0
+    },
+    {
+      "ref": 3,
+      "role": "button",
+      "name": "Go forward",
+      "pRelevant": 0
+    },
+    {
+      "ref": 4,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 5,
+      "role": "button",
+      "name": "Show right panel (Ctrl + J)",
+      "pRelevant": 0
+    },
+    {
+      "ref": 6,
+      "role": "button",
+      "name": "Show thread info panel",
+      "pRelevant": 0
+    },
+    {
+      "ref": 7,
+      "role": "button",
+      "name": "Open new tab (Ctrl + T)",
+      "pRelevant": 0
+    },
+    {
+      "ref": 8,
+      "role": "button",
+      "name": "Full Screen",
+      "pRelevant": 0
+    },
+    {
+      "ref": 9,
+      "role": "button",
+      "name": "Hide right panel (Ctrl + J)",
+      "pRelevant": 0
+    },
+    {
+      "ref": 11,
+      "role": "button",
+      "name": "Search threads (Ctrl + K)",
+      "pRelevant": 0
+    },
+    {
+      "ref": 12,
+      "role": "button",
+      "name": "Extensions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 13,
+      "role": "button",
+      "name": "Extensions panel options",
+      "pRelevant": 0
+    },
+    {
+      "ref": 14,
+      "role": "button",
+      "name": "Threads",
+      "pRelevant": 0
+    },
+    {
+      "ref": 15,
+      "role": "link",
+      "name": "Open hi，host现在在线吗？",
+      "pRelevant": 0
+    },
+    {
+      "ref": 16,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 17,
+      "role": "link",
+      "name": "Open 从10倒数到1，每个数字一行，不要调用任何工具",
+      "pRelevant": 0
+    },
+    {
+      "ref": 18,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 19,
+      "role": "link",
+      "name": "Open 用中文从1数到15，每个数字一行，不要调用任何工具",
+      "pRelevant": 0
+    },
+    {
+      "ref": 20,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 21,
+      "role": "link",
+      "name": "Open 从10倒数到1，每个数字一行",
+      "pRelevant": 0
+    },
+    {
+      "ref": 22,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 23,
+      "role": "link",
+      "name": "Open l239-task content reaches subagent",
+      "pRelevant": 0
+    },
+    {
+      "ref": 24,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 25,
+      "role": "link",
+      "name": "Open l239-stop-ask pending cancel",
+      "pRelevant": 0
+    },
+    {
+      "ref": 26,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 27,
+      "role": "link",
+      "name": "Open l239-ask dialog answer continue",
+      "pRelevant": 0
+    },
+    {
+      "ref": 28,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 29,
+      "role": "link",
+      "name": "Open l239-stop mid-generation cancel",
+      "pRelevant": 0
+    },
+    {
+      "ref": 30,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 31,
+      "role": "link",
+      "name": "Open l238-working-indicator repro v2",
+      "pRelevant": 0
+    },
+    {
+      "ref": 32,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 33,
+      "role": "button",
+      "name": "Copy message",
+      "pRelevant": 0
+    },
+    {
+      "ref": 34,
+      "role": "button",
+      "name": "Add to chat",
+      "pRelevant": 0
+    },
+    {
+      "ref": 35,
+      "role": "link",
+      "name": "Open l238-working-indicator repro",
+      "pRelevant": 0
+    },
+    {
+      "ref": 36,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 37,
+      "role": "link",
+      "name": "Open l239-stream streaming progressive sampling",
+      "pRelevant": 0
+    },
+    {
+      "ref": 38,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 39,
+      "role": "button",
+      "name": "Copy message",
+      "pRelevant": 0
+    },
+    {
+      "ref": 40,
+      "role": "button",
+      "name": "Add to chat",
+      "pRelevant": 0
+    },
+    {
+      "ref": 41,
+      "role": "button",
+      "name": "Thread table of contents",
+      "pRelevant": 0
+    },
+    {
+      "ref": 42,
+      "role": "link",
+      "name": "Open try spawn a subagent that reply OK only",
+      "pRelevant": 0
+    },
+    {
+      "ref": 43,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 44,
+      "role": "button",
+      "name": "Ran tool eval { code: import sys, platform, dat…",
+      "pRelevant": 0
+    },
+    {
+      "ref": 45,
+      "role": "link",
+      "name": "Open try spawn a subagent that reply OK only",
+      "pRelevant": 0
+    },
+    {
+      "ref": 46,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 47,
+      "role": "link",
+      "name": "Open hello",
+      "pRelevant": 0
+    },
+    {
+      "ref": 48,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 49,
+      "role": "link",
+      "name": "Open hello? 你的工具列表是？",
+      "pRelevant": 0
+    },
+    {
+      "ref": 50,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 51,
+      "role": "button",
+      "name": "Copy message",
+      "pRelevant": 0
+    },
+    {
+      "ref": 52,
+      "role": "button",
+      "name": "Add to chat",
+      "pRelevant": 0
+    },
+    {
+      "ref": 53,
+      "role": "link",
+      "name": "Open Thread thr_5nj2",
+      "pRelevant": 0
+    },
+    {
+      "ref": 54,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 55,
+      "role": "link",
+      "name": "Open Thread thr_87m8",
+      "pRelevant": 0
+    },
+    {
+      "ref": 56,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    },
+    {
+      "ref": 57,
+      "role": "button",
+      "name": "Copy message",
+      "pRelevant": 0
+    },
+    {
+      "ref": 58,
+      "role": "button",
+      "name": "Add to chat",
+      "pRelevant": 0
+    },
+    {
+      "ref": 59,
+      "role": "link",
+      "name": "Open Thread thr_vfkj",
+      "pRelevant": 0
+    },
+    {
+      "ref": 60,
+      "role": "button",
+      "name": "Thread actions",
+      "pRelevant": 0
+    }
+  ],
+  "regions": [],
+  "meta": {
+    "gen": 1,
+    "url": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786#__jev_tab:l242-locate",
+    "title": "hello? 你的工具列表是？",
+    "stateTokens": 1150,
+    "rttMs": [
+      367.6952799999999
+    ],
+    "stateMode": "full",
+    "counts": {
+      "elements": 60,
+      "trimmed": 27,
+      "regions": 0
+    },
+    "questions": 2,
+    "requests": 1,
+    "model": "jev-1.13.0"
+  }
+}
