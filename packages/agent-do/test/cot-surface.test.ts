@@ -120,12 +120,8 @@ describe("#257 — ux projection: item/reasoning/textDelta", () => {
     // Blob-offloaded rows contribute nothing to the ux face (raw-only).
     const inlineRows = thinkingRows.filter((event) => typeof event.data.text === "string");
     const projected = projectToUxEvents(events).map(parseThreadEvent);
-    const reasoning = projected.filter(
-      (event) => event.type === "item/reasoning/textDelta",
-    );
-    expect(reasoning.map((event) => event.seq)).toEqual(
-      inlineRows.map((event) => event.seq),
-    );
+    const reasoning = projected.filter((event) => event.type === "item/reasoning/textDelta");
+    expect(reasoning.map((event) => event.seq)).toEqual(inlineRows.map((event) => event.seq));
     for (const event of reasoning) {
       expect(event.data.turnId).toBe(sent.turnId);
       expect(event.data.itemId).toMatch(/^itm-rs-.*:\d+$/);
@@ -137,6 +133,40 @@ describe("#257 — ux projection: item/reasoning/textDelta", () => {
     }
     // The fold is replay-stable: projecting twice gives identical rows.
     expect(projectToUxEvents(events)).toEqual(projected.map(parseThreadEvent));
+  });
+
+  test("#276 J6 tier 1: call_completed lands the reasoning terminal with the full CoT text", async () => {
+    const rig = await createRig({
+      turns: [{ thinkingDeltas: ["step a ", "step b"], deltas: ["answer"] }],
+    });
+    const sent = await rig.stub.sendMessage({
+      clientRequestId: "cot-terminal",
+      content: [{ type: "text", text: "hi" }],
+      mode: "auto",
+    });
+    const events: AnyAgentEvent[] = await rig.waitTurnComplete(sent.turnId);
+    const projected = projectToUxEvents(events).map(parseThreadEvent);
+    const terminal = projected.find(
+      (event): event is Extract<typeof event, { type: "item/completed" }> =>
+        event.type === "item/completed" && event.data.item.type === "reasoning",
+    );
+    if (terminal === undefined) throw new Error("no reasoning terminal row");
+    expect(terminal.data.item).toMatchObject({
+      summary: [],
+      content: ["step a step b"],
+    });
+    // Same call identity as the streaming deltas; the terminal rides the
+    // call_completed seq (zero invented seqs — I3).
+    const deltas = projected.filter((event) => event.type === "item/reasoning/textDelta");
+    expect(terminal.data.item.id).toBe(deltas[0]?.data.itemId);
+    expect(terminal.data.item.id).toMatch(/^itm-rs-.*:\d+$/);
+    const completed = events.find((event) => event.type === "model.call_completed");
+    expect(terminal.seq).toBe(completed?.seq);
+    // Thinking precedes the answer it produced.
+    const answerIndex = projected.findIndex(
+      (event) => event.type === "item/completed" && event.data.item.type === "agentMessage",
+    );
+    expect(projected.indexOf(terminal)).toBeLessThan(answerIndex);
   });
 
   test("typeList shows the canonical journal shape with thinking rows", async () => {

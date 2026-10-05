@@ -309,6 +309,10 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
       case "task.subagent_identity":
       case "task.subagent_parked":
       case "task.subagent_revived":
+      // #276 J5 activity backflow: not child-run fold state (the parent-side
+      // ux projection unfolds it).
+      case "task.subagent_event":
+      case "task.subagent_flush":
       case "thread.created":
       case "todo_phases":
       case "tool.dispatch":
@@ -792,6 +796,8 @@ export function renderAgentHistory(events: readonly AnyAgentEvent[], agentId: st
       case "interaction.resolved":
       case "peer.message":
       case "peer.message_consumed":
+      case "task.subagent_event":
+      case "task.subagent_flush":
       case "thread.created":
       case "todo_phases":
       case "tool.dispatch":

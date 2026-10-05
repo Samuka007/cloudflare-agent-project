@@ -145,6 +145,10 @@ export function modelRequestFromEvents(
       case "task.subagent_parked":
       case "task.subagent_revived":
       case "task.subagent_aborted":
+      // #276 J5 activity backflow: the child-activity face (ux unfold), not
+      // model-visible session material.
+      case "task.subagent_event":
+      case "task.subagent_flush":
         break;
       case "task.async_result":
         // Consumed above from the full log; the turn filter skips it here.
