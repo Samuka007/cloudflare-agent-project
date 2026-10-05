@@ -7,6 +7,20 @@
 
 ### Added
 
+- **#242 jev-locate 定位器原语 + 枚举召回审计 + 预登记置信分布**（research
+  jev-locator-converger.md §6 单票落地）。`scripts/accept/jev-locate.ts`：
+  `locate(deps,input)→LocateReport` 单调用定位器——ground（形状 G，双序复验同请求）/
+  inventory（形状 C，逐项 14 项闭集词汇表+pRelevant）/converge（C+X 单 fan-out，区域
+  noul×2 + 预算内 packet，DATA 域协议头内嵌）；`converge()` 为未来 LLM lane 冻结入口，
+  无回路/无判决/无 goal_achieved。criteria 用 `opt<ref>` 非整数键——整型键会被 JS/JSON
+  数序重排、静默破坏 R4 乱序。`jev-recall-audit.ts`：staging 三页 A(SEL 白名单) vs
+  B(CDP AX 树)/C(启发式) 召回对照——bOnly 均为标签形状差非真漏（人工复核），真 C 候选
+  每页 ≈1，A 主路维持。`jev-locate-distribution.ts`：预登记 P1–P6（commit 顺序先于首跑），
+  n=144 类问实测 jev-1.13.0：类置信 P50 0.96、≥0.85 占 74.3%；三分位规则机械推导三档
+  高≥0.99/中[0.88,0.99)/低<0.88（零调参）；ground 整页形状三页 noneMatch（composer 被
+  ≤60 截断纪律裁撤，jev 如实弃权而非硬猜）——形状 G 只做页内排序的预言被实测复现。
+  归档 `docs/research/spike/jev-locate/`（审计/分布/两页 LocateReport 真用 + 契约冻结
+  README）。L1：seam 单测 30 例（question 契约/R5 注入纪律/双序/gap 数学/带推导）。
 - **#240 (P1) 浏览器租约台账**：CDP/thread 资源分配的结构化纪律（audit 规则 6，纪律语义源 #239 评论
   5988466175）。`AP.lease("browser", { lane, tabName, threadPrefix, number? })`／`AP.release`／`AP.ledger`：
   仓内 append-only `.pm-leases.jsonl`（gitignored，`PM_LEASES_PATH` 可改），同 tab／同线程前缀被他 lane
