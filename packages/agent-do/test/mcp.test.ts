@@ -285,6 +285,7 @@ describe("matrix C2 — wire assembly appends the MCP surface", () => {
     // family would filter `think` — supportsExternalThinking) so the slice
     // below compares against the unfiltered MAIN_WIRE_TOOLS rendering.
     const body = buildBody(request, { model: "claude-sonnet-4-5", maxTokens: 16 });
+    if (body.tools === undefined) throw new Error("tools omitted on a non-empty surface");
     const names = body.tools.map((tool) => tool.name);
     expect(names.slice(0, MAIN_WIRE_TOOLS.length)).toEqual(
       wireToolSet(M0_RENDER_FLAGS, MAIN_WIRE_TOOLS).map((tool) => tool.name),
@@ -298,6 +299,7 @@ describe("matrix C2 — wire assembly appends the MCP surface", () => {
         maxTokens: 16,
       },
     );
+    if (without.tools === undefined) throw new Error("tools omitted without mcpTools");
     expect(without.tools.map((tool) => tool.name)).toEqual(names.slice(0, MAIN_WIRE_TOOLS.length));
   });
 });

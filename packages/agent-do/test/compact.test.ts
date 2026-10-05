@@ -233,7 +233,9 @@ describe("#309 manual compact (sustained campaign)", () => {
     const input = slice[0];
     if (input?.type !== "turn.input") throw new Error("unreachable");
     expect(input.data.content).toHaveLength(1);
-    expect(input.data.content[0]?.text).toContain("context-compact");
+    const part = input.data.content[0];
+    if (part?.type !== "text") throw new Error("compact prompt part is not text");
+    expect(part.text).toContain("context-compact");
     const completed = slice.find((event) => event.type === "model.call_completed");
     if (completed?.type !== "model.call_completed") throw new Error("unreachable");
     expect(completed.data.text).toBe(SUMMARY_1);
