@@ -178,21 +178,36 @@ export const sessionReadyFrameSchema = z.object({
   leaseTimeoutMs: z.number().int(),
 });
 
+/**
+ * Workspace binding leg (#290 C1, bb `WorkspaceCommandTarget` anchor:
+ * environmentId + workspaceContext.workspacePath). `id` names the binding —
+ * stable across frames so the client keys its per-workspace runtime by it;
+ * `path` is the workspace root on THIS host, validated against the binding
+ * on every frame (drift is an explicit mismatch, never a silent re-route).
+ * Absent → the daemon sandbox default (backward compatible; the producer is
+ * the binding feed, inventory #282 §2.A).
+ */
+export const workspaceRefSchema = z.object({
+  id: z.string().min(1),
+  path: z.string().min(1),
+});
+export type WorkspaceRef = z.infer<typeof workspaceRefSchema>;
+
 export const execSpawnFrameSchema = z.object({
   type: z.literal("exec.spawn"),
   requestId: z.string(),
   threadId: z.string().min(1),
   executionId: z.string().min(1),
   command: z.string(),
-  /** Sandbox-relative working directory; the client clamps into the root. */
+  /**
+   * Root-relative working directory — sandbox by default, the frame's
+   * workspace root when `workspace` is present; the client clamps into that
+   * root either way.
+   */
   cwd: z.string(),
   timeoutMs: z.number().int().positive(),
-  /**
-   * #288 coordination with ticket 3 (daemon multi-workspace): workspace
-   * identifier for per-workspace tool hosts. Absent = the single sandbox
-   * (today's semantics, backward compatible in both frame directions).
-   */
-  workspace: z.string().min(1).optional(),
+  /** Optional workspace binding (#290 C1); absent = sandbox default. */
+  workspace: workspaceRefSchema.optional(),
 });
 
 /**
@@ -209,8 +224,8 @@ export const toolExecFrameSchema = z.object({
   tool: z.string().min(1),
   arguments: z.record(z.string(), z.unknown()),
   timeoutMs: z.number().int().positive(),
-  /** Same contract as {@link execSpawnFrameSchema.workspace}. */
-  workspace: z.string().min(1).optional(),
+  /** Optional workspace binding (#290 C1); absent = sandbox default. */
+  workspace: workspaceRefSchema.optional(),
 });
 
 export const execResumeFrameSchema = z.object({

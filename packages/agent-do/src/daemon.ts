@@ -19,6 +19,13 @@ export interface ToolDispatchRequest {
   turnId: string;
   executionId: string;
   machineId: string;
+  /**
+   * Workspace binding leg (#290 C1): which registered workspace the frame's
+   * tool calls resolve against on the target machine; structural mirror of
+   * daemon-service WorkspaceRef. Unset until the binding feed lands
+   * (inventory #282 §2.A) — the daemon then falls back to its sandbox.
+   */
+  workspace?: { id: string; path: string };
   tool: string;
   arguments: Record<string, unknown>;
   /** Execution timeout policy — service DO enforces via kill on expiry. */

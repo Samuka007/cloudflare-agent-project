@@ -386,6 +386,8 @@ export interface DispatchArgs {
   /** M1.5/T5': non-bash host tools ride the embedded-runtime path. */
   tool?: string;
   toolArguments?: Record<string, unknown>;
+  /** #290 C1: frame workspace binding (absent = sandbox default). */
+  workspace?: { id: string; path: string };
 }
 
 export async function dispatchViaSeam(
@@ -397,6 +399,7 @@ export async function dispatchViaSeam(
     turnId: `${args.threadId}-turn`,
     executionId: args.executionId,
     machineId: args.machineId,
+    workspace: args.workspace,
     tool: args.tool ?? "bash",
     arguments: args.toolArguments ?? {
       command: args.command,
