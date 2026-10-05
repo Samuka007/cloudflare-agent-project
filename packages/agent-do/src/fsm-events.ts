@@ -132,6 +132,20 @@ export const agentEventDataSchemas = {
     text: z.union([z.string(), blobRefSchema]),
   }),
 
+  /**
+   * #257 CoT stream — the provider's native reasoning deltas for one model
+   * call (Anthropic `thinking_delta`), journaled under the same flush
+   * discipline as `model.delta` so the log replays the full stream. Guarded
+   * exactly like `model.delta` (call must be running) but folds nothing:
+   * answer-prefix accounting (`deltaChars`) stays answer-only. The ux
+   * projection renders these as `item/reasoning/textDelta` rows.
+   */
+  "model.thinking": z.object({
+    turnId: z.string().min(1),
+    modelCallId: z.number().int().positive(),
+    text: z.union([z.string(), blobRefSchema]),
+  }),
+
   "model.call_completed": z.object({
     turnId: z.string().min(1),
     modelCallId: z.number().int().positive(),

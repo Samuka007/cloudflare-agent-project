@@ -1834,8 +1834,11 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       const combined = AbortSignal.any([signal, callAbort.signal]);
       let sawFirstByte = false;
       let text = "";
+      let thinking = "";
       let pendingDelta = "";
       let pendingDeltaBytes = 0;
+      let pendingThinking = "";
+      let pendingThinkingBytes = 0;
       let lastFlushAt = Date.now();
       const flushDelta = (): Effect.Effect<void> =>
         Effect.promise(async () => {
@@ -1852,6 +1855,27 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
             await self.appendEvent("turn.phase", { turnId, phase: "first_token", modelCallId });
           }
           await self.appendEvent("model.delta", {
+            turnId,
+            modelCallId,
+            text: chunk,
+          });
+        });
+      /**
+       * #257 CoT flush: `model.thinking` rows under the same
+       * deltaFlushBytes/deltaFlushMs discipline so the journal row rate
+       * stays capped and the hub delta pointer fires with it. Deliberately
+       * NOT a `first_token` trigger — the phase vocabulary keeps
+       * first_token answer-bound (spec §3.2: "首个非空 model.delta"), the
+       * Thinking indicator drives off the reasoning rows themselves.
+       */
+      const flushThinking = (): Effect.Effect<void> =>
+        Effect.promise(async () => {
+          if (pendingThinking === "") return;
+          const chunk = pendingThinking;
+          pendingThinking = "";
+          pendingThinkingBytes = 0;
+          thinking += chunk;
+          await self.appendEvent("model.thinking", {
             turnId,
             modelCallId,
             text: chunk,
@@ -1883,6 +1907,26 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
             const next = yield* pull;
             if (next.done === true) break;
             const chunk = next.value;
+            if (chunk.kind === "thinking-delta") {
+              if (!sawFirstByte) {
+                sawFirstByte = true;
+                lastFlushAt = Date.now();
+                yield* Effect.promise(() =>
+                  self.appendEvent("turn.phase", { turnId, phase: "stream_started", modelCallId }),
+                );
+              }
+              pendingThinking += chunk.text;
+              pendingThinkingBytes += new TextEncoder().encode(chunk.text).byteLength;
+              const now = Date.now();
+              if (
+                pendingThinkingBytes >= self.cfg.deltaFlushBytes ||
+                now - lastFlushAt >= self.cfg.deltaFlushMs
+              ) {
+                lastFlushAt = now;
+                yield* flushThinking();
+              }
+              continue;
+            }
             if (chunk.kind === "text-delta") {
               if (!sawFirstByte) {
                 sawFirstByte = true;
@@ -1907,6 +1951,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
               continue;
             }
             yield* flushDelta();
+            yield* flushThinking();
             return {
               kind: "completed" as const,
               modelCallId,
@@ -1915,6 +1960,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
             };
           }
           yield* flushDelta();
+          yield* flushThinking();
           return { kind: "completed" as const, modelCallId, text, toolCalls: [] };
         },
       );
@@ -2043,14 +2089,16 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     // replay tests (src/translate.ts).
     const { events } = await this.readAllEvents();
     const request = modelRequestFromEvents(events, turnId, modelCallId);
-    // #150 experimental gates + the omp forceReasoningOff pairing
-    // (sdk.ts:4275-4282): the wire assembly filters the five experimental
-    // tools by the deployment gates; when external thinking rides the
-    // surface, native provider reasoning is pinned OFF.
+    // #150 experimental gates: the wire assembly filters the five experimental
+    // tools by the deployment gates, then applies the omp supports(model)
+    // verdict (sdk.ts:4275-4282) and derives the forceReasoningOff pin from
+    // the RENDERED surface — the DO does not know the relay model id, so the
+    // "external CoT ∧ native reasoning never coexist" pairing can only be
+    // computed at the wire (#257: pinning off the gate alone killed the
+    // native CoT pathway for native-reasoning models like glm-5.3).
     const gated: ModelRequest = {
       ...request,
       experimentalGates: this.experimentalGates,
-      forceReasoningOff: this.experimentalGates.externalThinking,
     };
     // M1.5 T16 surface policy: a subagent DO (journaled identity) renders the
     // subagent toolset — hidden `yield` included — with `task` stripped past

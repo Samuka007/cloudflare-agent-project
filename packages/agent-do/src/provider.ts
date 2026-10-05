@@ -164,7 +164,7 @@ export interface ModelRequest {
 }
 
 export type ModelStreamChunk =
-  { kind: "text-delta"; text: string } | { kind: "tool-calls"; toolCalls: ModelToolCall[] };
+  { kind: "text-delta"; text: string } | { kind: "thinking-delta"; text: string } | { kind: "tool-calls"; toolCalls: ModelToolCall[] };
 
 export interface ModelCallFailure {
   message: string;

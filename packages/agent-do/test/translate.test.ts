@@ -75,7 +75,7 @@ function toolTurnLog(): AnyAgentEvent[] {
   ];
 }
 
-const WIRE_OPTS = { model: "glm-5.3", maxTokens: 8192, thinking: { type: "disabled" } as const };
+const WIRE_OPTS = { model: "test-model", maxTokens: 8192, thinking: { type: "disabled" } as const };
 
 describe("translation: event log → model request", () => {
   test("projects the model-visible trio with tool pairing", () => {

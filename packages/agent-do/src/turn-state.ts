@@ -290,6 +290,18 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
         typeof text === "string" ? new TextEncoder().encode(text).byteLength : text.__blob__.size;
       return;
     }
+    case "model.thinking": {
+      // #257 CoT stream: same call-guard as model.delta, but folds nothing —
+      // `deltaChars` is the ANSWER prefix size (seal accounting); reasoning
+      // bytes must never enter it. The stream surface (ux projection +
+      // timeline activeThinking) folds these rows from the log directly.
+      const runtime = requireActive(state);
+      const call = requireCall(state, runtime.turnId, event.data.modelCallId);
+      if (call.status !== "running") {
+        throw new FsmViolationError(`model.thinking on ${call.status} call ${call.modelCallId}`);
+      }
+      return;
+    }
     case "model.call_completed": {
       const runtime = requireActive(state);
       const call = requireCall(state, runtime.turnId, event.data.modelCallId);

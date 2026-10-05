@@ -275,33 +275,44 @@ export function anthropicRequestBody(
     throw new WireAssemblyError("request must end with a user message");
   }
 
+  // The tool surface renders from the compile-time registry only — the
+  // single schema authority (control-plane-layer.md §1.1, M1.5 T1). The
+  // surface (M1.5 T16) picks main vs subagent names; the subagent surface
+  // carries the hidden `yield` and strips `task` past the depth cap. The
+  // omp sdk.ts:4275-4282 model verdict then gates the `think` tool itself:
+  // the gate is cfgExternalThinking ∧ supports(model) — a native-reasoning
+  // family (glm, deepseek-r, o1/o3, *thinking*) never renders the
+  // external-CoT tool, leaving its native thinking pathway to the harness
+  // budget.
+  const surface =
+    request.toolSurface === "subagent"
+      ? subagentWireTools(request.spawnPolicyBlocked === true)
+      : MAIN_WIRE_TOOLS;
+  const gated =
+    request.experimentalGates === undefined
+      ? surface
+      : enabledToolNames(surface, request.experimentalGates);
+  const finalNames = supportsExternalThinking(options.model)
+    ? gated
+    : gated.filter((name) => name !== "think");
+  // #150 forceReasoningOff pairing, derived where the surface is known:
+  // when the `think` tool actually renders, native reasoning is pinned OFF
+  // regardless of the caller's thinking config — external CoT and native
+  // reasoning must never coexist (ToC risk). An explicit
+  // `request.forceReasoningOff` keeps the unconditional pin for callers that
+  // decide the pairing upstream of the tool surface.
+  const thinking =
+    finalNames.includes("think") || request.forceReasoningOff === true
+      ? { type: "disabled" }
+      : (options.thinking ?? { type: "disabled" });
+
   return {
     model: options.model,
     max_tokens: options.maxTokens,
     stream: true,
-    // #150 forceReasoningOff pairing: when external thinking (the `think`
-    // tool) rides the surface, native reasoning is pinned OFF regardless of
-    // the caller's thinking config — the two must never coexist.
-    thinking:
-      request.forceReasoningOff === true
-        ? { type: "disabled" }
-        : (options.thinking ?? { type: "disabled" }),
+    thinking,
     system: SYSTEM_PROMPT_BLOCKS.map((block) => ({ type: "text", text: block })),
-    // The tool surface renders from the compile-time registry only — the
-    // single schema authority (control-plane-layer.md §1.1, M1.5 T1). The
-    // surface (M1.5 T16) picks main vs subagent names; the subagent surface
-    // carries the hidden `yield` and strips `task` past the depth cap.
-    tools: (() => {
-      const surface =
-        request.toolSurface === "subagent"
-          ? subagentWireTools(request.spawnPolicyBlocked === true)
-          : MAIN_WIRE_TOOLS;
-      const gated =
-        request.experimentalGates === undefined
-          ? surface
-          : enabledToolNames(surface, request.experimentalGates);
-      return wireToolSet(M0_RENDER_FLAGS, gated);
-    })(),
+    tools: wireToolSet(M0_RENDER_FLAGS, finalNames),
     // M1.5 T17: the ladder's forced attempt pins `yield` as the tool choice
     // (translate derives it from the reminder marker bound to this turn).
     ...(request.toolChoice === undefined

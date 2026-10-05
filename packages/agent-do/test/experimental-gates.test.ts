@@ -108,8 +108,8 @@ describe("#150 — default wire: the five are absent; gated wire: present", () =
   });
 });
 
-describe("#150 — forceReasoningOff pairing (sdk.ts:4275-4282)", () => {
-  test("think enabled pins native reasoning OFF even against the caller's thinking config", () => {
+describe("#150/#257 — forceReasoningOff pairing (sdk.ts:4275-4282)", () => {
+  test("a rendered think tool pins native reasoning OFF even against the caller's thinking config", () => {
     const body = anthropicRequestBody(
       requestWith({
         experimentalGates: { ...GATES_ON },
@@ -118,6 +118,19 @@ describe("#150 — forceReasoningOff pairing (sdk.ts:4275-4282)", () => {
       { model: "test-model", maxTokens: 64, thinking: { type: "enabled", budget_tokens: 1024 } },
     );
     expect(body.thinking).toEqual({ type: "disabled" });
+  });
+
+  test("the model verdict strips think for native-reasoning families and keeps native thinking available (#257)", () => {
+    const glmBody = anthropicRequestBody(
+      requestWith({ experimentalGates: { ...GATES_ON } }),
+      {
+        model: "glm-5.3",
+        maxTokens: 64,
+        thinking: { type: "enabled", budget_tokens: 1024 },
+      },
+    );
+    expect(glmBody.tools.some((tool) => tool.name === "think")).toBe(false);
+    expect(glmBody.thinking).toEqual({ type: "enabled", budget_tokens: 1024 });
   });
 
   test("without the pairing the caller's thinking config is respected", () => {
