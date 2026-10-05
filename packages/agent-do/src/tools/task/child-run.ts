@@ -300,6 +300,7 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
       case "model.call_retry":
       case "model.call_sealed":
       case "model.delta":
+      case "model.thinking":
       case "interaction.interrupted":
       case "interaction.registered":
       case "interaction.resolved":
@@ -726,6 +727,14 @@ export function renderAgentHistory(events: readonly AnyAgentEvent[], agentId: st
         lines.push(
           `[${event.seq}] assistant: ${cap(event.data.text)}${tools === "" ? "" : ` | tools: ${tools}`}`,
         );
+        break;
+      }
+      case "model.thinking": {
+        // #257 CoT: reasoning rows are transcript content — the terminal
+        // aggregate carries answer text only. Blob-offloaded rows show the
+        // placeholder (tool.result precedent).
+        const text = typeof event.data.text === "string" ? event.data.text : "(blob)";
+        lines.push(`[${event.seq}] thinking: ${cap(text)}`);
         break;
       }
       case "tool.call":

@@ -235,6 +235,7 @@ export function modelRequestFromEvents(
       case "model.call_retry":
       case "model.call_sealed":
       case "model.delta":
+      case "model.thinking":
       case "tool.dispatch":
       case "tool.exec_started":
       case "tool.output":
