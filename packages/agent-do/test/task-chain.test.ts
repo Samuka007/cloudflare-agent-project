@@ -153,6 +153,59 @@ describe("M1.5 T16 — L1 chain over real child AgentDOs", () => {
     expect(settlementForSpawn(parentEvents, childThreadId)?.status).toBe("ok");
   });
 
+  test("#274 J1: task-family journal rows carry parentToolCallId = the task call's ux item id", async () => {
+    const parentThreadId = newThreadId();
+    const parentMock = new MockModelProvider([
+      { toolCalls: [{ name: "task", arguments: PARENT_TASK_ARGS }] },
+      { deltas: ["spawned"] },
+    ]);
+    const childMock = new MockModelProvider([
+      { toolCalls: [{ name: "yield", arguments: { data: { answer: 42 } } }] },
+      { deltas: ["submitted"] },
+    ]);
+    setAgentRuntime(parentThreadId, { provider: parentMock });
+    setAgentRuntime("*", { provider: childMock });
+    const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
+
+    const turnId = await driveParentTurn(rig, "in-1");
+    await rig.waitFor((all) => all.some((event) => event.type === "task.spawn_planned"));
+    await rig.waitFor((all) => all.some((event) => event.type === "task.async_result"));
+    await rig.waitTurnComplete(turnId);
+
+    // The attribution anchor is the task tool call's UX item id — the BARE
+    // `executionIdFor(threadId, callSeq)` (batch per-item plans suffix
+    // `#index` onto their own dedup key; this field never does).
+    const parentEvents = await rig.events();
+    const taskCall = parentEvents.find(
+      (event) => event.type === "tool.call" && event.data.tool === "task",
+    );
+    if (taskCall?.type !== "tool.call") throw new Error("no task tool.call journaled");
+    const anchor = `${parentThreadId}:${taskCall.seq}`;
+
+    const plan = parentEvents.find((event) => event.type === "task.spawn_planned");
+    if (plan?.type !== "task.spawn_planned") throw new Error("no spawn plan");
+    expect(plan.data.parentToolCallId).toBe(anchor);
+
+    const settled = parentEvents.find((event) => event.type === "task.spawn_settled");
+    if (settled?.type !== "task.spawn_settled") throw new Error("no settlement");
+    expect(settled.data.parentToolCallId).toBe(anchor);
+
+    const asyncResult = parentEvents.find((event) => event.type === "task.async_result");
+    if (asyncResult?.type !== "task.async_result") throw new Error("no async result");
+    expect(asyncResult.data.parentToolCallId).toBe(anchor);
+
+    // The child journal is self-attributing: the identity row mirrors the
+    // anchor from the spawn request.
+    const childThreadId = plan.data.childThreadId;
+    const childEvents = await childEventsOf(childThreadId);
+    const identity = subagentIdentityOf(childEvents);
+    expect(identity).toBeDefined();
+    expect(identity?.parentToolCallId).toBe(anchor);
+
+    expect(() => replayEvents(parentEvents)).not.toThrow();
+    expect(() => replayEvents(childEvents)).not.toThrow();
+  });
+
   test("blocking agent runs inline: wake on settle, SingleResult merge, no job row", async () => {
     setAgentDefinitions([{ name: "scout", blocking: true }]);
     const parentThreadId = newThreadId();

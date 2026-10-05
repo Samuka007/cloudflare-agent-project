@@ -7,6 +7,16 @@
 
 ### Added
 
+- **#274 J1 子代理呈现地基——delegation 归父字段 `parentToolCallId`**：protocol 事件面五处
+  增补可选 `parentToolCallId`（toolCall/agentMessage/reasoning item 与 `item/agentMessage/
+  delta`、`item/reasoning/textDelta`）——bb 三家先例的 item 级挂链字段，子代理活动/CoT
+  未来挂进委派行的锚点；additive，旧 journal 原样可解析，scheme A 版本常量不动。agent-do
+  侧 task 族 journal 同步携带：`task.spawn_planned` 派发处填充（值=task 工具调用的 UX
+  item id，即裸 call executionId——batch 逐项 dedup key 带 `#index` 后缀，本字段不带）；
+  `task.spawn_settled`/`task.async_result` 从 plan 随行（终局行免 join 归父）；
+  `task.subagent_identity` 经 spawn 请求镜像到子 journal（子面自归父，bb child-side
+  语义）。L1：protocol schema 解析+往返测试；agent-do task-chain 全链断言（plan/settled/
+  async_result/child identity 四行同锚点）。
 - **#266 provider 只读投影面**（#255 方案 C：正本留部署 env，UI 只投影）。
   `GET /api/v1/system/provider-projections`：聚合 `projectHarness`（relay
   模式/baseUrl host/模型/key 存在性/thinking/权限模式/machine，复用既有无秘
