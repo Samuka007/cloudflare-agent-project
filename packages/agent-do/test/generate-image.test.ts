@@ -68,19 +68,21 @@ function ctxFrom(seams: Seams, signal = new AbortController().signal): GenerateI
     config: CONFIG,
     signal,
     fetchImpl: (input, init) => fetch(input, init),
-    writeThreadFile: async ({ filename, contentBase64 }) => {
+    writeThreadFile: ({ filename, contentBase64 }) => {
       seams.writes.push({ filename, contentBase64 });
-      return (
-        seams.writeResult ?? { kind: "ok", path: `/host/root/thr/Generated/${filename}` }
+      return Promise.resolve(
+        seams.writeResult ?? { kind: "ok", path: `/host/root/thr/Generated/${filename}` },
       );
     },
-    readThreadFile: async ({ path }) =>
-      seams.readResult ?? {
-        kind: "ok",
-        content: PNG_B64,
-        contentEncoding: "base64",
-        mimeType: "image/png",
-      },
+    readThreadFile: () =>
+      Promise.resolve(
+        seams.readResult ?? {
+          kind: "ok",
+          content: PNG_B64,
+          contentEncoding: "base64",
+          mimeType: "image/png",
+        },
+      ),
   };
 }
 
@@ -373,7 +375,7 @@ describe("B2 — the edge execution folds imageView rows (B1 chain)", () => {
     // The rig's DO has no deployment env: the image source is injected into
     // the same private seam-poking channel the web-search L1 uses
     // (dispatchExecution), because AGENT_DO_* reads once at construction.
-    await runInDurableObject(rig.stub, async (instance) => {
+    await runInDurableObject(rig.stub, (instance) => {
       const configSeam = instance as unknown as { generateImageConfig: unknown };
       configSeam.generateImageConfig = CONFIG;
     });
@@ -442,7 +444,7 @@ describe("B2 — the edge execution folds imageView rows (B1 chain)", () => {
         { deltas: ["done"] },
       ],
     });
-    await runInDurableObject(rig.stub, async (instance) => {
+    await runInDurableObject(rig.stub, (instance) => {
       const configSeam = instance as unknown as { generateImageConfig: unknown };
       configSeam.generateImageConfig = CONFIG;
     });

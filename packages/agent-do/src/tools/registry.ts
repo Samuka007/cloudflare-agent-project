@@ -967,6 +967,10 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "edge",
     backend: { kind: "do-local" },
     intent: "require",
+    // C3 #328 taxonomy: the call is an upstream image-model query whose
+    // product lands through the thread-file RPC seam — no workspace file
+    // surface, no wake channel: the web_search "detached" class.
+    schedule: "detached",
   },
   {
     // omp tools/yield.ts:289-293 — the subagent terminal channel (M1.5 T16
