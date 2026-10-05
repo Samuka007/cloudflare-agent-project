@@ -347,3 +347,66 @@ describe("delegation attribution (#274 J1 parentToolCallId)", () => {
     expect(parsed.data.parentToolCallId).toBeUndefined();
   });
 });
+
+describe("backgroundTask thread-scoped family (#275 J3)", () => {
+  const envelope = (type: string, data: Record<string, unknown>, seq: number) => ({
+    threadId: "thr_bt",
+    id: eventRowId("thr_bt", seq),
+    seq,
+    type,
+    data,
+    createdAt: 3_000,
+  });
+
+  const item = {
+    type: "backgroundTask" as const,
+    id: "task:sp_1#0",
+    taskType: "local_subagent",
+    description: "Report the answer",
+    status: "pending",
+    taskStatus: "running",
+    skipTranscript: false,
+    parentToolCallId: "thr_root:5",
+  };
+
+  it("parses the backgroundTask item through the item union", () => {
+    const row = parseThreadEvent(envelope("item/started", { turnId: "turn_1", item }, 1));
+    if (row.type !== "item/started") throw new Error("unreachable");
+    expect(row.data.item.type).toBe("backgroundTask");
+    if (row.data.item.type !== "backgroundTask") throw new Error("unreachable");
+    expect(row.data.item.taskStatus).toBe("running");
+    expect(row.data.item.parentToolCallId).toBe("thr_root:5");
+  });
+
+  it("round-trips progress and completed events without a turnId (thread scope)", () => {
+    for (const type of ["item/backgroundTask/progress", "item/backgroundTask/completed"] as const) {
+      const built = buildThreadEvent({
+        id: eventRowId("thr_bt", 2),
+        threadId: "thr_bt",
+        seq: 2,
+        type,
+        data: {
+          item: { ...item, status: "completed", taskStatus: "completed", summary: "42" },
+        },
+        createdAt: 3_000,
+      });
+      const parsed = parseThreadEvent(built);
+      expect(parsed).toEqual(built);
+      expect(parsed.data).not.toHaveProperty("turnId");
+      if (parsed.type !== type) throw new Error("unreachable");
+      expect(parsed.data.item.summary).toBe("42");
+    }
+  });
+
+  it("rejects an unknown taskStatus and a legacy ux stream still parses", () => {
+    const bad = envelope(
+      "item/backgroundTask/completed",
+      { item: { ...item, taskStatus: "nope" } },
+      3,
+    );
+    expect(() => parseThreadEvent(bad)).toThrow();
+    // The canned pre-J3 turn (no backgroundTask rows anywhere) is untouched.
+    const events = cannedTurnEnvelopes("thr_legacy").map(parseThreadEvent);
+    expect(events).toHaveLength(9);
+  });
+});
