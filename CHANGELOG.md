@@ -7,9 +7,23 @@
 
 ### Added
 
+- **#313 (W5) AgentDO×compaction 的 API 压测——context 行为真空补齐（本地先行）**：
+  `packages/agent-do/test/compaction-stress.test.ts`（8 例，默认套件=CI 常设）：
+  一条 12 turn / 20 model call 的确定性 mock 中继 API 压测campaign，跑通
+  「上下文持续增长→压缩检查点→turn 连续性→journal 不变量→DO 驱逐重水化」
+  全链——KB 级载荷先单调推高会话上下文（#228 priorTurns），中段
+  checkpoint→exploration→rewind 落 cut A（#147 封印断言 + token 上限断言），
+  后续 turn 断言 branch summary 武装且 hidden span 零泄漏；campaign 中段
+  `abortAllDurableObjects()` 驱逐演练（journal 前缀指纹恒等、checkpoint/rewind
+  状态机与 active-branch 分割跨重水化逐字段一致、驱逐后 cutB/sig/postB1 无断
+  续跑）；cut B 重武装断言最新对取代语义（单活跃分支）；`new_context` 信号行
+  journal 化且 replay 可导（T1 面，rolloverRequestedInTurn 仅信号 turn 为真）；
+  逐 call 对拍 captured === final-log 重投影（#116 语义）。压测钉出多压缩对
+  回放投影缺口（历史请求丢当时 armed cut、hidden span 经 priorTurns 回归）并
+  pin 之（live 行为零影响），立项 #325；harness 即其回归门。
 - **#291 (P1) workspace 绑定可见面 + 悬置呈现（盘点 #282 §2.D D1-D3，依赖票 1 #288）**：
   D1 读面（thread 详情 `environmentId` + `include=environment,host`、`GET
-  /environments(:id)`、`GET /hosts`、列表内联绑定四字段）由 #288 落地；本票落
+/environments(:id)`、`GET /hosts`、列表内联绑定四字段）由 #288 落地；本票落
   D2 悬置呈现 + D3 UI 词汇，钉死 bb SPA 零改动。① §9.3 行 4 诚实宿主面：
   `resolveThreadRuntimeStateAsync`——无活跃 turn（status ∉ {active, stopping}）
   ∧ 绑定宿主（environments.host_id）离线（daemon-service DO hostLiveness
@@ -53,7 +67,7 @@
   行增 machineId/tool/argumentsJson（镜像真 service DO 行，路由可断言）。
 - **#288 workspace 绑定喂值链 + environments 数据模型（盘点 #282 §2.A 票 1）**：
   ① 数据模型：`0002_environments.sql` 落 bb 锚形 environments 表（`(project_id,
-  host_id NOT NULL, path)` 唯一 + workspace_provision_type + status，两源地图
+host_id NOT NULL, path)` 唯一 + workspace_provision_type + status，两源地图
   §1.1）；test/migrate.ts 按文件序应用全部迁移。② 解析函数：`resolveThreadBinding`
   （services/thread-binding.ts）在 server-worker 创建路径一次解析绑定来源链——thread
   显式 host/reuse 选择 > project 级默认源 checkout（`project_sources.is_default`，
@@ -277,7 +291,7 @@ projection`）渲染只读投影 + 「编辑走部署 env」指针（对照 ops/
 - **#295 (P1) staging 部署链缺 D1 迁移步骤——0002 从未应用（#288 走查发现，
   `/api/v1/environments` 500）**：`deploy-staging.sh` 在 `wrangler deploy` 前按
   字典序幂等重放 `apps/server-worker/migrations/*.sql`（`wrangler d1 execute
-  --remote --file`，任一失败即中止部署；无账本表，幂等 DDL 重放天然吸收 0001
+--remote --file`，任一失败即中止部署；无账本表，幂等 DDL 重放天然吸收 0001
   手工应用基线）；0001/0002 全语句 `IF NOT EXISTS` / 种子 `INSERT OR IGNORE`
   化（幂等契约注记入迁移文件头）；CD 冒烟增 `GET /api/v1/environments` 200
   防回归；迁移 runbook `docs/ops/staging-d1-migrations.md`；测试侧
