@@ -109,11 +109,18 @@ function latestCheckpointResultSeq(
 export function checkpointRewindState(
   events: readonly AnyAgentEvent[],
   threadId: string,
+  /**
+   * As-of anchor (#325): fold only rows with `seq < beforeSeq` — the state as
+   * it stood when the row numbered `beforeSeq` appended. Exclusive bound on
+   * the backward scan; +∞ (the default) folds the whole journal (the live
+   * NOW fold).
+   */
+  beforeSeq: number = Number.POSITIVE_INFINITY,
 ): CheckpointRewindState {
   const calls = treeCallIndex(events, threadId);
   for (let index = events.length - 1; index >= 0; index--) {
     const event = events[index];
-    if (event === undefined) continue;
+    if (event === undefined || event.seq >= beforeSeq) continue;
     if (event.type !== "tool.result" || event.data.status !== "ok") continue;
     const call = calls.get(event.data.executionId);
     if (call === undefined) continue;
@@ -195,13 +202,22 @@ export interface RewindContextCut {
  * the rewind turn has terminalized and the projected turn started after the
  * cut (its `turn.input` row seq > `hideThroughSeq`). Deterministic from the
  * journal — the same log always arms the same cuts (replay consistency).
+ *
+ * `modelCallId` is the as-of anchor (#325): the pair is selected from the
+ * journal prefix BEFORE this call started (`checkpointRewindState(…,
+ * modelCallId)`), so a replay of an earlier call from a longer final log arms
+ * the pair that was completed THEN — a later pair (checkpointed, rewound, or
+ * merely checkpointed after the call) neither arms nor disarms it. At call
+ * time the anchor is a no-op (rows after `model.call_started` do not exist
+ * yet), so live projection is unchanged.
  */
 export function rewindContextCut(
   events: readonly AnyAgentEvent[],
   threadId: string,
   turnId: string,
+  modelCallId: number,
 ): RewindContextCut | undefined {
-  const state = checkpointRewindState(events, threadId);
+  const state = checkpointRewindState(events, threadId, modelCallId);
   if (state.phase !== "completed") return undefined;
   const rewindResult = events.find(
     (event): event is Extract<AnyAgentEvent, { type: "tool.result" }> =>
