@@ -14,6 +14,7 @@
     "smoke:poc": "vitest run smoke-real-model"
   },
   "dependencies": {
+    "@cap/mcp": "workspace:*",
     "@cap/daemon-service": "workspace:*",
     "@cap/protocol": "workspace:*",
     "arktype": "^2.2.7",
