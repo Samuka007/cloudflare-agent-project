@@ -4,8 +4,13 @@ import {
   type ModelRequest,
   type ModelStreamChunk,
   type ModelToolCall,
+  type ModelUsageReceipt,
 } from "../provider.js";
-import { anthropicRequestBody, type ThinkingConfig } from "./wire.js";
+import {
+  anthropicRequestBody,
+  estimateWireRequestTokens,
+  type ThinkingConfig,
+} from "./wire.js";
 import { parseSseStream } from "./sse.js";
 
 /**
@@ -32,6 +37,12 @@ export interface RelayConfig {
   apiKey: string;
   model: string;
   maxTokens: number;
+  /**
+   * #308 context window for the usage percentage (`MODEL_RELAY_CONTEXT_WINDOW`).
+   * Null when the deployment doesn't know one — the journaled receipt then
+   * carries null and the timeline omits the indicator instead of guessing.
+   */
+  contextWindow?: number;
   thinking?: ThinkingConfig;
   /** Test seam; production uses global fetch. */
   fetchImpl?: typeof fetch;
@@ -115,6 +126,16 @@ export class AnthropicRelayProvider implements ModelProvider {
     let sawStreamBytes = false;
     let sawMessageStop = false;
     let stopReason: string | null = null;
+    /**
+     * #308 receipt accumulator: `message_start` seeds the input side, the
+     * final `message_delta` carries the cumulative output total.
+     */
+    let inputSide: {
+      inputTokens: number;
+      cacheReadInputTokens: number;
+      cacheCreationInputTokens: number;
+    } | null = null;
+    let outputTokens = 0;
     /** Insertion order = content_block_start order (Map iterates insertion). */
     const blocksByIndex = new Map<number, OpenToolBlock>();
     let streamError: ModelProviderError | null = null;
@@ -135,6 +156,24 @@ export class AnthropicRelayProvider implements ModelProvider {
           });
         }
         switch (payload.type) {
+          case "message_start": {
+            const usage = payload.message?.usage;
+            // A frame with no recognized field at all (test fixtures, broken
+            // upstreams) is not a receipt — fall through to the estimate.
+            if (
+              usage !== undefined &&
+              (usage.input_tokens !== undefined ||
+                usage.cache_read_input_tokens !== undefined ||
+                usage.cache_creation_input_tokens !== undefined)
+            ) {
+              inputSide = {
+                inputTokens: usage.input_tokens ?? 0,
+                cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
+                cacheCreationInputTokens: usage.cache_creation_input_tokens ?? 0,
+              };
+            }
+            break;
+          }
           case "error": {
             throw new ModelProviderError({
               message:
@@ -145,6 +184,11 @@ export class AnthropicRelayProvider implements ModelProvider {
           }
           case "message_delta": {
             stopReason = payload.delta?.stop_reason ?? null;
+            // Anthropic message_delta usage.output_tokens is cumulative; the
+            // last frame before message_stop is the call's final total.
+            if (payload.usage?.output_tokens !== undefined) {
+              outputTokens = payload.usage.output_tokens;
+            }
             if (stopReason === "max_tokens") {
               throw new ModelProviderError({
                 message: "relay stop_reason=max_tokens (length truncation — never continued)",
@@ -236,6 +280,30 @@ export class AnthropicRelayProvider implements ModelProvider {
       });
     }
 
+    // #308: emit the receipt before the terminal tool-calls chunk (the DO's
+    // loop stops at tool-calls). A receipt without an input side (degenerate
+    // upstream that never sent message_start usage) is discarded — a
+    // percentage built from output alone would read as near-zero fill.
+    const usage: ModelUsageReceipt =
+      inputSide !== null
+        ? {
+            inputTokens: inputSide.inputTokens,
+            outputTokens,
+            cacheReadInputTokens: inputSide.cacheReadInputTokens,
+            cacheCreationInputTokens: inputSide.cacheCreationInputTokens,
+            contextWindow: this.config.contextWindow ?? null,
+            estimated: false,
+          }
+        : {
+            inputTokens: estimateWireRequestTokens(serialized),
+            outputTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            contextWindow: this.config.contextWindow ?? null,
+            estimated: true,
+          };
+    yield { kind: "usage", usage };
+
     const toolCalls: ModelToolCall[] = [];
     for (const [, block] of [...blocksByIndex.entries()].sort((a, b) => a[0] - b[0])) {
       if (block.parsed === undefined) {
@@ -256,6 +324,10 @@ export class AnthropicRelayProvider implements ModelProvider {
 interface SseEventPayload {
   type: string;
   index?: number;
+  /** `message_start`: the response header carries the input-side usage. */
+  message?: { usage?: MessageUsageFrame };
+  /** `message_delta`: cumulative output usage, final total before stop. */
+  usage?: MessageUsageFrame;
   error?: { type?: string; message?: string };
   delta?: {
     stop_reason?: string | null;
@@ -266,6 +338,14 @@ interface SseEventPayload {
     thinking?: string;
   };
   content_block?: { type: string; id?: string; name?: string };
+}
+
+/** Anthropic usage frame (input_tokens excludes the two cache fields). */
+interface MessageUsageFrame {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
 }
 
 function parseToolArguments(block: OpenToolBlock): Record<string, unknown> {

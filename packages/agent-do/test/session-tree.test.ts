@@ -535,7 +535,8 @@ describe("M1.5 T3 — session-tree projections (T:checkpoint.ts rehydrate/apply 
       ev("turn.input", 10, { turnId: "t2", inputId: "in2", content: [] }),
     ];
     // Armed for the post-cut turn: boundary, hidden-span end, trimmed report.
-    expect(rewindContextCut(journal, THREAD, "t2")).toEqual({
+    // (+∞ anchor = the whole-journal fold, the pre-#325 view.)
+    expect(rewindContextCut(journal, THREAD, "t2", Number.POSITIVE_INFINITY)).toEqual({
       checkpointResultSeq: 4,
       rewindResultSeq: 8,
       hideThroughSeq: 9,
@@ -543,9 +544,9 @@ describe("M1.5 T3 — session-tree projections (T:checkpoint.ts rehydrate/apply 
     });
     // The rewind turn's own replay projects uncut (omp applies the cut at
     // turn end — "Rewind requested." stays in that turn's live context).
-    expect(rewindContextCut(journal, THREAD, "t1")).toBeUndefined();
+    expect(rewindContextCut(journal, THREAD, "t1", Number.POSITIVE_INFINITY)).toBeUndefined();
     // No completed rewind → nothing arms.
-    expect(rewindContextCut([], THREAD, "t2")).toBeUndefined();
+    expect(rewindContextCut([], THREAD, "t2", Number.POSITIVE_INFINITY)).toBeUndefined();
   });
 
   test("rewindContextCut: unarmed until the rewind turn terminalizes (crash window)", () => {
@@ -560,7 +561,7 @@ describe("M1.5 T3 — session-tree projections (T:checkpoint.ts rehydrate/apply 
       // only at turn end, so even a synthetic later turn projects uncut.
       ev("turn.input", 7, { turnId: "t2", inputId: "in2", content: [] }),
     ];
-    expect(rewindContextCut(journal, THREAD, "t2")).toBeUndefined();
+    expect(rewindContextCut(journal, THREAD, "t2", Number.POSITIVE_INFINITY)).toBeUndefined();
   });
 
   test("rewindContextCut: root fallback arms with a null boundary", () => {
@@ -572,11 +573,93 @@ describe("M1.5 T3 — session-tree projections (T:checkpoint.ts rehydrate/apply 
       ev("turn.completed", 7, { turnId: "t1" }),
       ev("turn.input", 8, { turnId: "t2", inputId: "in2", content: [] }),
     ];
-    expect(rewindContextCut(journal, THREAD, "t2")).toEqual({
+    expect(rewindContextCut(journal, THREAD, "t2", Number.POSITIVE_INFINITY)).toEqual({
       checkpointResultSeq: null,
       rewindResultSeq: 6,
       hideThroughSeq: 7,
       summary: "from the root",
+    });
+  });
+
+  test("rewindContextCut: the as-of call anchor arms the pair completed at call time (#325)", () => {
+    // Two cut pairs in one log: t1 = cut A, t2 = post-A continuity,
+    // t3 = cut B, t4 = post-B. The anchor decides which pair a call saw.
+    const callIn = (
+      turnId: string,
+      tool: string,
+      seq: number,
+      args: Record<string, unknown>,
+    ): AnyAgentEvent =>
+      ev("tool.call", seq, { turnId, modelCallId: 1, tool, arguments: args, timeoutMs: 1_000 });
+    const resultIn = (
+      turnId: string,
+      tool: string,
+      callSeq: number,
+      seq: number,
+      status: string,
+    ): AnyAgentEvent =>
+      ev("tool.result", seq, {
+        turnId,
+        executionId: executionIdFor(THREAD, callSeq),
+        status,
+        exitCode: null,
+        output: "x",
+      });
+    const journal = [
+      ev("thread.created", 1, { title: "t", machineId: "m" }),
+      ev("turn.input", 2, { turnId: "t1", inputId: "in1", content: [] }),
+      callIn("t1", "checkpoint", 3, { goal: "a" }),
+      resultIn("t1", "checkpoint", 3, 4, "ok"),
+      callIn("t1", "rewind", 5, { report: "  A  " }),
+      resultIn("t1", "rewind", 5, 6, "ok"),
+      ev("turn.completed", 7, { turnId: "t1" }),
+      ev("turn.input", 8, { turnId: "t2", inputId: "in2", content: [] }),
+      callIn("t2", "think", 9, { thoughts: "dig" }),
+      resultIn("t2", "think", 9, 10, "ok"),
+      ev("turn.completed", 11, { turnId: "t2" }),
+      ev("turn.input", 12, { turnId: "t3", inputId: "in3", content: [] }),
+      callIn("t3", "checkpoint", 13, { goal: "b" }),
+      resultIn("t3", "checkpoint", 13, 14, "ok"),
+      callIn("t3", "rewind", 15, { report: "  B  " }),
+      resultIn("t3", "rewind", 15, 16, "ok"),
+      ev("turn.completed", 17, { turnId: "t3" }),
+      ev("turn.input", 18, { turnId: "t4", inputId: "in4", content: [] }),
+    ];
+    const cutA = {
+      checkpointResultSeq: 4,
+      rewindResultSeq: 6,
+      hideThroughSeq: 7,
+      summary: "A",
+    };
+    const cutB = {
+      checkpointResultSeq: 14,
+      rewindResultSeq: 16,
+      hideThroughSeq: 17,
+      summary: "B",
+    };
+
+    // Before the rewind result lands: the checkpoint is merely active — no cut.
+    expect(rewindContextCut(journal, THREAD, "t1", 5)).toBeUndefined();
+    // Every post-A call arms cut A — including cut B's own turn's first call
+    // (harness live fact: pair B exists only after that call).
+    expect(rewindContextCut(journal, THREAD, "t2", 9)).toEqual(cutA);
+    expect(rewindContextCut(journal, THREAD, "t2", 10)).toEqual(cutA);
+    expect(rewindContextCut(journal, THREAD, "t3", 13)).toEqual(cutA);
+    // Once checkpoint B has landed (result row 14 < anchor 15) the live fold
+    // goes active: cut A is superseded and cut B cannot arm (its rewind turn
+    // is still running).
+    expect(rewindContextCut(journal, THREAD, "t3", 15)).toBeUndefined();
+    // The rewind turn's own calls replay uncut (cut applies at turn end).
+    expect(rewindContextCut(journal, THREAD, "t3", 16)).toBeUndefined();
+    // Post-B turns arm the superseding pair.
+    expect(rewindContextCut(journal, THREAD, "t4", 19)).toEqual(cutB);
+    // The NOW fold still ends on pair B — the anchor, not the journal tail,
+    // decides what an earlier call saw.
+    expect(checkpointRewindState(journal, THREAD)).toEqual({
+      phase: "completed",
+      checkpointResultSeq: 14,
+      rewindResultSeq: 16,
+      report: "B",
     });
   });
 

@@ -13,6 +13,7 @@ import { runSessionLoop } from "./session-loop.js";
 import { serviceFrameSchema, type ObservedExecution, type ServiceFrame } from "../protocol.js";
 import { loadIdentity, type ClientConfig, type ClientIdentity } from "./identity.js";
 import { Executor, scanMarkerProcesses } from "./executor.js";
+import { HostRpcCommandError, browseHostDirectory } from "./host-directory.js";
 import { ExecutionBuffer } from "./buffers.js";
 import {
   assertNativeAddonCurrent,
@@ -236,7 +237,12 @@ function handleServiceFrame(
   }
   const frame = serviceFrameSchema.safeParse(parsed);
   if (!frame.success) {
-    log("unrecognized service frame dropped");
+    const refusal = hostRpcUnknownCommandRefusal(parsed);
+    if (refusal !== null) {
+      socket.send(JSON.stringify(refusal));
+    } else {
+      log("unrecognized service frame dropped");
+    }
     return;
   }
   // Serial command processing (§8.3 envLane discipline); bounded queue with
@@ -397,7 +403,90 @@ function dispatchFrame(
     case "error":
       log(`service error frame: ${frame.code} ${frame.message}`);
       return;
+    case "host-rpc.request":
+      void dispatchHostRpc(socket, frame);
+      return;
   }
+}
+
+/**
+ * #302: the daemon face of the host online RPC (bb command-router.ts:160-191
+ * respondHostRpc): run the command, answer exactly one host-rpc.response —
+ * ok with the result, or a failure carrying the dispatch error code. The
+ * browse is async fs work, so this fires and forgets; the socket pump's
+ * serial-drain discipline (synchronous dispatch) is untouched. Failure to
+ * send (socket died mid-flight) is survivable: the DO's waiter times out and
+ * the SPA re-asks.
+ */
+export function dispatchHostRpc(
+  socket: WebSocket,
+  frame: Extract<ServiceFrame, { type: "host-rpc.request" }>,
+): Promise<void> {
+  const { requestId, command } = frame;
+  const respond = (payload: Record<string, unknown>): void => {
+    try {
+      socket.send(JSON.stringify({ requestId, commandType: command.type, ...payload }));
+    } catch (error) {
+      log(`host-rpc ${command.type} response dropped: ${errorText(error)}`);
+    }
+  };
+  // Resolved (never rejected) when the response frame has been sent —
+  // fire-and-forget for the pump, an awaitable signal for tests. An unknown
+  // commandType cannot reach here: serviceFrameSchema's hostRpcCommandSchema
+  // refuses it in handleServiceFrame (version skew answered there).
+  return browseHostDirectory(command).then(
+    (result) => {
+      respond({ type: "host-rpc.response", ok: true, result });
+    },
+    (error: unknown) => {
+      const failure =
+        error instanceof HostRpcCommandError
+          ? error
+          : new HostRpcCommandError(
+              error instanceof Error && "code" in error && typeof error.code === "string"
+                ? error.code
+                : "command_failed",
+              error instanceof Error ? error.message : String(error),
+            );
+      respond({
+        type: "host-rpc.response",
+        ok: false,
+        errorCode: failure.errorCode,
+        errorMessage: failure.message,
+      });
+    },
+  );
+}
+
+/**
+ * #302 version-skew tolerance at the parse gate (bb server-connection.ts:
+ * 609-613 answers an unparseable host-rpc request instead of dropping it):
+ * a newer control plane's host-rpc command this daemon predates gets an
+ * explicit unknown_command refusal — silence would burn the DO waiter's
+ * full timeout window. Anything else is not a host-rpc request; null means
+ * the caller keeps its silent drop.
+ */
+export function hostRpcUnknownCommandRefusal(parsed: unknown): Record<string, unknown> | null {
+  const candidate = parsed as {
+    type?: unknown;
+    requestId?: unknown;
+    command?: { type?: unknown };
+  };
+  if (
+    candidate.type === "host-rpc.request" &&
+    typeof candidate.requestId === "string" &&
+    typeof candidate.command?.type === "string"
+  ) {
+    return {
+      type: "host-rpc.response",
+      requestId: candidate.requestId,
+      commandType: candidate.command.type,
+      ok: false,
+      errorCode: "unknown_command",
+      errorMessage: `This daemon does not implement ${candidate.command.type}`,
+    };
+  }
+  return null;
 }
 
 /** The embedded runtime singleton (one per process; per-workspace hosts

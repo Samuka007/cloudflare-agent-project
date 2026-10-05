@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   classifyHarnessProjection,
+  FixedReplyProvider,
   harnessFromSnapshot,
   projectHarness,
   resolveHarness,
@@ -27,6 +28,7 @@ describe("harness: three-key resolution", () => {
     expect(harness.relay.baseUrl).toBe("https://open.bigmodel.cn/api/anthropic");
     expect(harness.relay.model).toBe("glm-5.3");
     expect(harness.relay.maxTokens).toBeGreaterThan(0);
+    expect(harness.relay.contextWindow).toBe(200_000);
     expect(harness.relay.thinking).toEqual({ type: "disabled" });
     expect(harness.hostBinding).toEqual({ machineId: "local" });
     expect(harness.execution).toMatchObject({
@@ -44,6 +46,7 @@ describe("harness: three-key resolution", () => {
       MODEL_RELAY_API_KEY: "k-test",
       MODEL_RELAY_MODEL: "glm-5.3-air",
       MODEL_RELAY_MAX_TOKENS: "1024",
+      MODEL_RELAY_CONTEXT_WINDOW: "1000000",
       MODEL_RELAY_THINKING_BUDGET_TOKENS: "2048",
       DAEMON_MACHINE_ID: "host-b",
       HARNESS_PERMISSION_MODE: "accept-edits",
@@ -53,6 +56,7 @@ describe("harness: three-key resolution", () => {
     expect(harness.relay.baseUrl).toBe("https://relay.example/anthropic");
     expect(harness.relay.model).toBe("glm-5.3-air");
     expect(harness.relay.maxTokens).toBe(1024);
+    expect(harness.relay.contextWindow).toBe(1_000_000);
     expect(harness.relay.thinking).toEqual({ type: "enabled", budget_tokens: 2048 });
     expect(harness.hostBinding).toEqual({ machineId: "host-b" });
     expect(harness.execution).toMatchObject({
@@ -76,6 +80,57 @@ describe("harness: three-key resolution", () => {
 
   test("unreadable snapshots report null so drift defaults to live", () => {
     expect(harnessFromSnapshot("not json")).toBeNull();
+  });
+
+  test("#308 MODEL_RELAY_CONTEXT_WINDOW overrides the GLM-5 default denominator", () => {
+    expect(resolveHarness({ MODEL_RELAY_CONTEXT_WINDOW: "1000000" }).relay.contextWindow).toBe(
+      1_000_000,
+    );
+    // Garbage and non-positive values fall back to the ruled default.
+    expect(resolveHarness({ MODEL_RELAY_CONTEXT_WINDOW: "abc" }).relay.contextWindow).toBe(200_000);
+    expect(resolveHarness({ MODEL_RELAY_CONTEXT_WINDOW: "0" }).relay.contextWindow).toBe(200_000);
+  });
+});
+
+describe("#308 fixed-reply usage estimate", () => {
+  test("the mock reports an estimated receipt sized off the exact wire body", async () => {
+    const provider = new FixedReplyProvider("mock reply", {
+      model: "glm-5.3",
+      maxTokens: 8192,
+      thinking: { type: "disabled" },
+      contextWindow: 200_000,
+    });
+    const chunks = [];
+    for await (const chunk of provider.streamTurn(
+      {
+        threadId: "th",
+        turnId: "t1",
+        modelCallId: 1,
+        input: "hi",
+        steers: [],
+        priorCalls: [],
+        asyncResults: [],
+        experimentalGates: {
+          externalThinking: false,
+          contextNotes: false,
+          checkpoint: false,
+        },
+      },
+      { signal: new AbortController().signal },
+    )) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(2);
+    const [usage, reply] = chunks;
+    expect(usage?.kind).toBe("usage");
+    if (usage?.kind !== "usage") throw new Error("unreachable");
+    expect(usage.usage).toMatchObject({
+      estimated: true,
+      contextWindow: 200_000,
+      outputTokens: 0,
+    });
+    expect(usage.usage.inputTokens).toBeGreaterThan(0);
+    expect(reply).toEqual({ kind: "text-delta", text: "mock reply" });
   });
 });
 

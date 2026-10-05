@@ -6,6 +6,7 @@ import {
 import { backgroundTaskItemStatus } from "../contract/domain/background-task.js";
 import { threadEventDataSchemas } from "@cap/protocol";
 import { activeThinkingSchema, type ActiveThinking } from "../contract/domain/active-thinking.js";
+import type { ThreadContextWindowUsage } from "../contract/api/shared.js";
 import type { JsonValue } from "../contract/domain/json-value.js";
 import type { UxThreadEvent } from "../seam/agent-do.js";
 
@@ -228,6 +229,38 @@ export function buildActiveThinking(
     startedAt: latest.startedAt,
     updatedAt: latest.updatedAt,
   });
+}
+
+// --- contextWindowUsage (#308 tail-only state) ---------------------------------------
+
+/**
+ * bb extractThreadContextWindowUsage (thread-view thread-context-window-usage.ts)
+ * M0 fold: the thread's latest context-window fill, the timeline response's
+ * tail-only `contextWindowUsage` field (bb data.ts gates it on the latest
+ * page the same way as activeThinking/pendingTodos). Newest-row-wins over the
+ * `thread/contextWindowUsage/updated` rows the ux projection emits from
+ * `model.call_completed{usage}`; our producer only emits complete rows (both
+ * members numbered), so bb's null-chain walk collapses to last-wins. Null
+ * when the thread has no row — the SPA then renders no indicator, never a
+ * guessed percentage.
+ */
+export function buildContextWindowUsage(
+  events: readonly UxThreadEvent[],
+): ThreadContextWindowUsage | null {
+  let latest: { seq: number; usage: ThreadContextWindowUsage } | null = null;
+  for (const event of events) {
+    if (event.type !== "thread/contextWindowUsage/updated") continue;
+    const parsed = threadEventDataSchemas["thread/contextWindowUsage/updated"].safeParse(
+      event.data,
+    );
+    if (!parsed.success) continue;
+    // bb sorts by seq before the newest-first walk; a max-seq scan is the
+    // same verdict without the copy (journal reads arrive seq-ordered anyway).
+    if (latest === null || event.seq > latest.seq) {
+      latest = { seq: event.seq, usage: parsed.data.contextWindowUsage };
+    }
+  }
+  return latest?.usage ?? null;
 }
 
 function rawEventData(event: UxThreadEvent): EventData {

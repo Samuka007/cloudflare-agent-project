@@ -220,6 +220,31 @@ export const agentEventDataSchemas = {
     toolCalls: z.array(toolCallDataSchema),
   }),
 
+  /**
+   * #308 provider-side token accounting for one completed call — its own
+   * journal row (bb's contextWindowUsage rows are first-class log rows too),
+   * appended right after the `model.call_completed` it describes. Receipt
+   * when the provider reported usage, bytes/4 wire estimate when it didn't
+   * (`estimated: true`); providers without any usage face append nothing.
+   * Thread-auditable via turnId/modelCallId; folded 1:1 into the ux
+   * `thread/contextWindowUsage/updated` row (own seq — the events view's
+   * strict unique-seq contract), never FSM state. contextWindow null = the
+   * deployment cannot name a percentage; the ux projection omits the row
+   * rather than guessing.
+   */
+  "model.usage_receipt": z.object({
+    turnId: z.string().min(1),
+    modelCallId: z.number().int().positive(),
+    usage: z.object({
+      inputTokens: z.number().int().nonnegative(),
+      outputTokens: z.number().int().nonnegative(),
+      cacheReadInputTokens: z.number().int().nonnegative(),
+      cacheCreationInputTokens: z.number().int().nonnegative(),
+      contextWindow: z.number().int().positive().nullable(),
+      estimated: z.boolean(),
+    }),
+  }),
+
   "model.call_sealed": z.object({
     turnId: z.string().min(1),
     modelCallId: z.number().int().positive(),

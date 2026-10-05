@@ -21,6 +21,8 @@
 
 import {
   AnthropicRelayProvider,
+  anthropicRequestBody,
+  estimateWireRequestTokens,
   type ModelProvider,
   type ModelRequest,
   type ModelStreamChunk,
@@ -36,6 +38,12 @@ export interface HarnessEnv {
   MODEL_RELAY_API_KEY?: string;
   /** Relay model (default `glm-5.3`). */
   MODEL_RELAY_MODEL?: string;
+  /**
+   * #308 context window denominator for the usage percentage (default 200K —
+   * docs.bigmodel.cn GLM-5 family「上下文窗口 200K」; 1M variants
+   * (`glm-5.3[1m]`) and other providers override via this env).
+   */
+  MODEL_RELAY_CONTEXT_WINDOW?: string;
   /** Per-call completion budget; reasoning counts against it on glm-5.3. */
   MODEL_RELAY_MAX_TOKENS?: string;
   /** When set (integer), turns on extended thinking with this token budget. */
@@ -55,6 +63,7 @@ export interface ResolvedHarness {
     apiKey: string;
     model: string;
     maxTokens: number;
+    contextWindow: number;
     thinking: ThinkingConfig;
   };
   hostBinding: { machineId: string };
@@ -65,6 +74,8 @@ export const HARNESS_DEFAULTS = {
   baseUrl: "https://open.bigmodel.cn/api/anthropic",
   model: "glm-5.3",
   maxTokens: 8192,
+  /** docs.bigmodel.cn GLM-5 family page: 上下文窗口 200K. */
+  contextWindow: 200_000,
   machineId: "local",
 } as const;
 
@@ -117,6 +128,11 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
   const maxTokensRaw = Number.parseInt(env.MODEL_RELAY_MAX_TOKENS ?? "", 10);
   const maxTokens =
     Number.isFinite(maxTokensRaw) && maxTokensRaw > 0 ? maxTokensRaw : HARNESS_DEFAULTS.maxTokens;
+  const contextWindowRaw = Number.parseInt(env.MODEL_RELAY_CONTEXT_WINDOW ?? "", 10);
+  const contextWindow =
+    Number.isFinite(contextWindowRaw) && contextWindowRaw > 0
+      ? contextWindowRaw
+      : HARNESS_DEFAULTS.contextWindow;
   const budgetRaw = Number.parseInt(env.MODEL_RELAY_THINKING_BUDGET_TOKENS ?? "", 10);
   const machineIdRaw = env.DAEMON_MACHINE_ID?.trim() ?? "";
   const thinking: ThinkingConfig =
@@ -130,6 +146,7 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
       apiKey,
       model,
       maxTokens,
+      contextWindow,
       thinking,
     },
     hostBinding: {
@@ -150,24 +167,54 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
 export class FixedReplyProvider implements ModelProvider {
   readonly calls: ModelRequest[] = [];
 
-  constructor(private readonly reply: string) {}
+  private readonly reply: string;
+  /** The relay resolution this mock stands in for (wire options + window). */
+  private readonly relay: { model: string; maxTokens: number; thinking: ThinkingConfig; contextWindow: number };
+
+  constructor(reply: string, relay?: { model: string; maxTokens: number; thinking: ThinkingConfig; contextWindow: number }) {
+    this.reply = reply;
+    this.relay = relay ?? {
+      model: HARNESS_DEFAULTS.model,
+      maxTokens: HARNESS_DEFAULTS.maxTokens,
+      thinking: { type: "disabled" },
+      contextWindow: HARNESS_DEFAULTS.contextWindow,
+    };
+  }
 
   streamTurn(
     request: ModelRequest,
     _options: { signal: AbortSignal },
   ): AsyncIterable<ModelStreamChunk> {
-    // Hand-rolled single-chunk async iterator: the ModelProvider signature
-    // demands AsyncIterable, but `async *` with no await trips require-await.
+    // Hand-rolled iterator: the ModelProvider signature demands AsyncIterable,
+    // but `async *` with no await trips require-await. Frame order: the #308
+    // usage estimate (bytes/4 over the exact wire body — the mock's
+    // "receipt"), then the fixed reply as the terminal answer text.
     this.calls.push(request);
-    const reply = this.reply;
-    let yielded = false;
+    const usage = {
+      inputTokens: estimateWireRequestTokens(
+        JSON.stringify(anthropicRequestBody(request, this.relay)),
+      ),
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      contextWindow: this.relay.contextWindow,
+      estimated: true,
+    };
+    const frames: ModelStreamChunk[] = [
+      { kind: "usage", usage },
+      { kind: "text-delta", text: this.reply },
+    ];
+    let frame = 0;
     return {
       [Symbol.asyncIterator](): AsyncIterator<ModelStreamChunk> {
         return {
           next: (): Promise<IteratorResult<ModelStreamChunk>> => {
-            if (yielded) return Promise.resolve({ done: true, value: undefined });
-            yielded = true;
-            return Promise.resolve({ done: false, value: { kind: "text-delta", text: reply } });
+            const current = frames[frame];
+            frame += 1;
+            if (current === undefined) {
+              return Promise.resolve({ done: true, value: undefined });
+            }
+            return Promise.resolve({ done: false, value: current });
           },
         };
       },
@@ -183,11 +230,13 @@ export function relayProviderFrom(harness: ResolvedHarness): ModelProvider {
       apiKey: harness.relay.apiKey,
       model: harness.relay.model,
       maxTokens: harness.relay.maxTokens,
+      contextWindow: harness.relay.contextWindow,
       thinking: harness.relay.thinking,
     });
   }
   return new FixedReplyProvider(
     "model relay not configured (MODEL_RELAY_API_KEY missing) — fixed-reply mock in service (ticket #28 M0)",
+    harness.relay,
   );
 }
 
@@ -205,6 +254,7 @@ export interface HarnessProjection {
   relayKeyPresent: boolean;
   relayModel: string;
   relayMaxTokens: number;
+  relayContextWindow: number;
   relayThinking: string;
   machineId: string;
   executionModel: string;
@@ -220,6 +270,7 @@ export function projectHarness(harness: ResolvedHarness): HarnessProjection {
     relayKeyPresent: harness.relay.apiKey !== "",
     relayModel: harness.relay.model,
     relayMaxTokens: harness.relay.maxTokens,
+    relayContextWindow: harness.relay.contextWindow,
     // Budget-bearing string so a thinking-budget drift classifies as `live`.
     relayThinking:
       harness.relay.thinking.type === "enabled"
@@ -278,6 +329,7 @@ export function classifyHarnessProjection(
     "relayKeyPresent",
     "relayModel",
     "relayMaxTokens",
+    "relayContextWindow",
     "relayThinking",
     "executionModel",
     "executionServiceTier",

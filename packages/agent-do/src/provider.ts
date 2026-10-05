@@ -184,9 +184,37 @@ export interface McpWireTool {
   input_schema: Record<string, unknown>;
 }
 
+/**
+ * One provider-side token accounting of a completed model call (#308).
+ *
+ * Receipt path (`estimated: false`): the numbers are the provider's own
+ * count from the Anthropic-protocol SSE frames — `message_start.message.usage`
+ * for the input side (input + cache read + cache creation, the request
+ * context as the provider saw it) and the final cumulative
+ * `message_delta.usage.output_tokens` for the output side.
+ *
+ * Estimate path (`estimated: true`): the provider had no receipt (fixed-reply
+ * mock, degenerate upstream); `inputTokens` is a bytes/4 estimate over the
+ * exact wire body, `outputTokens` the bytes/4 estimate of what the provider
+ * streamed. The bb indicator labels estimated rows "Estimated context".
+ *
+ * `contextWindow` is the deployment-configured window for the model
+ * (`MODEL_RELAY_CONTEXT_WINDOW`); null when the deployment doesn't know one —
+ * consumers must not fabricate a percentage without it.
+ */
+export interface ModelUsageReceipt {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  contextWindow: number | null;
+  estimated: boolean;
+}
+
 export type ModelStreamChunk =
   | { kind: "text-delta"; text: string }
   | { kind: "thinking-delta"; text: string }
+  | { kind: "usage"; usage: ModelUsageReceipt }
   | { kind: "tool-calls"; toolCalls: ModelToolCall[] };
 
 export interface ModelCallFailure {
@@ -211,11 +239,12 @@ export class ModelProviderError extends Error implements ModelCallFailure {
 
 export interface ModelProvider {
   /**
-   * Stream one model call attempt. Chunks: zero or more `text-delta`, then at
-   * most one terminal `tool-calls` chunk carrying *complete* calls only
-   * (§2.2: stream fragments are deltas, never tool.call events). Iteration
-   * must stop when `signal` aborts; preferred abort shape is throwing
-   * `ModelProviderError({retryable: false, afterFirstByte: true})`.
+   * Stream one model call attempt. Chunks: zero or more `text-delta` /
+   * `thinking-delta`, at most one `usage` receipt (#308, before any terminal
+   * chunk), then at most one terminal `tool-calls` chunk carrying *complete*
+   * calls only (§2.2: stream fragments are deltas, never tool.call events).
+   * Iteration must stop when `signal` aborts; preferred abort shape is
+   * throwing `ModelProviderError({retryable: false, afterFirstByte: true})`.
    */
   streamTurn(
     request: ModelRequest,

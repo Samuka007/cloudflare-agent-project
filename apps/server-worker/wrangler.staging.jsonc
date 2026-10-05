@@ -53,6 +53,15 @@
       ],
     },
   ],
+  "r2_buckets": [
+    {
+      // #316 project attachment objects (key family
+      // attachment/<projectId>/<sha256><ext>). Provision with
+      // `wrangler r2 bucket create cap-server-attachments` before deploy.
+      "binding": "BLOBS",
+      "bucket_name": "cap-server-attachments",
+    },
+  ],
   "kv_namespaces": [
     {
       // Edge shield (#36): hostKey-hash auth cache for the composed daemon

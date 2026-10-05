@@ -322,3 +322,18 @@ export function anthropicRequestBody(
     messages,
   };
 }
+
+/**
+ * bytes/4 token estimate over an exact wire body (#308 estimate path).
+ *
+ * The estimator rides the REAL serialization — `anthropicRequestBody` output,
+ * JSON.stringify'd exactly like the fetch call — so system prompt, tool
+ * definitions, and the full message framing all count. UTF-8 bytes / 4 is the
+ * display-grade heuristic: ≈4 bytes/token for English, and CJK's ~3 bytes/char
+ * at ~0.7 tokens/char lands within the same ratio. Receipts (estimated:false)
+ * always win when a provider reports them; this only covers providers that
+ * never do (fixed-reply mock, degenerate upstreams).
+ */
+export function estimateWireRequestTokens(serializedBody: string): number {
+  return Math.ceil(new TextEncoder().encode(serializedBody).byteLength / 4);
+}
