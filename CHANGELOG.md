@@ -7,6 +7,24 @@
 
 ### Added
 
+- **#258 (P0) host onboarding 端到端**：执行 host 添加此前无门——AddMachineDialog
+  开但 join-code mint 路由未移植（#193 走查实录 "Route not found"），也无任何
+  用户文档。三件套补齐：① `POST /api/v1/hosts/join-codes`（bb 契约形状 201
+  `{joinCode,hostId,expiresAt}`，15 分钟一次性码；铸码不建行——bb
+  issuePersistentHostEnrollKey 幽灵规避；存储走 DAEMON_EDGE_KV 哈希键，兑码即
+  焚）；daemon-service `/enroll` 双凭据梯（静态 env key 原语义 + join code 兑换，
+  铸码 hostId 为身份权威）；② `GET /install.sh`——钉版对话框打印的
+  `curl …/install.sh | sh -s -- --join-code … --host-id … --server …` 不再 404，
+  脚本按对话框旗标契约校验后 `nix run …#cap-daemon`（新增 flake app 别名，修掉
+  双动态 `apps.${system}` 的 Nix eval 错误）；cap-daemon 增 `--join-code`/
+  `DAEMON_JOIN_CODE` 与 `--server` 别名。③ `docs/ops/host-onboarding.md` 用户
+  视角全步骤。M1 key registry 维持 crop（#195 S7）：兑码交付部署级 hostKey，偏
+  差记档于 onboarding 文档安全节。真机走查（wrangler dev + 真实 cap-daemon ×2
+  + 钉版 SPA 真浏览器）：铸码→装命令渲染→倒计时→daemon 以铸码 hostId enroll→
+  `session.ready`→对话框原地翻绿 "nixos connected"（截图录据），spent code/伪码
+  均 401。L1/L2：daemon-service `l1-join-code-enroll.test.ts`（6）+ server-worker
+  `join-codes-onboarding.test.ts`（6，契约形状/无幽灵行/enroll 落表/一次性/静态
+  路不受扰/install.sh 旗标契约）。
 - **#242 jev-locate 定位器原语 + 枚举召回审计 + 预登记置信分布**（research
   jev-locator-converger.md §6 单票落地）。`scripts/accept/jev-locate.ts`：
   `locate(deps,input)→LocateReport` 单调用定位器——ground（形状 G，双序复验同请求）/
