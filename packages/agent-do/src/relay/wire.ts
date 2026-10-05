@@ -1,8 +1,4 @@
-import type {
-  ModelRequest,
-  PriorModelCall,
-  SteerContribution,
-} from "../provider.js";
+import type { ModelRequest, PriorModelCall, SteerContribution } from "../provider.js";
 import {
   enabledToolNames,
   MAIN_WIRE_TOOLS,
@@ -312,7 +308,12 @@ export function anthropicRequestBody(
     stream: true,
     thinking,
     system: SYSTEM_PROMPT_BLOCKS.map((block) => ({ type: "text", text: block })),
-    tools: wireToolSet(M0_RENDER_FLAGS, finalNames),
+    // MCP server tools (matrix C2, #327) ride after the registry rows —
+    // dynamic, deployment-config-derived names (`mcp__<server>__<tool>`)
+    // that never enter the compile-time registry (control-plane §1.1 stays
+    // the single schema authority for REGISTERED tools; these carry the
+    // server's own JSON schema verbatim, normalized by tools/mcp.ts).
+    tools: [...wireToolSet(M0_RENDER_FLAGS, finalNames), ...(request.mcpTools ?? [])],
     // M1.5 T17: the ladder's forced attempt pins `yield` as the tool choice
     // (translate derives it from the reminder marker bound to this turn).
     ...(request.toolChoice === undefined

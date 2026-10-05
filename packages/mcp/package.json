@@ -1,0 +1,27 @@
+{
+  "name": "@cap/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vendored MCP client (pi/mcp direct port, upstream @earendil-works/pi-mcp 1.0.3 @ 98d2e1947aa9, MIT) — matrix C2 #327.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./http": "./src/http.ts",
+    "./oauth": "./src/oauth/index.ts",
+    "./testing": "./src/testing/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:conformance": "bun conformance/run.ts"
+  },
+  "dependencies": {
+    "cross-spawn": "7.0.6"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "6.0.6",
+    "@types/node": "^22.10.0",
+    "typescript": "~5.9.0",
+    "vitest": "^4.1.0"
+  }
+}

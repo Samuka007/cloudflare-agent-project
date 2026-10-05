@@ -2,6 +2,9 @@ node_modules/
 dist/
 .wrangler/
 bb/
+packages/mcp/src/
+packages/mcp/test/
+packages/mcp/conformance/baseline.json
 pnpm-lock.yaml
 **/worker-configuration.d.ts
 apps/server-worker/public/
