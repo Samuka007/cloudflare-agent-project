@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **#240 (P1) 浏览器租约台账**：CDP/thread 资源分配的结构化纪律（audit 规则 6，纪律语义源 #239 评论
+  5988466175）。`AP.lease("browser", { lane, tabName, threadPrefix, number? })`／`AP.release`／`AP.ledger`：
+  仓内 append-only `.pm-leases.jsonl`（gitignored，`PM_LEASES_PATH` 可改），同 tab／同线程前缀被他 lane
+  持有时登记硬拒（零写入）。`AP.lane` 对提及浏览器／CDP／Chrome 的票自动生成租约计划（tab `l<票号>`、
+  线程前缀 `l<票号>-`、roster lane id；`agentSpec.lease` 可覆写）：spawn 上下文携带租约段（具名 tab＋
+  线程前缀＋释放义务），confirm 路径在 spawn 前登记、spawn 抛错自动回滚。`AP.audit` 新增规则 6（传
+  `leases: AP.ledger().events` 才武装）：browserLeaseMissing（涉浏览器活跃 lane 无租约）／
+  browserLeaseCollision（同 tab／前缀两 lane 并发）／browserLeaseUnreleased（票已交付租约未释放），
+  均无 mutation——修复动作是 AP.lease/AP.release。pm.md 验收钩子同步（CDP 三层纪律＋空框不可关票）。
+  L1：scripts/test/pm-autopilot.test.ts 租约台账／lane 自动携带／audit 规则 6 三组（含两 lane 并发
+  无碰撞与无租约违规演示）。
+
 ### Fixed
 
 - **#226 (P0) Stop request 无效**：`POST /threads/:id/stop` 是 no-op 存根——SPA
