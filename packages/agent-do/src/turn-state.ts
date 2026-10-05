@@ -575,6 +575,12 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       // folds it 1:1 into thread/contextWindowUsage/updated; never FSM state.
       return;
     }
+    case "thread/compacted": {
+      // #309: the manual compact checkpoint — the context assembly
+      // (translate.ts, via session-tree threadCompactedCut) folds it from the
+      // log as a replay-derived cut; never FSM state.
+      return;
+    }
     case "interaction.registered": {
       // Thread-scoped interaction journal (proposal §3 T4); the ask
       // projection and the watchdog expiry family fold it from the log.

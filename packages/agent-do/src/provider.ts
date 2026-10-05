@@ -109,8 +109,11 @@ export interface ModelRequest {
    * Wire surface (M1.5 T16): the Main thread renders MAIN_WIRE_TOOLS; a
    * subagent renders the subagent surface (hidden `yield` included). Absent
    * = Main. Purely additive — the mock provider and tests may ignore it.
+   * `compaction` (#309) renders NO tools: the compact turn's single call is a
+   * summarization request, not an agent step — a tool-use answer would be a
+   * compaction failure, so the surface never offers one.
    */
-  toolSurface?: "main" | "subagent";
+  toolSurface?: "main" | "subagent" | "compaction";
   /**
    * Subagent-only: the spawning DO's depth verdict (canSpawnAtDepth) — the
    * wire strips `task` past the recursion cap. Ignored off the subagent

@@ -453,6 +453,44 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
         });
         break;
       }
+      case "thread/compacted": {
+        // #309: the checkpoint marker rides the ux face as the bb-shaped
+        // same-name event (timeline "Context compacted" op row source), and
+        // — when the deployment knows a window — emits the estimated usage
+        // row that drops the indicator immediately: usedTokens is the
+        // post-cut visible-tail estimate the compact engine measured with
+        // the same estimator that planned the cut (never a fresh guess).
+        // Same-row extraUx shares the journal seq (model.call_completed
+        // thinking-row precedent); the next real receipt's higher seq
+        // replaces the estimate.
+        ux = buildThreadEvent({
+          id: event.id,
+          threadId: event.threadId,
+          seq: event.seq,
+          type: "thread/compacted",
+          data: { ...event.data },
+          createdAt: event.createdAt,
+        });
+        if (event.data.contextWindow !== null) {
+          extraUx.push(
+            buildThreadEvent({
+              id: event.id,
+              threadId: event.threadId,
+              seq: event.seq,
+              type: "thread/contextWindowUsage/updated",
+              data: {
+                contextWindowUsage: {
+                  usedTokens: event.data.tokensAfter,
+                  modelContextWindow: event.data.contextWindow,
+                  estimated: true,
+                },
+              },
+              createdAt: event.createdAt,
+            }),
+          );
+        }
+        break;
+      }
       case "tool.call": {
         const executionId = executionIdFor(event.threadId, event.seq);
         toolByExecution.set(executionId, event.data.tool);

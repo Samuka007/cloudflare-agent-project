@@ -1,10 +1,6 @@
 import { executionIdFor } from "../../ids.js";
 import type { AnyAgentEvent } from "../../fsm-events.js";
-import {
-  subagentIdentityOf,
-  type SubagentIdentityRecord,
-  MAX_OUTPUT_LINES,
-} from "./types.js";
+import { subagentIdentityOf, type SubagentIdentityRecord, MAX_OUTPUT_LINES } from "./types.js";
 import type { AbortReason } from "./lifecycle.js";
 
 /**
@@ -295,6 +291,7 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
       case "experimental_context_notes":
       // #288: binding rows are thread-scoped state, never child-journal units.
       case "thread.rebound":
+      case "thread/compacted":
       case "job.delivered":
       case "job.registered":
       case "job.settled":
@@ -544,9 +541,10 @@ export function childRunVerdict(state: ChildRunState, budget?: ChildBudgetPolicy
     // The two gates are independent knobs: maxRuntimeMs (default 0 = off)
     // works even when the request tiers are disabled, and vice versa.
     const hardLimit =
-      budget.softRequestBudget > 0 ? budgetHardLimit(budget.softRequestBudget) : Number.POSITIVE_INFINITY;
-    const requestsExceeded =
-      budget.softRequestBudget > 0 && state.modelCalls >= hardLimit;
+      budget.softRequestBudget > 0
+        ? budgetHardLimit(budget.softRequestBudget)
+        : Number.POSITIVE_INFINITY;
+    const requestsExceeded = budget.softRequestBudget > 0 && state.modelCalls >= hardLimit;
     const runtimeExceeded =
       budget.maxRuntimeMs > 0 &&
       state.runStartedAt !== undefined &&
@@ -576,7 +574,8 @@ export function childRunVerdict(state: ChildRunState, budget?: ChildBudgetPolicy
           reuseInputId: armed.inputId,
         };
       }
-      if (armed.terminal === undefined) return { kind: "noop", reason: "budget forced turn still live" };
+      if (armed.terminal === undefined)
+        return { kind: "noop", reason: "budget forced turn still live" };
       // The single forced attempt ended without a usable yield: the ladder
       // is compressed — partial findings deliver as the formal report.
       return { kind: "settle", status: "ok", output: renderPartialFindings(state) };
@@ -684,7 +683,8 @@ export function renderPartialFindings(state: {
   const parts = state.sections.map((section) => {
     const heading = `## ${section.labels.join(" / ")}`;
     if (section.data === undefined) return heading;
-    const body = typeof section.data === "string" ? section.data : JSON.stringify(section.data, null, 2);
+    const body =
+      typeof section.data === "string" ? section.data : JSON.stringify(section.data, null, 2);
     return `${heading}\n\n${body}`;
   });
   parts.push(state.lastAssistantText?.text ?? "(no assistant text — nothing to recover)");
@@ -793,6 +793,7 @@ export function renderAgentHistory(events: readonly AnyAgentEvent[], agentId: st
       case "experimental_context_notes":
       // #288: binding rows are thread-scoped state, never child-journal units.
       case "thread.rebound":
+      case "thread/compacted":
       case "job.delivered":
       case "job.registered":
       case "job.settled":

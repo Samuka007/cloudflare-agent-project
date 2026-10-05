@@ -245,6 +245,41 @@ export function rewindContextCut(
   };
 }
 
+/**
+ * The compact cut (#309) armed for one turn's projection (undefined = no
+ * thread/compacted checkpoint precedes this turn). The marker appends after
+ * the compact turn's summarization call completes, so the arm rule is a pure
+ * seq comparison: the marker applies to turns whose `turn.input` seq is
+ * strictly greater than the marker's — the compact turn's own calls project
+ * uncut (the summarizer must read the full span), every later turn sees the
+ * cut (`rows ≤ hideThroughSeq` leave the active context; the compact turn
+ * itself and later rows stay, the summary riding as the compact turn's own
+ * history — omp session-context.ts:339-343 "summary first" satisfied by the
+ * compact turn being the first kept row). Deterministic from the journal —
+ * the same log always arms the same cut (#116). No as-of modelCallId anchor
+ * is needed (#325 discipline): the marker lands strictly between turns, so
+ * no call ever replays across an armed/decision boundary.
+ */
+export interface ThreadCompactedCut {
+  hideThroughSeq: number;
+}
+
+export function threadCompactedCut(
+  events: readonly AnyAgentEvent[],
+  turnId: string,
+): ThreadCompactedCut | undefined {
+  const turnInput = events.find(
+    (event) => event.type === "turn.input" && event.data.turnId === turnId,
+  );
+  if (turnInput === undefined) return undefined;
+  let marker: Extract<AnyAgentEvent, { type: "thread/compacted" }> | undefined;
+  for (const event of events) {
+    if (event.type === "thread/compacted" && event.seq < turnInput.seq) marker = event;
+  }
+  if (marker === undefined) return undefined;
+  return { hideThroughSeq: marker.data.hideThroughSeq };
+}
+
 // ---------------------------------------------------------------------------
 // todo journal — omp getLatestTodoPhasesFromEntries / details.phases recovery
 // ---------------------------------------------------------------------------

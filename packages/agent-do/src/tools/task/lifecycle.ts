@@ -202,6 +202,7 @@ export function projectLifecycle(events: readonly AnyAgentEvent[]): LifecycleVie
       case "experimental_context_notes":
       // #288: binding rows are thread-scoped state, never lifecycle units.
       case "thread.rebound":
+      case "thread/compacted":
       case "interaction.interrupted":
       case "interaction.registered":
       case "interaction.resolved":
@@ -254,8 +255,7 @@ export function projectLifecycle(events: readonly AnyAgentEvent[]): LifecycleVie
 // ---------------------------------------------------------------------------
 
 export type RegistrationDecision =
-  | { ok: true; mode: "claim" | "adopt" }
-  | { ok: false; reason: string };
+  { ok: true; mode: "claim" | "adopt" } | { ok: false; reason: string };
 
 export function registerIfAvailable(
   view: LifecycleView,
@@ -297,8 +297,7 @@ export type KillDecision =
 export function decideKill(
   jobId: string,
   job:
-    | { ownerId: string | null; status: string; settlement: { status: string } | null }
-    | undefined,
+    { ownerId: string | null; status: string; settlement: { status: string } | null } | undefined,
   callerOwnerId: string | undefined,
   planForJob: (jobId: string) => SpawnPlanRecord | undefined,
 ): KillDecision {

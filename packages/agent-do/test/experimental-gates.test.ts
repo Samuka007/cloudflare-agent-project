@@ -1,8 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  DEFAULT_EXPERIMENTAL_TOOL_CONFIG,
-  decodeExperimentalToolConfig,
-} from "../src/config.js";
+import { DEFAULT_EXPERIMENTAL_TOOL_CONFIG, decodeExperimentalToolConfig } from "../src/config.js";
 import {
   enabledToolNames,
   EXPERIMENTAL_TOOL_GATE,
@@ -39,9 +36,8 @@ function requestWith(overrides: Partial<ModelRequest> = {}): ModelRequest {
 }
 
 function wireNames(request: ModelRequest): string[] {
-  return anthropicRequestBody(request, { model: "test-model", maxTokens: 64 }).tools.map(
-    (tool) => tool.name,
-  );
+  const tools = anthropicRequestBody(request, { model: "test-model", maxTokens: 64 }).tools ?? [];
+  return tools.map((tool) => tool.name);
 }
 
 describe("#150 — gate map covers exactly the five experimental tools", () => {
@@ -84,7 +80,9 @@ describe("#150 — gate map covers exactly the five experimental tools", () => {
 
 describe("#150 — default wire: the five are absent; gated wire: present", () => {
   test("default gates strip all five from the main and subagent surfaces", () => {
-    const mainDefault = wireNames(requestWith({ experimentalGates: DEFAULT_EXPERIMENTAL_TOOL_CONFIG }));
+    const mainDefault = wireNames(
+      requestWith({ experimentalGates: DEFAULT_EXPERIMENTAL_TOOL_CONFIG }),
+    );
     for (const name of FIVE) expect(mainDefault).not.toContain(name);
     const subDefault = wireNames(
       requestWith({
@@ -121,15 +119,12 @@ describe("#150/#257 — forceReasoningOff pairing (sdk.ts:4275-4282)", () => {
   });
 
   test("the model verdict strips think for native-reasoning families and keeps native thinking available (#257)", () => {
-    const glmBody = anthropicRequestBody(
-      requestWith({ experimentalGates: { ...GATES_ON } }),
-      {
-        model: "glm-5.3",
-        maxTokens: 64,
-        thinking: { type: "enabled", budget_tokens: 1024 },
-      },
-    );
-    expect(glmBody.tools.some((tool) => tool.name === "think")).toBe(false);
+    const glmBody = anthropicRequestBody(requestWith({ experimentalGates: { ...GATES_ON } }), {
+      model: "glm-5.3",
+      maxTokens: 64,
+      thinking: { type: "enabled", budget_tokens: 1024 },
+    });
+    expect((glmBody.tools ?? []).some((tool) => tool.name === "think")).toBe(false);
     expect(glmBody.thinking).toEqual({ type: "enabled", budget_tokens: 1024 });
   });
 
