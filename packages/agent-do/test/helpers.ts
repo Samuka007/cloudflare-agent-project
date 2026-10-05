@@ -19,7 +19,8 @@ export interface RigOptions {
   /** Overrides the mock (real-model smoke registers its relay client). */
   provider?: ModelProvider;
   threadId?: string;
-  watchdog?: Record<string, number>;
+  /** #326: booleans ride too (autoCompactionEnabled gate flips). */
+  watchdog?: Record<string, number | boolean>;
 }
 
 export interface Rig {

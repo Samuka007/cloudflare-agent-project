@@ -25,6 +25,129 @@ import type { AnyAgentEvent } from "./fsm-events.js";
 /** pi compaction/compaction.ts:126-130 via kernel DEFAULT_COMPACTION_SETTINGS. */
 export const DEFAULT_KEEP_RECENT_TOKENS = 20_000;
 
+// ---------------------------------------------------------------------------
+// Overflow trigger + reactive retry (#326) — the pi shouldCompact threshold and
+// the context-overflow recovery face
+// ---------------------------------------------------------------------------
+
+/**
+ * pi CompactionSettings reduced to the trigger face (pi
+ * compaction/compaction.ts:126-130, kernel DEFAULT_COMPACTION_SETTINGS):
+ * `reserveTokens` is the headroom a request must keep below the window,
+ * `keepRecentTokens` the retention budget the cut planner preserves.
+ */
+export interface CompactionTriggerSettings {
+  enabled: boolean;
+  reserveTokens: number;
+  keepRecentTokens: number;
+}
+
+/** pi compaction/compaction.ts:126-130 defaults (kernel parity). */
+export const DEFAULT_COMPACTION_TRIGGER_SETTINGS: CompactionTriggerSettings = {
+  enabled: true,
+  reserveTokens: 16_384,
+  keepRecentTokens: DEFAULT_KEEP_RECENT_TOKENS,
+};
+
+/**
+ * pi compaction/compaction.ts:264-270 (kernel shouldCompact): the context
+ * needs compaction once it presses against the window minus the reserve.
+ * `contextWindow: null` (the deployment cannot name a window) never triggers —
+ * consumers must not fabricate a threshold without a denominator (#308
+ * honest-absence posture).
+ */
+export function shouldCompact(
+  contextTokens: number,
+  contextWindow: number | null,
+  settings: CompactionTriggerSettings,
+): boolean {
+  if (!settings.enabled) return false;
+  if (contextWindow === null) return false;
+  return contextTokens > contextWindow - settings.reserveTokens;
+}
+
+/**
+ * The projected context size of the NEXT model call: the last usage receipt
+ * anchors the count (the provider's own view of that request, #308), and the
+ * journal rows appended after it are estimated with the same bytes/4 walk the
+ * cut planner uses (pi estimateContextTokens' usage-first / estimate-forward
+ * shape, compaction.ts:196-224). No receipt at all → a whole-journal estimate
+ * (rough, but the reactive overflow face is the correctness backstop).
+ */
+export function projectedContextTokens(events: readonly AnyAgentEvent[]): {
+  tokens: number;
+  contextWindow: number | null;
+} {
+  const usage = lastUsageTotal(events);
+  // A checkpoint anchor supersedes a stale pre-cut receipt: the receipt
+  // priced rows the cut later hid, so once a `thread/compacted` marker is
+  // the newest measurement, its own visible-tail estimate is the truth
+  // (without this, every post-cut turn re-triggers the gate on the ghost
+  // pre-cut size).
+  let marker: { seq: number; tokensAfter: number; contextWindow: number | null } | null = null;
+  for (const event of events) {
+    if (event.type === "thread/compacted") {
+      marker = {
+        seq: event.seq,
+        tokensAfter: event.data.tokensAfter,
+        contextWindow: event.data.contextWindow,
+      };
+    }
+  }
+  const boundary = marker;
+  if (boundary !== null && (usage === null || boundary.seq > usage.seq)) {
+    const tail = events.filter((event) => event.seq > boundary.seq);
+    return {
+      tokens: boundary.tokensAfter + estimateTurnTokens(tail),
+      contextWindow: boundary.contextWindow,
+    };
+  }
+  // With a receipt: its total anchors the size and only the rows appended
+  // after it are estimated (tool calls/results of the settled call — the
+  // delta the next request adds). Without one: the whole journal estimated.
+  const tail = usage === null ? events : events.filter((event) => event.seq > usage.seq);
+  return {
+    tokens: (usage?.usedTokens ?? 0) + estimateTurnTokens(tail),
+    contextWindow: usage?.contextWindow ?? null,
+  };
+}
+
+/**
+ * The provider's context-overflow verdict inside a failure message. Anchored
+ * to the real upstream shapes only — a generic 400 must keep today's raw
+ * failure, not get hijacked into a compaction cycle:
+ * - Anthropic `invalid_request_error`: "prompt is too long: N tokens > M maximum"
+ * - OpenAI `invalid_request_error` code `context_length_exceeded`, message
+ *   "This model's maximum context length is ... tokens"
+ */
+export function isContextOverflowFailure(message: string): boolean {
+  return (
+    /\bprompt is too long\b/i.test(message) ||
+    /\bcontext_length_exceeded\b/i.test(message) ||
+    /\bmaximum context length\b/i.test(message)
+  );
+}
+
+/**
+ * The reactive retry cut ladder (#326): the estimator said the journal fit
+ * `keepRecentTokens`, yet the provider rejected the request — the estimate
+ * underestimated (image bytes, provider tokenizer divergence). Halve the
+ * retention, then fall to minimal retention (newest turn only). Each rung is
+ * the same turn-granular planner, so every rung inherits the tool-pair
+ * guarantee. Undefined at every rung = nothing can be summarized (single-turn
+ * journal) — the raw failure stands.
+ */
+export function planRetryCut(
+  events: readonly AnyAgentEvent[],
+  keepRecentTokens: number = DEFAULT_KEEP_RECENT_TOKENS,
+): CompactCutPlan | undefined {
+  for (const budget of [keepRecentTokens, Math.floor(keepRecentTokens / 2), 0]) {
+    const plan = planCompactCut(events, budget);
+    if (plan !== undefined) return plan;
+  }
+  return undefined;
+}
+
 /**
  * The compact turn's user-side material. It doubles as (a) the summarizer's
  * instruction and (b) the visible history row future requests read ("the user
@@ -233,6 +356,8 @@ export function estimateVisibleTailTokens(options: {
 
 /** The latest usage-receipt total (usedTokens fold, ux-projection semantics). */
 export function lastUsageTotal(events: readonly AnyAgentEvent[]): {
+  /** The receipt's own seq — the anchor for tail estimates (#326). */
+  seq: number;
   usedTokens: number;
   contextWindow: number | null;
 } | null {
@@ -250,5 +375,5 @@ export function lastUsageTotal(events: readonly AnyAgentEvent[]): {
     }
   }
   if (latest === null) return null;
-  return { usedTokens: latest.usedTokens, contextWindow: latest.contextWindow };
+  return { seq: latest.seq, usedTokens: latest.usedTokens, contextWindow: latest.contextWindow };
 }

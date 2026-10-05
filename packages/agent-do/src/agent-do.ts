@@ -18,15 +18,21 @@ import {
   COMPACT_DIRECTIVE_TEXT,
   DEFAULT_KEEP_RECENT_TOKENS,
   estimateVisibleTailTokens,
+  isContextOverflowFailure,
   lastUsageTotal,
   planCompactCut,
+  planRetryCut,
+  projectedContextTokens,
+  shouldCompact,
   type CompactCutPlan,
+  type CompactionTriggerSettings,
 } from "./compaction.js";
 import {
   applyEvent,
   computeDueWork,
   emptyReplayState,
   executionTerminal,
+  FsmViolationError,
   replayEvents,
   turnTerminal,
   type ExecutionRuntime,
@@ -385,7 +391,12 @@ type ModelCallOutcome =
   | { kind: "sealed"; modelCallId: number }
   | { kind: "cancelled"; modelCallId: number }
   | { kind: "failed_pre_first_byte"; modelCallId: number; attempt: number }
-  | { kind: "failed"; modelCallId: number };
+  | {
+      kind: "failed";
+      modelCallId: number;
+      /** #326: the provider failure text, for the overflow-verdict gate. */
+      failureMessage: string;
+    };
 
 /** Typed error channel for a provider pull failure. */
 class ProviderPullFailure {
@@ -647,25 +658,28 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       content: [{ type: "text", text: COMPACT_DIRECTIVE_TEXT }],
     });
     this.armWatchdog();
-    this.ctx.waitUntil(this.driveCompactTurn(turnId, plan, usage));
+    this.ctx.waitUntil(this.runCompactTurnCore(turnId, plan, usage, "manual"));
     return { turnId, duplicated: false };
   }
 
   /**
-   * The compact turn driver: one summarization call (no tools), then the
-   * checkpoint row, then turn.completed. Terminal mapping mirrors
-   * turnProgram's single-call segment (§4.2: seal after first byte, bounded
-   * pre-first-byte retry); the cancellation face rides the shared
-   * cancelTurn → cancel_requested → abort → finalizeCancel path. An answer
-   * that is empty or tool-bearing seals instead of persisting — an assistant
-   * slice with neither text nor paired results has no wire shape and would
-   * poison every later projection (translate's pairing invariant).
+   * The compact turn driver (#309 manual button, #326 auto faces — one shared
+   * core): one summarization call (no tools), then the checkpoint row, then
+   * turn.completed. Terminal mapping mirrors turnProgram's single-call
+   * segment (§4.2: seal after first byte, bounded pre-first-byte retry); the
+   * cancellation face rides the shared cancelTurn → cancel_requested → abort
+   * → finalizeCancel path. An answer that is empty or tool-bearing seals
+   * instead of persisting — an assistant slice with neither text nor paired
+   * results has no wire shape and would poison every later projection
+   * (translate's pairing invariant). The return status is the #326 auto
+   * caller's recovery verdict; the manual path ignores it.
    */
-  private async driveCompactTurn(
+  private async runCompactTurnCore(
     turnId: string,
     plan: CompactCutPlan,
     usage: { usedTokens: number; contextWindow: number | null } | null,
-  ): Promise<void> {
+    method: "manual" | "auto",
+  ): Promise<"completed" | "failed" | "cancelled"> {
     const abort = new AbortController();
     this.activeDrivers.set(turnId, abort);
     try {
@@ -675,10 +689,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       };
       for (;;) {
         const turn = this.state.turns.get(turnId);
-        if (turn === undefined || turnTerminal(turn)) return;
+        if (turn === undefined || turnTerminal(turn)) return "cancelled";
         if (turn.status === "cancelling") {
           await this.finalizeCancel(turnId);
-          return;
+          return "cancelled";
         }
         const started = await this.appendEvent("model.call_started", {
           turnId,
@@ -686,10 +700,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         });
         const outcome = await Effect.runPromise(
           this.consumeModelCall(turnId, started.seq, abort.signal),
-        ).catch(() => ({ kind: "failed" as const }));
+        ).catch(() => ({ kind: "failed" as const, failureMessage: "" }));
         if (outcome.kind === "cancelled") {
           await this.finalizeCancel(turnId);
-          return;
+          return "cancelled";
         }
         if (outcome.kind === "sealed") {
           if (turnLive()) {
@@ -699,7 +713,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
               sealed: true,
             });
           }
-          return;
+          return "failed";
         }
         if (outcome.kind === "failed_pre_first_byte") {
           if (outcome.attempt <= this.cfg.maxPreFirstByteRetries) {
@@ -716,20 +730,20 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           if (turnLive()) {
             await this.appendEvent("turn.failed", { turnId, reason: "model_error" });
           }
-          return;
+          return "failed";
         }
         if (outcome.kind === "failed") {
           if (turnLive()) {
             await this.appendEvent("turn.failed", { turnId, reason: "model_error" });
           }
-          return;
+          return "failed";
         }
         // Completed — but a cancel_requested may have landed mid-stream
         // (turnProgram's loop-top ordering): cancelling settles as cancelled,
         // never as a fresh checkpoint on a dying turn.
         if (this.state.turns.get(turnId)?.status === "cancelling") {
           await this.finalizeCancel(turnId);
-          return;
+          return "cancelled";
         }
         if (outcome.toolCalls.length > 0 || outcome.text.trim() === "") {
           await this.appendEvent("model.call_sealed", {
@@ -738,7 +752,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
             prefixChars: 0,
           });
           await this.appendEvent("turn.failed", { turnId, reason: "model_error" });
-          return;
+          return "failed";
         }
         await this.appendEvent("model.call_completed", {
           turnId,
@@ -764,13 +778,139 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           tokensBefore: usage?.usedTokens ?? null,
           tokensAfter,
           contextWindow: usage?.contextWindow ?? null,
-          method: "manual",
+          method,
         });
         await this.appendEvent("turn.completed", { turnId });
-        return;
+        return "completed";
       }
     } finally {
       this.activeDrivers.delete(turnId);
+    }
+  }
+
+  /**
+   * #326 proactive face — the post-turn `shouldCompact` gate (pi checks the
+   * same threshold after each assistant message, compaction.ts:264-270): when
+   * the projected next-call context (usage anchor + tail estimate) presses
+   * against the window minus the reserve, the auto compact turn runs NOW so
+   * the next turn never sees a raw overflow. Best-effort between turns: a
+   * racing user turn (FSM violation on the compact turn.input) or a subagent
+   * thread steps aside — the reactive overflow face remains the backstop.
+   */
+  private async maybeAutoCompactAfterTurn(): Promise<void> {
+    if (this.threadId === null || this.state.subagentIdentity !== null) return;
+    const settings: CompactionTriggerSettings = {
+      enabled: this.cfg.autoCompactionEnabled,
+      reserveTokens: this.cfg.autoCompactionReserveTokens,
+      keepRecentTokens: this.cfg.autoCompactionKeepRecentTokens,
+    };
+    if (!settings.enabled) return;
+    try {
+      if (this.activeTurn() !== undefined) return;
+      const { events } = await this.readAllEvents();
+      if (!events.some((event) => event.type === "model.call_completed")) return;
+      const projected = projectedContextTokens(events);
+      if (!shouldCompact(projected.tokens, projected.contextWindow, settings)) return;
+      const plan = planCompactCut(events, settings.keepRecentTokens);
+      // Fits the retention budget → nothing to summarize; the reactive face
+      // owns the (rare) provider-rejection case where the estimate lied.
+      if (plan === undefined) return;
+      const usage = lastUsageTotal(events);
+      const turnId = `turn_${crypto.randomUUID()}`;
+      await this.appendEvent("turn.input", {
+        turnId,
+        inputId: `compact-auto-${crypto.randomUUID()}`,
+        content: [{ type: "text", text: COMPACT_DIRECTIVE_TEXT }],
+      });
+      this.armWatchdog();
+      await this.runCompactTurnCore(turnId, plan, usage, "auto");
+    } catch (error) {
+      if (!(error instanceof FsmViolationError)) {
+        console.error("auto compaction gate failed", error);
+      }
+    }
+  }
+
+  /**
+   * #326 reactive recovery — after a context-overflow failure, compact over
+   * the current journal and re-drive the failed input as a fresh turn. The
+   * failed turn stays failed (honest journal: the attempt did fail); the
+   * recovery is that the session continues without user action. The cut
+   * ladder (planRetryCut) assumes the estimator underestimated — the provider
+   * rejected what fit `keepRecentTokens` on paper. Returns whether the retry
+   * turn was started; false leaves the raw failure standing (no cut exists,
+   * the summarizer itself failed, or a racing user turn owns the thread).
+   */
+  private async autoCompactAndRetry(failedTurnId: string): Promise<boolean> {
+    try {
+      if (this.state.subagentIdentity !== null) return false;
+      const { events } = await this.readAllEvents();
+      const plan = planRetryCut(events, this.cfg.autoCompactionKeepRecentTokens);
+      if (plan === undefined) return false;
+      const failedInput = events.find(
+        (event) => event.type === "turn.input" && event.data.turnId === failedTurnId,
+      );
+      if (failedInput?.type !== "turn.input") return false;
+      const usage = lastUsageTotal(events);
+      const compactTurnId = `turn_${crypto.randomUUID()}`;
+      await this.appendEvent("turn.input", {
+        turnId: compactTurnId,
+        inputId: `compact-auto-${crypto.randomUUID()}`,
+        content: [{ type: "text", text: COMPACT_DIRECTIVE_TEXT }],
+      });
+      this.armWatchdog();
+      const outcome = await this.runCompactTurnCore(compactTurnId, plan, usage, "auto");
+      if (outcome !== "completed") return false;
+      // A user turn racing in past the failure owns the thread now — its own
+      // requests already ride the fresh cut, which is the recovery that
+      // matters; the automatic retry steps aside.
+      if (this.activeTurn() !== undefined) return false;
+      const retryTurnId = `turn_${crypto.randomUUID()}`;
+      await this.appendEvent("turn.input", {
+        turnId: retryTurnId,
+        inputId: `${failedInput.data.inputId}#compact-retry`,
+        content: failedInput.data.content,
+      });
+      this.armWatchdog();
+      await this.driveTurn(retryTurnId);
+      return true;
+    } catch (error) {
+      if (!(error instanceof FsmViolationError)) {
+        console.error(`auto compact-and-retry for ${failedTurnId} failed`, error);
+      }
+      return false;
+    }
+  }
+
+  /**
+   * Cold-start resume for a queued compact turn (#309 manual, #326 auto):
+   * re-derive the cut from the journal — the planner is deterministic over
+   * the same rows, and the journal cannot have grown agent-side while the
+   * compact turn held the thread — then finish the checkpoint. Method
+   * attribution: auto turns always name themselves `compact-auto-…`; the
+   * manual face (default or client-supplied id) stays `manual`.
+   */
+  private async resumeCompactTurn(turnId: string): Promise<void> {
+    try {
+      const { events } = await this.readAllEvents();
+      const plan = planRetryCut(events, this.cfg.autoCompactionKeepRecentTokens);
+      if (plan === undefined) {
+        await this.appendEvent("turn.failed", { turnId, reason: "model_error" });
+        return;
+      }
+      const input = events.find(
+        (event) => event.type === "turn.input" && event.data.turnId === turnId,
+      );
+      const method =
+        input?.type === "turn.input" && input.data.inputId.startsWith("compact-auto-")
+          ? ("auto" as const)
+          : ("manual" as const);
+      this.armWatchdog();
+      await this.runCompactTurnCore(turnId, plan, lastUsageTotal(events), method);
+    } catch (error) {
+      if (!(error instanceof FsmViolationError)) {
+        console.error(`compact turn resume for ${turnId} failed`, error);
+      }
     }
   }
 
@@ -1638,6 +1778,14 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     for (const turn of this.state.turns.values()) {
       if (turnTerminal(turn)) continue;
       if (this.activeDrivers.has(turn.turnId)) continue;
+      // #309/#326: a queued compact turn resumes through the compact core,
+      // not the agent turnProgram — the summarizer call must land its
+      // thread/compacted checkpoint, which turnProgram knows nothing about.
+      // Mid-call compact turns follow the watchdog seal path like agent turns.
+      if (turn.inputId.startsWith("compact-") && turn.status === "queued") {
+        this.ctx.waitUntil(this.resumeCompactTurn(turn.turnId));
+        continue;
+      }
       this.ctx.waitUntil(this.driveTurn(turn.turnId));
     }
     // 6. M1.5 T17: a subagent run with NO live turn (interrupted reminder,
@@ -2098,6 +2246,23 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           return;
         }
         if (outcome.kind === "failed") {
+          // #326 reactive overflow face: a pre-first-byte provider rejection
+          // whose message names the context window becomes compact-and-retry
+          // instead of the raw failure. The turn still fails (honest journal
+          // — the attempt did fail); the auto compact turn + retry turn
+          // recover the session without user action.
+          if (
+            self.cfg.autoCompactionEnabled &&
+            !signal.aborted &&
+            self.state.subagentIdentity === null &&
+            isContextOverflowFailure(outcome.failureMessage)
+          ) {
+            yield* Effect.promise(() =>
+              self.appendEvent("turn.failed", { turnId, reason: "context_overflow" }),
+            );
+            yield* Effect.promise(() => self.autoCompactAndRetry(turnId));
+            return;
+          }
           yield* Effect.promise(() =>
             self.appendEvent("turn.failed", { turnId, reason: "model_error" }),
           );
@@ -2124,6 +2289,11 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         }
         if (outcome.toolCalls.length === 0) {
           yield* Effect.promise(() => self.appendEvent("turn.completed", { turnId }));
+          // #326 proactive face: the just-settled turn may have crossed the
+          // compaction threshold — compact now, between turns, so the next
+          // input never sees a raw overflow. Fire-and-forget: the journal is
+          // the only truth clients observe (compact RPC posture).
+          self.ctx.waitUntil(self.maybeAutoCompactAfterTurn());
           return;
         }
         const executionIds: string[] = [];
@@ -2412,7 +2582,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       ).length;
       return { kind: "failed_pre_first_byte", modelCallId, attempt: failedAttempts };
     }
-    return { kind: "failed", modelCallId };
+    return { kind: "failed", modelCallId, failureMessage: failure.message };
   }
 
   private classifyProviderFailure(
@@ -2462,7 +2632,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     // subagent toolset — hidden `yield` included — with `task` stripped past
     // the recursion cap (omp canSpawnAtDepth gate). Main keeps MAIN_WIRE_TOOLS.
     const identity = this.state.subagentIdentity;
-    if (identity === null) return { ...gated, ...(mcpTools === undefined ? {} : { mcpTools }) };
+    if (identity === null) {
+      // #309/#326: translate derives the tool-free `compaction` surface for
+      // compact turns (their `compact-…` inputId); those calls also skip the
+      // MCP tools/list round trip the summarizer can never use.
+      if (gated.toolSurface === "compaction") return gated;
+      return { ...gated, ...(mcpTools === undefined ? {} : { mcpTools }) };
+    }
     return {
       ...gated,
       ...(mcpTools === undefined ? {} : { mcpTools }),
@@ -4130,7 +4306,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
 
   /** Test/config seam: persist a watchdog config patch. */
   async configureWatchdog(
-    patch: Record<string, number>,
+    patch: Record<string, number | boolean>,
   ): Promise<{ config: Record<string, number> }> {
     await this.ready();
     const merged = mergeWatchdogConfig(this.cfg, parseWatchdogConfigPatch(patch));

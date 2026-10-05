@@ -471,6 +471,13 @@ export function modelRequestFromEvents(
     priorCalls,
     // Session history (#228): prior turns ride every post-turn request.
     ...(priorTurns.length > 0 ? { priorTurns } : {}),
+    // #309/#326: a compact turn's single call IS the summarization request —
+    // the journal derives the tool-free `compaction` surface from its
+    // `compact-…` inputId (replay-deterministic, the toolChoice precedent:
+    // derived here so the final-log rebuild projects the same request). The
+    // wire renders no tools for it; the DO additionally skips the MCP
+    // tools/list round trip the summarizer can never use.
+    ...(inputTurn.inputId.startsWith("compact-") ? { toolSurface: "compaction" as const } : {}),
     // The current call's boundary rows ride the trailing user message (wire
     // appends them after the steers); prior calls carry theirs permanently.
     asyncResults: asyncResultsByCall.get(modelCallId) ?? [],
