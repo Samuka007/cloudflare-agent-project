@@ -53,7 +53,7 @@ bb 把 provider 字段劈成两套，纪律是「client 可读的进 wire 契约
 | 字段 | schema | 说明 | 锚（bb/packages/config/src/bb-app-managed-config.ts） |
 | --- | --- | --- | --- |
 | `config` 值 | strict 五键 | `BB_APP_URL / BB_INFERENCE / BB_INFERENCE_FALLBACK / BB_LOG_LEVEL / BB_TRANSCRIPTION` | :40-48 |
-| `customModels[]` | strict `{providerId(内建枚举 ∪ `acp-*` 正则), model(min1), displayName?}` | 用户注册 picker 模型；坏条目**跳过+警告**，永不因重写文件被静默删除（写流程携带 raw JSON 穿透） | :53-69；:233-255；bb-app/src/launcher.ts:172-181 |
+| `customModels[]` | strict `{providerId: 内建枚举 ∪ acp-* 正则, model(min1), displayName?}` | 用户注册 picker 模型；坏条目**跳过+警告**，永不因重写文件被静默删除（写流程携带 raw JSON 穿透） | :53-69；:233-255；bb-app/src/launcher.ts:172-181 |
 | `customAcpAgents[]` | strict `{id(slug), displayName, command, logo?(svg/png/webp), args[], env{}, cwd?, modelCli?{listArgs, selectFlag, primaryModels}, reasoningCli?, nativeReasoning?, nativeSkillRoots?}` | 用户注册 ACP agent，id 派生 `acp-<id>`，禁撞内建枚举，禁重复 | :84-148 |
 | 其余 | `sharedSkillRoots / machineCredential / connectMachineId / serverUrl` | 机器凭据与连接指向 | :150-160 |
 | 合并语义 | `managedConfig ?? baseConfig` 逐字段 | bb-app 托管配置覆盖基础配置 | apps/server/src/services/system/bb-app-managed-config.ts:106-111 |
