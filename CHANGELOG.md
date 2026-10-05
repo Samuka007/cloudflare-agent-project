@@ -7,6 +7,32 @@
 
 ### Added
 
+- **#288 workspace 绑定喂值链 + environments 数据模型（盘点 #282 §2.A 票 1）**：
+  ① 数据模型：`0002_environments.sql` 落 bb 锚形 environments 表（`(project_id,
+  host_id NOT NULL, path)` 唯一 + workspace_provision_type + status，两源地图
+  §1.1）；test/migrate.ts 按文件序应用全部迁移。② 解析函数：`resolveThreadBinding`
+  （services/thread-binding.ts）在 server-worker 创建路径一次解析绑定来源链——thread
+  显式 host/reuse 选择 > project 级默认源 checkout（`project_sources.is_default`，
+  层文档 §6 留白的字段形状按既有 producer 落地）> 部署默认单机（§2.3 零 D1：
+  `ORCHESTRATOR_HOST_ID ?? "local"`，不落行、不查 fleet 注册表）；managed-worktree
+  显式 422（供给另票，盘点 §4 留注）。解析一次喂两半：environments 行
+  find-or-create → `threads.environment_id`（createThreadRecord/rebind 落库）+
+  `thread.created.machineId` 冻结轨迹（直接 DO 路径与组合路径 thread/start 均喂
+  `command.machineId`，manager 优先取之、harness hostBinding 兜底——执行绑定与 D1
+  绑定由同一次解析对账）。③ 显式换绑：`thread.rebound` 轨迹事件（fsm-events 词汇 +
+  turn-state 重放迁移 `state.machineId` + AgentDO `rebindThread` RPC，同目标幂等），
+  `POST /threads/:id/environment` 为 owner 操作面（更新行 + 事件 + hub
+  environment-changed；ux 投影与 translate/task 家族按 thread-scoped 不渲染穿透）。
+  ④ 喂值链读面：`GET /environments?projectId=`、`GET /environments/:id` 最小集；
+  thread 详情 `include=environment,host` 真解析（bb buildThreadResponse 锚形）；
+  线程列表 LEFT JOIN environments 带出 environmentHostId/Name/BranchName/display
+  kind（bb threadWithPendingInteractionBaseQuery 锚形，替换 M0 硬编码 null）；
+  protocol ThreadSummary 增 environmentId/环境/host 内联可选字段、
+  createThreadRequestSchema 增 environment、HTTP_ROUTES 登记两条 environments 路由。
+  ⑤ 协议漂移回迁（盘点 A5）：workspace/environment 绑定词汇（含 gitBranchNameSchema
+  校验器）唯一定居于 @cap/protocol，server-worker shared.ts 改为 re-export。⑥ 帧
+  字段协调（盘点 C1）：`tool.exec`/`exec.spawn` 增可选 `workspace` 标识，缺省回退
+  sandbox（双帧方向向后兼容），票 3 在此之上落 per-workspace ToolHost。
 - **#276 J5 子代活动/CoT 回父——`task.subagent_event` 包装行（journal-first）+ CoT
   终局行档 1**：#256 G4 的 journal-first 臂。① journal 化：`task.subagent_event`
   包装行（omp `subagent_event` 帧同构：child 事件摘要 unit + 外层 spawn 锚），由子 DO

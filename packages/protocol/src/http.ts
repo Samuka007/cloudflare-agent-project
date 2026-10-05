@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { promptContentSchema, threadEventEnvelopeSchema } from "./events.js";
+import {
+  createThreadEnvironmentArgsSchema,
+  environmentSummarySchema,
+  hostSummarySchema,
+} from "./environments.js";
 
 /**
  * Frozen HTTP surface (`/api/v1`), bb-shaped so the bb SPA can be pointed at
@@ -27,6 +32,15 @@ export const threadSummarySchema = z.object({
   updatedAt: z.number(),
   /** Seq of the newest event in the log; 0 for a fresh thread. */
   lastSeq: z.number().int().min(0),
+  /**
+   * #288 binding feed-through: the control-plane binding row inlined when the
+   * thread has one. `undefined` = the deployment-default
+   * binding (no environments row — trajectory machineId is the only truth);
+   * `null` fields keep bb's nullable vocabulary.
+   */
+  environmentId: z.string().min(1).nullable().optional(),
+  environment: environmentSummarySchema.nullable().optional(),
+  host: hostSummarySchema.nullable().optional(),
 });
 export type ThreadSummary = z.infer<typeof threadSummarySchema>;
 
@@ -42,6 +56,13 @@ export const createThreadRequestSchema = z.object({
   /** bb requires projectId; M0 fakes default it so a bare SPA create works. */
   projectId: z.string().min(1).optional(),
   title: z.string().min(1).optional(),
+  /**
+   * #288: workspace binding choice resolved once at creation into the
+   * trajectory (`thread.created.machineId`) and the control-plane row
+   * (`threads.environment_id`). Omitted = server defaulting policy (project
+   * default source, then the deployment single machine).
+   */
+  environment: createThreadEnvironmentArgsSchema.optional(),
   /** Optional seed message; when present it starts the first turn. */
   input: z.array(promptContentSchema).min(1).optional(),
   clientRequestId: z.string().min(1).optional(),
@@ -193,5 +214,15 @@ export const HTTP_ROUTES: readonly HttpRouteDescriptor[] = [
     method: "GET",
     path: "/threads/:id/timeline",
     purpose: "rendered timeline rows",
+  },
+  {
+    method: "GET",
+    path: "/environments",
+    purpose: "binding rows for a project (?projectId=, #288 minimal set)",
+  },
+  {
+    method: "GET",
+    path: "/environments/:id",
+    purpose: "binding row detail (bb environments get, #288 minimal set)",
   },
 ] as const;

@@ -68,6 +68,11 @@ export type AdapterCommand =
       type: "thread/start";
       threadId: string;
       cwd: string;
+      /**
+       * #288: the control plane's resolved binding machine. Absent = the
+       * harness hostBinding (the composition machine, previous semantics).
+       */
+      machineId?: string;
       input?: PromptInput[];
       options: ProviderExecutionContext;
       dynamicTools?: DynamicTool[];

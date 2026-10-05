@@ -187,6 +187,12 @@ export const execSpawnFrameSchema = z.object({
   /** Sandbox-relative working directory; the client clamps into the root. */
   cwd: z.string(),
   timeoutMs: z.number().int().positive(),
+  /**
+   * #288 coordination with ticket 3 (daemon multi-workspace): workspace
+   * identifier for per-workspace tool hosts. Absent = the single sandbox
+   * (today's semantics, backward compatible in both frame directions).
+   */
+  workspace: z.string().min(1).optional(),
 });
 
 /**
@@ -203,6 +209,8 @@ export const toolExecFrameSchema = z.object({
   tool: z.string().min(1),
   arguments: z.record(z.string(), z.unknown()),
   timeoutMs: z.number().int().positive(),
+  /** Same contract as {@link execSpawnFrameSchema.workspace}. */
+  workspace: z.string().min(1).optional(),
 });
 
 export const execResumeFrameSchema = z.object({

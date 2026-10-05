@@ -445,6 +445,27 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     return { threadId: request.threadId, duplicated: false };
   }
 
+  /**
+   * #288 explicit rebind: the only write that moves a binding after creation.
+   * Idempotent on the same target (a replayed owner operation appends
+   * nothing); in-flight executions keep settling by executionId self-routing.
+   */
+  async rebindThread(request: {
+    machineId: string;
+    environmentId?: string;
+  }): Promise<{ machineId: string; duplicated: boolean }> {
+    await this.ready();
+    this.requireThread();
+    if (this.state.machineId === request.machineId) {
+      return { machineId: request.machineId, duplicated: true };
+    }
+    await this.appendEvent("thread.rebound", {
+      machineId: request.machineId,
+      ...(request.environmentId !== undefined ? { environmentId: request.environmentId } : {}),
+    });
+    return { machineId: request.machineId, duplicated: false };
+  }
+
   /** Input-first-persist (ruling on #23): the event lands before anything runs. */
   async sendMessage(request: SendMessageRequest): Promise<SendMessageResult> {
     await this.ready();

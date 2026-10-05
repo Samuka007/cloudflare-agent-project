@@ -128,6 +128,20 @@ export const agentEventDataSchemas = {
     machineId: z.string().min(1),
   }),
 
+  /**
+   * #288 explicit rebind (layer doc §2.1): the ONLY way a binding moves — an
+   * owner operation appends this row, replay migrates `state.machineId`, and
+   * every later dispatch resolves the new machine with zero per-dispatch
+   * lookups. In-flight executions settle by executionId self-routing and are
+   * unaffected (bb: "The switch moves the thread mid-turn"). The system side
+   * never appends this row itself; product policy for offline hosts is #73.
+   */
+  "thread.rebound": z.object({
+    machineId: z.string().min(1),
+    /** Control-plane half (`threads.environment_id`), for log-level 对账. */
+    environmentId: z.string().min(1).optional(),
+  }),
+
   "turn.input": z.object({
     turnId: z.string().min(1),
     /** Client-generated idempotency key; retries append nothing. */

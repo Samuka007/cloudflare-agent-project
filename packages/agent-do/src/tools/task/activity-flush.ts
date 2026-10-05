@@ -130,6 +130,8 @@ export function projectActivityFlush(
       // model stream transport, the task/lifecycle/interaction families,
       // this module's own cursor rows).
       case "experimental_context_notes":
+      // #288: binding rows are thread-scoped state, never child-journal units.
+      case "thread.rebound":
       case "interaction.interrupted":
       case "interaction.registered":
       case "interaction.resolved":

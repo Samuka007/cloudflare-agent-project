@@ -126,6 +126,8 @@ export function modelRequestFromEvents(
       // (JobRegistry entries, notebook revisions, interaction rows — the
       // ask's model-visible surface is its tool.result) fall through untouched.
       case "experimental_context_notes":
+      // #288: binding rows are thread-scoped state, not turn content.
+      case "thread.rebound":
       case "interaction.interrupted":
       case "turn.phase":
       case "interaction.registered":
