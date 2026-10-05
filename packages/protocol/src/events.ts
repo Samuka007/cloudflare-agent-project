@@ -43,9 +43,32 @@ export const turnPhaseSchema = z.enum([
 ]);
 export type TurnPhase = z.infer<typeof turnPhaseSchema>;
 
-/** User input content items (bb `threadEventUserContentSchema`, M0 subset). */
+/**
+ * User input content items (bb `threadEventUserContentSchema`). #317 unlocks
+ * the image union additively: the vocabulary mirrors the server contract's
+ * `promptInputSchema` (contract/domain/shared-types.ts:263-299) minus the
+ * HTTP-only visibility fields — the journal carries runtime truth, the
+ * request layer carries presentation concerns.
+ */
 export const promptContentSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
+  z.object({ type: z.literal("image"), url: z.url() }),
+  z.object({
+    type: z.literal("localImage"),
+    /**
+     * Absolute paths and URI-like values are passed through to the runtime.
+     * Relative paths are server-managed attachment references (#316 R2
+     * family), not workspace relative files.
+     */
+    path: z.string(),
+  }),
+  z.object({
+    type: z.literal("localFile"),
+    path: z.string(),
+    name: z.string().optional(),
+    sizeBytes: z.number().int().nonnegative().optional(),
+    mimeType: z.string().optional(),
+  }),
 ]);
 export type PromptContent = z.infer<typeof promptContentSchema>;
 

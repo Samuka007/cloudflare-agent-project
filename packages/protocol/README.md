@@ -62,7 +62,10 @@ single ordering authority.
 - `GET /system/version` → `{version, protocol:{http,realtimeWs}}`
 - `GET /sidebar-bootstrap` → `{projects:[{id,name}], threads:[ThreadSummary]}`
 - `GET|POST /threads`, `GET|DELETE /threads/:id`
-- `POST /threads/:id/send` `{input:[{type:"text",text}],mode?,clientRequestId?}` → `{ok:true}`
+- `POST /threads/:id/send`
+  `{input:[{type:"text",text}|{type:"image",url}|{type:"localImage",path}|{type:"localFile",path,…}],mode?,clientRequestId?}`
+  → `{ok:true}` (image union additive since #317; relative `localImage/localFile`
+  paths are server-managed attachment references the server verifies)
 - `POST /threads/:id/stop` → `{ok:true}`
 - `GET /threads/:id/events?afterSeq=&limit=` → `{events:[envelope],latestSeq,hasMore}`
 - `GET /threads/:id/timeline` → `{rows:[TimelineRow],latestSeq}`

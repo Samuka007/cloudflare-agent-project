@@ -6,6 +6,7 @@ import {
   threadPhaseChangedMessage,
   pendingInteractionChangedMessage,
   realtimeClientMessageSchema,
+  type PromptContent,
   type PendingInteractionPayload,
   type PendingInteractionResolution,
   type PendingInteractionRow,
@@ -321,7 +322,8 @@ export interface CreateThreadResult {
 export interface SendMessageRequest {
   /** Client-generated idempotency key (protocol `clientRequestId`). */
   clientRequestId: string;
-  content: { type: "text"; text: string }[];
+  /** #317: the full journal prompt-content union (text/image/localImage/localFile). */
+  content: PromptContent[];
   mode: "auto" | "start" | "steer";
 }
 
