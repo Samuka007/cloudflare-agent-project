@@ -6,7 +6,7 @@
  *     %load "scripts/pm-harness.ts"
  *
  * What it does, in order:
- *  1. cache-bust dynamic-imports scripts/pm-autopilot.ts (`?t=<now>` — pm.md
+ *  1. cache-bust dynamic-imports plugins/pm-harness/src/core.ts (`?t=<now>` — pm.md
  *     坑档 "AP 模块变更后内核需带 ?t= 重 import", encoded as default behavior)
  *     and installs the FRESH instance as globalThis.AP. The assignment is
  *     unconditional: the module's own `??=` mount would keep a stale AP
@@ -29,7 +29,7 @@
  *
  * Consumers: the eval JS kernel (%load — top-level await runs there) and
  * `pnpm --filter @cap/scripts typecheck`. No test of its own: the transport
- * seam is covered by L1 in test/pm-autopilot.test.ts (#206 describe), and
+ * seam is covered by L1 in plugins/pm-harness/test/core.test.ts (#206 describe), and
  * the real-bridge demo is the ticket's manual acceptance (smoke test stays
  * env-gated: AP_LANE_SMOKE=1 + a kernel agent global).
  */
@@ -38,7 +38,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import type { AP, SpawnRequest } from "./pm-autopilot.js";
+import type { AP, SpawnRequest } from "../plugins/pm-harness/src/core.js";
 
 /** omp eval-kernel global as a named unchecked view: the typeof guard below
  *  is the runtime validation (absent global → transport=missing). */
@@ -59,7 +59,7 @@ interface AutopilotModule {
   registerSpawn: (fn: ((p: SpawnRequest) => unknown) | null) => void;
 }
 
-/** Locates scripts/pm-autopilot.ts: cwd first (documented usage — the eval
+/** Locates plugins/pm-harness/src/core.ts: cwd first (documented usage — the eval
  *  kernel starts at the repo root), then walking up from this module's dir,
  *  ≤6 levels (same shape as resolveJeapiKey's .env.local walk). */
 function resolveAutopilotPath(): string {
@@ -70,14 +70,14 @@ function resolveAutopilotPath(): string {
   for (const root of roots) {
     let dir = root;
     for (let i = 0; i < 6; i += 1) {
-      const candidate = join(dir, "scripts", "pm-autopilot.ts");
+      const candidate = join(dir, "plugins", "pm-harness", "src", "core.ts");
       if (existsSync(candidate)) return candidate;
       const parent = dirname(dir);
       if (parent === dir) break;
       dir = parent;
     }
   }
-  throw new Error("pm-harness: scripts/pm-autopilot.ts not found from cwd or module dir");
+  throw new Error("pm-harness: plugins/pm-harness/src/core.ts not found from cwd or module dir");
 }
 
 const modulePath = resolveAutopilotPath();
@@ -85,7 +85,7 @@ const modulePath = resolveAutopilotPath();
 // Static import cannot work here BY DESIGN (#206 ticket mandate): the whole
 // point is a runtime-selected specifier — `?t=<now>` cache-bust — so module
 // edits reach the kernel without a session restart (pm.md 坑档). Every static
-// import of pm-autopilot would pin the kernel's first cached instance forever.
+// import of the core would pin the kernel's first cached instance forever.
 // Cache-bust import: a fresh module instance per load. The harness is the
 // one sanctioned entry through which staleness cannot leak — everything the
 // PM touches afterwards (AP, spawnOverride state) lives in THIS instance.

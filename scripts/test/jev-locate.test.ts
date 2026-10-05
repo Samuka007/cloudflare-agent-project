@@ -26,7 +26,7 @@ import {
   type LocateReport,
 } from "../accept/jev-locate.js";
 import type { FlowPage, JevElementRec, JevJudgeFn, JevSnapshot } from "../accept/jev-loop.js";
-import type { JudgeAnswer } from "../pm-autopilot.js";
+import type { JudgeAnswer } from "../../plugins/pm-harness/src/core.js";
 
 // ---------------------------------------------------------------------------
 // Fakes

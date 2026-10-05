@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "vitest";
-import { _inject, intake, lane, resolveJeapiKey } from "../pm-autopilot.js";
+import { _inject, intake, lane, resolveJeapiKey } from "../src/core.js";
 
 /**
  * Real-call jev smoke (#131 CRITICAL: the judge layer is a REAL model call).

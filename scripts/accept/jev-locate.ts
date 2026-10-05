@@ -35,11 +35,11 @@
  *   to [0,1] by /(bands-1). Ordinal, not calibrated — ranking signal only.
  *
  * Transport reference (reused, not redefined): resolveJeapiKey / JEV_URL /
- * JEV_MODEL live in pm-autopilot.ts; snapshot/askJev/shuffled/openTab live
+ * JEV_MODEL live in the pm-harness core; snapshot/askJev/shuffled/openTab live
  * in jev-loop.ts.
  */
 
-import type { JudgeAnswer } from "../pm-autopilot.js";
+import type { JudgeAnswer } from "../../plugins/pm-harness/src/core.js";
 import { writeFileSync } from "node:fs";
 import {
   askJev,
