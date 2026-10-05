@@ -344,6 +344,14 @@ export const agentEventDataSchemas = {
      * rule as outputSchemaJson (RPC-serializable event data only).
      */
     isolationJson: z.string().min(1).optional(),
+    /**
+     * #274 J1 delegation attribution: the spawning `task` tool call's UX
+     * item id — the BARE call executionId (batch per-item plans suffix a
+     * `#index` onto their own executionId dedup key; this stays the
+     * un-suffixed anchor the delegation row is keyed by). Optional:
+     * pre-J1 journals omit it.
+     */
+    parentToolCallId: z.string().min(1).optional(),
     depth: z.number().int().nonnegative(),
   }),
 
@@ -362,6 +370,12 @@ export const agentEventDataSchemas = {
     /** Inline delivery text — already summary-capped by the executor. */
     output: z.string(),
     outputTruncated: z.boolean().optional(),
+    /**
+     * #274 J1: attribution carried from the plan so terminal rows fold into
+     * the delegation row without a spawnId→plan join. Optional: pre-J1
+     * journals omit it.
+     */
+    parentToolCallId: z.string().min(1).optional(),
   }),
 
   /**
@@ -378,6 +392,8 @@ export const agentEventDataSchemas = {
     jobId: z.string().min(1),
     status: z.enum(["ok", "error"]),
     output: z.string(),
+    /** #274 J1: delegation attribution from the plan (see spawn_settled). */
+    parentToolCallId: z.string().min(1).optional(),
   }),
 
   /**
@@ -407,6 +423,13 @@ export const agentEventDataSchemas = {
      */
     outputSchemaJson: z.string().min(1).optional(),
     schemaMode: z.enum(["permissive", "strict"]).optional(),
+    /**
+     * #274 J1: attribution anchor mirrored from the spawn request, so the
+     * child journal is self-attributing — the child's own rows (activity,
+     * CoT) point at the parent's delegation tool call (bb child-side
+     * parentToolCallId semantics). Optional: pre-J1 journals omit it.
+     */
+    parentToolCallId: z.string().min(1).optional(),
   }),
 
   /**

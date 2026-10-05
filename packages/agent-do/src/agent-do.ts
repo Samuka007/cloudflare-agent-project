@@ -790,6 +790,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         outputSchemaJson?: string;
       }),
       ...(request.schemaMode === undefined ? {} : { schemaMode: request.schemaMode }),
+      ...(request.parentToolCallId === undefined
+        ? {}
+        : { parentToolCallId: request.parentToolCallId }),
     });
     return this.sendMessage({
       clientRequestId: request.spawnId,
@@ -867,6 +870,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       childThreadId: plan.childThreadId,
       status: request.status,
       output,
+      ...(plan.parentToolCallId === undefined
+        ? {}
+        : { parentToolCallId: plan.parentToolCallId }),
     });
     if (plan.mode === "background" && plan.jobId !== null) {
       // Backflow marker for the parent's next run boundary; settleSpawn's
@@ -880,6 +886,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         jobId: plan.jobId,
         status: request.status,
         output,
+        ...(plan.parentToolCallId === undefined
+          ? {}
+          : { parentToolCallId: plan.parentToolCallId }),
       });
     }
     this.wakeEdgeWaiter(plan.executionId, { kind: "job" });
@@ -914,6 +923,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       childThreadId: plan.childThreadId,
       status: "error",
       output,
+      ...(plan.parentToolCallId === undefined
+        ? {}
+        : { parentToolCallId: plan.parentToolCallId }),
     });
     this.wakeEdgeWaiter(plan.executionId, { kind: "job" });
     // T17 supersession chain runs on the failure path too — a subagent
@@ -3276,6 +3288,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
             : { isolationJson: JSON.stringify(plan.isolation) }) as {
             isolationJson?: string;
           }),
+          ...(plan.parentToolCallId === undefined
+            ? {}
+            : { parentToolCallId: plan.parentToolCallId }),
         });
       },
       recordSpawnSettlement: async (settlement) => {

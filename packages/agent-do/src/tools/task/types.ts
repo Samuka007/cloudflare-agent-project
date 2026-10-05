@@ -97,6 +97,12 @@ export interface SpawnPlanRecord {
   /** Prepare outcome (JSON-encoded on the journal row) — workspace path,
    * resolved backend, merge mode, apply gate. Present iff isolated. */
   isolation?: SpawnIsolationInfo;
+  /**
+   * #274 J1: the spawning `task` tool call's UX item id (bare call
+   * executionId — un-suffixed even for batch items). The delegation anchor
+   * for every attribution-bearing row of this spawn.
+   */
+  parentToolCallId?: string;
   depth: number;
 }
 
@@ -120,6 +126,8 @@ export interface SpawnSettledRecord {
   status: "ok" | "error";
   output: string;
   outputTruncated?: boolean;
+  /** #274 J1: attribution carried from the plan (join-free terminal fold). */
+  parentToolCallId?: string;
 }
 
 /** Typed view of the child-journal `task.subagent_identity` row. */
@@ -135,6 +143,8 @@ export interface SubagentIdentityRecord {
   /** T17 structured contract mirrored from the spawn plan (optional). */
   outputSchema?: unknown;
   schemaMode?: "permissive" | "strict";
+  /** #274 J1: parent delegation anchor mirrored from the spawn request. */
+  parentToolCallId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +179,7 @@ export function projectSpawnPlans(events: readonly AnyAgentEvent[]): SpawnPlanRe
       ...(data.isolationJson === undefined
         ? {}
         : { isolated: true, isolation: JSON.parse(data.isolationJson) as SpawnIsolationInfo }),
+      ...(data.parentToolCallId === undefined ? {} : { parentToolCallId: data.parentToolCallId }),
       depth: data.depth,
     });
   }
@@ -201,6 +212,9 @@ export function projectSpawnSettlements(events: readonly AnyAgentEvent[]): Spawn
       ...(event.data.outputTruncated === undefined
         ? {}
         : { outputTruncated: event.data.outputTruncated }),
+      ...(event.data.parentToolCallId === undefined
+        ? {}
+        : { parentToolCallId: event.data.parentToolCallId }),
     }));
 }
 
@@ -233,5 +247,8 @@ export function subagentIdentityOf(
       ? {}
       : { outputSchema: JSON.parse(row.data.outputSchemaJson) as unknown }),
     ...(row.data.schemaMode === undefined ? {} : { schemaMode: row.data.schemaMode }),
+    ...(row.data.parentToolCallId === undefined
+      ? {}
+      : { parentToolCallId: row.data.parentToolCallId }),
   };
 }

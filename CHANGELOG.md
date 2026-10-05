@@ -7,6 +7,16 @@
 
 ### Added
 
+- **#274 J1 子代理呈现地基——delegation 归父字段 `parentToolCallId`**：protocol 事件面五处
+  增补可选 `parentToolCallId`（toolCall/agentMessage/reasoning item 与 `item/agentMessage/
+  delta`、`item/reasoning/textDelta`）——bb 三家先例的 item 级挂链字段，子代理活动/CoT
+  未来挂进委派行的锚点；additive，旧 journal 原样可解析，scheme A 版本常量不动。agent-do
+  侧 task 族 journal 同步携带：`task.spawn_planned` 派发处填充（值=task 工具调用的 UX
+  item id，即裸 call executionId——batch 逐项 dedup key 带 `#index` 后缀，本字段不带）；
+  `task.spawn_settled`/`task.async_result` 从 plan 随行（终局行免 join 归父）；
+  `task.subagent_identity` 经 spawn 请求镜像到子 journal（子面自归父，bb child-side
+  语义）。L1：protocol schema 解析+往返测试；agent-do task-chain 全链断言（plan/settled/
+  async_result/child identity 四行同锚点）。
 - **#258 (P0) host onboarding 端到端**：执行 host 添加此前无门——AddMachineDialog
   开但 join-code mint 路由未移植（#193 走查实录 "Route not found"），也无任何
   用户文档。三件套补齐：① `POST /api/v1/hosts/join-codes`（bb 契约形状 201
