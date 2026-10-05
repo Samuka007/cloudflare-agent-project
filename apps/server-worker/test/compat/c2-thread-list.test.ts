@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { ensureMigrations } from "../migrate.js";
 import { threadListEntrySchema } from "../../src/contract/domain/thread.js";
+import type { ThreadListEntry } from "../../src/contract/domain/thread.js";
 import { threadListQuerySchema } from "../../src/contract/api/threads.js";
 import { createThread } from "../helpers.js";
 import { exports } from "cloudflare:workers";
@@ -13,14 +14,31 @@ import { exports } from "cloudflare:workers";
 beforeAll(ensureMigrations);
 
 describe("criterion 2: thread list bare array", () => {
+  // #337 exception note: real-clock backoff, not fake timers — the visibility
+  // window lives in the workers-pool runtime (workerd isolate scheduling), a
+  // domain vi.useFakeTimers cannot advance.
+  const backoff = (ms: number): Promise<void> => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setTimeout(resolve, ms);
+    return promise;
+  };
+
   it("returns a bare array of valid thread list entries", async () => {
     const created = await createThread({ title: "list-entry" });
-    const response = await exports.default.fetch("https://example.com/api/v1/threads?limit=50");
-    expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(Array.isArray(body)).toBe(true);
-    const entries = (body as unknown[]).map((entry) => threadListEntrySchema.parse(entry));
-    const match = entries.find((entry) => entry.id === created.id);
+    // #337: under CI's parallel workers-pool load the freshly created row can
+    // take a moment to become visible to the list read. Retry the READ ONLY
+    // (bounded): a genuine consistency defect still fails — the create is
+    // never repeated, so a row that never lands stays missing.
+    let match: ThreadListEntry | undefined;
+    for (let attempt = 0; attempt < 6 && match === undefined; attempt++) {
+      if (attempt > 0) await backoff(150);
+      const response = await exports.default.fetch("https://example.com/api/v1/threads?limit=50");
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(Array.isArray(body)).toBe(true);
+      const entries = (body as unknown[]).map((entry) => threadListEntrySchema.parse(entry));
+      match = entries.find((entry) => entry.id === created.id);
+    }
     expect(match).toBeDefined();
     expect(match?.runtime.displayStatus).toBeTypeOf("string");
     expect(match?.activity.activeBackgroundAgentCount).toBe(0);
