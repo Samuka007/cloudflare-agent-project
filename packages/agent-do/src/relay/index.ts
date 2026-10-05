@@ -7,6 +7,7 @@ export {
   toolUseIdFor,
   WireAssemblyError,
   type AnthropicAssistantBlock,
+  type AnthropicImageBlock,
   type AnthropicMessage,
   type AnthropicRequestBody,
   type AnthropicTextBlock,

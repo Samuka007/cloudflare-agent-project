@@ -612,6 +612,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       harness.relay.maxTokens,
       harness.relay.contextWindow,
       harness.relay.thinking.type,
+      harness.relay.supportsImageInput,
     ].join("|");
     if (this.registeredRelayFingerprint === fingerprint) return;
     const provider: ModelProvider = relayProviderFrom(harness);

@@ -205,6 +205,12 @@ export interface ProviderCapabilities {
   supportsServiceTier: boolean;
   supportsUserQuestion: boolean;
   supportsFork: boolean;
+  /**
+   * A4 image-consumption dispatch (#319): does the provider accept image
+   * input? acp `session.supportsImageInput` anchor — a false verdict degrades
+   * every prompt image to its `[image attachment on disk: path]` text.
+   */
+  supportsImageInput: boolean;
   supportedPermissionModes: PermissionMode[];
 }
 

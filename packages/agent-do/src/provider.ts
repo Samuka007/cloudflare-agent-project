@@ -16,7 +16,30 @@ export interface ModelToolCall {
 export interface SteerContribution {
   seq: number;
   text: string;
+  /**
+   * Image parts of the steer content (#317 union, A4), in journal order.
+   * Empty for text-only steers — the historical shape before the image face.
+   */
+  images: ImageContribution[];
 }
+
+/**
+ * One user-side image part projected onto the model seam (#317 union, A4).
+ *
+ * - `url`: an http(s) reference — the Anthropic `url` source renders it
+ *   directly, no byte access.
+ * - `data`: an inline base64 image already decoded from a `data:` URI
+ *   (media type restricted to the Anthropic-accepted set).
+ * - `path`: a disk reference (staged attachment, `file:` URI, or any value
+ *   the DO cannot express as an Anthropic source) — there is no byte channel
+ *   from the DO to the staging host, so it renders as the acp degradation
+ *   text regardless of the image-input capability (acp
+ *   bridge/bridge.ts:1131-1153 anchor: `[image attachment on disk: path]`).
+ */
+export type ImageContribution =
+  | { kind: "url"; url: string }
+  | { kind: "data"; mediaType: string; base64: string }
+  | { kind: "path"; path: string };
 
 /** One completed model call of the turn — its slice of the replayed history. */
 export interface PriorModelCall {
@@ -73,6 +96,8 @@ export interface AsyncResultContribution {
 export interface PriorTurnHistory {
   /** The prior turn's user input text. */
   input: string;
+  /** The prior turn's image parts (#317 union, A4), in journal order. */
+  images: ImageContribution[];
   /** Completed calls of the prior turn, in call order. */
   calls: PriorModelCall[];
 }
@@ -84,6 +109,13 @@ export interface ModelRequest {
   modelCallId: number;
   /** User input text of the turn. */
   input: string;
+  /**
+   * Image parts of the turn input (#317 union, A4), in journal order — the
+   * wire renders them as Anthropic image blocks next to the input text when
+   * the deployment declares image input, else as the degradation texts.
+   * An image-only turn (empty text, non-empty here) is a legal turn.
+   */
+  inputImages: ImageContribution[];
   /**
    * Steers this call's boundary consumes (the `consumedSteerSeqs` of this
    * call's `model.call_started`, already persisted) — they enter the context

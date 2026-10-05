@@ -90,6 +90,16 @@ describe("harness: three-key resolution", () => {
     expect(resolveHarness({ MODEL_RELAY_CONTEXT_WINDOW: "abc" }).relay.contextWindow).toBe(200_000);
     expect(resolveHarness({ MODEL_RELAY_CONTEXT_WINDOW: "0" }).relay.contextWindow).toBe(200_000);
   });
+
+  test("#319 MODEL_RELAY_IMAGE_INPUT declares the image-input capability", () => {
+    // 1/true/on (the repo env-flag convention); unset or garbage = not
+    // declared → every prompt image degrades to its acp text.
+    expect(resolveHarness({ MODEL_RELAY_IMAGE_INPUT: "1" }).relay.supportsImageInput).toBe(true);
+    expect(resolveHarness({ MODEL_RELAY_IMAGE_INPUT: "true" }).relay.supportsImageInput).toBe(true);
+    expect(resolveHarness({ MODEL_RELAY_IMAGE_INPUT: " on " }).relay.supportsImageInput).toBe(true);
+    expect(resolveHarness({}).relay.supportsImageInput).toBe(false);
+    expect(resolveHarness({ MODEL_RELAY_IMAGE_INPUT: "yes" }).relay.supportsImageInput).toBe(false);
+  });
 });
 
 describe("#308 fixed-reply usage estimate", () => {
@@ -107,6 +117,7 @@ describe("#308 fixed-reply usage estimate", () => {
         turnId: "t1",
         modelCallId: 1,
         input: "hi",
+        inputImages: [],
         steers: [],
         priorCalls: [],
         asyncResults: [],
@@ -221,6 +232,13 @@ describe("classifyHarnessChange (three-key face)", () => {
     );
     const gainedKey = resolveHarness({});
     expect(adapter.classifyHarnessChange(gainedKey, next)).toBe("live");
+  });
+
+  test("#319 an image-input capability flip classifies live", () => {
+    const current = resolveHarness({});
+    const next = resolveHarness({ MODEL_RELAY_IMAGE_INPUT: "1" });
+    expect(adapter.classifyHarnessChange(current, next)).toBe("live");
+    expect(classifyHarnessProjection(projectHarness(current), projectHarness(next))).toBe("live");
   });
 });
 

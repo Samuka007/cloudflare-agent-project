@@ -23,6 +23,7 @@ import {
   AnthropicRelayProvider,
   anthropicRequestBody,
   estimateWireRequestTokens,
+  envFlag,
   type ModelProvider,
   type ModelRequest,
   type ModelStreamChunk,
@@ -48,6 +49,13 @@ export interface HarnessEnv {
   MODEL_RELAY_MAX_TOKENS?: string;
   /** When set (integer), turns on extended thinking with this token budget. */
   MODEL_RELAY_THINKING_BUDGET_TOKENS?: string;
+  /**
+   * A4 image-input capability declaration (#319, 1/true/on): does the relay
+   * model accept image input? Unset = not declared → every prompt image
+   * degrades to its acp text (safe default; a wrong `true` turns into an
+   * upstream 400 on the first image turn, so the deployment opts in).
+   */
+  MODEL_RELAY_IMAGE_INPUT?: string;
   /** Host binding default (default `local`). */
   DAEMON_MACHINE_ID?: string;
   /** `accept-edits` | `auto` | `full` (default `full`). */
@@ -65,6 +73,7 @@ export interface ResolvedHarness {
     maxTokens: number;
     contextWindow: number;
     thinking: ThinkingConfig;
+    supportsImageInput: boolean;
   };
   hostBinding: { machineId: string };
   execution: RuntimeThreadExecutionOptions;
@@ -148,6 +157,7 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
       maxTokens,
       contextWindow,
       thinking,
+      supportsImageInput: envFlag(env.MODEL_RELAY_IMAGE_INPUT),
     },
     hostBinding: {
       machineId: machineIdRaw === "" ? HARNESS_DEFAULTS.machineId : machineIdRaw,
@@ -169,9 +179,24 @@ export class FixedReplyProvider implements ModelProvider {
 
   private readonly reply: string;
   /** The relay resolution this mock stands in for (wire options + window). */
-  private readonly relay: { model: string; maxTokens: number; thinking: ThinkingConfig; contextWindow: number };
+  private readonly relay: {
+    model: string;
+    maxTokens: number;
+    thinking: ThinkingConfig;
+    contextWindow: number;
+    supportsImageInput?: boolean;
+  };
 
-  constructor(reply: string, relay?: { model: string; maxTokens: number; thinking: ThinkingConfig; contextWindow: number }) {
+  constructor(
+    reply: string,
+    relay?: {
+      model: string;
+      maxTokens: number;
+      thinking: ThinkingConfig;
+      contextWindow: number;
+      supportsImageInput?: boolean;
+    },
+  ) {
     this.reply = reply;
     this.relay = relay ?? {
       model: HARNESS_DEFAULTS.model,
@@ -232,6 +257,7 @@ export function relayProviderFrom(harness: ResolvedHarness): ModelProvider {
       maxTokens: harness.relay.maxTokens,
       contextWindow: harness.relay.contextWindow,
       thinking: harness.relay.thinking,
+      supportsImageInput: harness.relay.supportsImageInput,
     });
   }
   return new FixedReplyProvider(
@@ -256,6 +282,7 @@ export interface HarnessProjection {
   relayMaxTokens: number;
   relayContextWindow: number;
   relayThinking: string;
+  relayImageInput: boolean;
   machineId: string;
   executionModel: string;
   executionServiceTier: string;
@@ -276,6 +303,7 @@ export function projectHarness(harness: ResolvedHarness): HarnessProjection {
       harness.relay.thinking.type === "enabled"
         ? `enabled:${harness.relay.thinking.budget_tokens}`
         : "disabled",
+    relayImageInput: harness.relay.supportsImageInput,
     machineId: harness.hostBinding.machineId,
     executionModel: harness.execution.model,
     executionServiceTier: harness.execution.serviceTier,
@@ -331,6 +359,7 @@ export function classifyHarnessProjection(
     "relayMaxTokens",
     "relayContextWindow",
     "relayThinking",
+    "relayImageInput",
     "executionModel",
     "executionServiceTier",
     "executionReasoningLevel",

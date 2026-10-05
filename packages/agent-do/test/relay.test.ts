@@ -1,10 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { AnthropicRelayProvider, type RelayConfig } from "../src/relay/anthropic-provider.js";
-import type {
-  ModelRequest,
-  ModelStreamChunk,
-  ModelUsageReceipt,
-} from "../src/provider.js";
+import type { ModelRequest, ModelStreamChunk, ModelUsageReceipt } from "../src/provider.js";
 
 /**
  * Real-client behavior against scripted SSE streams: happy path assembly,
@@ -25,6 +21,7 @@ const REQUEST: ModelRequest = {
   turnId: "t1",
   modelCallId: 1,
   input: "hi",
+  inputImages: [],
   steers: [],
   priorCalls: [],
   asyncResults: [],
@@ -454,7 +451,11 @@ describe("relay client: usage receipt (#308)", () => {
               ],
               [
                 "content_block_delta",
-                { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } },
+                {
+                  type: "content_block_delta",
+                  index: 0,
+                  delta: { type: "text_delta", text: "ok" },
+                },
               ],
               // An earlier output total is superseded by the final frame.
               ["message_delta", { type: "message_delta", delta: {}, usage: { output_tokens: 3 } }],

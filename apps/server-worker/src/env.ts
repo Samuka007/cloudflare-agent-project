@@ -84,6 +84,12 @@ export interface Env {
   readonly MODEL_RELAY_MODEL?: string;
   readonly MODEL_RELAY_MAX_TOKENS?: string;
   readonly MODEL_RELAY_THINKING_BUDGET_TOKENS?: string;
+  /**
+   * A4 image-input capability declaration (#319, 1/true/on). Read by the
+   * execution-options projection (routes/system.ts) and the provider-app
+   * harness — the same deployment var both faces must agree on.
+   */
+  readonly MODEL_RELAY_IMAGE_INPUT?: string;
   /** `accept-edits` | `auto` | `full` (default `full`). */
   readonly HARNESS_PERMISSION_MODE?: string;
   /**

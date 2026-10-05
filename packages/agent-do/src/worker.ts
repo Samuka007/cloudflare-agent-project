@@ -3,6 +3,7 @@ import { setAgentRuntime } from "./injection.js";
 import { AnthropicRelayProvider } from "./relay/anthropic-provider.js";
 import { TestDaemonServiceDO } from "./testing/test-daemon-do.js";
 import { RecordingHubDO } from "./testing/recording-hub.js";
+import { envFlag } from "./config.js";
 import { DaemonServiceDO, daemonServiceWorker, type WorkerEnv } from "@cap/daemon-service";
 
 /**
@@ -23,6 +24,8 @@ export interface PocDriveEnv {
   MODEL_RELAY_MODEL?: string;
   /** #308 usage-percentage denominator; unset = receipts carry no window. */
   MODEL_RELAY_CONTEXT_WINDOW?: string;
+  /** A4 image-input capability declaration (1/true/on); unset = degrade. */
+  MODEL_RELAY_IMAGE_INPUT?: string;
 }
 
 /** Register-once runtime seam: module state is shared with the DOs' isolate. */
@@ -48,6 +51,7 @@ function ensureRuntime(env: PocDriveEnv): void {
       maxTokens: 8192,
       ...(contextWindow !== null ? { contextWindow } : {}),
       thinking: { type: "disabled" },
+      supportsImageInput: envFlag(env.MODEL_RELAY_IMAGE_INPUT),
     }),
   });
   runtimeRegistered = true;
