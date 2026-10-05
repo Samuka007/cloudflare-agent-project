@@ -237,7 +237,8 @@ describe("pi compaction scenarios over the journal (需改写 tier)", () => {
       }
       if (event.type === "turn.input") {
         const content = event.data.content;
-        const text = content.map((block) => block.text).join("");
+        // #317 union: non-text parts contribute nothing to the row cost.
+        const text = content.map((block) => (block.type === "text" ? block.text : "")).join("");
         return text.length;
       }
       return 0;

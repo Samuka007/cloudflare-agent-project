@@ -4,6 +4,7 @@ import {
   type ModelProvider,
   type SendMessageResult,
 } from "@cap/agent-do";
+import type { PromptContent } from "@cap/protocol";
 import { DurableObject } from "cloudflare:workers";
 import type {
   AdapterCommand,
@@ -133,15 +134,33 @@ function mapAgentError(error: unknown): AdapterCommandOutcome {
   return errorOutcome("provider_error", message);
 }
 
-function textInputsOf(
+/**
+ * Adapter input → DO journal content (#317 gate unlock): the full prompt
+ * union rides through; the request layer's mentions/visibility extras stay
+ * behind. The historical text-only gate died with the M0 face — an
+ * image-only turn is a legal turn; only an EMPTY input stays invalid.
+ */
+function promptContentOf(
   command: Extract<AdapterCommand, { type: "turn/start" } | { type: "turn/steer" }>,
-): {
-  type: "text";
-  text: string;
-}[] {
-  return flattenPromptInputGroups(command.input, command.inputGroups).flatMap((part) =>
-    part.type === "text" ? [{ type: "text", text: part.text }] : [],
-  );
+): PromptContent[] {
+  return flattenPromptInputGroups(command.input, command.inputGroups).map((part) => {
+    switch (part.type) {
+      case "text":
+        return { type: "text" as const, text: part.text };
+      case "image":
+        return { type: "image" as const, url: part.url };
+      case "localImage":
+        return { type: "localImage" as const, path: part.path };
+      case "localFile":
+        return {
+          type: "localFile" as const,
+          path: part.path,
+          ...(part.name !== undefined ? { name: part.name } : {}),
+          ...(part.sizeBytes !== undefined ? { sizeBytes: part.sizeBytes } : {}),
+          ...(part.mimeType !== undefined ? { mimeType: part.mimeType } : {}),
+        };
+    }
+  });
 }
 
 function firstTextOf(
@@ -454,9 +473,9 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
         "host binding changed since thread start — rebuild the provider session (thread/resume)",
       );
     }
-    const content = textInputsOf(command);
+    const content = promptContentOf(command);
     if (content.length === 0) {
-      return errorOutcome("invalid_input", "turn/start carries no text input");
+      return errorOutcome("invalid_input", "turn/start carries no input");
     }
     let sent: SendMessageResult;
     try {
@@ -498,9 +517,9 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
         `expected active turn ${command.expectedTurnId}, registry holds ${row.activeTurnId ?? "none"}`,
       );
     }
-    const content = textInputsOf(command);
+    const content = promptContentOf(command);
     if (content.length === 0) {
-      return errorOutcome("invalid_input", "turn/steer carries no text input");
+      return errorOutcome("invalid_input", "turn/steer carries no input");
     }
     try {
       const sent = await this.agentStub(command.threadId).sendMessage({
