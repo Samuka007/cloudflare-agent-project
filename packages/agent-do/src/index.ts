@@ -80,6 +80,19 @@ export {
   type AskWake,
   type InteractionProjection,
 } from "./tools/ask.js";
+export {
+  BROWSER_BACKED_ENGINES,
+  DEFAULT_WEB_SEARCH_CONFIG,
+  decodeWebSearchConfig,
+  projectWebSearchConfig,
+} from "./tools/web-search.js";
+export type {
+  BrowserBackedEngineId,
+  SearchEngineId,
+  WebSearchConfig,
+  WebSearchEngineProjection,
+  WebSearchProjection,
+} from "./tools/web-search.js";
 export { projectToUxEvents } from "./ux-projection.js";
 export { ProjectionError, modelRequestFromEvents } from "./translate.js";
 export { AnthropicRelayProvider, type RelayConfig } from "./relay/index.js";

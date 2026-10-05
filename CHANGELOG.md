@@ -7,6 +7,18 @@
 
 ### Added
 
+- **#266 provider 只读投影面**（#255 方案 C：正本留部署 env，UI 只投影）。
+  `GET /api/v1/system/provider-projections`：聚合 `projectHarness`（relay
+  模式/baseUrl host/模型/key 存在性/thinking/权限模式/machine，复用既有无秘
+  密投影）+ web_search 投影（`projectWebSearchConfig`：chain 序、各引擎凭据
+  门 boolean、browser-backed 排除表、decodeError）——零秘密值出 env，decode
+  失败丢弃错误文本；端点无任何写路径（`/system/config/reload` no-op 先例）。
+  SPA：Settings→Providers→Server 新节（bb fork `lane/266-server-provider-
+projection`）渲染只读投影 + 「编辑走部署 env」指针（对照 ops/staging-relay.md
+  文案先例），零 PUT/零控件。docs：§3.1 表挂 `docs/ops/provider-config-points.md`
+  为 provider 配置点唯一索引。daemon 侧投影（judge/security）随 #56 裁。
+  L1：`system-provider-projections.test.ts` 7 例（含评审断言「never emits
+  secret values」与 404 写路径）。
 - **#242 jev-locate 定位器原语 + 枚举召回审计 + 预登记置信分布**（research
   jev-locator-converger.md §6 单票落地）。`scripts/accept/jev-locate.ts`：
   `locate(deps,input)→LocateReport` 单调用定位器——ground（形状 G，双序复验同请求）/
