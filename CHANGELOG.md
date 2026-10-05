@@ -32,6 +32,22 @@ projection`）渲染只读投影 + 「编辑走部署 env」指针（对照 ops/
   实际含 `think` 时才 pin `thinking:{type:"disabled"}`；DO 不知 relay model id，不再从闸
   推导（旧闸推导对 glm-5.3 类原生推理模型误杀原生 CoT——闸开≠`think` 上 wire）。显式
   `request.forceReasoningOff` 保留给上游决定配对的调用方。
+- **#270 pm-harness 插件化——AP 变 omp custom-tool 家族**。`plugins/pm-harness/`
+  独立插件包（`package.json` `omp.tools` manifest，`omp plugin link` 即装）：
+  `src/core.ts`（原 scripts/pm-autopilot.ts 整体迁入，纯函数+gh/jev 注入缝不变）+
+  `src/tools.ts` 五件模型级原生工具——`pm_lane`（gate→worktree→spawn→守卫翻转，
+  dry-run 默认）/`pm_apply`（唯一写路径：preflight diff→分批守卫写→逐批复核，
+  漂移即扣留余批）/`pm_audit`（漂移对账，产出 pm_apply-ready mutations）/
+  `pm_release`/`pm_ledger`（浏览器租约台账对）。装插件后 omp 会话零 import：
+  模型直呼、eval 内 `await tool.pm_lane(...)`、`tools.xdev` 下挂 `xd://pm_*`。
+  spawn 传输梯新增 #270 分离式兜底：registerSpawn 覆盖槽 → eval 内核
+  `globalThis.agent` → 分离式 `omp -p --cwd <worktree>`（回执 pid+`.pm-lane.log`，
+  会话落 `~/.omp/agent/sessions` 可 `omp --resume`；`PM_LANE_NO_DETACH=1` 还原
+  transport-missing 契约）。附 `agents/pm-guard.md` task-agent def。
+  scripts/pm-harness.ts（%load 装载体）与 jev-loop/jev-locate 全部改指新址；
+  L1 随核心迁入 `plugins/pm-harness/test/`（core.test.ts 90 例）+ 新
+  tools.test.ts 16 例（工厂面/漂移拒绝/守卫写/对账闭环/传输梯/台账对），
+  共 106 通过。插件包入 pnpm workspace，typecheck/test 进 CI 门。
 - **#242 jev-locate 定位器原语 + 枚举召回审计 + 预登记置信分布**（research
   jev-locator-converger.md §6 单票落地）。`scripts/accept/jev-locate.ts`：
   `locate(deps,input)→LocateReport` 单调用定位器——ground（形状 G，双序复验同请求）/
