@@ -69,7 +69,11 @@ export function modelRequestFromEvents(
   // session-context.ts:339-343: summary first, then kept rows, then rows
   // after the cut). All folds (async attribution, steer ledger, turn slices)
   // see only the active branch; the summary rides the request as the overlay.
-  const cut = rewindContextCut(events, firstRow.threadId, turnId);
+  // #325: the pair arms as of THIS call — a replay of an earlier call from a
+  // longer final log must arm the pair that was completed then, not the
+  // latest pair the log ends with (the cut is a temporal fold like every
+  // other slice below).
+  const cut = rewindContextCut(events, firstRow.threadId, turnId, modelCallId);
   const activeEvents =
     cut === undefined
       ? events
