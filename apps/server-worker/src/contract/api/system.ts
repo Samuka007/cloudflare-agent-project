@@ -265,6 +265,61 @@ export const systemVersionQuerySchema = z.object({
 });
 export type SystemVersionQuery = z.infer<typeof systemVersionQuerySchema>;
 
+// --- Port-only surface (#266, #255 solution C) --------------------------------
+// GET /system/provider-projections: the read-only provider status face. Zero
+// secret values by construction — the harness row re-uses the secret-free
+// HarnessProjection (provider-app projectHarness, key PRESENCE only) plus the
+// relay host, and the web_search row carries engine ids and credential-gate
+// booleans only. There is deliberately no PUT anywhere on this face: the
+// config source of truth is the deployment env (control-plane-layer §3.2).
+
+export const providerWebSearchEngineProjectionSchema = z.object({
+  engine: z.string(),
+  /** True when the engine needs configured credentials to serve requests. */
+  credentialsRequired: z.boolean(),
+  /** True when the gate passes (nothing required, or the secret fields are set). */
+  credentialsPresent: z.boolean(),
+});
+export type ProviderWebSearchEngineProjection = z.infer<
+  typeof providerWebSearchEngineProjectionSchema
+>;
+
+export const systemProviderProjectionsResponseSchema = z.object({
+  /** The relay harness projection (projectHarness + relayBaseUrlHost). */
+  harness: z.object({
+    relayMode: z.string(),
+    relayBaseUrl: z.string(),
+    /** Host component of relayBaseUrl; null when the env URL does not parse. */
+    relayBaseUrlHost: z.string().nullable(),
+    relayKeyPresent: z.boolean(),
+    relayModel: z.string(),
+    relayMaxTokens: z.number(),
+    relayThinking: z.string(),
+    machineId: z.string(),
+    executionModel: z.string(),
+    executionServiceTier: z.string(),
+    executionReasoningLevel: z.string(),
+    permissionMode: z.string(),
+  }),
+  webSearch: z.object({
+    /** True when AGENT_DO_WEB_SEARCH is set (false = ruled defaults). */
+    configured: z.boolean(),
+    /**
+     * True when the env JSON failed to decode. The composed AgentDO would
+     * fail the same way at construction, so this reports a broken deployment
+     * rather than a usable chain. Error text is dropped (JSON.parse/zod
+     * messages can quote raw env content — zero-secret discipline).
+     */
+    decodeError: z.boolean(),
+    chain: z.array(providerWebSearchEngineProjectionSchema),
+    timeoutSeconds: z.number().nullable(),
+    browserBackedEngines: z.array(z.string()),
+  }),
+});
+export type SystemProviderProjectionsResponse = z.infer<
+  typeof systemProviderProjectionsResponseSchema
+>;
+
 export const systemConfigReloadResponseSchema = z.object({
   ok: z.literal(true),
 });

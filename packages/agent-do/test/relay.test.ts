@@ -55,17 +55,20 @@ function messageStop(): [string, unknown] {
 
 async function collect(provider: AnthropicRelayProvider): Promise<{
   texts: string[];
+  thinking: string[];
   toolCalls: { name: string; arguments: Record<string, unknown> }[][];
 }> {
   const texts: string[] = [];
+  const thinking: string[] = [];
   const toolCalls: { name: string; arguments: Record<string, unknown> }[][] = [];
   for await (const chunk of provider.streamTurn(REQUEST, {
     signal: new AbortController().signal,
   })) {
     if (chunk.kind === "text-delta") texts.push(chunk.text);
+    else if (chunk.kind === "thinking-delta") thinking.push(chunk.text);
     else toolCalls.push(chunk.toolCalls);
   }
-  return { texts, toolCalls };
+  return { texts, thinking, toolCalls };
 }
 
 describe("relay client: happy paths", () => {
@@ -133,11 +136,14 @@ describe("relay client: happy paths", () => {
     expect(body.stream).toBe(true);
     expect(body.thinking).toEqual({ type: "disabled" });
     expect(body.model).toBe("glm-5.3");
+    // #257 wire verdict: the native-reasoning glm family never renders the
+    // external-CoT tool even with gates on.
+    expect(body.tools.some((tool) => tool.name === "think")).toBe(false);
     expect(body.tools[0]?.name).toBe("bash");
     expect(body.messages[0]?.content[0]?.text).toBe("hi");
   });
 
-  test("thinking deltas never surface as answer text", async () => {
+  test("thinking deltas surface as their own chunk kind, never as answer text (#257)", async () => {
     const sse =
       sseLines([
         messageStart(),
@@ -178,8 +184,9 @@ describe("relay client: happy paths", () => {
       ...CONFIG,
       fetchImpl: () => Promise.resolve(streamResponse(sse)),
     });
-    const { texts } = await collect(provider);
+    const { texts, thinking } = await collect(provider);
     expect(texts).toEqual(["answer"]);
+    expect(thinking).toEqual(["let me think"]);
   });
 });
 

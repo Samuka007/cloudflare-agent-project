@@ -32,7 +32,7 @@ wire 面：`tools:` 数组只从注册表行渲染（wireToolSet），intent 字
 3. **先日志后应用**；已提交部分流永不重放（#71）
 4. 上游化：bb 面零改动（工具 wire 经 providerOwnsRuntimeSurface 透传——实践 10）
 5. omp 运行时 vendoring 钉版本 + native 门禁；Settings.loadIsolated 隔离目录
-6. **实验工具闸（omp 姿态，#150）**：think/context_notes/new_context/checkpoint/rewind 五件默认 **off**——env `AGENT_DO_EXTERNAL_THINKING` / `AGENT_DO_CONTEXT_NOTES` / `AGENT_DO_CHECKPOINT` 开闸；think 开闸时 provider **forceReasoningOff 钉死配对**（外部 CoT 与原生推理互斥=ToC 安全）；supportsExternalThinking 按模型判定（原生推理族拒绝）。部署面 env：另 `DAEMON_TASK_ISOLATION`（#110 隔离后端）、`DAEMON_AGENT_AUTH`（#145 judge 通道：providers→models.yml/runtimeKeys/judgeRole）。
+6. **实验工具闸（omp 姿态，#150）**：think/context_notes/new_context/checkpoint/rewind 五件默认 **off**——env `AGENT_DO_EXTERNAL_THINKING` / `AGENT_DO_CONTEXT_NOTES` / `AGENT_DO_CHECKPOINT` 开闸；supportsExternalThinking 按模型判定（原生推理族拒绝，未知 model id 放行给 env 闸）。**forceReasoningOff 钉死配对在 wire 判定**（#257 修正）：`anthropicRequestBody` 在 RENDERED 工具面——experimentalGates ∧ supportsExternalThinking 过滤后的 finalNames——实际含 `think` 时才 pin `thinking:{type:"disabled"}`（外部 CoT 与原生推理互斥=ToC 安全）；**DO 不从闸推导**——DO 不知 relay model id，闸开≠`think` 上 wire（glm-5.3 类原生推理模型被 supports() 滤掉时，原生 CoT 通路必须存活）；显式 `request.forceReasoningOff` 保留给上游决定配对的调用方。部署面 env：另 `DAEMON_TASK_ISOLATION`（#110 隔离后端）、`DAEMON_AGENT_AUTH`（#145 judge 通道：providers→models.yml/runtimeKeys/judgeRole）。
 
 ## 状态（2026-10-04）
 

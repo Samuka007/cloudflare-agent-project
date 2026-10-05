@@ -25,6 +25,31 @@
   均 401。L1/L2：daemon-service `l1-join-code-enroll.test.ts`（6）+ server-worker
   `join-codes-onboarding.test.ts`（6，契约形状/无幽灵行/enroll 落表/一次性/静态
   路不受扰/install.sh 旗标契约）。
+- **#266 provider 只读投影面**（#255 方案 C：正本留部署 env，UI 只投影）。
+  `GET /api/v1/system/provider-projections`：聚合 `projectHarness`（relay
+  模式/baseUrl host/模型/key 存在性/thinking/权限模式/machine，复用既有无秘
+  密投影）+ web_search 投影（`projectWebSearchConfig`：chain 序、各引擎凭据
+  门 boolean、browser-backed 排除表、decodeError）——零秘密值出 env，decode
+  失败丢弃错误文本；端点无任何写路径（`/system/config/reload` no-op 先例）。
+  SPA：Settings→Providers→Server 新节（bb fork `lane/266-server-provider-
+projection`）渲染只读投影 + 「编辑走部署 env」指针（对照 ops/staging-relay.md
+  文案先例），零 PUT/零控件。docs：§3.1 表挂 `docs/ops/provider-config-points.md`
+  为 provider 配置点唯一索引。daemon 侧投影（judge/security）随 #56 裁。
+  L1：`system-provider-projections.test.ts` 7 例（含评审断言「never emits
+  secret values」与 404 写路径）。
+- **#257 CoT thinking 通路**：provider 原生 reasoning（Anthropic `thinking_delta`）端到端
+  journal 面。relay 侧 thinking_delta 独立 chunk（`relay/anthropic-provider.ts`）；agent DO
+  以 `model.thinking` 行落盘——与 `model.delta` 同 deltaFlushBytes/deltaFlushMs 刷盘纪律
+  与 call guard（FSM 折叠零状态，answer 记账 `deltaChars` 不含 reasoning 字节），oversize
+  行与 `model.delta` 同 `text` 字段 R2 blob-offload（读面透明解析，fetch 权威不变）；ux
+  projection 1:1 投 `item/reasoning/textDelta`（`itm-rs-<turnId>:<callSeq>` item id，blob
+  行/空行不出 UX 面）；server-worker timeline `activeThinking` 折叠供 SPA Thinking 指示器
+  （test/compat/active-thinking.test.ts）；子代理 history:// 渲染 `thinking:` 转写行。
+  **#150 配对语义修正**：forceReasoningOff 钉死从闸状态移到 wire——`anthropicRequestBody`
+  在 RENDERED 工具面（experimentalGates ∧ supportsExternalThinking 过滤后的 finalNames）
+  实际含 `think` 时才 pin `thinking:{type:"disabled"}`；DO 不知 relay model id，不再从闸
+  推导（旧闸推导对 glm-5.3 类原生推理模型误杀原生 CoT——闸开≠`think` 上 wire）。显式
+  `request.forceReasoningOff` 保留给上游决定配对的调用方。
 - **#242 jev-locate 定位器原语 + 枚举召回审计 + 预登记置信分布**（research
   jev-locator-converger.md §6 单票落地）。`scripts/accept/jev-locate.ts`：
   `locate(deps,input)→LocateReport` 单调用定位器——ground（形状 G，双序复验同请求）/

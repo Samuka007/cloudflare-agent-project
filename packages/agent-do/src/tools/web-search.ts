@@ -194,6 +194,69 @@ export function decodeWebSearchConfig(
 }
 
 // ---------------------------------------------------------------------------
+// Read-only projection (#266, #255 solution C) — facts, never secret values
+// ---------------------------------------------------------------------------
+
+/** One chain entry's credential gate. Carries ids and booleans only. */
+export interface WebSearchEngineProjection {
+  engine: SearchEngineId;
+  /** True when the engine needs configured credentials to serve requests. */
+  credentialsRequired: boolean;
+  /** True when the gate passes (nothing required, or the secret fields are set). */
+  credentialsPresent: boolean;
+}
+
+/**
+ * Secret-free web_search projection for `GET /system/provider-projections`
+ * (#266): the chain in order with per-engine credential gates, the transport
+ * ceiling, and the browser-backed exclusion list. Mirrors `projectHarness`'s
+ * discipline — only key PRESENCE survives, never a key VALUE.
+ */
+export interface WebSearchProjection {
+  chain: WebSearchEngineProjection[];
+  timeoutSeconds: number;
+  /** Engines excluded from the DO-local provider set at the config layer. */
+  browserBackedEngines: BrowserBackedEngineId[];
+}
+
+function engineProjection(
+  engine: SearchEngineId,
+  gate: { required: boolean; present: boolean },
+): WebSearchEngineProjection {
+  return {
+    engine,
+    credentialsRequired: gate.required,
+    credentialsPresent: gate.present,
+  };
+}
+
+export function projectWebSearchConfig(config: WebSearchConfig): WebSearchProjection {
+  const chain = config.chain.map((engine): WebSearchEngineProjection => {
+    if (engine === "brave") {
+      const apiKey = config.engines.brave?.apiKey;
+      return engineProjection(engine, {
+        required: true,
+        present: apiKey !== undefined && apiKey !== "",
+      });
+    }
+    if (engine === "searxng") {
+      const endpoint = config.engines.searxng?.endpoint;
+      return engineProjection(engine, {
+        required: true,
+        present: endpoint !== undefined && endpoint !== "",
+      });
+    }
+    // duckduckgo / startpage / public are credential-free plain fetch.
+    return engineProjection(engine, { required: false, present: true });
+  });
+  return {
+    chain,
+    timeoutSeconds: config.timeoutSeconds,
+    browserBackedEngines: [...BROWSER_BACKED_ENGINES],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Shared search plumbing — omp ports with inline anchors
 // ---------------------------------------------------------------------------
 

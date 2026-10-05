@@ -14,6 +14,8 @@ import {
 
 export interface MockTurn {
   deltas?: string[];
+  /** Reasoning deltas streamed BEFORE the answer deltas (#257 CoT surface). */
+  thinkingDeltas?: string[];
   /** Terminal tool-calls chunk (complete calls only — §2.2). */
   toolCalls?: { name: string; arguments: Record<string, unknown> }[];
   /** Throw before any byte (retryable-class failure, §4.2.3). */
@@ -46,6 +48,26 @@ export class MockModelProvider implements ModelProvider {
       });
     }
     const deltas = turn.deltas ?? [];
+    const thinkingDeltas = turn.thinkingDeltas ?? [];
+    for (let i = 0; i < thinkingDeltas.length; i++) {
+      const delta = thinkingDeltas[i];
+      if (delta === undefined) continue;
+      if (options.signal.aborted) {
+        throw new ModelProviderError({
+          message: "aborted",
+          retryable: false,
+          afterFirstByte: true,
+        });
+      }
+      yield { kind: "thinking-delta", text: delta };
+      if (turn.failMidStreamAfter !== undefined && i + 1 >= turn.failMidStreamAfter) {
+        throw new ModelProviderError({
+          message: "stream broken mid-call",
+          retryable: false,
+          afterFirstByte: true,
+        });
+      }
+    }
     for (let i = 0; i < deltas.length; i++) {
       const delta = deltas[i];
       if (delta === undefined) continue;
