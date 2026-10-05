@@ -18,6 +18,12 @@
  * auth.json, same file the client persists 0600) — no separate credentials.
  *
  * Run: bun staging-smoke.ts --url <base> [--dataDir <dir>] [--hostKey <key>]
+ *      [--command '<shell>'] — dispatch an arbitrary command instead of the
+ *      default `echo <marker> $(uname -m)` probe (#254 acceptance: prove the
+ *      agent tool shell resolves host tools, e.g. `nix --version`). The
+ *      dispatch still rides the marker gate: the command runs as
+ *      `<command> && echo <marker>`, so a non-zero command exits without a
+ *      marker and fails the smoke at the marker check.
  * Exit 0 = roundtrip proven; non-zero = failure with the journal tail printed.
  */
 
@@ -94,6 +100,13 @@ const stamp = Date.now().toString(36);
 const threadId = `thr_stg_smoke_${stamp}`;
 const executionId = `${threadId}:1`;
 const marker = `cap-verify-smoke-ok-${stamp}`;
+const customCommand = argValue("--command");
+// `&&` composition keeps the exit-0 + marker-in-output gate verbatim for
+// custom commands: marker only prints when the command itself succeeded.
+const command =
+  customCommand === undefined
+    ? `echo ${marker} $(uname -m)`
+    : `${customCommand} && echo ${marker}`;
 
 const headers = { "content-type": "application/json", authorization: `Bearer ${hostKey}` };
 
@@ -186,7 +199,7 @@ async function main(): Promise<void> {
       turnId: `${threadId}-turn`,
       executionId,
       tool: "bash",
-      arguments: { command: `echo ${marker} $(uname -m)` },
+      arguments: { command },
       timeoutMs: 60_000,
     },
     DispatchOutcomeSchema,
