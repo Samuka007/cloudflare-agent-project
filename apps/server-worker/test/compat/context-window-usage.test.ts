@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { beforeAll } from "vitest";
+import { exports } from "cloudflare:workers";
+import { threadTimelineResponseSchema } from "../../src/contract/api/threads.js";
+import { createThread, send } from "../helpers.js";
+import { ensureMigrations } from "../migrate.js";
 import { buildContextWindowUsage } from "../../src/services/timeline.js";
 import type { UxThreadEvent } from "../../src/seam/agent-do.js";
 
@@ -8,9 +13,13 @@ import type { UxThreadEvent } from "../../src/seam/agent-do.js";
  * `thread/contextWindowUsage/updated` rows (bb
  * extractThreadContextWindowUsage semantics; our producer only emits complete
  * rows, so the fold is last-wins). The route half (response field + SPA
- * consumption) is covered by the harness-driven compat assertion in
- * provider-app's suite landing with the estimate provider.
+ * consumption) is exercised end-to-end below: the composed stack's
+ * fixed-reply provider reports an estimated receipt (harness default window
+ * 200K), which the SPA's ThreadContextWindowIndicator renders once the
+ * timeline response carries the field.
  */
+
+beforeAll(ensureMigrations);
 
 const usageRow = (seq: number, usedTokens: number, modelContextWindow = 200_000): UxThreadEvent => ({
   id: `thr_u:${seq}`,
