@@ -4,6 +4,7 @@ import {
   createThreadRequestSchema,
   deleteThreadRequestSchema,
   sendMessageRequestSchema,
+  rebindThreadEnvironmentRequestSchema,
   threadSearchQuerySchema,
   threadSearchResponseSchema,
   threadEventsQuerySchema,
@@ -61,10 +62,14 @@ import {
   getProject,
 } from "../db/control-plane.js";
 import type { ThreadDbRow } from "../db/rows.js";
+import { getEnvironmentRow } from "../db/environments.js";
+import { environmentSchema } from "../contract/domain/environment.js";
+import { getHostRow } from "../db/hosts.js";
 import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs.js";
 import { mirrorPendingInteraction } from "../db/pending-interactions.js";
 import { getAppSettingsRow, toAppSettings } from "../db/settings.js";
 import { toThreadListEntry, toThreadResponseWithSpawnCheck } from "../services/runtime-display.js";
+import { toHostRecord } from "../services/host-records.js";
 import {
   THREAD_SEARCH_LIMIT_PER_GROUP_DEFAULT,
   THREAD_SEARCH_LIMIT_PER_GROUP_MAX,
@@ -89,6 +94,7 @@ import {
 } from "../services/timeline.js";
 import { computeTimelineRowDelta } from "../contract/thread-timeline.js";
 import { agentDoCancelTurn, agentDoFor } from "../seam/agent-do.js";
+import { resolveThreadBinding } from "../services/thread-binding.js";
 import type { Env, HonoBindings } from "../app-types.js";
 
 /** bb timeline.ts:163-165. */
@@ -260,6 +266,14 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // M0 harness minimum: single provider (spec #17 ruling #10; provider
     // selection surfaces are daemon-lane faces).
     const providerId = payload.providerId ?? "omp";
+    // #288: the binding source chain resolves once, here — explicit choice >
+    // project default source > deployment single machine — and feeds BOTH
+    // halves: the environments row / threads.environment_id (control plane)
+    // and thread.created.machineId (trajectory truth).
+    const binding = await resolveThreadBinding(ctx.env, {
+      projectId: payload.projectId,
+      ...(payload.environment !== undefined ? { environment: payload.environment } : {}),
+    });
     const threadId = createThreadId();
     const visibility =
       payload.visibility ??
@@ -269,6 +283,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     const row = await createThreadRecord(ctx.env, {
       id: threadId,
       projectId: payload.projectId,
+      environmentId: binding.environmentId,
       providerId,
       title: payload.title ?? null,
       // bb derives the sidebar title fallback from the create input at the
@@ -285,6 +300,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     await agentDoFor(ctx.env, threadId).createThread({
       threadId,
       title: payload.title ?? "",
+      machineId: binding.machineId,
     });
     // bb createThread broadcasts (packages/db/src/data/threads.ts:337-340).
     await hub(ctx).notifyThread(threadId, ["thread-created"], { projectId: payload.projectId });
@@ -349,17 +365,38 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
   // --- get / update / delete ------------------------------------------------------
 
   routes.get("/threads/:id", async (ctx) => {
-    // bb 422s on unknown query params even when the M0 include face resolves
-    // them to null, so validate the surface without binding the result.
-    parseOr422(threadGetQuerySchema, ctx.req.query());
+    // bb parseThreadIncludes (routes/threads/base.ts:59-68); the query schema
+    // 422s unknown params, the include set drives the inline resolution.
+    const query = parseOr422(threadGetQuerySchema, ctx.req.query());
+    const includes = new Set<"environment" | "host">();
+    if (query.include !== undefined) {
+      for (const value of query.include.split(",")) {
+        includes.add(value as "environment" | "host");
+      }
+    }
     const row = await requirePublicThread(ctx);
+    // bb buildThreadResponse (base.ts:86-121): one environment read serves
+    // both includes; host rides the binding row's hostId with live status.
+    const environment =
+      includes.size > 0 && row.environmentId !== null
+        ? await getEnvironmentRow(ctx.env, row.environmentId)
+        : null;
+    const host =
+      includes.has("host") && environment !== null
+        ? await getHostRow(ctx.env, environment.hostId).then((hostRow) =>
+            hostRow !== null && hostRow.destroyedAt === null ? toHostRecord(ctx.env, hostRow) : null,
+          )
+        : null;
     const response = (await toThreadResponseWithSpawnCheck(ctx.env, row)) as ThreadResponse & {
       environment?: unknown;
       host?: unknown;
     };
-    // M0: environment/host includes resolve to null — the environment family
-    // is OUT (ruling #7); the response fields exist and are nullable (bb
-    // threadWithIncludesResponseSchema).
+    if (includes.has("environment")) {
+      response.environment = environment === null ? null : environmentSchema.parse(environment);
+    }
+    if (includes.has("host")) {
+      response.host = host;
+    }
     return ctx.json(response);
   });
 
@@ -389,6 +426,38 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
         projectId: updated.row.projectId,
       });
     }
+    return ctx.json(await toThreadResponseWithSpawnCheck(ctx.env, updated.row));
+  });
+
+  // --- rebind (#288) ----------------------------------------------------------------
+
+  /**
+   * bb's thread rebind is DB-level (two-source map §1.3: 换 environment =
+   * DB 换绑 + 新环境重新 provision, in-flight turn included); the M0 face is
+   * the explicit owner operation: resolve the new binding (same chain as
+   * create, explicit vocabulary only), update threads.environment_id, and
+   * land the trajectory half — thread.rebound migrates state.machineId on
+   * replay, so every later dispatch resolves the new machine with zero
+   * per-dispatch lookups (§2.1). No mid-turn guard, matching bb.
+   */
+  routes.post("/threads/:id/environment", async (ctx) => {
+    const payload = await requireJsonBody(ctx, rebindThreadEnvironmentRequestSchema);
+    const row = await requirePublicThread(ctx);
+    const resolved = await resolveThreadBinding(ctx.env, {
+      projectId: row.projectId,
+      environment: payload.environment,
+    });
+    const updated = await updateThreadRecord(ctx.env, row.id, {
+      environmentId: resolved.environmentId,
+    });
+    if (updated === null) {
+      throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
+    }
+    await agentDoFor(ctx.env, row.id).rebindThread({
+      machineId: resolved.machineId,
+      ...(resolved.environmentId !== null ? { environmentId: resolved.environmentId } : {}),
+    });
+    await hub(ctx).notifyThread(row.id, ["environment-changed"], { projectId: row.projectId });
     return ctx.json(await toThreadResponseWithSpawnCheck(ctx.env, updated.row));
   });
 

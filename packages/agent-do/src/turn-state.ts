@@ -224,6 +224,14 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       state.threadCreatedAt = event.createdAt;
       return;
     }
+    case "thread.rebound": {
+      const { machineId } = event.data;
+      if (state.threadId === null) {
+        throw new FsmViolationError("thread.rebound before thread.created");
+      }
+      state.machineId = machineId;
+      return;
+    }
     case "turn.input": {
       const { turnId, inputId } = event.data;
       if (state.activeTurnId !== null) {

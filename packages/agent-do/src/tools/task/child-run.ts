@@ -293,6 +293,8 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
         break;
       }
       case "experimental_context_notes":
+      // #288: binding rows are thread-scoped state, never child-journal units.
+      case "thread.rebound":
       case "job.delivered":
       case "job.registered":
       case "job.settled":
@@ -783,6 +785,8 @@ export function renderAgentHistory(events: readonly AnyAgentEvent[], agentId: st
         lines.push(`[${event.seq}] aborted (${event.data.reason})`);
         break;
       case "experimental_context_notes":
+      // #288: binding rows are thread-scoped state, never child-journal units.
+      case "thread.rebound":
       case "job.delivered":
       case "job.registered":
       case "job.settled":

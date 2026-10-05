@@ -1,6 +1,6 @@
 import type { Env } from "../env.js";
 import type { ThreadDbRow } from "../db/rows.js";
-import { getThreadHierarchyDepth } from "../db/control-plane.js";
+import { getThreadHierarchyDepth, type ThreadListRow } from "../db/control-plane.js";
 import type { ThreadListEntry, ThreadRuntimeState } from "../contract/domain/thread.js";
 import type { ThreadResponse } from "../contract/api/threads.js";
 
@@ -75,11 +75,11 @@ export async function toThreadResponseWithSpawnCheck(
 
 /**
  * bb ThreadListEntry assembly (thread-runtime-display.ts:441-463). M0: no
- * environments (family OUT) → environment* fields null with display kind
- * "other"; activity counters zero (background tasks are a daemon surface).
+ * provisioning — the environment* fields come from the #288 binding join;
+ * activity counters zero (background tasks are a daemon surface).
  */
 export function toThreadListEntry(
-  row: ThreadDbRow & { hasPendingInteraction: boolean },
+  row: ThreadListRow,
 ): ThreadListEntry {
   return {
     ...toPublicThread(row),
@@ -93,9 +93,9 @@ export function toThreadListEntry(
     },
     pinSortKey: row.pinSortKey,
     hasPendingInteraction: row.hasPendingInteraction,
-    environmentHostId: null,
-    environmentName: null,
-    environmentBranchName: null,
-    environmentWorkspaceDisplayKind: "other",
+    environmentHostId: row.environmentHostId,
+    environmentName: row.environmentName,
+    environmentBranchName: row.environmentBranchName,
+    environmentWorkspaceDisplayKind: row.environmentWorkspaceDisplayKind,
   };
 }

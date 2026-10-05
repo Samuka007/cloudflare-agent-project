@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import controlPlaneSql from "../migrations/0001_control_plane.sql";
+import environmentsSql from "../migrations/0002_environments.sql";
 
 /**
  * Applies the control-plane D1 migrations once per worker context. Invoked
@@ -18,18 +19,20 @@ export function ensureMigrations(): Promise<void> {
     if (probe !== null) {
       return;
     }
-    const statements = controlPlaneSql
-      .split(/;\s*\n/)
-      .map((statement) =>
-        statement
-          .split("\n")
-          .filter((line) => !line.trim().startsWith("--"))
-          .join("\n")
-          .trim(),
-      )
-      .filter((statement) => statement.length > 0);
-    for (const statement of statements) {
-      await env.DB.prepare(statement).run();
+    for (const file of [controlPlaneSql, environmentsSql]) {
+      const statements = file
+        .split(/;\s*\n/)
+        .map((statement) =>
+          statement
+            .split("\n")
+            .filter((line) => !line.trim().startsWith("--"))
+            .join("\n")
+            .trim(),
+        )
+        .filter((statement) => statement.length > 0);
+      for (const statement of statements) {
+        await env.DB.prepare(statement).run();
+      }
     }
   })();
   return applied;

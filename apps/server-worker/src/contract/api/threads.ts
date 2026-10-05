@@ -36,6 +36,7 @@ import {
   timelineWorkflowWorkRowSchema,
 } from "../thread-timeline.js";
 import {
+  environmentArgsSchema,
   createThreadEnvironmentArgsSchema,
   FILE_LIST_QUERY_MAX_LENGTH,
   isCommaSeparatedIncludeQueryValue,
@@ -124,7 +125,10 @@ export const createThreadRequestSchema = z
     reasoningLevel: reasoningLevelSchema.optional(),
     permissionMode: permissionModeInputSchema.optional(),
     executionInputSources: createExecutionInputSourcesSchema.optional(),
-    environment: createThreadEnvironmentArgsSchema,
+    // #288: optional here as in @cap/protocol — omitted resolves through the
+    // project default source to the deployment single machine (bb clients
+    // always send the field; the relaxation is additive-safe).
+    environment: createThreadEnvironmentArgsSchema.optional(),
     parentThreadId: z.string().min(1).optional(),
     sectionId: z.string().min(1).nullable().optional(),
     sourceThreadId: z.string().min(1).optional(),
@@ -163,6 +167,21 @@ export const createThreadRequestSchema = z
     }
   });
 export type CreateThreadRequest = z.infer<typeof createThreadRequestSchema>;
+
+/**
+ * #288 explicit rebind (layer doc §2.1 换绑): owner operation moving a thread
+ * to a new binding — the vocabulary is the explicit half of the create chain
+ * (`reuse`/`host`; no project-default on rebind). The DO appends the
+ * trajectory half (`thread.rebound`), the threads row gets the control-plane
+ * half. System-side switching never happens; product policy for offline hosts
+ * is #73's ruling.
+ */
+export const rebindThreadEnvironmentRequestSchema = z
+  .object({
+    environment: environmentArgsSchema,
+  })
+  .strict();
+export type RebindThreadEnvironmentRequest = z.infer<typeof rebindThreadEnvironmentRequestSchema>;
 
 const agentOnlyPromptInputSchema = promptInputSchema.and(
   z.object({ visibility: z.literal("agent-only") }),

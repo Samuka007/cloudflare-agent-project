@@ -1,9 +1,13 @@
 import type { Env } from "../env.js";
+import { resolveEnvironmentWorkspaceDisplayKind } from "../contract/domain/environment.js";
+import type { EnvironmentWorkspaceDisplayKind } from "../contract/domain/environment.js";
 import {
   THREAD_COLUMN_SQL,
   toProjectRow,
   toThreadDbRow,
   toThreadSectionRow,
+  strOrNull,
+  type EnvironmentDbRow,
   type ProjectRow,
   type ThreadDbRow,
   type ThreadSectionRow,
@@ -152,6 +156,15 @@ export interface ThreadListFilters {
   offset?: number;
 }
 
+/** Thread row plus the #288 binding join (bb toThreadWithPendingInteractionState). */
+export interface ThreadListRow extends ThreadDbRow {
+  hasPendingInteraction: boolean;
+  environmentHostId: string | null;
+  environmentName: string | null;
+  environmentBranchName: string | null;
+  environmentWorkspaceDisplayKind: EnvironmentWorkspaceDisplayKind;
+}
+
 /**
  * Filters per bb buildListThreadsFilters: deleted_at always NULL, visible-only
  * unless includeHidden, archived/hasParent tri-state; ordering per
@@ -162,7 +175,7 @@ export interface ThreadListFilters {
 export async function listThreads(
   env: Env,
   filters: ThreadListFilters,
-): Promise<(ThreadDbRow & { hasPendingInteraction: boolean })[]> {
+): Promise<ThreadListRow[]> {
   const where: string[] = ["t.deleted_at IS NULL"];
   const binds: unknown[] = [];
   if (filters.visibility !== undefined) {
@@ -210,11 +223,19 @@ export async function listThreads(
       ? "t.archived_at DESC, t.id DESC"
       : "CASE WHEN t.pinned_at IS NOT NULL THEN 0 ELSE 1 END ASC, t.pin_sort_key ASC, t.id ASC, t.created_at DESC, t.id DESC";
 
+  // #288: bb threadWithPendingInteractionBaseQuery (data/threads.ts:533-552)
+  // — LEFT JOIN environments so the list face can inline the binding fields
+  // (environmentHostId/Name/BranchName + display kind) per thread.
   let sql = `SELECT ${THREAD_COLUMN_SQL.split(", ")
     .map((c) => `t.${c}`)
     .join(
       ", ",
-    )}, EXISTS(SELECT 1 FROM pending_interactions pi WHERE pi.thread_id = t.id AND pi.status IN ('pending','resolving')) AS has_pending_interaction FROM threads t WHERE ${where.join(" AND ")} ORDER BY ${orderBy}`;
+    )}, e.host_id AS environment_host_id, e.name AS environment_name,
+       e.branch_name AS environment_branch_name, e.is_worktree AS environment_is_worktree,
+       e.workspace_provision_type AS environment_workspace_provision_type,
+       EXISTS(SELECT 1 FROM pending_interactions pi WHERE pi.thread_id = t.id AND pi.status IN ('pending','resolving')) AS has_pending_interaction
+     FROM threads t LEFT JOIN environments e ON t.environment_id = e.id
+     WHERE ${where.join(" AND ")} ORDER BY ${orderBy}`;
   if (filters.limit !== undefined) {
     sql += " LIMIT ?";
     binds.push(filters.limit);
@@ -229,6 +250,18 @@ export async function listThreads(
     .all();
   return results.map((row) => ({
     ...toThreadDbRow(row),
+    environmentHostId: strOrNull(row, "environment_host_id"),
+    environmentName: strOrNull(row, "environment_name"),
+    environmentBranchName: strOrNull(row, "environment_branch_name"),
+    environmentWorkspaceDisplayKind: resolveEnvironmentWorkspaceDisplayKind({
+      environment: {
+        isWorktree: row.environment_is_worktree === null ? null : row.environment_is_worktree === 1,
+        workspaceProvisionType:
+          (strOrNull(row, "environment_workspace_provision_type") as
+            | EnvironmentDbRow["workspaceProvisionType"]
+            | null),
+      },
+    }),
     hasPendingInteraction: row.has_pending_interaction === 1,
   }));
 }
@@ -287,6 +320,8 @@ export async function getThreadHierarchyDepth(env: Env, threadId: string): Promi
 export interface CreateThreadRecordArgs {
   id: string;
   projectId: string;
+  /** #288 binding row resolved at creation; null = deployment default. */
+  environmentId: string | null;
   providerId: string;
   title: string | null;
   titleFallback: string | null;
@@ -312,7 +347,7 @@ export async function createThreadRecord(
     .bind(
       args.id,
       args.projectId,
-      null,
+      args.environmentId,
       args.providerId,
       null,
       null,
@@ -350,6 +385,8 @@ export interface ThreadMetadataUpdate {
   title?: string | null;
   sectionId?: string | null;
   parentThreadId?: string | null;
+  /** #288 rebind: the new binding row (change kind "environment-changed"). */
+  environmentId?: string | null;
   visibility?: ThreadDbRow["visibility"];
   lastReadAt?: number | null;
   status?: ThreadDbRow["status"];
@@ -396,6 +433,11 @@ export async function updateThreadRecord(
     sets.push("parent_thread_id = ?");
     binds.push(update.parentThreadId);
     changedKinds.push("parent-changed");
+  }
+  if (update.environmentId !== undefined) {
+    sets.push("environment_id = ?");
+    binds.push(update.environmentId);
+    changedKinds.push("environment-changed");
   }
   if (update.lastReadAt !== undefined) {
     sets.push("last_read_at = ?");

@@ -306,7 +306,9 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
     }
     const titleRaw = firstTextOf(command)?.slice(0, 120) ?? "";
     const title = titleRaw === "" ? `thread ${command.threadId}` : titleRaw;
-    const machineId = resolveHarness(this.env).hostBinding.machineId;
+    // #288: the control plane's resolved binding wins; the harness hostBinding
+    // stays the fallback for commands that predate the field.
+    const machineId = command.machineId ?? resolveHarness(this.env).hostBinding.machineId;
     const created = await this.agentStub(command.threadId).createThread({
       threadId: command.threadId,
       title,

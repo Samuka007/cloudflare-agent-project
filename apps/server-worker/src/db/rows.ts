@@ -30,7 +30,7 @@ function str(row: Row, key: string): string {
   return value;
 }
 
-function strOrNull(row: Row, key: string): string | null {
+export function strOrNull(row: Row, key: string): string | null {
   const value = row[key];
   return value === null || value === undefined ? null : (value as string);
 }
@@ -191,6 +191,84 @@ export function toHostDbRow(row: Row): HostDbRow {
     destroyedAt: numOrNull(row, "destroyed_at"),
     lastSeenAt: numOrNull(row, "last_seen_at"),
     lastRejectedProtocolVersion: numOrNull(row, "last_rejected_protocol_version"),
+    createdAt: num(row, "created_at"),
+    updatedAt: num(row, "updated_at"),
+  };
+}
+
+// --- environments (#288) -------------------------------------------------------
+
+export type EnvironmentStatus =
+  | "provisioning"
+  | "ready"
+  | "retiring"
+  | "error"
+  | "destroying"
+  | "destroyed";
+export type WorkspaceProvisionType = "unmanaged" | "managed-worktree" | "personal";
+
+export interface EnvironmentDbRow {
+  id: string;
+  name: string | null;
+  projectId: string;
+  hostId: string;
+  path: string | null;
+  managed: boolean;
+  isGitRepo: boolean;
+  isWorktree: boolean;
+  branchName: string | null;
+  baseBranch: string | null;
+  defaultBranch: string | null;
+  mergeBaseBranch: string | null;
+  destroyAttemptId: string | null;
+  retireRequestedAt: number | null;
+  workspaceProvisionType: WorkspaceProvisionType;
+  status: EnvironmentStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+
+const ENVIRONMENT_COLUMNS = [
+  "id",
+  "name",
+  "project_id",
+  "host_id",
+  "path",
+  "managed",
+  "is_git_repo",
+  "is_worktree",
+  "branch_name",
+  "base_branch",
+  "default_branch",
+  "merge_base_branch",
+  "destroy_attempt_id",
+  "retire_requested_at",
+  "workspace_provision_type",
+  "status",
+  "created_at",
+  "updated_at",
+] as const;
+
+export const ENVIRONMENT_COLUMN_SQL = ENVIRONMENT_COLUMNS.join(", ");
+
+export function toEnvironmentDbRow(row: Row): EnvironmentDbRow {
+  return {
+    id: str(row, "id"),
+    name: strOrNull(row, "name"),
+    projectId: str(row, "project_id"),
+    hostId: str(row, "host_id"),
+    path: strOrNull(row, "path"),
+    managed: bool(row, "managed"),
+    isGitRepo: bool(row, "is_git_repo"),
+    isWorktree: bool(row, "is_worktree"),
+    branchName: strOrNull(row, "branch_name"),
+    baseBranch: strOrNull(row, "base_branch"),
+    defaultBranch: strOrNull(row, "default_branch"),
+    mergeBaseBranch: strOrNull(row, "merge_base_branch"),
+    destroyAttemptId: strOrNull(row, "destroy_attempt_id"),
+    retireRequestedAt: numOrNull(row, "retire_requested_at"),
+    workspaceProvisionType: str(row, "workspace_provision_type") as WorkspaceProvisionType,
+    status: str(row, "status") as EnvironmentStatus,
     createdAt: num(row, "created_at"),
     updatedAt: num(row, "updated_at"),
   };
