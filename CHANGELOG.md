@@ -32,6 +32,34 @@
   幂等）、daemon-service `host-files.test.ts`（bun 真 fs 语义）+
   `l1-host-read-file.test.ts`（DO 线）、server-worker
   `timeline-image-view.test.ts` + `host-files-content.test.ts`。
+- **#328 (W5) 矩阵 C3——工具批并行调度 + 同文件互斥（pi E2 对应物）**：
+  agent-do 工具批此前无批内调度语义——`Effect.forEach` unbounded 并发派发，
+  同文件 write/write、read/write 全部裸跑并发（比 pi 的两条语义都少）。新增
+  `tools/batch-scheduler.ts` 纯函数调度器 + registry 行级 `schedule` 分类
+  （`read`＝按 path 键控的只读面：read/glob/grep/find；`detached`＝与批内
+  无共享面：think/web_search + 阻塞型 wait/ask——t19 的
+  `[wait, write proc://<job>/kill]` photo-finish 批必须同波派发才收敛；
+  `exclusive`＝变更面/未知面：同键冲突、无键（bash/task/eval/mcp 等全部
+  无键尾）整批 barrier）。turnProgram 批循环改波次推进：冲突感知分波、
+  波内并发派发、波间等全部终态再派下一波——只读批整波并行，同文件
+  写写/读写冲突按模型 call 序串行化（pi agent-loop 默认 parallel +
+  file-mutation-queue 同文件写互斥的调度层移植，锚
+  badlogic/pi-mono agent/agent-loop.ts:514-529 + coding-agent
+  tools/file-mutation-queue.ts）。键 = journaled 调用参数的词法归一
+  （`./`/重复斜杠折叠、read 行选择器剥离、edit 取 hashline input 首行），
+  纯确定性——重放/看门狗重问重算同一波次；DO 无 fs，归一不到的拼写给
+  的是过度串行而非漏互斥。波间取消收敛：取消落在波间时未派发波在 DO 内
+  补 `tool.result{cancelled}` 封账（未派发执行无 daemon 痕迹——kill 对未知
+  id no-op、看门狗 re-ask 依赖 dispatch 行，不封账则永久悬空）。
+  recovery Ruling E 同步走波序（`redispatchScheduled` 分离驱动：波内
+  并发 re-ask、波间等终态，wait/ask 照旧分离派发）——互斥跨驱逐存活；
+  稳态 at-least-once re-ask 语义不变（service journal 按 executionId
+  去重）。测试：agent-do `batch-scheduler.test.ts` 24 例（分类/键提取/
+  冲突表/波次布局）+ `batch-parallel.test.ts` 6 例（L1 只读批并行计时
+  断言：波内 dispatch 与 settle 展布均 < 单个伪工具时延，串行计划下
+  两者展布 ≥ 3×；同文件写写/读写串行化 seq 序断言；异文件写并行；波间
+  取消封账；驱逐后 recovery 波序重问无双 spawn）+ registry 形状/分类
+  2 例。
 - **#320 (W5) 图片 A5——SPA 渲染面回接（依赖 #316-A4；SPA 零新码）**：
   timeline 投影喂上唯一断点——`projectTimelineRows` 的 userMessage 行
   `attachments: null` 三处硬编码中仅用户行是真缺口（assistant 行 upstream
