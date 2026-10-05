@@ -1,7 +1,7 @@
 # Codebase Guidelines
 
 <current_wave>
-当前 wave（W4 已收官：milestone 11 关，终检报告 #260 comment，签收票 #300 待用户）。W4 交付：host 接入门（#258）、provider 只读投影面（#266）、CoT 通路（#257）、子代理委派行+活动流回父（#274/#275/#276）、workspace 四票（#288-#291）、部署迁移链自愈（#295）、PM 工具插件化（#270）与验收关账门（#277）。W5 方向待用户定（候选：CoT 界面呈现移植、web_search 凭据引擎、生产化硬化）。
+当前 wave（W5，伞 #310，milestone 12）：全面迈向确定性、鲁棒的 agent 基本功能 UX，包括除 skill 外的一切常见 agent 功能。首批：#302 Add project 修复、#303 CoT 呈现、#304 图片支持、#305 provider 字段路线图、#306 idle session release、#307 Artifacts fs、#308 上下文指示、#309 compact 按钮；功能清单未尽，随发现随立。使命：云上随时可用的 omp——这一目标永不停下。W4 已收官（milestone 11 关，终检 #260 comment，签收 #300 待用户）。
 </current_wave>
 
 ## Engineering Doctrine（工程铁律——先读这个）
