@@ -275,6 +275,28 @@ function dispatchFrame(
       log(`sync.complete generation=${frame.generation}`);
       return;
     case "exec.spawn": {
+      // #290 C1: a workspace-tagged spawn resolves its cwd against the
+      // registered workspace root; drift/unknown fail the spawn explicitly.
+      // Absent workspace keeps the sandbox default (backward compatible).
+      let spawnRoot = config.sandboxRoot;
+      if (frame.workspace !== undefined) {
+        const bound = toolRuntimeOf(runtime, config).resolveWorkspaceRoot(frame.workspace);
+        if ("error" in bound) {
+          log(`exec ${frame.executionId} refused: ${bound.error}`);
+          socket.send(
+            JSON.stringify({
+              type: "exec.spawn_ack",
+              requestId: frame.requestId,
+              threadId: frame.threadId,
+              executionId: frame.executionId,
+              ok: false,
+              error: bound.error,
+            } satisfies Record<string, unknown>),
+          );
+          return;
+        }
+        spawnRoot = bound.root;
+      }
       const buffer = new ExecutionBuffer();
       runtime.buffers.set(frame.executionId, buffer);
       try {
@@ -285,6 +307,7 @@ function dispatchFrame(
           (text) => {
             buffer.append(text);
           },
+          spawnRoot,
         );
         socket.send(
           JSON.stringify({
@@ -377,6 +400,18 @@ function dispatchFrame(
   }
 }
 
+/** The embedded runtime singleton (one per process; per-workspace hosts
+ * live inside it — #290 C2). Constructed on first host-tool/exec frame. */
+function toolRuntimeOf(runtime: ClientRuntime, config: ClientConfig): ToolRuntime {
+  return (runtime.toolRuntime ??= new ToolRuntime({
+    workspaceRoot: config.sandboxRoot,
+    agentDir: join(config.dataDir, "omp-agent"),
+    machineId: runtime.machineId ?? "",
+    taskIsolation: config.taskIsolation,
+    agentAuth: config.agentAuth,
+  }));
+}
+
 /**
  * Host-tool dispatch (T5'): relay the tool-agnostic frame into the embedded
  * omp runtime. The execution is kicked off, never awaited inline (the §8.3
@@ -389,13 +424,7 @@ function dispatchToolExec(
   socket: WebSocket,
   frame: Extract<ServiceFrame, { type: "tool.exec" }>,
 ): void {
-  const toolRuntime = (runtime.toolRuntime ??= new ToolRuntime({
-    workspaceRoot: config.sandboxRoot,
-    agentDir: join(config.dataDir, "omp-agent"),
-    machineId: runtime.machineId ?? "",
-    taskIsolation: config.taskIsolation,
-    agentAuth: config.agentAuth,
-  }));
+  const toolRuntime = toolRuntimeOf(runtime, config);
   // A watchdog re-forward of a live run reuses its buffer — the first run
   // owns the output subscription (execute() is idempotent per executionId).
   const existing = runtime.buffers.get(frame.executionId) ?? new ExecutionBuffer();
@@ -406,6 +435,7 @@ function dispatchToolExec(
     executionId: frame.executionId,
     machineId: runtime.machineId ?? "",
     timeoutMs: frame.timeoutMs,
+    ...(frame.workspace !== undefined ? { workspace: frame.workspace } : {}),
   };
   if (!toolRuntime.running.has(frame.executionId)) {
     const execution = toolRuntime.execute(dispatchFrame_, (chunk) => {

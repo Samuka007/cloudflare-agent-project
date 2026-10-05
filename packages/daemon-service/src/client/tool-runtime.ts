@@ -1,6 +1,9 @@
 import { createRequire } from "node:module";
+import { existsSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { log } from "./log.js";
+import type { WorkspaceRef } from "../protocol.js";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { EvalKernelRuntime } from "./eval-kernel.js";
@@ -35,6 +38,8 @@ export interface ToolDispatchFrame {
   executionId: string;
   machineId: string;
   timeoutMs: number;
+  /** Workspace binding leg (#290 C1); absent = the daemon sandbox default. */
+  workspace?: WorkspaceRef;
 }
 
 export type WireStatus = "ok" | "error" | "timeout" | "cancelled";
@@ -187,6 +192,23 @@ export function assertNativeAddonCurrent(status: NativeAddonIdentity): void {
 // ---------------------------------------------------------------------------
 // Host construction (spike §1: the minimal ToolSession is five members).
 // ---------------------------------------------------------------------------
+
+/**
+ * Host constructions are serialized process-wide (#290 C4): every host —
+ * base and per-workspace alike — installs the SHARED daemon-private
+ * agentDir's models.yml (installAgentAuth) and re-pins the process-global
+ * agent-dir resolver (setAgentDir). The pins are value-idempotent (one
+ * agentDir per process), but concurrent constructions would interleave the
+ * file writes; one-at-a-time keeps the discipline the single base host has
+ * always run under. The chain never poisons: a failed build must not block
+ * later workspaces.
+ */
+let hostBuildChain: Promise<unknown> = Promise.resolve();
+function serializedHostBuild<T>(build: () => Promise<T>): Promise<T> {
+  const built = hostBuildChain.then(build);
+  hostBuildChain = built.catch(() => undefined);
+  return built;
+}
 
 /**
  * Builds the tool host. `agentDir` MUST be a daemon-private directory
@@ -573,6 +595,13 @@ interface RunningTool {
   done: Promise<ToolExecutionResult>;
 }
 
+/** One registered workspace (#290 C2): the bound root plus its lazily built
+ * first-class host (bb ensureEnvironment anchor: per-environment runtime). */
+interface WorkspaceBinding {
+  path: string;
+  hostPromise: Promise<ToolHost> | null;
+}
+
 export interface ToolRuntimeConfig {
   /** Workspace root — the cwd every host tool resolves against. */
   workspaceRoot: string;
@@ -594,6 +623,8 @@ export class ToolRuntime {
   private isolation: IsolationManager | null = null;
   /** Live runs by executionId (abort handle + idempotent re-forward answer). */
   readonly running = new Map<string, RunningTool>();
+  /** Registered workspaces by id (#290 C2 — bb ensureEnvironment anchor). */
+  private readonly workspaces = new Map<string, WorkspaceBinding>();
 
   constructor(private readonly config: ToolRuntimeConfig) {}
 
@@ -601,11 +632,13 @@ export class ToolRuntime {
   ensureHost(): Promise<ToolHost> {
     this.hostPromise ??= (async () => {
       assertNativeAddonCurrent(await readNativeAddonStatus());
-      return createToolHost(
-        this.config.workspaceRoot,
-        this.config.agentDir,
-        this.config.machineId,
-        this.config.agentAuth,
+      return serializedHostBuild(() =>
+        createToolHost(
+          this.config.workspaceRoot,
+          this.config.agentDir,
+          this.config.machineId,
+          this.config.agentAuth,
+        ),
       );
     })();
     return this.hostPromise;
@@ -623,18 +656,38 @@ export class ToolRuntime {
     const live = this.running.get(frame.executionId);
     if (live !== undefined) return live.done;
     const controller = new AbortController();
-    const done = this.ensureHost().then((host) => {
+    const done = this.ensureHost().then(async (baseHost) => {
+      // #290 C1/C2: a frame-declared workspace routes to its first-class
+      // host (per-workspace createToolHost — per-project settings by cwd).
+      // Drift and unknown paths fail as STRUCTURED ERROR RESULTS (C3, the
+      // mis-route guard's shape): the service DO's waiter resolves only on
+      // tool.exited, so a rejected dispatch would hang the run to timeout.
+      // Isolation sessions stay sandbox-scoped (isolationOp carries no
+      // workspace leg), so workspace frames bypass the isolation manager.
+      if (frame.workspace !== undefined) {
+        const bound = this.bindWorkspace(frame.workspace);
+        if ("error" in bound) {
+          return { status: "error" as const, exitCode: null, output: bound.error };
+        }
+        const host = await this.workspaceHost(bound.binding);
+        return frame.tool === "eval"
+          ? (this.evalRuntime ??= new EvalKernelRuntime(this.config)).execute(host, frame, {
+              onOutput,
+              cancelSignal: controller.signal,
+            })
+          : executeDispatch(host, frame, { onOutput, cancelSignal: controller.signal });
+      }
       // T20 #110: reserved isolation verbs route to the manager; every other
       // frame resolves against the thread's isolation view when its child is
       // workspace-isolated, else the base host.
-      this.isolation ??= new IsolationManager(host, this.config.taskIsolation);
+      this.isolation ??= new IsolationManager(baseHost, this.config.taskIsolation);
       const isolation = this.isolation;
       // Prefix-less executionIds (test rigs) have no thread leg; the raw id
       // then never matches a session key and routing falls to the base host.
       const frameThreadId = frame.executionId.includes(":")
         ? threadIdFromExecutionId(frame.executionId)
         : frame.executionId;
-      const routedHost = isolation.hostFor(frameThreadId) ?? host;
+      const routedHost = isolation.hostFor(frameThreadId) ?? baseHost;
       return isolation.execute(frame).then(
         (handled) =>
           handled ??
@@ -662,5 +715,64 @@ export class ToolRuntime {
     if (live === undefined) return false;
     live.controller.abort();
     return true;
+  }
+
+  /**
+   * Sync binding resolution — runs on EVERY workspace-tagged frame before
+   * any host/spawn work. A registered id with a different path is an
+   * explicit mismatch (C3, bb `workspace_type_mismatch` anchor: "Loaded
+   * environment X is bound to A, not B" — never a silent re-route); a fresh
+   * id registers only once the path proves an existing directory (bb
+   * unmanaged semantics: validate an existing path, never provision).
+   */
+  private bindWorkspace(
+    ref: WorkspaceRef,
+  ): { root: string; binding: WorkspaceBinding } | { error: string } {
+    const path = resolve(ref.path);
+    const existing = this.workspaces.get(ref.id);
+    if (existing !== undefined) {
+      if (existing.path !== path) {
+        return {
+          error: `workspace_type_mismatch: workspace ${ref.id} is bound to ${existing.path}, not ${path}`,
+        };
+      }
+      return { root: path, binding: existing };
+    }
+    if (!existsSync(path) || !statSync(path).isDirectory()) {
+      return { error: `workspace_not_found: ${path}` };
+    }
+    const binding: WorkspaceBinding = { path, hostPromise: null };
+    this.workspaces.set(ref.id, binding);
+    log(`workspace ${ref.id} registered at ${path}`);
+    return { root: path, binding };
+  }
+
+  /** Public sync face for the exec.spawn path — root only, no host work. */
+  resolveWorkspaceRoot(ref: WorkspaceRef): { root: string } | { error: string } {
+    const bound = this.bindWorkspace(ref);
+    return "error" in bound ? bound : { root: bound.root };
+  }
+
+  /**
+   * Per-workspace host (C2): a full createToolHost per registered path.
+   * Distinct workspaces are distinct projects, so each loads its own
+   * project settings by cwd — unlike the T20 viewFor, which shares the base
+   * settings for same-project worktrees. The shared agentDir keeps every
+   * setAgentDir pin value-idempotent and the frozen omp resolver correct
+   * (C4 audit: one daemon-private agentDir per process; eval kernels key
+   * their module-level registries by cwd, so per-workspace cells stay
+   * apart while EvalKernelRuntime stays one per process, deterministically
+   * seeded from the sandbox root).
+   */
+  private workspaceHost(binding: WorkspaceBinding): Promise<ToolHost> {
+    binding.hostPromise ??= serializedHostBuild(() =>
+      createToolHost(
+        binding.path,
+        this.config.agentDir,
+        this.config.machineId,
+        this.config.agentAuth,
+      ),
+    );
+    return binding.hostPromise;
   }
 }
