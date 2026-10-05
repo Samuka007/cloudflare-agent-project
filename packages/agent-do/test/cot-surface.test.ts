@@ -195,3 +195,88 @@ describe("#257 — ux projection: item/reasoning/textDelta", () => {
     ]);
   });
 });
+
+describe("#308 — context window usage face", () => {
+  const RECEIPT = {
+    inputTokens: 1200,
+    outputTokens: 42,
+    cacheReadInputTokens: 8000,
+    cacheCreationInputTokens: 100,
+    contextWindow: 200_000,
+    estimated: false,
+  };
+
+  test("a receipt is its own journal row and projects the contextWindowUsage row", async () => {
+    const rig = await createRig({
+      turns: [{ deltas: ["answer"], usage: RECEIPT }],
+    });
+    const sent = await rig.stub.sendMessage({
+      clientRequestId: "usage-1",
+      content: [{ type: "text", text: "hi" }],
+      mode: "auto",
+    });
+    const events = await rig.waitTurnComplete(sent.turnId);
+
+    // Journal face: the receipt is its own row, chained to its call.
+    const completed = events.find((event) => event.type === "model.call_completed");
+    const receiptRows = events.filter((event) => event.type === "model.usage_receipt");
+    expect(receiptRows).toHaveLength(1);
+    expect(receiptRows[0]?.data).toEqual({
+      turnId: sent.turnId,
+      modelCallId: completed?.data.modelCallId,
+      usage: RECEIPT,
+    });
+    expect(receiptRows[0]?.seq).toBeGreaterThan(completed?.seq ?? 0);
+
+    // UX face: one row with the receipt's own seq, usedTokens = input +
+    // output + both cache sides.
+    const projected = projectToUxEvents(events).map(parseThreadEvent);
+    const usageRows = projected.filter(
+      (event) => event.type === "thread/contextWindowUsage/updated",
+    );
+    expect(usageRows).toHaveLength(1);
+    expect(usageRows[0]?.data).toEqual({
+      contextWindowUsage: {
+        usedTokens: 1200 + 42 + 8000 + 100,
+        modelContextWindow: 200_000,
+        estimated: false,
+      },
+    });
+    // Same transport identity as its source row (I3 — no invented seqs).
+    expect(usageRows[0]?.seq).toBe(receiptRows[0]?.seq);
+  });
+
+  test("window-less receipts journal but project no row — absence, never a guess", async () => {
+    const rig = await createRig({
+      turns: [{ deltas: ["answer"], usage: { ...RECEIPT, contextWindow: null } }],
+    });
+    const sent = await rig.stub.sendMessage({
+      clientRequestId: "usage-2",
+      content: [{ type: "text", text: "hi" }],
+      mode: "auto",
+    });
+    const events = await rig.waitTurnComplete(sent.turnId);
+    expect(events.find((event) => event.type === "model.usage_receipt")?.data).toMatchObject({
+      usage: { contextWindow: null },
+    });
+    const projected = projectToUxEvents(events).map(parseThreadEvent);
+    expect(
+      projected.filter((event) => event.type === "thread/contextWindowUsage/updated"),
+    ).toEqual([]);
+  });
+
+  test("providers without a usage face leave journal and ux view untouched", async () => {
+    const rig = await createRig({ turns: [{ deltas: ["answer"] }] });
+    const sent = await rig.stub.sendMessage({
+      clientRequestId: "usage-3",
+      content: [{ type: "text", text: "hi" }],
+      mode: "auto",
+    });
+    const events = await rig.waitTurnComplete(sent.turnId);
+    expect(events.find((event) => event.type === "model.usage_receipt")).toBeUndefined();
+    const projected = projectToUxEvents(events).map(parseThreadEvent);
+    expect(
+      projected.filter((event) => event.type === "thread/contextWindowUsage/updated"),
+    ).toEqual([]);
+  });
+});

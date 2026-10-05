@@ -3,6 +3,7 @@ export { parseSseStream, type SseMessage } from "./sse.js";
 export {
   SYSTEM_PROMPT_BLOCKS,
   anthropicRequestBody,
+  estimateWireRequestTokens,
   toolUseIdFor,
   WireAssemblyError,
   type AnthropicAssistantBlock,

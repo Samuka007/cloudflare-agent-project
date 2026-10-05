@@ -143,6 +143,7 @@ export function projectActivityFlush(
       case "model.call_sealed":
       case "model.call_started":
       case "model.delta":
+      case "model.usage_receipt":
       case "peer.message":
       case "peer.message_consumed":
       case "task.async_result":

@@ -591,6 +591,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       harness.relay.baseUrl,
       harness.relay.model,
       harness.relay.maxTokens,
+      harness.relay.contextWindow,
       harness.relay.thinking.type,
     ].join("|");
     if (this.registeredRelayFingerprint === fingerprint) return;

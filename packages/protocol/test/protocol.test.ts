@@ -410,3 +410,34 @@ describe("backgroundTask thread-scoped family (#275 J3)", () => {
     expect(events).toHaveLength(9);
   });
 });
+
+describe("contextWindowUsage event (#308)", () => {
+  const envelope = (data: unknown, seq = 7) => ({
+    threadId: "thr_cw",
+    id: eventRowId("thr_cw", seq),
+    seq,
+    type: "thread/contextWindowUsage/updated",
+    data,
+    createdAt: 4_000,
+  });
+
+  it("round-trips a complete usage row", () => {
+    const built = envelope({
+      contextWindowUsage: { usedTokens: 9342, modelContextWindow: 200_000, estimated: false },
+    });
+    const parsed = parseThreadEvent(built);
+    expect(parsed).toEqual(built);
+    if (parsed.type !== "thread/contextWindowUsage/updated") throw new Error("unreachable");
+    expect(parsed.data.contextWindowUsage.usedTokens).toBe(9342);
+  });
+
+  it("rejects a guessed row: unknown window, negative fill, non-boolean estimated", () => {
+    for (const bad of [
+      envelope({ contextWindowUsage: { usedTokens: 10, modelContextWindow: null, estimated: false } }),
+      envelope({ contextWindowUsage: { usedTokens: -1, modelContextWindow: 200_000, estimated: false } }),
+      envelope({ contextWindowUsage: { usedTokens: 10, modelContextWindow: 200_000 } }),
+    ]) {
+      expect(() => parseThreadEvent(bad)).toThrow();
+    }
+  });
+});
