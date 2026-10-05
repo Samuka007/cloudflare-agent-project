@@ -21,6 +21,8 @@ export interface PocDriveEnv {
   MODEL_RELAY_BASE_URL_ANTHROPIC?: string;
   MODEL_RELAY_API_KEY?: string;
   MODEL_RELAY_MODEL?: string;
+  /** #308 usage-percentage denominator; unset = receipts carry no window. */
+  MODEL_RELAY_CONTEXT_WINDOW?: string;
 }
 
 /** Register-once runtime seam: module state is shared with the DOs' isolate. */
@@ -35,12 +37,16 @@ function ensureRuntime(env: PocDriveEnv): void {
       "MODEL_RELAY_BASE_URL_ANTHROPIC / MODEL_RELAY_API_KEY missing — the composed rig needs the relay env (repo-root .dev.vars) to drive turns",
     );
   }
+  const contextWindowParsed = Number.parseInt(env.MODEL_RELAY_CONTEXT_WINDOW ?? "", 10);
+  const contextWindow =
+    Number.isFinite(contextWindowParsed) && contextWindowParsed > 0 ? contextWindowParsed : null;
   setAgentRuntime("*", {
     provider: new AnthropicRelayProvider({
       baseUrl,
       apiKey,
       model: env.MODEL_RELAY_MODEL ?? "glm-5.3",
       maxTokens: 8192,
+      ...(contextWindow !== null ? { contextWindow } : {}),
       thinking: { type: "disabled" },
     }),
   });

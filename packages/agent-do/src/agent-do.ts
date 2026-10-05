@@ -48,7 +48,12 @@ import type {
   IsolationOpOutcome,
   ToolResultPayload,
 } from "./daemon.js";
-import { ModelProviderError, type ModelRequest, type ModelStreamChunk } from "./provider.js";
+import {
+  ModelProviderError,
+  type ModelRequest,
+  type ModelStreamChunk,
+  type ModelUsageReceipt,
+} from "./provider.js";
 import { projectToUxEvents } from "./ux-projection.js";
 import { getAgentRuntime } from "./injection.js";
 import { modelRequestFromEvents } from "./translate.js";
@@ -349,6 +354,8 @@ type ModelCallOutcome =
       modelCallId: number;
       text: string;
       toolCalls: { name: string; arguments: Record<string, unknown> }[];
+      /** #308 provider usage receipt/estimate; absent when none was reported. */
+      usage?: ModelUsageReceipt;
     }
   | { kind: "sealed"; modelCallId: number }
   | { kind: "cancelled"; modelCallId: number }
@@ -1887,6 +1894,16 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
             toolCalls: outcome.toolCalls,
           }),
         );
+        if (outcome.usage !== undefined) {
+          const usage = outcome.usage;
+          yield* Effect.promise(() =>
+            self.appendEvent("model.usage_receipt", {
+              turnId,
+              modelCallId: outcome.modelCallId,
+              usage,
+            }),
+          );
+        }
         if (outcome.toolCalls.length === 0) {
           yield* Effect.promise(() => self.appendEvent("turn.completed", { turnId }));
           return;
@@ -1941,6 +1958,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       const combined = AbortSignal.any([signal, callAbort.signal]);
       let sawFirstByte = false;
       let text = "";
+      let usage: ModelUsageReceipt | undefined;
       let pendingDelta = "";
       let pendingDeltaBytes = 0;
       let pendingThinking = "";
@@ -2012,6 +2030,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
             const next = yield* pull;
             if (next.done === true) break;
             const chunk = next.value;
+            if (chunk.kind === "usage") {
+              usage = chunk.usage;
+              continue;
+            }
             if (chunk.kind === "thinking-delta") {
               if (!sawFirstByte) {
                 sawFirstByte = true;
@@ -2062,11 +2084,18 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
               modelCallId,
               text,
               toolCalls: chunk.toolCalls,
+              ...(usage !== undefined ? { usage } : {}),
             };
           }
           yield* flushDelta();
           yield* flushThinking();
-          return { kind: "completed" as const, modelCallId, text, toolCalls: [] };
+          return {
+            kind: "completed" as const,
+            modelCallId,
+            text,
+            toolCalls: [],
+            ...(usage !== undefined ? { usage } : {}),
+          };
         },
       );
       const outcome = yield* Effect.catchIf(

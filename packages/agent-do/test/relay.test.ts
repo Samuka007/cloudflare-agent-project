@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { AnthropicRelayProvider, type RelayConfig } from "../src/relay/anthropic-provider.js";
-import type { ModelRequest, ModelStreamChunk } from "../src/provider.js";
+import type {
+  ModelRequest,
+  ModelStreamChunk,
+  ModelUsageReceipt,
+} from "../src/provider.js";
 
 /**
  * Real-client behavior against scripted SSE streams: happy path assembly,
@@ -56,19 +60,22 @@ function messageStop(): [string, unknown] {
 async function collect(provider: AnthropicRelayProvider): Promise<{
   texts: string[];
   thinking: string[];
+  usage: ModelUsageReceipt[];
   toolCalls: { name: string; arguments: Record<string, unknown> }[][];
 }> {
   const texts: string[] = [];
   const thinking: string[] = [];
+  const usage: ModelUsageReceipt[] = [];
   const toolCalls: { name: string; arguments: Record<string, unknown> }[][] = [];
   for await (const chunk of provider.streamTurn(REQUEST, {
     signal: new AbortController().signal,
   })) {
     if (chunk.kind === "text-delta") texts.push(chunk.text);
     else if (chunk.kind === "thinking-delta") thinking.push(chunk.text);
+    else if (chunk.kind === "usage") usage.push(chunk.usage);
     else toolCalls.push(chunk.toolCalls);
   }
-  return { texts, thinking, toolCalls };
+  return { texts, thinking, usage, toolCalls };
 }
 
 describe("relay client: happy paths", () => {
@@ -422,6 +429,147 @@ describe("relay client: abort", () => {
       message: expect.stringContaining("abort"),
       retryable: false,
       afterFirstByte: true,
+    } satisfies Record<string, unknown>);
+  });
+});
+
+describe("relay client: usage receipt (#308)", () => {
+  test("message_start input side + final message_delta output total ride one usage chunk", async () => {
+    const provider = new AnthropicRelayProvider({
+      ...CONFIG,
+      contextWindow: 200_000,
+      fetchImpl: () =>
+        Promise.resolve(
+          streamResponse(
+            sseLines([
+              [
+                "message_start",
+                {
+                  type: "message_start",
+                  message: {
+                    id: "m1",
+                    usage: { input_tokens: 1200, cache_read_input_tokens: 8000 },
+                  },
+                },
+              ],
+              [
+                "content_block_delta",
+                { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } },
+              ],
+              // An earlier output total is superseded by the final frame.
+              ["message_delta", { type: "message_delta", delta: {}, usage: { output_tokens: 3 } }],
+              [
+                "message_delta",
+                {
+                  type: "message_delta",
+                  delta: { stop_reason: "end_turn" },
+                  usage: { output_tokens: 42 },
+                },
+              ],
+              messageStop(),
+            ]),
+          ),
+        ),
+    });
+    const { usage, texts } = await collect(provider);
+    expect(texts).toEqual(["ok"]);
+    expect(usage).toEqual([
+      {
+        inputTokens: 1200,
+        outputTokens: 42,
+        cacheReadInputTokens: 8000,
+        cacheCreationInputTokens: 0,
+        contextWindow: 200_000,
+        estimated: false,
+      },
+    ]);
+  });
+
+  test("no usage frames → bytes/4 estimate over the exact wire body, estimated: true", async () => {
+    const provider = new AnthropicRelayProvider({
+      ...CONFIG,
+      contextWindow: 200_000,
+      fetchImpl: () =>
+        Promise.resolve(
+          streamResponse(
+            sseLines([
+              messageStart(),
+              [
+                "content_block_delta",
+                {
+                  type: "content_block_delta",
+                  index: 0,
+                  delta: { type: "text_delta", text: "hello" },
+                },
+              ],
+              [
+                "message_delta",
+                { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: {} },
+              ],
+              messageStop(),
+            ]),
+          ),
+        ),
+    });
+    const { usage } = await collect(provider);
+    expect(usage).toHaveLength(1);
+    expect(usage[0]).toMatchObject({
+      estimated: true,
+      contextWindow: 200_000,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+    });
+    expect(usage[0]?.inputTokens).toBeGreaterThan(0);
+  });
+
+  test("window unset → contextWindow null (no percentage denominator, no guess)", async () => {
+    const provider = new AnthropicRelayProvider({
+      ...CONFIG,
+      fetchImpl: () =>
+        Promise.resolve(
+          streamResponse(
+            sseLines([
+              messageStart(),
+              [
+                "message_delta",
+                { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: {} },
+              ],
+              messageStop(),
+            ]),
+          ),
+        ),
+    });
+    const { usage } = await collect(provider);
+    expect(usage[0]?.contextWindow).toBeNull();
+    expect(usage[0]?.estimated).toBe(true);
+  });
+
+  test("max_tokens seal throws before any usage chunk", async () => {
+    const provider = new AnthropicRelayProvider({
+      ...CONFIG,
+      fetchImpl: () =>
+        Promise.resolve(
+          streamResponse(
+            sseLines([
+              [
+                "message_start",
+                { type: "message_start", message: { id: "m1", usage: { input_tokens: 5 } } },
+              ],
+              [
+                "message_delta",
+                {
+                  type: "message_delta",
+                  delta: { stop_reason: "max_tokens" },
+                  usage: { output_tokens: 9 },
+                },
+              ],
+              messageStop(),
+            ]),
+          ),
+        ),
+    });
+    await expect(collect(provider)).rejects.toMatchObject({
+      message: expect.stringContaining("max_tokens"),
     } satisfies Record<string, unknown>);
   });
 });

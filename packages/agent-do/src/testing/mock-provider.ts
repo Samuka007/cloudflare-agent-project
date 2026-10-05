@@ -3,6 +3,7 @@ import {
   type ModelProvider,
   type ModelRequest,
   type ModelStreamChunk,
+  type ModelUsageReceipt,
 } from "../provider.js";
 
 /**
@@ -16,6 +17,12 @@ export interface MockTurn {
   deltas?: string[];
   /** Reasoning deltas streamed BEFORE the answer deltas (#257 CoT surface). */
   thinkingDeltas?: string[];
+  /**
+   * #308 usage receipt emitted before the terminal chunk. Absent = the
+   * provider never reports usage — the journal carries no `usage` field and
+   * the timeline omits the context indicator (the honest-absence path).
+   */
+  usage?: ModelUsageReceipt;
   /** Terminal tool-calls chunk (complete calls only — §2.2). */
   toolCalls?: { name: string; arguments: Record<string, unknown> }[];
   /** Throw before any byte (retryable-class failure, §4.2.3). */
@@ -113,6 +120,9 @@ export class MockModelProvider implements ModelProvider {
           { once: true },
         );
       });
+    }
+    if (turn.usage !== undefined) {
+      yield { kind: "usage", usage: turn.usage };
     }
     if (turn.toolCalls !== undefined && turn.toolCalls.length > 0) {
       yield { kind: "tool-calls", toolCalls: turn.toolCalls };

@@ -39,6 +39,7 @@ export type {
   ModelRequest,
   ModelStreamChunk,
   ModelToolCall,
+  ModelUsageReceipt,
   SteerContribution,
   ToolResultContribution,
 } from "./provider.js";
@@ -95,4 +96,9 @@ export type {
 } from "./tools/web-search.js";
 export { projectToUxEvents } from "./ux-projection.js";
 export { ProjectionError, modelRequestFromEvents } from "./translate.js";
-export { AnthropicRelayProvider, type RelayConfig } from "./relay/index.js";
+export {
+  AnthropicRelayProvider,
+  anthropicRequestBody,
+  estimateWireRequestTokens,
+  type RelayConfig,
+} from "./relay/index.js";

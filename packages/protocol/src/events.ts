@@ -263,6 +263,25 @@ export const threadEventDataSchemas = {
   "item/backgroundTask/completed": z.object({
     item: backgroundTaskItemSchema,
   }),
+  /**
+   * #308 context-window fill (bb same-name event, domain type
+   * `threadEventContextWindowUsageSchema`): the provider-reported (or
+   * wire-estimated, `estimated: true`) token count against the configured
+   * window. Emitted 1:1 from a `model.call_completed{usage}` journal row when
+   * both sides are known; rows never guess — no window, no row. bb's domain
+   * shape allows null members for partial ACP reporters; our projection only
+   * emits complete rows, so both members are strict numbers here. The SPA
+   * consumes the value via the timeline response's `contextWindowUsage` tail
+   * field (thread-scoped last-row-wins fold, `threadScopeRationaleByType`
+   * policy "thread-or-turn").
+   */
+  "thread/contextWindowUsage/updated": z.object({
+    contextWindowUsage: z.object({
+      usedTokens: z.number().int().nonnegative(),
+      modelContextWindow: z.number().int().positive(),
+      estimated: z.boolean(),
+    }),
+  }),
   "system/error": z.object({
     message: z.string(),
     category: systemErrorCategorySchema,
