@@ -259,6 +259,14 @@ export const agentEventDataSchemas = {
     /** Transport-level pairing id; never an idempotency key (§0). */
     requestId: z.string().min(1),
     outcome: dispatchOutcomeSchema,
+    /**
+     * #289 host:path override deviation (control-plane-layer.md §2.2): when
+     * a path argument overrode the thread binding for THIS single dispatch,
+     * the target machineId. Absent = the dispatch rode the bound machine.
+     * The binding itself is never rewritten — the next dispatch resolves
+     * `state.machineId` again (explicit binding state in trajectory).
+     */
+    overriddenMachineId: z.string().min(1).optional(),
   }),
 
   "tool.exec_started": z.object({
