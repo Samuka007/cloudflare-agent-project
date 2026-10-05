@@ -54,6 +54,10 @@ export class Executor {
       cwd: resolved,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
+      // The tool shell inherits the daemon process env verbatim — this is the
+      // tool-visible PATH contract (#254): the closure wrapper guarantees the
+      // host-profile baseline (NixOS /run/current-system/sw/{bin,sbin}); a
+      // missing host tool is a host install, never added here.
       env: {
         ...process.env,
         DAEMON_EXEC_MARKER: "1",

@@ -154,6 +154,21 @@
           # baked by makeWrapper at install time — a placeholder "out" inside
           # a writeShellScript sub-derivation would resolve to the script's
           # own store path and drag a foreign output into the closure.
+          # #254: the tool-shell PATH baseline. systemd launches this unit with
+          # its compiled-in default PATH (dosfstools/util-linux/openssh/systemd
+          # only — measured on CT141, /proc/<pid>/environ), which excludes the
+          # NixOS user profile where the host's tools live (nix, git, bash,
+          # coreutils). The daemon's Executor and the embedded omp bash tool
+          # both inherit this process env verbatim, so agent tool shells saw
+          # no host tools at all. Decision (#254): the host user profile IS the
+          # agent's tool environment — whitelist it here, in the product
+          # wrapper, so every launch method (systemd-run, console, cron)
+          # inherits it. NOT bundled-in-closure (nix binds to the host store,
+          # ~300 MiB class bloat, wrong layer) and not unit-level env (would
+          # only cover one launch method). Entries that don't exist on a given
+          # host (non-NixOS Linux) are skipped by name lookup — harmless.
+          # Boundary: a tool missing from the host profile is a host install,
+          # never a closure addition.
           makeWrapper ${
             pkgs.writeShellScript "cap-daemon-inner" ''
               if [[ "''${1:-}" == "--version" ]]; then
@@ -164,7 +179,10 @@
               cd "$CAP_DAEMON_ROOT/share/cap-daemon/packages/daemon-service"
               exec ${bun}/bin/bun run src/client/index.ts "$@"
             ''
-          } $out/bin/cap-daemon --set CAP_DAEMON_ROOT "$out"
+          } $out/bin/cap-daemon --set CAP_DAEMON_ROOT "$out" \
+            --prefix PATH : /run/current-system/sw/bin \
+            --prefix PATH : /run/current-system/sw/sbin \
+            --prefix PATH : /nix/var/nix/profiles/default/bin
           makeWrapper ${
             pkgs.writeShellScript "cap-daemon-smoke-inner" ''
               cd "$CAP_DAEMON_ROOT/share/cap-daemon/packages/daemon-service"
