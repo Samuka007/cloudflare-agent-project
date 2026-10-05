@@ -8,6 +8,7 @@ import { registerSystemRoutes } from "./routes/system.js";
 import { registerProjectRoutes, registerThreadSectionRoutes } from "./routes/projects.js";
 import { registerHostRoutes } from "./routes/hosts.js";
 import { registerPluginRoutes } from "./routes/plugins.js";
+import { installShScript } from "./install-sh.js";
 import type { AppEnv, Env } from "./app-types.js";
 import type { Context, Next } from "hono";
 
@@ -21,6 +22,15 @@ export function createApp(env: Env): Hono<AppEnv> {
   app.onError(apiErrorHandler);
 
   app.get("/health", (ctx) => ctx.json({ ok: true }));
+
+  // Add-a-machine bootstrap (#258): public like bb's /install.sh — the
+  // one-time join code is the capability, curl carries no JWT.
+  app.get("/install.sh", (ctx) =>
+    ctx.body(installShScript(), 200, {
+      "content-type": "text/x-shellscript; charset=utf-8",
+      "cache-control": "no-store",
+    }),
+  );
 
   // Guarded surface: /api/v1/* + /ws (bb guards both, server.ts:490-499).
   app.use("/api/v1/*", async (ctx: Context, next: Next) => {
