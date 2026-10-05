@@ -26,6 +26,15 @@
   （toolCall/agentMessage）聚入 `childRows` 不再上顶层；委派行不注册 turn-pending——
   background 行跨 turn 存活，turn/completed 清扫不误封。回放一致：投影为 journal 的纯
   函数，全量重投逐字节相等。
+- **#277 验收 lane 接入关账门（#243 图收账）**：PM 循环固化「实现票交付→验收 lane 出证据→才可
+  merge/close」序列。`AP.closeout(number, "acceptance-lane"|"ci", { evidence, date?, deploymentVersion })`／
+  `AP.closeoutLedger`：仓内 append-only `.pm-closeouts.jsonl`（gitignored，`PM_CLOSEOUTS_PATH` 可改），
+  证据三件套（证据锚/日期/部署版本）不全硬拒（零写入，无证据不关票）；勾选权分面——staging 面=验收 lane
+  勾票面验收框，纯代码面=CI 勾，PM 抽验降为 wave 终检抽样（#246）不再作为关账输入。`AP.audit` 新增规则 7
+  （传 `closeouts: AP.closeoutLedger().events` 才武装）：closeoutNoEvidence——type:implementation/type:bug
+  票已交付而无 accepted 台账项=关账门被跳过，修复动作是 `AP.closeout` 回填（#266 首例）或重开票，无 mutation。
+  #239 首用范式模板化 `docs/agents/acceptance-lane.md`（grill 三靶 #245＋ephemeral 事实引用 #244＋租约登记
+  #240＋证据三件套）。L1：scripts/test/pm-autopilot.test.ts 关账台账／audit 规则 7 两组 11 例。
 - **#274 J1 子代理呈现地基——delegation 归父字段 `parentToolCallId`**：protocol 事件面五处
   增补可选 `parentToolCallId`（toolCall/agentMessage/reasoning item 与 `item/agentMessage/
   delta`、`item/reasoning/textDelta`）——bb 三家先例的 item 级挂链字段，子代理活动/CoT
