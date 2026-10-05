@@ -676,6 +676,9 @@ export async function locate(deps: LocateDeps, input: LocateInput): Promise<Loca
   const regions: LocateRegion[] = [];
   let packet: string | undefined;
   let groundNoneMatch: boolean | undefined;
+  // Packet assembly consumes the final relevance order; the report and the
+  // packet must never disagree about what "top" means.
+  let sorted: LocateComponent[] = [];
 
   const baseComponent = (e: JevElementRec, i: number): LocateComponent => ({
     ref: i + 1,
@@ -768,10 +771,11 @@ export async function locate(deps: LocateDeps, input: LocateInput): Promise<Loca
         });
       });
       regions.sort((a, b) => (b.pRelevant ?? -1) - (a.pRelevant ?? -1));
+      sorted = sortComponents(components);
       packet = buildPacket({
         snap,
         intent,
-        components,
+        components: sorted,
         regions,
         tokenBudget: input.tokenBudget ?? PACKET_DEFAULT_TOKEN_BUDGET,
       });
@@ -816,9 +820,9 @@ export async function locate(deps: LocateDeps, input: LocateInput): Promise<Loca
     }
   }
 
-  const sortedComponents = sortComponents(components);
+  sorted = sortComponents(components);
   const report: LocateReport = {
-    components: sortedComponents,
+    components: sorted,
     regions: [...regions].sort((a, b) => (b.pRelevant ?? -1) - (a.pRelevant ?? -1)),
     meta: {
       gen: snap.gen,

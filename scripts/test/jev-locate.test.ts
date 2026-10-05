@@ -499,6 +499,33 @@ describe("locate converge", () => {
     expect(out.packet).toContain("__JEV_PACKET_V1");
     expect(out.meta.questions).toBe(14);
   });
+
+  it("packet components block follows relevance order, not enumeration order", async () => {
+    const page = new FakePage(FAKE_EXTRACTION);
+    const judge = new CannedJudge({
+      class_1: () => ({ choice: "action-button", confidence: 0.9 }),
+      class_2: () => ({ choice: "composer", confidence: 0.9 }),
+      class_3: () => ({ choice: "send-button", confidence: 0.9 }),
+      rel_1: () => scoreAnswer(0),
+      rel_2: () => scoreAnswer(1),
+      rel_3: () => scoreAnswer(3), // ref 3 is the clear top
+      r0_rel: () => ({ noul: 0.1 }),
+      r0_anomaly: () => ({ noul: 0.1 }),
+      r1_rel: () => ({ noul: 0.1 }),
+      r1_anomaly: () => ({ noul: 0.1 }),
+      r2_rel: () => ({ noul: 0.1 }),
+      r2_anomaly: () => ({ noul: 0.1 }),
+      r3_rel: () => ({ noul: 0.1 }),
+      r3_anomaly: () => ({ noul: 0.1 }),
+    });
+    const report = await locate({ page, judge: judge.judge }, defaultLocateInput("converge"));
+    const packet = report.packet ?? "";
+    const at = (ref: number): number => packet.indexOf(`ref ${String(ref)} `);
+    expect(at(3)).toBeGreaterThan(-1);
+    expect(at(2)).toBeGreaterThan(-1);
+    expect(at(3)).toBeLessThan(at(2));
+    expect(at(2)).toBeLessThan(at(1));
+  });
 });
 
 // ---------------------------------------------------------------------------

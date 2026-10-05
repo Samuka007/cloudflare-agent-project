@@ -271,16 +271,17 @@ function argValues(flag: string): string[] {
   return out;
 }
 
+/** First value after `flag`, or undefined when the flag is absent. */
+function argValue(flag: string): string | undefined {
+  const at = process.argv.indexOf(flag);
+  return at >= 0 ? process.argv[at + 1] : undefined;
+}
+
 async function main(): Promise<void> {
   const urls = argValues("--url");
-  const http =
-    process.argv[process.argv.indexOf("--http") + 1] ??
-    process.env.JEV_CDP_HTTP ??
-    "http://172.27.0.1:9222";
-  const tabName =
-    process.argv[process.argv.indexOf("--tab") + 1] ?? process.env.JEV_LOCATE_TAB ?? "l242-locate";
-  const outAt = process.argv.indexOf("--out");
-  const outPath = outAt >= 0 ? process.argv[outAt + 1] : undefined;
+  const http = argValue("--http") ?? process.env.JEV_CDP_HTTP ?? "http://172.27.0.1:9222";
+  const tabName = argValue("--tab") ?? process.env.JEV_LOCATE_TAB ?? "l242-locate";
+  const outPath = argValue("--out");
   if (urls.length === 0) {
     console.log(
       JSON.stringify({ status: "blocked", blocked: ["--url <u> required (repeatable)"] }, null, 2),

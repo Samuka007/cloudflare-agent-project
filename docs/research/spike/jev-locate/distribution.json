@@ -1,0 +1,1616 @@
+{
+  "status": "completed",
+  "preregistered": {
+    "frozen": "2026-10-05 (before first live run; jev-locator-converger.md §6 分布实测块)",
+    "vocab": [
+      "stop-button",
+      "send-button",
+      "option-card",
+      "tool-card",
+      "action-button",
+      "composer",
+      "text-input",
+      "toggle",
+      "select",
+      "tab",
+      "link",
+      "menu-item",
+      "dialog",
+      "not-interactive"
+    ],
+    "vocabSize": 14,
+    "minClassQuestions": 30,
+    "bandRule": "high ≥ P67, mid [P33, P67), low < P33 (edges rounded to 2dp); degenerate if spread < 0.05 → fallback 0.85/0.6",
+    "relevanceNormalization": "score / 3",
+    "groundPooling": "ground confidences are page-relative; never pooled across pages (research §2.3)",
+    "zeroPostHocTuning": "band numbers are derived by the frozen rule only; no manual adjustment"
+  },
+  "measured": {
+    "pages": {
+      "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786": {
+        "elements": 60,
+        "classQuestions": 60
+      },
+      "https://cap-server-staging.dai-samuel.workers.dev/settings": {
+        "elements": 24,
+        "classQuestions": 24
+      },
+      "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7": {
+        "elements": 60,
+        "classQuestions": 60
+      }
+    },
+    "classQuestions": 144,
+    "class": {
+      "n": 144,
+      "min": 0.39,
+      "p10": 0.64,
+      "p25": 0.84,
+      "p50": 0.96,
+      "p75": 0.99,
+      "p90": 1,
+      "max": 1,
+      "histogram": {
+        "[0,0.5)": 7,
+        "[0.5,0.6)": 2,
+        "[0.6,0.7)": 10,
+        "[0.7,0.85)": 18,
+        "[0.85,1]": 107
+      }
+    },
+    "perClass": {
+      "action-button": {
+        "n": 73,
+        "medianPClass": 0.91
+      },
+      "link": {
+        "n": 50,
+        "medianPClass": 0.99
+      },
+      "not-interactive": {
+        "n": 10,
+        "medianPClass": 0.82
+      },
+      "tool-card": {
+        "n": 3,
+        "medianPClass": 0.96
+      },
+      "toggle": {
+        "n": 5,
+        "medianPClass": 1
+      },
+      "option-card": {
+        "n": 2,
+        "medianPClass": 0.46
+      },
+      "tab": {
+        "n": 1,
+        "medianPClass": 0.61
+      }
+    },
+    "relevance": {
+      "n": 144,
+      "min": 0.04,
+      "p10": 0.07,
+      "p25": 0.1,
+      "p50": 0.12,
+      "p75": 0.15,
+      "p90": 0.21,
+      "max": 0.68,
+      "histogram": {
+        "[0,0.5)": 142,
+        "[0.5,0.6)": 0,
+        "[0.6,0.7)": 2,
+        "[0.7,0.85)": 0,
+        "[0.85,1]": 0
+      }
+    },
+    "ground": {
+      "perPage": [
+        {
+          "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786#__jev_tab:l242-locate",
+          "winnerRef": 1,
+          "confidence": 0,
+          "orderStable": false,
+          "noneMatch": true
+        },
+        {
+          "page": "https://cap-server-staging.dai-samuel.workers.dev/settings#__jev_tab:l242-locate",
+          "winnerRef": 8,
+          "confidence": 0.02,
+          "orderStable": false,
+          "noneMatch": true
+        },
+        {
+          "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7#__jev_tab:l242-locate",
+          "winnerRef": 15,
+          "confidence": 0.01,
+          "orderStable": false,
+          "noneMatch": true
+        }
+      ],
+      "note": "page-relative; order-stability via in-request dual order"
+    },
+    "rttMs": {
+      "p50": 313,
+      "p95": 691,
+      "n": 6
+    },
+    "model": "jev-1.13.0"
+  },
+  "derivedBands": {
+    "informative": true,
+    "p33": 0.88,
+    "p67": 0.99,
+    "lowBelow": 0.88,
+    "highFrom": 0.99,
+    "note": "tertile bands from pooled per-item class confidence (P33/P67, frozen rule P5)"
+  },
+  "raw": {
+    "classRecords": [
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 58,
+        "role": "button",
+        "name": "Add to chat",
+        "class": "action-button",
+        "pClass": 0.94,
+        "relevanceScore": 0.77,
+        "pRelevant": 0.25666666666666665
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 34,
+        "role": "button",
+        "name": "Add to chat",
+        "class": "action-button",
+        "pClass": 0.96,
+        "relevanceScore": 0.76,
+        "pRelevant": 0.25333333333333335
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 52,
+        "role": "button",
+        "name": "Add to chat",
+        "class": "action-button",
+        "pClass": 0.98,
+        "relevanceScore": 0.75,
+        "pRelevant": 0.25
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 40,
+        "role": "button",
+        "name": "Add to chat",
+        "class": "action-button",
+        "pClass": 0.98,
+        "relevanceScore": 0.71,
+        "pRelevant": 0.23666666666666666
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 15,
+        "role": "link",
+        "name": "Open hi，host现在在线吗？",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.56,
+        "pRelevant": 0.18666666666666668
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 19,
+        "role": "link",
+        "name": "Open 用中文从1数到15，每个数字一行，不要调用任何工具",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.56,
+        "pRelevant": 0.18666666666666668
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 57,
+        "role": "button",
+        "name": "Copy message",
+        "class": "action-button",
+        "pClass": 1,
+        "relevanceScore": 0.56,
+        "pRelevant": 0.18666666666666668
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 49,
+        "role": "link",
+        "name": "Open hello? 你的工具列表是？",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.54,
+        "pRelevant": 0.18000000000000002
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 39,
+        "role": "button",
+        "name": "Copy message",
+        "class": "action-button",
+        "pClass": 1,
+        "relevanceScore": 0.51,
+        "pRelevant": 0.17
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 51,
+        "role": "button",
+        "name": "Copy message",
+        "class": "action-button",
+        "pClass": 1,
+        "relevanceScore": 0.51,
+        "pRelevant": 0.17
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 21,
+        "role": "link",
+        "name": "Open 从10倒数到1，每个数字一行",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.48,
+        "pRelevant": 0.16
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 17,
+        "role": "link",
+        "name": "Open 从10倒数到1，每个数字一行，不要调用任何工具",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.47,
+        "pRelevant": 0.15666666666666665
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 33,
+        "role": "button",
+        "name": "Copy message",
+        "class": "action-button",
+        "pClass": 1,
+        "relevanceScore": 0.4600000000000001,
+        "pRelevant": 0.15333333333333335
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 48,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.9,
+        "relevanceScore": 0.4600000000000001,
+        "pRelevant": 0.15333333333333335
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 22,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "link",
+        "pClass": 0.57,
+        "relevanceScore": 0.44999999999999996,
+        "pRelevant": 0.15
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 16,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.93,
+        "relevanceScore": 0.44,
+        "pRelevant": 0.14666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 9,
+        "role": "button",
+        "name": "Hide right panel (Ctrl + J)",
+        "class": "action-button",
+        "pClass": 0.94,
+        "relevanceScore": 0.43000000000000005,
+        "pRelevant": 0.14333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 10,
+        "role": "button",
+        "name": "New thread (Ctrl + Shift + O)",
+        "class": "action-button",
+        "pClass": 1,
+        "relevanceScore": 0.41999999999999993,
+        "pRelevant": 0.13999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 13,
+        "role": "button",
+        "name": "Extensions panel options",
+        "class": "action-button",
+        "pClass": 0.82,
+        "relevanceScore": 0.41999999999999993,
+        "pRelevant": 0.13999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 14,
+        "role": "button",
+        "name": "Threads",
+        "class": "not-interactive",
+        "pClass": 0.7,
+        "relevanceScore": 0.41999999999999993,
+        "pRelevant": 0.13999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 50,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.94,
+        "relevanceScore": 0.41,
+        "pRelevant": 0.13666666666666666
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 5,
+        "role": "button",
+        "name": "Show right panel (Ctrl + J)",
+        "class": "action-button",
+        "pClass": 0.88,
+        "relevanceScore": 0.4,
+        "pRelevant": 0.13333333333333333
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 4,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.86,
+        "relevanceScore": 0.4,
+        "pRelevant": 0.13333333333333333
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 6,
+        "role": "button",
+        "name": "Show thread info panel",
+        "class": "action-button",
+        "pClass": 0.99,
+        "relevanceScore": 0.39,
+        "pRelevant": 0.13
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 11,
+        "role": "button",
+        "name": "Search threads (Ctrl + K)",
+        "class": "action-button",
+        "pClass": 0.99,
+        "relevanceScore": 0.38,
+        "pRelevant": 0.12666666666666668
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 25,
+        "role": "link",
+        "name": "Open l239-stop-ask pending cancel",
+        "class": "link",
+        "pClass": 0.97,
+        "relevanceScore": 0.38,
+        "pRelevant": 0.12666666666666668
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 37,
+        "role": "link",
+        "name": "Open l239-stream streaming progressive sampling",
+        "class": "link",
+        "pClass": 0.99,
+        "relevanceScore": 0.37,
+        "pRelevant": 0.12333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 7,
+        "role": "button",
+        "name": "Open new tab (Ctrl + T)",
+        "class": "action-button",
+        "pClass": 0.98,
+        "relevanceScore": 0.37,
+        "pRelevant": 0.12333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 43,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.91,
+        "relevanceScore": 0.37,
+        "pRelevant": 0.12333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 46,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.86,
+        "relevanceScore": 0.36,
+        "pRelevant": 0.12
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 45,
+        "role": "link",
+        "name": "Open try spawn a subagent that reply OK only",
+        "class": "link",
+        "pClass": 0.94,
+        "relevanceScore": 0.35,
+        "pRelevant": 0.11666666666666665
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 18,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.92,
+        "relevanceScore": 0.35,
+        "pRelevant": 0.11666666666666665
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 42,
+        "role": "link",
+        "name": "Open try spawn a subagent that reply OK only",
+        "class": "link",
+        "pClass": 0.99,
+        "relevanceScore": 0.34,
+        "pRelevant": 0.11333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 29,
+        "role": "link",
+        "name": "Open l239-stop mid-generation cancel",
+        "class": "link",
+        "pClass": 0.97,
+        "relevanceScore": 0.34,
+        "pRelevant": 0.11333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 31,
+        "role": "link",
+        "name": "Open l238-working-indicator repro v2",
+        "class": "link",
+        "pClass": 0.99,
+        "relevanceScore": 0.33,
+        "pRelevant": 0.11
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 54,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.91,
+        "relevanceScore": 0.33,
+        "pRelevant": 0.11
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 38,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.9,
+        "relevanceScore": 0.33,
+        "pRelevant": 0.11
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 36,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.87,
+        "relevanceScore": 0.33,
+        "pRelevant": 0.11
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 1,
+        "role": "button",
+        "name": "Toggle sidebar (Ctrl + \\)",
+        "class": "action-button",
+        "pClass": 0.56,
+        "relevanceScore": 0.33,
+        "pRelevant": 0.11
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 47,
+        "role": "link",
+        "name": "Open hello",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.32,
+        "pRelevant": 0.10666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 35,
+        "role": "link",
+        "name": "Open l238-working-indicator repro",
+        "class": "link",
+        "pClass": 0.99,
+        "relevanceScore": 0.32,
+        "pRelevant": 0.10666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 20,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.9,
+        "relevanceScore": 0.32,
+        "pRelevant": 0.10666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 12,
+        "role": "button",
+        "name": "Extensions",
+        "class": "not-interactive",
+        "pClass": 0.79,
+        "relevanceScore": 0.32,
+        "pRelevant": 0.10666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 23,
+        "role": "link",
+        "name": "Open l239-task content reaches subagent",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.31,
+        "pRelevant": 0.10333333333333333
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 24,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.88,
+        "relevanceScore": 0.31,
+        "pRelevant": 0.10333333333333333
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 27,
+        "role": "link",
+        "name": "Open l239-ask dialog answer continue",
+        "class": "link",
+        "pClass": 0.93,
+        "relevanceScore": 0.3,
+        "pRelevant": 0.09999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 56,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.84,
+        "relevanceScore": 0.3,
+        "pRelevant": 0.09999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 41,
+        "role": "button",
+        "name": "Thread table of contents",
+        "class": "action-button",
+        "pClass": 0.75,
+        "relevanceScore": 0.3,
+        "pRelevant": 0.09999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 28,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.47,
+        "relevanceScore": 0.3,
+        "pRelevant": 0.09999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 30,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.43,
+        "relevanceScore": 0.3,
+        "pRelevant": 0.09999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 44,
+        "role": "button",
+        "name": "Ran tool eval { code: import sys, platform, dat…",
+        "class": "tool-card",
+        "pClass": 0.97,
+        "relevanceScore": 0.29,
+        "pRelevant": 0.09666666666666666
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 60,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.87,
+        "relevanceScore": 0.28,
+        "pRelevant": 0.09333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 55,
+        "role": "link",
+        "name": "Open Thread thr_87m8",
+        "class": "link",
+        "pClass": 0.95,
+        "relevanceScore": 0.27,
+        "pRelevant": 0.09000000000000001
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 32,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.88,
+        "relevanceScore": 0.27,
+        "pRelevant": 0.09000000000000001
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 26,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.61,
+        "relevanceScore": 0.27,
+        "pRelevant": 0.09000000000000001
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 59,
+        "role": "link",
+        "name": "Open Thread thr_vfkj",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.25,
+        "pRelevant": 0.08333333333333333
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 53,
+        "role": "link",
+        "name": "Open Thread thr_5nj2",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.22,
+        "pRelevant": 0.07333333333333333
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 3,
+        "role": "button",
+        "name": "Go forward",
+        "class": "not-interactive",
+        "pClass": 0.86,
+        "relevanceScore": 0.22,
+        "pRelevant": 0.07333333333333333
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 2,
+        "role": "button",
+        "name": "Go back",
+        "class": "not-interactive",
+        "pClass": 0.91,
+        "relevanceScore": 0.20999999999999996,
+        "pRelevant": 0.06999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786",
+        "ref": 8,
+        "role": "button",
+        "name": "Full Screen",
+        "class": "action-button",
+        "pClass": 0.92,
+        "relevanceScore": 0.2,
+        "pRelevant": 0.06666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 10,
+        "role": "switch",
+        "name": "Steer running threads on Enter",
+        "class": "toggle",
+        "pClass": 0.99,
+        "relevanceScore": 2.04,
+        "pRelevant": 0.68
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 8,
+        "role": "switch",
+        "name": "Markdown formatting in prompt box",
+        "class": "toggle",
+        "pClass": 1,
+        "relevanceScore": 2.01,
+        "pRelevant": 0.6699999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 9,
+        "role": "link",
+        "name": "Keyboard",
+        "class": "link",
+        "pClass": 0.82,
+        "relevanceScore": 1.38,
+        "pRelevant": 0.45999999999999996
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 5,
+        "role": "switch",
+        "name": "Navigate to threads on creation",
+        "class": "toggle",
+        "pClass": 1,
+        "relevanceScore": 0.78,
+        "pRelevant": 0.26
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 13,
+        "role": "switch",
+        "name": "Rewrite localhost links",
+        "class": "toggle",
+        "pClass": 1,
+        "relevanceScore": 0.73,
+        "pRelevant": 0.24333333333333332
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 7,
+        "role": "link",
+        "name": "Appearance",
+        "class": "link",
+        "pClass": 0.69,
+        "relevanceScore": 0.64,
+        "pRelevant": 0.21333333333333335
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 6,
+        "role": "link",
+        "name": "General",
+        "class": "link",
+        "pClass": 0.49,
+        "relevanceScore": 0.53,
+        "pRelevant": 0.17666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 23,
+        "role": "button",
+        "name": "Microphone",
+        "class": "action-button",
+        "pClass": 0.77,
+        "relevanceScore": 0.51,
+        "pRelevant": 0.17
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 1,
+        "role": "button",
+        "name": "Toggle sidebar (Ctrl + \\)",
+        "class": "action-button",
+        "pClass": 0.84,
+        "relevanceScore": 0.38,
+        "pRelevant": 0.12666666666666668
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 4,
+        "role": "link",
+        "name": "Back to app",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.37,
+        "pRelevant": 0.12333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 21,
+        "role": "button",
+        "name": "Load microphones",
+        "class": "action-button",
+        "pClass": 1,
+        "relevanceScore": 0.33,
+        "pRelevant": 0.11
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 11,
+        "role": "link",
+        "name": "Usage limits",
+        "class": "link",
+        "pClass": 0.98,
+        "relevanceScore": 0.32,
+        "pRelevant": 0.10666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 20,
+        "role": "link",
+        "name": "ClaudeClaude Code",
+        "class": "link",
+        "pClass": 0.98,
+        "relevanceScore": 0.29,
+        "pRelevant": 0.09666666666666666
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 16,
+        "role": "link",
+        "name": "Experiments",
+        "class": "link",
+        "pClass": 0.95,
+        "relevanceScore": 0.28,
+        "pRelevant": 0.09333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 19,
+        "role": "link",
+        "name": "OpenAICodex",
+        "class": "link",
+        "pClass": 0.98,
+        "relevanceScore": 0.26,
+        "pRelevant": 0.08666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 14,
+        "role": "link",
+        "name": "Updates",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.23000000000000004,
+        "pRelevant": 0.07666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 12,
+        "role": "link",
+        "name": "Machines",
+        "class": "link",
+        "pClass": 0.97,
+        "relevanceScore": 0.2,
+        "pRelevant": 0.06666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 18,
+        "role": "button",
+        "name": "Install bb CLI skills",
+        "class": "action-button",
+        "pClass": 1,
+        "relevanceScore": 0.19,
+        "pRelevant": 0.06333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 15,
+        "role": "link",
+        "name": "Plugin marketplaces",
+        "class": "link",
+        "pClass": 0.99,
+        "relevanceScore": 0.18,
+        "pRelevant": 0.06
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 22,
+        "role": "link",
+        "name": "Archived threads",
+        "class": "link",
+        "pClass": 0.99,
+        "relevanceScore": 0.16,
+        "pRelevant": 0.05333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 24,
+        "role": "switch",
+        "name": "Show unhandled provider events",
+        "class": "toggle",
+        "pClass": 1,
+        "relevanceScore": 0.15,
+        "pRelevant": 0.049999999999999996
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 3,
+        "role": "button",
+        "name": "Go forward",
+        "class": "not-interactive",
+        "pClass": 0.86,
+        "relevanceScore": 0.15,
+        "pRelevant": 0.049999999999999996
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 2,
+        "role": "button",
+        "name": "Go back",
+        "class": "not-interactive",
+        "pClass": 0.88,
+        "relevanceScore": 0.13,
+        "pRelevant": 0.043333333333333335
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings",
+        "ref": 17,
+        "role": "link",
+        "name": "Community",
+        "class": "link",
+        "pClass": 0.99,
+        "relevanceScore": 0.12,
+        "pRelevant": 0.04
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 15,
+        "role": "button",
+        "name": "Add to chat",
+        "class": "action-button",
+        "pClass": 0.98,
+        "relevanceScore": 0.76,
+        "pRelevant": 0.25333333333333335
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 59,
+        "role": "button",
+        "name": "Add to chat",
+        "class": "action-button",
+        "pClass": 0.94,
+        "relevanceScore": 0.75,
+        "pRelevant": 0.25
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 21,
+        "role": "button",
+        "name": "Add to chat",
+        "class": "action-button",
+        "pClass": 0.98,
+        "relevanceScore": 0.65,
+        "pRelevant": 0.21666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 60,
+        "role": "button",
+        "name": "命令行工具curl、wget、git、zip、unzip、htop 等常用基础工具1",
+        "class": "option-card",
+        "pClass": 0.99,
+        "relevanceScore": 0.63,
+        "pRelevant": 0.21
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 29,
+        "role": "button",
+        "name": "Add to chat",
+        "class": "action-button",
+        "pClass": 0.98,
+        "relevanceScore": 0.63,
+        "pRelevant": 0.21
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 18,
+        "role": "link",
+        "name": "Open hi，host现在在线吗？",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.6,
+        "pRelevant": 0.19999999999999998
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 58,
+        "role": "button",
+        "name": "Copy message",
+        "class": "action-button",
+        "pClass": 0.99,
+        "relevanceScore": 0.5,
+        "pRelevant": 0.16666666666666666
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 4,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.79,
+        "relevanceScore": 0.49,
+        "pRelevant": 0.16333333333333333
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 20,
+        "role": "button",
+        "name": "Copy message",
+        "class": "action-button",
+        "pClass": 1,
+        "relevanceScore": 0.48,
+        "pRelevant": 0.16
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 10,
+        "role": "button",
+        "name": "New thread (Ctrl + Shift + O)",
+        "class": "action-button",
+        "pClass": 1,
+        "relevanceScore": 0.47,
+        "pRelevant": 0.15666666666666665
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 14,
+        "role": "button",
+        "name": "Copy message",
+        "class": "action-button",
+        "pClass": 0.98,
+        "relevanceScore": 0.47,
+        "pRelevant": 0.15666666666666665
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 5,
+        "role": "button",
+        "name": "Show right panel (Ctrl + J)",
+        "class": "action-button",
+        "pClass": 0.96,
+        "relevanceScore": 0.4600000000000001,
+        "pRelevant": 0.15333333333333335
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 54,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.85,
+        "relevanceScore": 0.4600000000000001,
+        "pRelevant": 0.15333333333333335
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 52,
+        "role": "button",
+        "name": "软件选择",
+        "class": "option-card",
+        "pClass": 0.46,
+        "relevanceScore": 0.4600000000000001,
+        "pRelevant": 0.15333333333333335
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 6,
+        "role": "button",
+        "name": "Show thread info panel",
+        "class": "action-button",
+        "pClass": 0.99,
+        "relevanceScore": 0.44999999999999996,
+        "pRelevant": 0.15
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 22,
+        "role": "link",
+        "name": "Open 从10倒数到1，每个数字一行，不要调用任何工具",
+        "class": "link",
+        "pClass": 0.99,
+        "relevanceScore": 0.44999999999999996,
+        "pRelevant": 0.15
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 53,
+        "role": "button",
+        "name": "安装方式",
+        "class": "tab",
+        "pClass": 0.61,
+        "relevanceScore": 0.44,
+        "pRelevant": 0.14666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 26,
+        "role": "link",
+        "name": "Open 从10倒数到1，每个数字一行",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.43000000000000005,
+        "pRelevant": 0.14333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 9,
+        "role": "button",
+        "name": "Hide right panel (Ctrl + J)",
+        "class": "action-button",
+        "pClass": 0.98,
+        "relevanceScore": 0.43000000000000005,
+        "pRelevant": 0.14333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 17,
+        "role": "button",
+        "name": "Ran tool bash { command: echo ok; date -u, i: 检…",
+        "class": "tool-card",
+        "pClass": 0.96,
+        "relevanceScore": 0.43000000000000005,
+        "pRelevant": 0.14333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 19,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.84,
+        "relevanceScore": 0.43000000000000005,
+        "pRelevant": 0.14333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 24,
+        "role": "link",
+        "name": "Open 用中文从1数到15，每个数字一行，不要调用任何工具",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.41999999999999993,
+        "pRelevant": 0.13999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 28,
+        "role": "button",
+        "name": "Copy message",
+        "class": "action-button",
+        "pClass": 0.99,
+        "relevanceScore": 0.41,
+        "pRelevant": 0.13666666666666666
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 27,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.91,
+        "relevanceScore": 0.4,
+        "pRelevant": 0.13333333333333333
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 7,
+        "role": "button",
+        "name": "Open new tab (Ctrl + T)",
+        "class": "action-button",
+        "pClass": 1,
+        "relevanceScore": 0.39,
+        "pRelevant": 0.13
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 51,
+        "role": "link",
+        "name": "Open hello? 你的工具列表是？",
+        "class": "link",
+        "pClass": 0.99,
+        "relevanceScore": 0.39,
+        "pRelevant": 0.13
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 35,
+        "role": "link",
+        "name": "Open l239-ask dialog answer continue",
+        "class": "link",
+        "pClass": 0.98,
+        "relevanceScore": 0.39,
+        "pRelevant": 0.13
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 1,
+        "role": "button",
+        "name": "Toggle sidebar (Ctrl + \\)",
+        "class": "action-button",
+        "pClass": 0.86,
+        "relevanceScore": 0.38,
+        "pRelevant": 0.12666666666666668
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 32,
+        "role": "button",
+        "name": "Ran 4 tools 2 errors",
+        "class": "tool-card",
+        "pClass": 0.86,
+        "relevanceScore": 0.38,
+        "pRelevant": 0.12666666666666668
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 23,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.82,
+        "relevanceScore": 0.35,
+        "pRelevant": 0.11666666666666665
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 13,
+        "role": "button",
+        "name": "Extensions panel options",
+        "class": "action-button",
+        "pClass": 0.78,
+        "relevanceScore": 0.35,
+        "pRelevant": 0.11666666666666665
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 25,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.39,
+        "relevanceScore": 0.35,
+        "pRelevant": 0.11666666666666665
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 33,
+        "role": "link",
+        "name": "Open l239-stop-ask pending cancel",
+        "class": "link",
+        "pClass": 0.98,
+        "relevanceScore": 0.34,
+        "pRelevant": 0.11333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 11,
+        "role": "button",
+        "name": "Search threads (Ctrl + K)",
+        "class": "action-button",
+        "pClass": 1,
+        "relevanceScore": 0.33,
+        "pRelevant": 0.11
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 30,
+        "role": "link",
+        "name": "Open l239-task content reaches subagent",
+        "class": "link",
+        "pClass": 0.99,
+        "relevanceScore": 0.33,
+        "pRelevant": 0.11
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 56,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.69,
+        "relevanceScore": 0.33,
+        "pRelevant": 0.11
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 49,
+        "role": "link",
+        "name": "Open hello",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.32,
+        "pRelevant": 0.10666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 16,
+        "role": "button",
+        "name": "Threads",
+        "class": "not-interactive",
+        "pClass": 0.71,
+        "relevanceScore": 0.32,
+        "pRelevant": 0.10666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 31,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.64,
+        "relevanceScore": 0.31,
+        "pRelevant": 0.10333333333333333
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 55,
+        "role": "link",
+        "name": "Open Thread thr_5nj2",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.3,
+        "pRelevant": 0.09999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 43,
+        "role": "link",
+        "name": "Open l239-stream streaming progressive sampling",
+        "class": "link",
+        "pClass": 0.99,
+        "relevanceScore": 0.3,
+        "pRelevant": 0.09999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 41,
+        "role": "link",
+        "name": "Open l238-working-indicator repro",
+        "class": "link",
+        "pClass": 0.96,
+        "relevanceScore": 0.3,
+        "pRelevant": 0.09999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 12,
+        "role": "button",
+        "name": "Extensions",
+        "class": "not-interactive",
+        "pClass": 0.85,
+        "relevanceScore": 0.3,
+        "pRelevant": 0.09999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 57,
+        "role": "link",
+        "name": "Open Thread thr_87m8",
+        "class": "link",
+        "pClass": 0.99,
+        "relevanceScore": 0.29,
+        "pRelevant": 0.09666666666666666
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 48,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.83,
+        "relevanceScore": 0.29,
+        "pRelevant": 0.09666666666666666
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 34,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.76,
+        "relevanceScore": 0.29,
+        "pRelevant": 0.09666666666666666
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 50,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "link",
+        "pClass": 0.64,
+        "relevanceScore": 0.29,
+        "pRelevant": 0.09666666666666666
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 37,
+        "role": "link",
+        "name": "Open l239-stop mid-generation cancel",
+        "class": "link",
+        "pClass": 0.92,
+        "relevanceScore": 0.28,
+        "pRelevant": 0.09333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 36,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.42,
+        "relevanceScore": 0.28,
+        "pRelevant": 0.09333333333333334
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 46,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.65,
+        "relevanceScore": 0.27,
+        "pRelevant": 0.09000000000000001
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 44,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.42,
+        "relevanceScore": 0.27,
+        "pRelevant": 0.09000000000000001
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 45,
+        "role": "link",
+        "name": "Open try spawn a subagent that reply OK only",
+        "class": "link",
+        "pClass": 1,
+        "relevanceScore": 0.26,
+        "pRelevant": 0.08666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 3,
+        "role": "button",
+        "name": "Go forward",
+        "class": "not-interactive",
+        "pClass": 0.74,
+        "relevanceScore": 0.26,
+        "pRelevant": 0.08666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 47,
+        "role": "link",
+        "name": "Open try spawn a subagent that reply OK only",
+        "class": "link",
+        "pClass": 0.82,
+        "relevanceScore": 0.25,
+        "pRelevant": 0.08333333333333333
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 42,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.62,
+        "relevanceScore": 0.25,
+        "pRelevant": 0.08333333333333333
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 38,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.63,
+        "relevanceScore": 0.24,
+        "pRelevant": 0.08
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 2,
+        "role": "button",
+        "name": "Go back",
+        "class": "not-interactive",
+        "pClass": 0.82,
+        "relevanceScore": 0.23000000000000004,
+        "pRelevant": 0.07666666666666667
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 39,
+        "role": "link",
+        "name": "Open l238-working-indicator repro v2",
+        "class": "link",
+        "pClass": 0.99,
+        "relevanceScore": 0.20999999999999996,
+        "pRelevant": 0.06999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 40,
+        "role": "button",
+        "name": "Thread actions",
+        "class": "action-button",
+        "pClass": 0.65,
+        "relevanceScore": 0.20999999999999996,
+        "pRelevant": 0.06999999999999999
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7",
+        "ref": 8,
+        "role": "button",
+        "name": "Full Screen",
+        "class": "action-button",
+        "pClass": 0.96,
+        "relevanceScore": 0.19,
+        "pRelevant": 0.06333333333333334
+      }
+    ],
+    "groundRecords": [
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_jk45qe4786#__jev_tab:l242-locate",
+        "winnerRef": 1,
+        "confidence": 0,
+        "orderStable": false,
+        "noneMatch": true
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/settings#__jev_tab:l242-locate",
+        "winnerRef": 8,
+        "confidence": 0.02,
+        "orderStable": false,
+        "noneMatch": true
+      },
+      {
+        "page": "https://cap-server-staging.dai-samuel.workers.dev/threads/thr_m2grbmbqh7#__jev_tab:l242-locate",
+        "winnerRef": 15,
+        "confidence": 0.01,
+        "orderStable": false,
+        "noneMatch": true
+      }
+    ]
+  }
+}
