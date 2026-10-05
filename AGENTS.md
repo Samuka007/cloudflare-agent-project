@@ -1,7 +1,7 @@
 # Codebase Guidelines
 
 <current_wave>
-当前 wave（W4 完全产品化，伞 #260）：新用户可自助上手（host onboarding #258）、可自助配置（provider 面 #255）、看得见 agent 思考与委派（CoT #257+子代理呈现 #256）、工具环境边界可理解（nix #254）、workspace/path 语义成型（#259）。验收体系组装（图 #243 组件已齐）为横切基建。W3 已收官（终检报告 #186 comment、milestone 8 关）。
+当前 wave（W4 已收官：milestone 11 关，终检报告 #260 comment，签收票 #300 待用户）。W4 交付：host 接入门（#258）、provider 只读投影面（#266）、CoT 通路（#257）、子代理委派行+活动流回父（#274/#275/#276）、workspace 四票（#288-#291）、部署迁移链自愈（#295）、PM 工具插件化（#270）与验收关账门（#277）。W5 方向待用户定（候选：CoT 界面呈现移植、web_search 凭据引擎、生产化硬化）。
 </current_wave>
 
 ## Engineering Doctrine（工程铁律——先读这个）
