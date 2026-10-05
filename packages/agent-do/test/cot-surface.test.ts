@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { abortAllDurableObjects } from "cloudflare:test";
+import { runInDurableObject } from "cloudflare:test";
 import { parseThreadEvent } from "@cap/protocol";
 import { createRig, resetRuntime, typeList } from "./helpers.js";
 import { projectToUxEvents } from "../src/ux-projection.js";
-import type { AnyAgentEvent } from "../src/fsm-events.js";
+import { blobRefSchema, type AnyAgentEvent } from "../src/fsm-events.js";
 
 /**
  * #257 CoT surface end-to-end (agent-DO half): provider thinking chunks →
@@ -37,11 +37,7 @@ describe("#257 — thinking journal rows", () => {
     expect(thinkingRow?.data).toMatchObject({
       turnId: sent.turnId,
       text: "ponder more",
-      modelCallId: expect.any(Number),
     });
-    for (const row of thinkingRows) {
-      expect(row.data).toMatchObject({ turnId: sent.turnId, modelCallId: expect.any(Number) });
-    }
 
     // Answer accounting untouched: call_completed.text carries ONLY answer text.
     const completed = events.filter((event) => event.type === "model.call_completed");
@@ -63,40 +59,49 @@ describe("#257 — thinking journal rows", () => {
   });
 
   test("oversize reasoning offloads to R2 under the same blob field as model.delta", async () => {
-    const bigChunk = "x".repeat(4096);
+    // One 150KB thinking delta exceeds the constructor-time r2BypassBytes
+    // (default 100KB — configureWatchdog cannot retune the EventLog), so the
+    // stored row carries a BlobRef in the SAME `text` field model.delta uses.
+    // The fetch view resolves it transparently (§8.2: journal is authority).
     const rig = await createRig({
-      turns: [{ thinkingDeltas: [bigChunk, bigChunk], deltas: ["ok"] }],
-      // Flush at the chunk boundary (4096 bytes: chunk 1 crosses the
-      // threshold mid-stream) with the R2 bypass BELOW the flushed prefix —
-      // the second chunk's 4096 bytes land past 4096 accumulated, so at
-      // least one row carries an oversize payload. Probe-verified shape:
-      // row(5)=4096-byte string, row(6)=4096-byte string, both before the
-      // terminal; a bypass at 2048 makes any ≥2049-byte row blob-offload.
-      watchdog: { deltaFlushBytes: 4096, deltaFlushMs: 1, r2BypassBytes: 2048 },
+      turns: [{ thinkingDeltas: ["x".repeat(150 * 1024)], deltas: ["ok"] }],
     });
-    // constructor env is absent in the rig: set the flush thresholds directly.
-    await rig.stub.configureWatchdog({ deltaFlushBytes: 4096, deltaFlushMs: 1, r2BypassBytes: 2048 });
     const sent = await rig.stub.sendMessage({
       clientRequestId: "cot-blob",
       content: [{ type: "text", text: "hi" }],
       mode: "auto",
     });
     const events = await rig.waitTurnComplete(sent.turnId);
-    // With a 1ms flush timer the 150KB row lands mid-call just like the
-    // stream-hub R2 delta test.
-    const rows = events.filter((event) => event.type === "model.thinking");
-    expect(rows.length).toBeGreaterThanOrEqual(2);
-    const withBlob = rows.find(
-      (event) => event.type === "model.thinking" && typeof event.data.text !== "string",
-    );
-    expect(withBlob).toBeDefined();
-    if (
-      withBlob !== undefined &&
-      withBlob.type === "model.thinking" &&
-      typeof withBlob.data.text !== "string"
-    ) {
-      expect(withBlob.data.text.__blob__.sha256).toMatch(/^[0-9a-f]{64}$/);
+
+    // deltaFlushBytes (2KB) trips mid-stream: exactly one flushed row, and
+    // the read-back carries the full 150KB reasoning prefix.
+    const thinkingRows = events.filter((event) => event.type === "model.thinking");
+    expect(thinkingRows).toHaveLength(1);
+    const fetched = thinkingRows[0]?.data.text;
+    if (typeof fetched !== "string") {
+      expect.unreachable("fetch view must resolve the blob back to a string");
     }
+    expect(fetched).toHaveLength(150 * 1024);
+
+    // Stored face: the raw journal row keeps the BlobRef (64-hex sha256,
+    // full payload size) — pattern from invariants.test.ts liveState.
+    const raw = await runInDurableObject(rig.stub, (_instance, state) =>
+      state.storage.sql
+        .exec<{ data: string }>(
+          "SELECT data FROM events WHERE thread_id = ? AND type = 'model.thinking'",
+          rig.threadId,
+        )
+        .toArray(),
+    );
+    expect(raw).toHaveLength(1);
+    const parsedRow: unknown = JSON.parse(raw[0]?.data ?? "{}");
+    const storedText =
+      parsedRow !== null && typeof parsedRow === "object" && "text" in parsedRow
+        ? parsedRow.text
+        : undefined;
+    const blobRef = blobRefSchema.parse(storedText);
+    expect(blobRef.__blob__.size).toBe(150 * 1024);
+    expect(blobRef.__blob__.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 
@@ -113,9 +118,7 @@ describe("#257 — ux projection: item/reasoning/textDelta", () => {
     const events: AnyAgentEvent[] = await rig.waitTurnComplete(sent.turnId);
     const thinkingRows = events.filter((event) => event.type === "model.thinking");
     // Blob-offloaded rows contribute nothing to the ux face (raw-only).
-    const inlineRows = thinkingRows.filter(
-      (event) => event.type === "model.thinking" && typeof event.data.text === "string",
-    );
+    const inlineRows = thinkingRows.filter((event) => typeof event.data.text === "string");
     const projected = projectToUxEvents(events).map(parseThreadEvent);
     const reasoning = projected.filter(
       (event) => event.type === "item/reasoning/textDelta",
@@ -124,11 +127,8 @@ describe("#257 — ux projection: item/reasoning/textDelta", () => {
       inlineRows.map((event) => event.seq),
     );
     for (const event of reasoning) {
-      if (event.type !== "item/reasoning/textDelta") continue;
-      expect(event.data).toMatchObject({
-        turnId: sent.turnId,
-        itemId: expect.stringMatching(/^itm-rs-.*:\d+$/),
-      });
+      expect(event.data.turnId).toBe(sent.turnId);
+      expect(event.data.itemId).toMatch(/^itm-rs-.*:\d+$/);
     }
     // The ux view never invents seqs the raw log cannot replay (I3).
     const journalSeqs = new Set(events.map((event) => event.seq));
@@ -147,14 +147,17 @@ describe("#257 — ux projection: item/reasoning/textDelta", () => {
       mode: "auto",
     });
     const events = await rig.waitTurnComplete(sent.turnId);
+    // Flush discipline: the scripted "hmm" (3B) trips neither threshold, so
+    // the thinking row flushes at the call boundary — after the answer delta
+    // (first_token stays answer-bound), before call_completed.
     expect(typeList(events)).toEqual([
       "thread.created",
       "turn.input",
       "model.call_started",
       "turn.phase",
-      "model.thinking",
       "turn.phase",
       "model.delta",
+      "model.thinking",
       "model.call_completed",
       "turn.completed",
       "turn.phase",

@@ -1834,7 +1834,6 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       const combined = AbortSignal.any([signal, callAbort.signal]);
       let sawFirstByte = false;
       let text = "";
-      let thinking = "";
       let pendingDelta = "";
       let pendingDeltaBytes = 0;
       let pendingThinking = "";
@@ -1874,7 +1873,6 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           const chunk = pendingThinking;
           pendingThinking = "";
           pendingThinkingBytes = 0;
-          thinking += chunk;
           await self.appendEvent("model.thinking", {
             turnId,
             modelCallId,

@@ -301,7 +301,7 @@ export function anthropicRequestBody(
   // reasoning must never coexist (ToC risk). An explicit
   // `request.forceReasoningOff` keeps the unconditional pin for callers that
   // decide the pairing upstream of the tool surface.
-  const thinking =
+  const thinking: ThinkingConfig =
     finalNames.includes("think") || request.forceReasoningOff === true
       ? { type: "disabled" }
       : (options.thinking ?? { type: "disabled" });

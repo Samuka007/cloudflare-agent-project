@@ -7,6 +7,19 @@
 
 ### Added
 
+- **#257 CoT thinking 通路**：provider 原生 reasoning（Anthropic `thinking_delta`）端到端
+  journal 面。relay 侧 thinking_delta 独立 chunk（`relay/anthropic-provider.ts`）；agent DO
+  以 `model.thinking` 行落盘——与 `model.delta` 同 deltaFlushBytes/deltaFlushMs 刷盘纪律
+  与 call guard（FSM 折叠零状态，answer 记账 `deltaChars` 不含 reasoning 字节），oversize
+  行与 `model.delta` 同 `text` 字段 R2 blob-offload（读面透明解析，fetch 权威不变）；ux
+  projection 1:1 投 `item/reasoning/textDelta`（`itm-rs-<turnId>:<callSeq>` item id，blob
+  行/空行不出 UX 面）；server-worker timeline `activeThinking` 折叠供 SPA Thinking 指示器
+  （test/compat/active-thinking.test.ts）；子代理 history:// 渲染 `thinking:` 转写行。
+  **#150 配对语义修正**：forceReasoningOff 钉死从闸状态移到 wire——`anthropicRequestBody`
+  在 RENDERED 工具面（experimentalGates ∧ supportsExternalThinking 过滤后的 finalNames）
+  实际含 `think` 时才 pin `thinking:{type:"disabled"}`；DO 不知 relay model id，不再从闸
+  推导（旧闸推导对 glm-5.3 类原生推理模型误杀原生 CoT——闸开≠`think` 上 wire）。显式
+  `request.forceReasoningOff` 保留给上游决定配对的调用方。
 - **#242 jev-locate 定位器原语 + 枚举召回审计 + 预登记置信分布**（research
   jev-locator-converger.md §6 单票落地）。`scripts/accept/jev-locate.ts`：
   `locate(deps,input)→LocateReport` 单调用定位器——ground（形状 G，双序复验同请求）/
