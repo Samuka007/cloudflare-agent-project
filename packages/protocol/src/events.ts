@@ -130,9 +130,10 @@ export const toolCallItemSchema = z.object({
 /**
  * bb `reasoning` item (#257 CoT surface): provider-native chain of thought.
  * `summary` stays the bb shape ([] for glm-5.3 — no summaries on the wire);
- * `content` accumulates the reasoning text. Root-projection-only ephemeral
- * state — the pinned SPA renders CoT through the timeline response's
- * `activeThinking`, never as a standalone row.
+ * `content` accumulates the reasoning text. #303 (upstream #3250 port, J6
+ * 档 2): completed items materialize as expandable reasoning operation rows
+ * ("Thought…" prose rows keyed by the canonical `reasoningId` = the item id);
+ * the live stream renders through the timeline response's `activeThinking`.
  */
 export const reasoningItemSchema = z.object({
   type: z.literal("reasoning"),
@@ -266,7 +267,9 @@ export const threadEventDataSchemas = {
    * the journal's `model.thinking` rows (bb event name `item/reasoning/
    * textDelta`; M0 folds summary into the omitted bb field). `itemId` is the
    * reasoning lifecycle `itm-rs-<turnId>:<modelCallId>` — the timeline
-   * service folds these into the response's `activeThinking` tail field.
+   * service folds these into the response's `activeThinking` tail field, and
+   * since #303 (upstream #3250 port) the completion materializes the same id
+   * as the canonical `reasoningId` of the persistent Thought row.
    */
   "item/reasoning/textDelta": z.object({
     turnId: turnIdField,

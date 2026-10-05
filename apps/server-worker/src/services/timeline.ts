@@ -202,6 +202,66 @@ function delegationTargetFor(
 
 // --- activeThinking (#257 CoT surface) ------------------------------------------------
 
+/**
+ * bb durationToCompactString (thread-view format-helpers.ts:41-68) port: the
+ * compact duration the reasoning row title carries. Sub-second renders as
+ * milliseconds; minutes/hours split into joined h/m/s parts.
+ */
+export function durationToCompactString(durationMs: number): string {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return "0s";
+  if (durationMs < 1_000) return `${Math.round(durationMs)}ms`;
+  const totalSeconds = Math.round(durationMs / 1_000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts: string[] = [];
+  if (hours > 0) {
+    parts.push(`${hours}h`);
+  }
+  if (minutes > 0) {
+    parts.push(`${minutes}m`);
+  }
+  if (seconds > 0) {
+    parts.push(`${seconds}s`);
+  }
+  return parts.join(" ");
+}
+
+// --- reasoning operation rows (#303 J6 档 2, bb #3250) --------------------------------
+
+/**
+ * bb MAX_REASONING_DETAIL_CHARS (thread-view reasoning-lifecycle-projection.
+ * ts) port: past 32k the row detail truncates with a tail-counted suffix —
+ * the full text stays on the ux/raw event faces.
+ */
+const MAX_REASONING_DETAIL_CHARS = 32_000;
+const REASONING_DETAIL_TRUNCATION_SUFFIX_TAIL = " more characters truncated]";
+
+function truncateReasoningDetail(detail: string): string {
+  if (detail.length <= MAX_REASONING_DETAIL_CHARS) {
+    return detail;
+  }
+  const dropped = detail.length - MAX_REASONING_DETAIL_CHARS;
+  return `${detail.slice(0, MAX_REASONING_DETAIL_CHARS)}\n…[${dropped.toLocaleString("en-US")}${REASONING_DETAIL_TRUNCATION_SUFFIX_TAIL}`;
+}
+
+/**
+ * bb ActiveThinkingLifecycle (reasoning-lifecycle-projection.ts:19-28) M0
+ * shape: one open reasoning stream per ux itemId. `#3250` materializes it as
+ * an operation row only at completion — the live text keeps flowing through
+ * `activeThinking`, so no pending reasoning row ever doubles the indicator.
+ */
+interface ReasoningLifecycle {
+  itemId: string;
+  turnId: string | null;
+  parentCallId?: string;
+  text: string;
+  startedAt: number;
+  firstSeq: number;
+  lastSeq: number;
+}
+
 interface ThinkingLifecycle {
   id: string;
   text: string;
@@ -217,11 +277,12 @@ interface ThinkingLifecycle {
  * reasoning item (`itm-rs-<turnId>:<modelCallId>`, folded from the ux
  * projection of the journal's `model.thinking` rows); `item/reasoning/
  * textDelta` appends; the same call's answer delta closes it — bb closes at
- * the reasoning item's completion, and the M0 journal carries no separate
- * reasoning-completion row (the answer delta is the call's own
- * thinking→answering boundary). The latest lifecycle by last delta seq wins
- * (bb isNewerActiveThinkingLifecycle seq tie-break); everything drops when
- * the thread leaves `active` (bb threadStatus gate).
+ * the reasoning item's completion — the journal has carried the separate
+ * completion row since #276, and since #303 (upstream #3250 port) the same
+ * completion materializes the persistent Thought row (see the reasoning
+ * projection below). The latest lifecycle by last delta seq wins (bb
+ * isNewerActiveThinkingLifecycle seq tie-break); everything drops when the
+ * thread leaves `active` (bb threadStatus gate).
  */
 export function buildActiveThinking(
   events: readonly UxThreadEvent[],
@@ -317,6 +378,10 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
   const rows = new Map<string, RowDraft>();
   const assistantByItemId = new Map<string, string>();
   const turnPendingRowIds = new Map<string, Set<string>>();
+  // #303 (bb #3250): open reasoning streams; materialized into operation rows
+  // at the reasoning completion, sealed as interrupted at turn completion.
+  const reasoningLifecycles = new Map<string, ReasoningLifecycle>();
+  const reasoningRowIds = new Set<string>();
 
   const registerTurnRow = (turnId: string, rowId: string): void => {
     let ids = turnPendingRowIds.get(turnId);
@@ -367,6 +432,51 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
       registerTurnRow(turnId, rowId);
     }
     return rowId;
+  };
+
+  /**
+   * bb finalizeReasoningLifecycleByKey (reasoning-lifecycle-projection.ts:
+   * 196-235): the completed Thought row — "Thought for Ns" title, prose
+   * detail, canonical `reasoningId` (the ux itemId, which is also the live
+   * `activeThinking` id). Empty text produces no row (bb returns null).
+   */
+  const materializeReasoningRow = (
+    lifecycle: ReasoningLifecycle,
+    status: "completed" | "interrupted",
+    event: UxThreadEvent,
+    finalText?: string,
+  ): void => {
+    if (reasoningRowIds.has(lifecycle.itemId)) {
+      return;
+    }
+    reasoningRowIds.add(lifecycle.itemId);
+    reasoningLifecycles.delete(lifecycle.itemId);
+    const text = (finalText ?? lifecycle.text).trim();
+    if (text.length === 0) {
+      return;
+    }
+    const rowId = `reasoning:${lifecycle.itemId}`;
+    rows.set(rowId, {
+      kind: "system",
+      systemKind: "operation",
+      operationKind: "reasoning",
+      id: rowId,
+      reasoningId: lifecycle.itemId,
+      threadId: event.threadId,
+      turnId: lifecycle.turnId,
+      sourceSeqStart: lifecycle.firstSeq,
+      sourceSeqEnd: event.seq,
+      startedAt: lifecycle.startedAt,
+      createdAt: event.createdAt,
+      title: `Thought for ${durationToCompactString(event.createdAt - lifecycle.startedAt)}`,
+      detail: truncateReasoningDetail(text),
+      status,
+      completedAt: event.createdAt,
+      __order: event.seq,
+      ...(lifecycle.parentCallId !== undefined
+        ? { __parentCallId: lifecycle.parentCallId }
+        : {}),
+    });
   };
 
   for (const event of events) {
@@ -520,12 +630,45 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
         }
         break;
       }
+      case "item/reasoning/textDelta": {
+        const parsed = threadEventDataSchemas["item/reasoning/textDelta"].safeParse(raw);
+        if (!parsed.success) {
+          break;
+        }
+        const { itemId, delta, parentToolCallId } = parsed.data;
+        const existing = reasoningLifecycles.get(itemId);
+        reasoningLifecycles.set(itemId, {
+          itemId,
+          turnId: pickTurnId(raw),
+          parentCallId: existing?.parentCallId ?? parentToolCallId,
+          text: (existing?.text ?? "") + delta,
+          startedAt: existing?.startedAt ?? event.createdAt,
+          firstSeq: existing?.firstSeq ?? event.seq,
+          lastSeq: event.seq,
+        });
+        break;
+      }
       case "item/completed": {
         const parsed = threadEventDataSchemas["item/completed"].safeParse(raw);
         if (!parsed.success) {
           break;
         }
         const item = parsed.data.item;
+        if (item.type === "reasoning") {
+          // #303: the call's CoT terminal (bb item/completed reasoning) —
+          // the accumulated text materializes as the expandable Thought row.
+          const lifecycle = reasoningLifecycles.get(item.id);
+          if (lifecycle === undefined) {
+            break;
+          }
+          materializeReasoningRow(
+            lifecycle,
+            "completed",
+            event,
+            item.content.join(""),
+          );
+          break;
+        }
         const assistantRowId =
           item.type === "agentMessage"
             ? ensureAssistantRow(
@@ -568,6 +711,17 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
         const parsed = threadEventDataSchemas["turn/completed"].safeParse(raw);
         if (!parsed.success) {
           break;
+        }
+        // #303 (bb finalizeOpenReasoningLifecyclesForTurn): a turn that ends
+        // with reasoning still open (interrupted call) seals the row as
+        // interrupted — the text is preserved for review, matching bb's
+        // terminal-record behavior. Runs before the pending-row sweep's
+        // early return: a turn without open tool rows still seals thoughts.
+        for (const lifecycle of [...reasoningLifecycles.values()]) {
+          if (lifecycle.turnId !== turnId) {
+            continue;
+          }
+          materializeReasoningRow(lifecycle, "interrupted", event);
         }
         const pendingIds = turnId ? turnPendingRowIds.get(turnId) : undefined;
         if (!pendingIds) {

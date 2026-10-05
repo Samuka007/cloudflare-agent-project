@@ -120,6 +120,7 @@ export type TimelineConversationRow = z.infer<typeof timelineConversationRowSche
 
 export const timelineSystemOperationKindValues = [
   "generic",
+  "reasoning",
   "compaction",
   "context-clear",
   "parent-change",
@@ -133,6 +134,7 @@ export const timelineSystemOperationKindSchema = z.enum(timelineSystemOperationK
 export type TimelineSystemOperationKind = z.infer<typeof timelineSystemOperationKindSchema>;
 const timelineGenericSystemOperationKindSchema = z.enum([
   "generic",
+  "reasoning",
   "compaction",
   "context-clear",
   "thread-provisioning",
@@ -169,6 +171,14 @@ export type TimelineNonOperationSystemRow = z.infer<typeof timelineNonOperationS
 export const timelineGenericOperationSystemRowSchema = timelineSystemRowBaseSchema.extend({
   systemKind: z.literal("operation"),
   operationKind: timelineGenericSystemOperationKindSchema,
+  /**
+   * #3250 port (J6 档 2): canonical reasoning disclosure identity — the ux
+   * itemId (`itm-rs-<turnId>:<modelCallId>`) that also names the live
+   * `activeThinking` lifecycle, carried separately from the structural row id
+   * so the SPA's expansion state survives live→completed and delegation
+   * nesting.
+   */
+  reasoningId: z.string().optional(),
   completedAt: z.number().nullable(),
 });
 

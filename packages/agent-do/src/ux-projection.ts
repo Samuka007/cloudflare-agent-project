@@ -174,9 +174,9 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
     }
     if (unit.kind === "thinking") {
       // J6 CoT terminal shape (attributed): the call's accumulated thinking
-      // as one reasoning item. The pinned SPA ignores reasoning rows (reasoning
-      // never becomes a timeline row — #3250 port is tier 2, another ticket);
-      // the rows ride the ux face so tier 2 needs no further journal work.
+      // as one reasoning item. Tier 2 (#303, upstream #3250 port) is live:
+      // the server's timeline projection materializes these as expandable
+      // Thought rows keyed by the canonical item id.
       return buildThreadEvent({
         ...base,
         type: "item/completed",
@@ -377,12 +377,10 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       case "model.call_completed": {
         const text = event.data.text;
         if (turnId === undefined) break;
-        // #276 J6 tier 1 (zero SPA change): the call's CoT terminal row —
-        // `item/completed` + reasoning item, the journal's accumulated
-        // `model.thinking` text finally materialized on the ux face. The
-        // pinned SPA ignores reasoning rows today (reasoning never becomes a
-        // timeline row; the upstream #3250 row rendering is tier 2, another
-        // ticket) — landing the row now is the tier-2-ready journal face.
+        // #276 J6 tier 1: the call's CoT terminal row — `item/completed` +
+        // reasoning item, the journal's accumulated `model.thinking` text
+        // materialized on the ux face. Tier 2 (#303, upstream #3250 port)
+        // turns it into the expandable Thought row on the timeline.
         const thinkingKey = `${turnId}:${event.data.modelCallId}`;
         const thinking = thinkingByCall.get(thinkingKey);
         thinkingByCall.delete(thinkingKey);
