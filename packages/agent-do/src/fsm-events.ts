@@ -142,6 +142,31 @@ export const agentEventDataSchemas = {
     environmentId: z.string().min(1).optional(),
   }),
 
+  /**
+   * #309 manual compact — the content-bearing checkpoint row (omp
+   * CompactionEntry reduced to our seq-keyed journal; bb's `thread/compacted`
+   * is content-free because bb delegates the transcript to the provider, but
+   * this stack rebuilds every request from the log, so the boundary must be
+   * journal-derivable, #116). Appended after the compact turn's summarization
+   * call completes. `hideThroughSeq` = `firstKeptEntryId` as a seq boundary
+   * (checkpointResultSeq precedent): rows ≤ it left the active context, the
+   * compact turn itself and later rows stay visible — the summary rides the
+   * request as the compact turn's own history, no branchCut overlay needed.
+   * Thread-scoped, never FSM state (model.usage_receipt no-op precedent).
+   */
+  "thread/compacted": z.object({
+    /** The compact turn that produced this checkpoint. */
+    turnId: z.string().min(1),
+    hideThroughSeq: z.number().int().nonnegative(),
+    /** Last known usage total before the cut; null = never measured. */
+    tokensBefore: z.number().int().nonnegative().nullable(),
+    /** bytes/4 estimate over the post-cut visible tail (estimated: true). */
+    tokensAfter: z.number().int().nonnegative(),
+    /** Window denominator for the estimated usage row; null = unknown. */
+    contextWindow: z.number().int().positive().nullable(),
+    method: z.enum(["manual"]),
+  }),
+
   "turn.input": z.object({
     turnId: z.string().min(1),
     /** Client-generated idempotency key; retries append nothing. */
