@@ -45,7 +45,7 @@ const INTENT_FIELD = {
 } as const;
 
 describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
-  test("every row carries the frozen six-field shape with class↔backend agreement", () => {
+  test("every row carries the frozen seven-field shape with class↔backend agreement", () => {
     const names = new Set<string>();
     for (const row of TOOL_REGISTRY) {
       expect(typeof row.name).toBe("string");
@@ -57,8 +57,22 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
       expect((row.backend.kind === "daemon-dispatch") === (row.class === "host")).toBe(true);
       expect((row.backend.kind === "do-local") === (row.class === "edge")).toBe(true);
       expect(["require", "optional", "omit"]).toContain(row.intent);
+      // #328 C3: every row names its batch parallel-scheduling class.
+      expect(["read", "detached", "exclusive"]).toContain(row.schedule);
       expect(names.has(row.name)).toBe(false);
       names.add(row.name);
+    }
+  });
+
+  test("#328 classification: read-side host rows are read, wait/ask detached, the rest exclusive", () => {
+    for (const name of ["read", "glob", "grep", "find"]) {
+      expect(toolRegistryRow(name)?.schedule).toBe("read");
+    }
+    for (const name of ["wait", "ask", "think", "web_search"]) {
+      expect(toolRegistryRow(name)?.schedule).toBe("detached");
+    }
+    for (const name of ["bash", "edit", "write", "eval", "task", "yield"]) {
+      expect(toolRegistryRow(name)?.schedule).toBe("exclusive");
     }
   });
 
