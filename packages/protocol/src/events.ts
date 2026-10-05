@@ -87,11 +87,26 @@ export const toolCallItemSchema = z.object({
   completedAt: z.number().nullable(),
 });
 
+/**
+ * bb `reasoning` item (#257 CoT surface): provider-native chain of thought.
+ * `summary` stays the bb shape ([] for glm-5.3 — no summaries on the wire);
+ * `content` accumulates the reasoning text. Root-projection-only ephemeral
+ * state — the pinned SPA renders CoT through the timeline response's
+ * `activeThinking`, never as a standalone row.
+ */
+export const reasoningItemSchema = z.object({
+  type: z.literal("reasoning"),
+  id: z.string().min(1),
+  summary: z.array(z.string()),
+  content: z.array(z.string()),
+});
+
 export const threadEventItemSchema = z.discriminatedUnion("type", [
   userMessageItemSchema,
   agentMessageItemSchema,
   commandExecutionItemSchema,
   toolCallItemSchema,
+  reasoningItemSchema,
 ]);
 export type ThreadEventItem = z.infer<typeof threadEventItemSchema>;
 
@@ -147,6 +162,18 @@ export const threadEventDataSchemas = {
     item: threadEventItemSchema,
   }),
   "item/agentMessage/delta": z.object({
+    turnId: turnIdField,
+    itemId: z.string().min(1),
+    delta: z.string(),
+  }),
+  /**
+   * #257 CoT stream: the reasoning half of a model call, projected 1:1 from
+   * the journal's `model.thinking` rows (bb event name `item/reasoning/
+   * textDelta`; M0 folds summary into the omitted bb field). `itemId` is the
+   * reasoning lifecycle `itm-rs-<turnId>:<modelCallId>` — the timeline
+   * service folds these into the response's `activeThinking` tail field.
+   */
+  "item/reasoning/textDelta": z.object({
     turnId: turnIdField,
     itemId: z.string().min(1),
     delta: z.string(),
