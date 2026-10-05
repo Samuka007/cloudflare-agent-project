@@ -50,6 +50,31 @@
   bun `l1-prompt-attachments.test.ts` 10 例（staging 路径+0600+去重+直通透传+失败清理+限额+
   尺寸对账+先验限额+逃逸 + 派发接线两态）+ server-worker `attachment-pickup.test.ts` 4 例
   （桥 D1/R2 端到端 + 两 403 判词 + A1 404 映射）。
+- **#326 (W5) 矩阵漏项 C1——上下文溢出压缩重试（overflow compact-and-retry，依赖 #309）**：
+  超窗不再裸失败。两个自动面共用 #309 的压缩数据面（同一个 `compact-` turn 形状、
+  同一个 cut planner、同一条 `thread/compacted` checkpoint）：
+  ① 反应面——provider 首字节前拒绝且报文点名上下文窗口（Anthropic
+  `prompt is too long` / OpenAI `context_length_exceeded` / `maximum context length`
+  三类锚定形状，`isContextOverflowFailure`）→ 该 turn 诚实落
+  `turn.failed{reason: context_overflow}`，随后自动 compact turn（`method: "auto"`，
+  复用 `runCompactTurnCore`）落 checkpoint，原输入以 `inputId#compact-retry`
+  新 turn 重驱；cut 用 `planRetryCut` 阶梯（keepRecent → 半额 → 最小保留，
+  应对估算器低估图片等盲区），全程 turn 边界切分、tool pair 不可分。
+  ② 前摄面——turn 完成后 `shouldCompact` 门（pi compaction.ts:264-270 阈值，
+  `projectedContextTokens` 以 usage 回执为锚、回执后行 bytes/4 估算、
+  checkpoint 比 receipt 新时以其 `tokensAfter` 为锚防幻影重触发），跨
+  window−reserve 即在两 turn 之间自动压缩。配置走 WatchdogConfig 补丁
+  （`autoCompactionEnabled` 默认开 / `autoCompactionReserveTokens` 16384 /
+  `autoCompactionKeepRecentTokens` 20000）；`turnFailedReasonSchema` 增
+  `context_overflow`，journal/protocol `thread/compacted.method` 增 `"auto"`；
+  compact 面派生移入 `translate.ts`（`compact-` inputId → `toolSurface:
+  "compaction"`，replay 确定性，toolChoice 先例），DO 侧对 compact 调用跳过
+  MCP tools/list；冷启动恢复对 queued compact turn 走 `resumeCompactTurn`
+  （重推 cut→补 checkpoint，不再误入 agent turnProgram）。测试：
+  `overflow-compact.test.ts` 17 例（反应面 campaign——失败原因/自动 marker/
+  retry 完成对拍/隐藏 span 零泄漏/I11 计费守恒/ux 面、前摄面跨阈值触发与
+  低阈值不触发、L1 配对不变断言——planner 阶梯与 marker journal 重投影
+  双面、门禁两例——关闸保持裸 model_error、非溢出拒绝不劫持）。
 - **#317 (W5) 图片 A2——协议 image union + 422 门解锁 + 引用校验（依赖 #316 A1 keystone）**：
   ① 协议 additive：`promptContentSchema` 增 `image{url}/localImage{path}/localFile{path,name?,sizeBytes?,mimeType?}`
   （契约词汇镜像 `promptInputSchema`，去 HTTP 层 visibility 字段——journal 载运行时真值），

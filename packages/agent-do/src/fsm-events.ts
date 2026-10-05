@@ -43,6 +43,8 @@ export const turnFailedReasonSchema = z.enum([
   "interrupted_mid_stream",
   "model_error",
   "turn_watchdog_expired",
+  /** #326: the provider rejected the request as over the context window. */
+  "context_overflow",
 ]);
 export type TurnFailedReason = z.infer<typeof turnFailedReasonSchema>;
 
@@ -143,7 +145,7 @@ export const agentEventDataSchemas = {
   }),
 
   /**
-   * #309 manual compact — the content-bearing checkpoint row (omp
+   * #309 manual compact / #326 auto compact — the content-bearing checkpoint row (omp
    * CompactionEntry reduced to our seq-keyed journal; bb's `thread/compacted`
    * is content-free because bb delegates the transcript to the provider, but
    * this stack rebuilds every request from the log, so the boundary must be
@@ -164,7 +166,8 @@ export const agentEventDataSchemas = {
     tokensAfter: z.number().int().nonnegative(),
     /** Window denominator for the estimated usage row; null = unknown. */
     contextWindow: z.number().int().positive().nullable(),
-    method: z.enum(["manual"]),
+    /** `manual` = the compact button (#309); `auto` = overflow faces (#326). */
+    method: z.enum(["manual", "auto"]),
   }),
 
   "turn.input": z.object({
