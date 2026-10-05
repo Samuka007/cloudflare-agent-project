@@ -68,7 +68,7 @@ import { getHostRow } from "../db/hosts.js";
 import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs.js";
 import { mirrorPendingInteraction } from "../db/pending-interactions.js";
 import { getAppSettingsRow, toAppSettings } from "../db/settings.js";
-import { toThreadListEntry, toThreadResponseWithSpawnCheck } from "../services/runtime-display.js";
+import { toThreadListEntries, toThreadResponseWithSpawnCheck } from "../services/runtime-display.js";
 import { toHostRecord } from "../services/host-records.js";
 import {
   THREAD_SEARCH_LIMIT_PER_GROUP_DEFAULT,
@@ -169,8 +169,9 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
       ...(offsetRaw !== undefined ? { offset: offsetRaw } : {}),
     });
-    // bb threadListResponseSchema: bare array.
-    return ctx.json(rows.map((row) => toThreadListEntry(row)));
+    // bb threadListResponseSchema: bare array. #291: the list resolves the
+    // §9.3 row-4 suspension face once per distinct bound host.
+    return ctx.json(await toThreadListEntries(ctx.env, rows));
   });
 
   // --- search ---------------------------------------------------------------------
@@ -215,19 +216,29 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // 1113-1132); the title-level M0 scan serves both from one listing.
     const rows = await listThreads(ctx.env, {});
     const response = buildTitleSearchResponse({ rows, query: searchQuery, limitPerGroup });
-    const toResult = (result: (typeof response.active.results)[number]) => ({
-      thread: toThreadListEntry(result.thread),
-      matches: result.matches,
-    });
+    // The two groups are disjoint (archived split), so one face pass each.
+    const [activeEntries, archivedEntries] = await Promise.all([
+      toThreadListEntries(ctx.env, response.active.results.map((result) => result.thread)),
+      toThreadListEntries(ctx.env, response.archived.results.map((result) => result.thread)),
+    ]);
+    const entryById = new Map(
+      [...activeEntries, ...archivedEntries].map((entry) => [entry.id, entry]),
+    );
     return ctx.json(
       threadSearchResponseSchema.parse({
         active: {
           total: response.active.total,
-          results: response.active.results.map(toResult),
+          results: response.active.results.map((result) => ({
+            thread: entryById.get(result.thread.id) ?? result.thread,
+            matches: result.matches,
+          })),
         },
         archived: {
           total: response.archived.total,
-          results: response.archived.results.map(toResult),
+          results: response.archived.results.map((result) => ({
+            thread: entryById.get(result.thread.id) ?? result.thread,
+            matches: result.matches,
+          })),
         },
       }),
     );

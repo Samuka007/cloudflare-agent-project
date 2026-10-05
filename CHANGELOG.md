@@ -7,6 +7,24 @@
 
 ### Added
 
+- **#291 (P1) workspace 绑定可见面 + 悬置呈现（盘点 #282 §2.D D1-D3，依赖票 1 #288）**：
+  D1 读面（thread 详情 `environmentId` + `include=environment,host`、`GET
+  /environments(:id)`、`GET /hosts`、列表内联绑定四字段）由 #288 落地；本票落
+  D2 悬置呈现 + D3 UI 词汇，钉死 bb SPA 零改动。① §9.3 行 4 诚实宿主面：
+  `resolveThreadRuntimeStateAsync`——无活跃 turn（status ∉ {active, stopping}）
+  ∧ 绑定宿主（environments.host_id）离线（daemon-service DO hostLiveness
+  读时派生）→ bb `host-reconnecting`（expiry 恒 null）；`waiting-for-host`
+  永不发出（该面锁 composer 到 stop-only，违反 #73 消息可发——host-reconnecting
+  面 = 横幅 + 排队 composer，正是半停语义）。行 1-3 原样保持：active/stopping
+  行恒回声、无横幅抢占（#148 thr_jk45qe4786 回归守卫延续）。② 读面全覆盖：
+  详情（GET/PATCH/rebind/pin/read 全走 `toThreadResponseWithSpawnCheck`）、
+  列表（`toThreadListEntries` 按 DISTINCT host 各一次 DO RPC，零 N+1）、
+  搜索两组、项目详情 threads。③ 实时面：turn 结算既有 `status-changed`
+  immediate-refetch 挂横幅（悬置 turn 结束即显）；host 恢复走 host-connected
+  帧 + 下次读（bb 上游同款 eventual，零新帧词汇）。④ D3 词汇锚定：CONTEXT.md
+  执行悬置词条补 SPA 呈现词汇行。测试：`thread-suspension-face.test.ts` 8 例
+  （解析器四态/行 1-3 守卫/悬置 turn 结算后横幅/列表同面/attach 清面/绑定源）；
+  server-worker 32 files/159 green，根 lint + typecheck 绿。
 - **#289 (P2) host:path 参数级覆盖 + 偏差记录（盘点 #282 §2.B B1–B5，依赖票 1 #288）**：
   ① B1 覆盖语法与解析：`tools/host-path.ts` 纯解析器——host 类工具的 path 参数
   可写 `ssh://<machineId>/<path>`（read/write/find `path`、glob/grep `;` 分隔多段、
