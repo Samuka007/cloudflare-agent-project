@@ -29,6 +29,8 @@ export {
   type HostBrowseDirectoryCommand,
   type HostDirectoryEntry,
   type HostDirectoryListing,
+  type HostFileReadResult,
+  type HostReadFileCommand,
   type HostRpcCommand,
   type HostRpcRequestFrame,
   type HostRpcResponseFrame,

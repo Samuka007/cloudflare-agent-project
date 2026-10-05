@@ -43,6 +43,23 @@ export const hostDirectoryListingSchema = z.object({
 });
 export type HostDirectoryListing = z.infer<typeof hostDirectoryListingSchema>;
 
+/**
+ * B1 (#321): the daemon `host.read_file` result, mirrored from
+ * @cap/daemon-service hostFileReadResultSchema (bb fileReadResultSchema,
+ * host-daemon-contract commands.ts:1147-1157) — the thread host-file content
+ * route validates the RPC answer with this before serving bytes.
+ */
+export const hostFileReadResultSchema = z.object({
+  path: z.string(),
+  content: z.string(),
+  contentEncoding: z.enum(["base64", "utf8"]),
+  mimeType: z.string().optional(),
+  sizeBytes: z.number().int().nonnegative(),
+  modifiedAtMs: z.number().nonnegative().optional(),
+  sha256: z.string(),
+});
+export type HostFileReadResult = z.infer<typeof hostFileReadResultSchema>;
+
 /** Project name is sent so the daemon can derive its host-local checkout path. */
 export const hostCloneDefaultPathQuerySchema = z.object({
   projectId: z.string().min(1),

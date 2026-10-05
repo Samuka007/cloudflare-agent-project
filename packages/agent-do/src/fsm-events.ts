@@ -343,6 +343,22 @@ export const agentEventDataSchemas = {
   }),
 
   /**
+   * B1 (#321): one image a tool produced/viewed, addressed by its host-disk
+   * path. Appended by ingestResult when the result payload reports images —
+   * BEFORE the closing tool.result (todo_phases journal-before-result
+   * ordering), one row per image, `parentToolCallId` = the bare call
+   * executionId (bb imageView event attribution verbatim). The ux projection
+   * folds each row into the bb item lifecycle pair (item/started +
+   * item/completed, both sharing this row's seq — thread/compacted extraUx
+   * precedent) and the server timeline projects the `image-view` work row.
+   */
+  imageView: z.object({
+    turnId: z.string().min(1),
+    parentToolCallId: z.string().min(1),
+    path: z.string().min(1),
+  }),
+
+  /**
    * Edge `context_notes` journal entry — omp ContextNotesEntry verbatim
    * (packages/coding-agent/src/session/context-notes.ts:8-11). Thread-scoped
    * like thread.created: notebook revisions outlive turns and are projected

@@ -147,6 +147,22 @@ export const reasoningItemSchema = z.object({
 });
 
 /**
+ * bb `imageView` item (contract port apps/server-worker/src/contract/domain/
+ * provider-event.ts:141-148, threadEventImageViewItemSchema): one image the
+ * agent viewed/produced, addressed by its host-disk path. The timeline
+ * projects it into the `image-view` work row and the SPA renders it through
+ * the `GET /threads/:id/host-files/content` face (#321).
+ */
+export const imageViewItemSchema = z.object({
+  type: z.literal("imageView"),
+  id: z.string().min(1),
+  path: z.string().min(1),
+  /** #274 J1-style attribution: the producing/consuming tool call item id. */
+  parentToolCallId: z.string().min(1).optional(),
+});
+export type ImageViewItem = z.infer<typeof imageViewItemSchema>;
+
+/**
  * bb `backgroundTaskStatus` (#256 J3; contract port
  * apps/server-worker/src/contract/domain/background-task.ts:37-45): the union
  * of the provider task lifecycle statuses. `paused` stays pending on the item
@@ -199,6 +215,7 @@ export const threadEventItemSchema = z.discriminatedUnion("type", [
   commandExecutionItemSchema,
   toolCallItemSchema,
   reasoningItemSchema,
+  imageViewItemSchema,
   backgroundTaskItemSchema,
 ]);
 export type ThreadEventItem = z.infer<typeof threadEventItemSchema>;

@@ -7,6 +7,31 @@
 
 ### Added
 
+- **#321 (W5) 图片 B1——imageView 事件链 + host-file content face（依赖 A3 通道，独立于 A4）**：
+  ① journal additive `imageView` 事件（`fsm-events.ts`，G9 载体补齐）：`ingestResult`
+  在 tool.result 落行前按结果载荷的 `images`（`ToolResultPayload.images` additive，
+  daemon-service `toolResultPayloadSchema.images` 同形过线）逐图落 `imageView`
+  {turnId, parentToolCallId=call executionId, path}——todo_phases
+  journal-before-result 位序，executionTerminal 守卫即幂等。② ux 投影：一行折叠成
+  bb 生命周期对（`item/started`+`item/completed` 同 seq——thread/compacted extraUx
+  先例），item 形状 `imageViewItemSchema`（protocol union additive，bb
+  threadEventImageViewItemSchema verbatim：无 status，生命周期在事件类型里）。
+  ③ timeline `image-view` 行生产者（G7 断点补上）：`projectTimelineRows` 从
+  item/started 立 pending 行（callId=item.id，bb web-activity-lifecycle
+  callId 语义）、item/completed 收口（path 刷新 + completedAt），turn 扫尾
+  pending 即封（tool 行同法）；SPA `ImageViewWorkRowBody` 图行 + lightbox
+  由钉版 SPA 自带，src 即本 face。④ `GET /threads/:id/host-files/content`
+  （README §1 files face 9 路由的最小子集，只开 content 读）：bb data.ts:660-682
+  verbatim——宿主解析按本栈 #318 姿态（绑定 environment 宿主，缺省部署机），
+  host-rpc `host.read_file`（#302 通道 additive；daemon 侧 bb readHostFile
+  rootless 子集 verbatim：绝对路径断言、目录拒绝、图 10MB/非图 25MB 双上限、
+  image base64/其余 utf8-else-base64、sha256/mtime；mime 为 mime-types 端口
+  截断表，未中即 octet-stream）；响应侧 bb daemon-file-response 移植
+  （ENOENT→404/invalid_path→400/file_too_large→413）。测试：agent-do
+  `image-view.test.ts` 5 例（journal→ux→timeline 全链、重放稳定、producer
+  幂等）、daemon-service `host-files.test.ts`（bun 真 fs 语义）+
+  `l1-host-read-file.test.ts`（DO 线）、server-worker
+  `timeline-image-view.test.ts` + `host-files-content.test.ts`。
 - **#320 (W5) 图片 A5——SPA 渲染面回接（依赖 #316-A4；SPA 零新码）**：
   timeline 投影喂上唯一断点——`projectTimelineRows` 的 userMessage 行
   `attachments: null` 三处硬编码中仅用户行是真缺口（assistant 行 upstream
