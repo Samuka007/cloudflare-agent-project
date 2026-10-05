@@ -39,37 +39,56 @@
       # lives in scripts/deploy-staging.sh, shared verbatim with the GHA CD
       # workflow (#175) so local and CD surfaces cannot drift.
       # Usage: nix run .#staging-deploy [-- --skip-spa-build]
-      apps.${system}.staging-deploy = {
-        type = "app";
-        program = "${pkgs.writeShellApplication {
-          name = "deploy-staging";
-          runtimeInputs = with pkgs; [
-            bash
-            git
-            gnutar
-            gnugrep
-            findutils
-            coreutils
-            nodejs_22
-            pnpm_10
-          ];
-          text = ''
-            set -euo pipefail
-            REPO_ROOT="$(git rev-parse --show-toplevel)"
-            cd "$REPO_ROOT"
+      # One combined apps.${system} set — a second dynamic `apps.${system}.…`
+      # path in the same attrset is a Nix eval error ("dynamic attribute
+      # already defined"), which is how #258's first cut failed flake eval.
+      apps.${system} = {
+        # Canonical staging deploy (engineering.md 横切实践 12). Thin credential
+        # adapter: the real flow (SPA stage → SERVER_VERSION stamp → deploy)
+        # lives in scripts/deploy-staging.sh, shared verbatim with the GHA CD
+        # workflow (#175) so local and CD surfaces cannot drift.
+        # Usage: nix run .#staging-deploy [-- --skip-spa-build]
+        staging-deploy = {
+          type = "app";
+          program = "${pkgs.writeShellApplication {
+            name = "deploy-staging";
+            runtimeInputs = with pkgs; [
+              bash
+              git
+              gnutar
+              gnugrep
+              findutils
+              coreutils
+              nodejs_22
+              pnpm_10
+            ];
+            text = ''
+              set -euo pipefail
+              REPO_ROOT="$(git rev-parse --show-toplevel)"
+              cd "$REPO_ROOT"
 
-            if [[ ! -f .dev.vars ]]; then
-              echo "ERROR: .dev.vars missing (CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID)" >&2
-              exit 1
-            fi
-            set -a
-            # shellcheck disable=SC1091
-            # .dev.vars is an intentional runtime credential file, not a static source target
-            source .dev.vars
-            set +a
-            exec bash scripts/deploy-staging.sh "$@"
-          '';
-        }}/bin/deploy-staging";
+              if [[ ! -f .dev.vars ]]; then
+                echo "ERROR: .dev.vars missing (CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID)" >&2
+                exit 1
+              fi
+              set -a
+              # shellcheck disable=SC1091
+              # .dev.vars is an intentional runtime credential file, not a static source target
+              source .dev.vars
+              set +a
+              exec bash scripts/deploy-staging.sh "$@"
+            '';
+          }}/bin/deploy-staging";
+        };
+
+        # #258 host onboarding: `nix run github:Samuka007/cloudflare-agent-project#cap-daemon`
+        # is what GET /install.sh execs on the joining machine (the Add-a-machine
+        # dialog one-liner). apps entry required — `nix run` on the package attr
+        # would try bin/daemon (the attr name), which does not exist.
+        cap-daemon = {
+          type = "app";
+          program = "${self.packages.${system}.daemon}/bin/cap-daemon";
+        };
       };
 
       # U3 daemon client as a runnable closure (ticket #176). Wrapper form:

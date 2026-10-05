@@ -31,18 +31,27 @@ function argValue(flag: string): string | undefined {
 
 /** Enroll credentials are deployment secrets — refusing to ship a dev
  * default (the POC's "[REDACTED-staging-secret]") means a misconfigured daemon
- * fails at start instead of enrolling against whatever it can reach. */
+ * fails at start instead of enrolling against whatever it can reach. The
+ * add-a-machine path (#258) swaps the static key for a one-time join code
+ * (minted by POST /hosts/join-codes); exactly one credential is required. */
 const enrollKey = process.env.DAEMON_ENROLL_KEY;
-if (enrollKey === undefined || enrollKey === "") {
-  console.error("[daemon-client] DAEMON_ENROLL_KEY is required (set it in the daemon env file)");
+const joinCode = argValue("--join-code") ?? process.env.DAEMON_JOIN_CODE;
+if ((enrollKey === undefined || enrollKey === "") && (joinCode === undefined || joinCode === "")) {
+  console.error(
+    "[daemon-client] a credential is required: DAEMON_ENROLL_KEY, or a one-time join code via --join-code / DAEMON_JOIN_CODE",
+  );
   process.exit(1);
 }
 
 const config: ClientConfig = {
-  baseUrl: argValue("--url") ?? process.env.DAEMON_SERVICE_URL ?? "http://127.0.0.1:8790",
+  // --server is the bb installer contract flag (AddMachineDialog
+  // pairingCommand); --url stays for existing env files.
+  baseUrl:
+    argValue("--server") ?? argValue("--url") ?? process.env.DAEMON_SERVICE_URL ?? "http://127.0.0.1:8790",
   dataDir: argValue("--dataDir") ?? process.env.DAEMON_DATA_DIR ?? join(homedir(), ".local", "state", "cap-daemon"),
   sandboxRoot: argValue("--sandbox") ?? process.env.DAEMON_SANDBOX_ROOT ?? "/tmp/cap-sandbox",
-  enrollKey,
+  enrollKey: enrollKey ?? "",
+  joinCode: joinCode ?? null,
   taskIsolation: decodeTaskIsolationConfig(process.env.DAEMON_TASK_ISOLATION),
   agentAuth: decodeAgentAuthConfig(process.env.DAEMON_AGENT_AUTH),
 };
