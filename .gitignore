@@ -6,6 +6,7 @@ dist/
 .dev.vars.*
 .staging-daemon.env
 .env.local
+.pm-leases.jsonl
 apps/server-worker/public/
 result
 result-*
