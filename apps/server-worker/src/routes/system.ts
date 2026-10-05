@@ -1,6 +1,15 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
+  BROWSER_BACKED_ENGINES,
+  DEFAULT_WEB_SEARCH_CONFIG,
+  decodeWebSearchConfig,
+  projectWebSearchConfig,
+} from "@cap/agent-do";
+import type { WebSearchEngineProjection } from "@cap/agent-do";
+import { projectHarness, resolveHarness, type HarnessEnv } from "@cap/provider-app";
+import {
+  systemProviderProjectionsResponseSchema,
   systemConfigResponseSchema,
   systemExecutionOptionsQuerySchema,
   systemExecutionOptionsResponseSchema,
@@ -129,6 +138,61 @@ export function buildExecutionOptions(env: Pick<Env, "MODEL_RELAY_MODEL">) {
   };
 }
 
+/**
+ * GET /system/provider-projections (#266, #255 solution C): aggregate the
+ * read-only provider status face. Harness row = projectHarness over
+ * resolveHarness (the same total resolution thread turns run) plus the relay
+ * host; web_search row = projectWebSearchConfig over decodeWebSearchConfig —
+ * chain order, credential-gate booleans, browser-backed exclusions. Zero
+ * secret values leave the env: key/token contents never enter the response,
+ * and decode failures drop the error text (it can quote raw env content).
+ * Daemon-side provider pins (judge/security) are NOT visible here — they live
+ * in daemon env, a different trust domain (#255 §6.2, ticket #56).
+ */
+export function buildProviderProjections(env: Pick<Env, "AGENT_DO_WEB_SEARCH"> & HarnessEnv) {
+  const harness = projectHarness(resolveHarness(env));
+  // Total over env content: a malformed relay URL degrades to a null host
+  // instead of failing the whole read-only face.
+  let relayBaseUrlHost: string | null = null;
+  try {
+    relayBaseUrlHost = new URL(harness.relayBaseUrl).host;
+  } catch {
+    // env content, not a caller error
+  }
+  const rawWebSearch = env.AGENT_DO_WEB_SEARCH;
+  let webSearch: {
+    configured: boolean;
+    decodeError: boolean;
+    chain: WebSearchEngineProjection[];
+    timeoutSeconds: number | null;
+    browserBackedEngines: string[];
+  };
+  if (rawWebSearch === undefined || rawWebSearch === "") {
+    webSearch = {
+      configured: false,
+      decodeError: false,
+      ...projectWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG),
+    };
+  } else {
+    try {
+      webSearch = {
+        configured: true,
+        decodeError: false,
+        ...projectWebSearchConfig(decodeWebSearchConfig(rawWebSearch)),
+      };
+    } catch {
+      webSearch = {
+        configured: true,
+        decodeError: true,
+        chain: [],
+        timeoutSeconds: null,
+        browserBackedEngines: [...BROWSER_BACKED_ENGINES],
+      };
+    }
+  }
+  return { harness: { ...harness, relayBaseUrlHost }, webSearch };
+}
+
 export function registerSystemRoutes(app: Hono<{ Bindings: HonoBindings }>): void {
   const routes = new Hono<{ Bindings: HonoBindings }>();
 
@@ -244,6 +308,15 @@ export function registerSystemRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // discarded and the primary catalog is served regardless.
     parseOr422(systemExecutionOptionsQuerySchema, ctx.req.query());
     return ctx.json(systemExecutionOptionsResponseSchema.parse(buildExecutionOptions(ctx.env)));
+  });
+
+  // Read-only projection face (#266): no PUT exists anywhere on this path —
+  // provider edits ride the deployment env (control-plane-layer §3.2), and
+  // POST /system/config/reload is a deliberate no-op for the same reason.
+  routes.get("/system/provider-projections", (ctx) => {
+    return ctx.json(
+      systemProviderProjectionsResponseSchema.parse(buildProviderProjections(ctx.env)),
+    );
   });
 
   app.route("/api/v1", routes);
