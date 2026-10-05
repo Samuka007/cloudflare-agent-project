@@ -97,8 +97,11 @@ import {
   timelineLatestRowsCache,
 } from "../services/timeline.js";
 import { computeTimelineRowDelta } from "../contract/thread-timeline.js";
+import { validatePromptAttachmentReferences } from "../services/attachments.js";
 import { agentDoCancelTurn, agentDoCompactThread, agentDoFor } from "../seam/agent-do.js";
 import { resolveThreadBinding } from "../services/thread-binding.js";
+import type { PromptInput } from "../contract/domain/shared-types.js";
+import type { PromptContent } from "@cap/protocol";
 import type { Env, HonoBindings } from "../app-types.js";
 
 /** bb timeline.ts:163-165. */
@@ -284,6 +287,10 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
         sourceThreadId = parent.id;
       }
     }
+    // #317 gate unlock: relative localImage/localFile paths are server-managed
+    // attachment references — verify containment + presence in the sending
+    // project's family before any write lands (a 4xx leaves no orphan row).
+    await validatePromptAttachmentReferences(ctx.env.BLOBS, payload.projectId, payload.input);
     // M0 harness minimum: single provider (spec #17 ruling #10; provider
     // selection surfaces are daemon-lane faces).
     const providerId = payload.providerId ?? "omp";
@@ -339,16 +346,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // creates (fork/side-chat preloads) start no turn and stay starting.
     let dispatchedRow = row;
     if (payload.input.length > 0) {
-      const content = payload.input.map((entry) => {
-        if (entry.type !== "text") {
-          throw new ApiError({
-            status: 422,
-            code: "validation_failed",
-            message: `Unsupported prompt input type for M0: ${entry.type}`,
-          });
-        }
-        return { type: "text" as const, text: entry.text };
-      });
+      const content = promptContentFromInput(payload.input);
       // bb generates the client turn request id server-side (thread-send.ts:
       // 346-356) — the same shape the send route records for /send turns.
       const clientRequestId = formatClientTurnRequestIdSuffix({
@@ -508,6 +506,10 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
   routes.post("/threads/:id/send", async (ctx) => {
     const payload = await requireJsonBody(ctx, sendMessageRequestSchema);
     const row = await requirePublicThread(ctx);
+    // #317 gate unlock: the same attachment-reference verification the create
+    // face runs — relative paths must be uploaded into this thread's project
+    // family; absolute/URI-like paths pass through to the runtime untouched.
+    await validatePromptAttachmentReferences(ctx.env.BLOBS, row.projectId, payload.input);
     const mode = resolveSendMode(row.status, payload.mode);
     // bb generates the client turn request id server-side when appending the
     // client/turn/requested event (thread-send.ts:346-356); the HTTP schema
@@ -519,16 +521,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
         )
         .join(""),
     });
-    const content = payload.input.map((entry) => {
-      if (entry.type !== "text") {
-        throw new ApiError({
-          status: 422,
-          code: "validation_failed",
-          message: `Unsupported prompt input type for M0: ${entry.type}`,
-        });
-      }
-      return { type: "text" as const, text: entry.text };
-    });
+    const content = promptContentFromInput(payload.input);
     const result = await agentDoFor(ctx.env, row.id).sendMessage({
       clientRequestId,
       content,
@@ -1100,6 +1093,34 @@ export function resolveSendMode(
     return "start";
   }
   return status === "active" ? "auto" : "start";
+}
+
+/**
+ * Contract prompt input → journal prompt content (#317 gate unlock). The
+ * request layer's mention/visibility fields are presentation concerns and
+ * stay behind; the four union members ride the journal verbatim (the daemon
+ * seam re-anchors mentions on its side). Reference validation is the caller's
+ * job (validatePromptAttachmentReferences) — this maps, never validates.
+ */
+function promptContentFromInput(input: readonly PromptInput[]): PromptContent[] {
+  return input.map((entry) => {
+    switch (entry.type) {
+      case "text":
+        return { type: "text" as const, text: entry.text };
+      case "image":
+        return { type: "image" as const, url: entry.url };
+      case "localImage":
+        return { type: "localImage" as const, path: entry.path };
+      case "localFile":
+        return {
+          type: "localFile" as const,
+          path: entry.path,
+          ...(entry.name !== undefined ? { name: entry.name } : {}),
+          ...(entry.sizeBytes !== undefined ? { sizeBytes: entry.sizeBytes } : {}),
+          ...(entry.mimeType !== undefined ? { mimeType: entry.mimeType } : {}),
+        };
+    }
+  });
 }
 
 /** bb requirePublicThread (entity-lookup.ts): 404 on missing or deleted. */

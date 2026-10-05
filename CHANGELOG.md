@@ -7,6 +7,23 @@
 
 ### Added
 
+- **#317 (W5) 图片 A2——协议 image union + 422 门解锁 + 引用校验（依赖 #316 A1 keystone）**：
+  ① 协议 additive：`promptContentSchema` 增 `image{url}/localImage{path}/localFile{path,name?,sizeBytes?,mimeType?}`
+  （契约词汇镜像 `promptInputSchema`，去 HTTP 层 visibility 字段——journal 载运行时真值），
+  ux 投影 `userMessage` content 原样穿透；`translate.ts`/`task/child-run.ts` 的
+  模型可见文本投影按 bb timeline `textOfContent` 同款语义跳过非 text 部分。
+  ② 422 门解锁：`POST /threads`（create-with-input）与 `POST /threads/:id/send` 的
+  「Unsupported prompt input type for M0」门移除，union 成员 verbatim 入 DO journal。
+  ③ 相对路径引用校验（`validatePromptAttachmentReferences` 移植，bb
+  `pathLooksRuntimeReadable` 判直通）：`localImage/localFile` 相对路径＝服务器管理的
+  附件引用——先 containment（逃逸家族 400 `escapes project directory`）、再存在性
+  （R2 family head 未命中 400 `was not uploaded`）；绝对路径与 URI-like 值直通 runtime
+  不校验。校验在 create 任意写入之前（4xx 零孤儿行）。④ 组合链同步：provider-app
+  manager `textInputsOf` → `promptContentOf`（union 直通，空输入仍 invalid_input），
+  daemon seam `sendMessage` content 类型放宽为 `PromptContent[]`。测试：协议 union
+  parse/拒绝 3 例 + `prompt-attachment-input.test.ts` 6 例（带图 input 201 + journal
+  落 union、URL/绝对/file:// 直通、localFile 呈现字段、逃逸 400、未上传 400、send 面
+  同规则）。
 - **#313 (W5) AgentDO×compaction 的 API 压测——context 行为真空补齐（本地先行）**：
   `packages/agent-do/test/compaction-stress.test.ts`（8 例，默认套件=CI 常设）：
   一条 12 turn / 20 model call 的确定性 mock 中继 API 压测campaign，跑通

@@ -177,7 +177,12 @@ export function modelRequestFromEvents(
         // Consumed above from the full log; the turn filter skips it here.
         break;
       case "turn.steer": {
-        steerTexts.set(event.seq, event.data.content.map((part) => part.text).join("\n"));
+        // Non-text parts (#317 image union) contribute nothing to the
+        // model-visible request text, exactly like the timeline projection.
+        steerTexts.set(
+          event.seq,
+          event.data.content.map((part) => (part.type === "text" ? part.text : "")).join("\n"),
+        );
         break;
       }
       case "turn.input": {
@@ -188,7 +193,7 @@ export function modelRequestFromEvents(
           turnId: event.data.turnId,
           seq: event.seq,
           inputId: event.data.inputId,
-          text: event.data.content.map((part) => part.text).join("\n"),
+          text: event.data.content.map((part) => (part.type === "text" ? part.text : "")).join("\n"),
         });
         break;
       }

@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   apiError,
   buildThreadEvent,
+  createThreadRequestSchema,
   eventRowId,
   FIRST_SEQ,
   httpStatusForCode,
   isSeqContiguous,
   parseThreadEvent,
+  promptContentSchema,
   realtimeClientMessageSchema,
   realtimeThreadChangedSchema,
+  sendMessageRequestSchema,
   threadEventsResponseSchema,
   timelineResponseSchema,
   type ThreadEventEnvelope,
@@ -439,5 +442,45 @@ describe("contextWindowUsage event (#308)", () => {
     ]) {
       expect(() => parseThreadEvent(bad)).toThrow();
     }
+  });
+});
+
+describe("prompt content image union (#317)", () => {
+  const imageInput = [
+    { type: "image", url: "https://example.com/cat.png" },
+    { type: "localImage", path: "9f86d081884c7d659a2feaa0c55ad015.png" },
+    {
+      type: "localFile",
+      path: "5f2b3c....pdf",
+      name: "doc.pdf",
+      sizeBytes: 8,
+      mimeType: "application/pdf",
+    },
+  ] as const;
+
+  it("parses every member on the create/send request input", () => {
+    for (const member of imageInput) {
+      expect(promptContentSchema.parse(member)).toEqual(member);
+    }
+    expect(sendMessageRequestSchema.parse({ input: [...imageInput] }).input).toEqual([
+      ...imageInput,
+    ]);
+    expect(createThreadRequestSchema.parse({ input: [...imageInput] }).input).toEqual([
+      ...imageInput,
+    ]);
+  });
+
+  it("keeps the localFile presentation fields optional", () => {
+    expect(promptContentSchema.parse({ type: "localFile", path: "a.bin" })).toEqual({
+      type: "localFile",
+      path: "a.bin",
+    });
+  });
+
+  it("rejects a non-URL image member and an unknown type", () => {
+    expect(promptContentSchema.safeParse({ type: "image", url: "not a url" }).success).toBe(false);
+    expect(promptContentSchema.safeParse({ type: "localImage" }).success).toBe(false);
+    expect(promptContentSchema.safeParse({ type: "video", url: "https://x.test/v.mp4" }).success)
+      .toBe(false);
   });
 });

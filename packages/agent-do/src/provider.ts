@@ -159,11 +159,32 @@ export interface ModelRequest {
     checkpoint: boolean;
   };
   /**
+   * Discovered MCP server tools (matrix C2, #327): the `mcp__<server>__<tool>`
+   * surface, projected by the DO's McpToolSurface from the deployment's
+   * AGENT_DO_MCP_SERVERS config. Appended after the registry rows at wire
+   * assembly; absent = no MCP servers configured (the surface is exactly as
+   * before this field). Deployment-time input — never a runtime setting
+   * (control-plane §1.2), same posture as `experimentalGates`.
+   */
+  mcpTools?: McpWireTool[];
+  /**
    * omp sdk.ts:4275-4282 forceReasoningOff pairing: when external thinking
    * (the `think` tool) is on the wire, native provider reasoning is forced
    * OFF — external CoT and native reasoning must never coexist (ToC risk).
    */
   forceReasoningOff?: boolean;
+}
+
+/**
+ * Model-facing projection of one discovered MCP tool (tools/mcp.ts). Owned
+ * here because ModelRequest crosses the package boundary while the
+ * projecting module sits behind the relay (import direction: relay →
+ * provider; tools → relay — defining it in tools/ would cycle).
+ */
+export interface McpWireTool {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
 }
 
 /**

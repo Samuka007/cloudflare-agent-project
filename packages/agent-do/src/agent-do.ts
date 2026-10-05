@@ -6,6 +6,7 @@ import {
   threadPhaseChangedMessage,
   pendingInteractionChangedMessage,
   realtimeClientMessageSchema,
+  type PromptContent,
   type PendingInteractionPayload,
   type PendingInteractionResolution,
   type PendingInteractionRow,
@@ -134,6 +135,13 @@ import {
   type WebSearchConfig,
   type WebSearchToolContext,
 } from "./tools/web-search.js";
+import {
+  decodeMcpServersConfig,
+  limitMcpOutput,
+  projectMcpToolOutput,
+  McpToolSurface,
+  type McpToolRoute,
+} from "./tools/mcp.js";
 
 /** Delivery caps apply to artifact reads too (omp task/types.ts:29-32). */
 function capArtifactText(
@@ -180,6 +188,14 @@ export interface AgentDoBindings {
    * rejection, never silent fallback (tools/web-search.ts policy).
    */
   AGENT_DO_WEB_SEARCH?: string;
+  /**
+   * Optional JSON array of MCP servers (matrix C2, #327) — Streamable HTTP
+   * endpoints the DO connects to in-process (edge do-local class, the same
+   * fetch-only posture as web_search; stdio stays a daemon-side evaluation).
+   * Decoded once at construction (tools/mcp.ts); absent/empty = no MCP
+   * surface and the wire is byte-identical to the pre-C2 shape.
+   */
+  AGENT_DO_MCP_SERVERS?: string;
   /**
    * Daemon-service DO namespace (production: ticket #30's DO; tests: the
    * reference fake). When present it wins over the in-process registry —
@@ -314,7 +330,8 @@ export interface CreateThreadResult {
 export interface SendMessageRequest {
   /** Client-generated idempotency key (protocol `clientRequestId`). */
   clientRequestId: string;
-  content: { type: "text"; text: string }[];
+  /** #317: the full journal prompt-content union (text/image/localImage/localFile). */
+  content: PromptContent[];
   mode: "auto" | "start" | "steer";
 }
 
@@ -423,6 +440,16 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * fetch in flight surfaces as a cancelled tool result (omp throwIfAborted
    * rethrow), not an Error text. */
   private readonly webSearchAborts = new Map<string, AbortController>();
+  /** In-flight MCP tool transports (executionId → cancel), matrix C2 #327.
+   * Same vocabulary as webSearchAborts: killNonTerminalExecutions aborts the
+   * owning call's signal so an in-flight MCP request surfaces as a cancelled
+   * tool result, not an Error text. */
+  private readonly mcpAborts = new Map<string, AbortController>();
+  /**
+   * The DO's MCP face (tools/mcp.ts): discovery cache + connection pool +
+   * wire-name routes. Empty server config = inert (no fetch, no surface).
+   */
+  private readonly mcpSurface: McpToolSurface;
 
   constructor(ctx: DurableObjectState, env: AgentDoBindings) {
     super(ctx, env);
@@ -432,6 +459,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       env.AGENT_DO_WEB_SEARCH,
       DEFAULT_WEB_SEARCH_CONFIG,
     );
+    this.mcpSurface = new McpToolSurface(decodeMcpServersConfig(env.AGENT_DO_MCP_SERVERS));
     this.log = new EventLog(ctx.storage, env.BLOBS, this.cfg.r2BypassBytes);
     this.state = this.loadState();
     if (this.state.threadId !== null) this.threadId = this.state.threadId;
@@ -2424,13 +2452,20 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       ...request,
       experimentalGates: this.experimentalGates,
     };
+    // Matrix C2 (#327): the discovered MCP surface rides every call — the
+    // TTL cache inside McpToolSurface bounds the tools/list round-trips, a
+    // failing server contributes nothing this call (server isolation), and
+    // with no servers configured this line is absent entirely (byte-identical
+    // request shape).
+    const mcpTools = this.mcpSurface.enabled ? await this.mcpSurface.wireTools() : undefined;
     // M1.5 T16 surface policy: a subagent DO (journaled identity) renders the
     // subagent toolset — hidden `yield` included — with `task` stripped past
     // the recursion cap (omp canSpawnAtDepth gate). Main keeps MAIN_WIRE_TOOLS.
     const identity = this.state.subagentIdentity;
-    if (identity === null) return gated;
+    if (identity === null) return { ...gated, ...(mcpTools === undefined ? {} : { mcpTools }) };
     return {
       ...gated,
+      ...(mcpTools === undefined ? {} : { mcpTools }),
       toolSurface: "subagent",
       spawnPolicyBlocked: !canSpawnAtDepth(this.cfg.taskMaxRecursionDepth, identity.depth),
     };
@@ -2598,6 +2633,17 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       // executes here — journal appends are DO storage writes, never daemon RPC.
       if (callData?.type === "tool.call") {
         await this.executeEdgeLocal(execution, row, callData.data.arguments);
+      }
+      return;
+    }
+    if (toolName.startsWith("mcp__")) {
+      // Matrix C2 (#327): MCP tools are deployment-config-discovered, never
+      // registry rows (control-plane §1.1 stays the registered schema
+      // authority) — the wire-name prefix routes them to the in-DO executor,
+      // the same iron rules as executeEdgeLocal (idempotent re-ask,
+      // journal-first result, zero daemon touches).
+      if (callData?.type === "tool.call") {
+        await this.executeMcpLocal(execution, toolName, callData.data.arguments);
       }
       return;
     }
@@ -3102,6 +3148,74 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     );
   }
 
+  /**
+   * DO-local MCP execution (matrix C2, #327): the same iron rules as
+   * executeEdgeLocal — executionId dedup guards re-asks (a terminal
+   * execution re-asked after eviction answers from the journal, never a
+   * second execution), the result persists as `tool.result` before any
+   * waiter wakes, zero daemon involvement. Cancel rides the web_search
+   * vocabulary (killNonTerminalExecutions aborts the registered controller;
+   * the transport surfaces it and the executor journals `cancelled`).
+   */
+  private async executeMcpLocal(
+    execution: ExecutionRuntime,
+    wireName: string,
+    args: Record<string, unknown>,
+  ): Promise<void> {
+    if (executionTerminal(execution)) return;
+    const route: McpToolRoute | undefined = this.mcpSurface.routeOf(wireName);
+    if (route === undefined) {
+      // Fail closed with a structured answer: the name was on the wire once
+      // (the model could only have learned it from discovery) but routes no
+      // longer carry it — stale surface after a DO eviction whose discovery
+      // now fails, or the server dropped the tool. Never a daemon dispatch.
+      await this.ingestResult(
+        execution,
+        {
+          status: "error",
+          exitCode: null,
+          output: `mcp: no live route for ${wireName} — the server failed discovery this turn or no longer lists the tool`,
+        },
+        { ack: false },
+      );
+      return;
+    }
+    // Register the cancel controller BEFORE the executor runs (web_search
+    // discipline, M1.5 T12).
+    const abort = new AbortController();
+    this.mcpAborts.set(execution.executionId, abort);
+    try {
+      const result = await this.mcpSurface.callTool(route, args, {
+        signal: abort.signal,
+        timeoutMs: execution.timeoutMs,
+      });
+      const output = limitMcpOutput(projectMcpToolOutput(result));
+      await this.ingestResult(
+        execution,
+        { status: result.isError === true ? "error" : "ok", exitCode: null, output },
+        { ack: false },
+      );
+    } catch (error) {
+      // Cancelled owning call/turn: the cancelled tool.result row (omp
+      // throwIfAborted rethrow semantics); anything else is an error result —
+      // transport text surfaces verbatim so the model can retry or reroute.
+      const cancelled = abort.signal.aborted;
+      await this.ingestResult(
+        execution,
+        {
+          status: cancelled ? "cancelled" : "error",
+          exitCode: null,
+          output: cancelled
+            ? "cancelled: the owning turn was cancelled while the MCP call was in flight"
+            : `mcp: ${error instanceof Error ? error.message : String(error)}`,
+        },
+        { ack: false },
+      );
+    } finally {
+      this.mcpAborts.delete(execution.executionId);
+    }
+  }
+
   /** DO-bound `ask` context (tools/ask.ts AskToolContext): journal
    * accessors + registration/interrupt mutators + wake/expiry plumbing. */
   private askToolContext(execution: ExecutionRuntime): AskToolContext {
@@ -3307,6 +3421,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         // web_search rides the same vocabulary: abort the in-flight
         // transport; the executor journals the cancelled tool.result row.
         this.webSearchAborts.get(executionId)?.abort();
+        continue;
+      }
+      if (execution.tool.startsWith("mcp__")) {
+        // Matrix C2 (#327): MCP rides the same vocabulary — abort the
+        // in-flight transport; the executor journals the cancelled
+        // tool.result row. Never a daemon kill (no daemon execution exists).
+        this.mcpAborts.get(executionId)?.abort();
         continue;
       }
       try {

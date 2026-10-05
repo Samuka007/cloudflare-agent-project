@@ -94,6 +94,18 @@ export type {
   WebSearchEngineProjection,
   WebSearchProjection,
 } from "./tools/web-search.js";
+export {
+  DEFAULT_MCP_TIMEOUT_SECONDS,
+  MAX_MCP_TIMEOUT_SECONDS,
+  MAX_MCP_TOOL_NAME_LENGTH,
+  McpToolSurface,
+  createMcpToolName,
+  decodeMcpServersConfig,
+  limitMcpOutput,
+  projectMcpToolOutput,
+  toMcpInputParameters,
+} from "./tools/mcp.js";
+export type { McpServerConfig, McpToolRoute } from "./tools/mcp.js";
 export { projectToUxEvents } from "./ux-projection.js";
 export { ProjectionError, modelRequestFromEvents } from "./translate.js";
 export {

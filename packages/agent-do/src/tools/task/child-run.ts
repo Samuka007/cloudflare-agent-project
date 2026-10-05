@@ -721,12 +721,17 @@ export function renderAgentHistory(events: readonly AnyAgentEvent[], agentId: st
         break;
       case "turn.input":
         lines.push(
-          `[${event.seq}] input: ${cap(event.data.content.map((part) => part.text).join(" "))}`,
+          // Non-text parts (#317 image union) render nothing in transcripts.
+          `[${event.seq}] input: ${cap(
+            event.data.content.map((part) => (part.type === "text" ? part.text : "")).join(" "),
+          )}`,
         );
         break;
       case "turn.steer":
         lines.push(
-          `[${event.seq}] steer: ${cap(event.data.content.map((part) => part.text).join(" "))}`,
+          `[${event.seq}] steer: ${cap(
+            event.data.content.map((part) => (part.type === "text" ? part.text : "")).join(" "),
+          )}`,
         );
         break;
       case "model.call_completed": {
