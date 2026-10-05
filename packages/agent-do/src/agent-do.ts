@@ -74,6 +74,7 @@ import { getAgentRuntime } from "./injection.js";
 import { modelRequestFromEvents } from "./translate.js";
 import { toolRegistryRow, type ToolRegistryRow } from "./tools/registry.js";
 import { resolveHostPathOverride, type HostPathResolution } from "./tools/host-path.js";
+import { scheduleBatch, type BatchScheduleItem } from "./tools/batch-scheduler.js";
 import { latestContextNotes, runEdgeTool, type EdgeToolContext } from "./tools/edge.js";
 import {
   projectJobs,
@@ -148,6 +149,11 @@ import {
   McpToolSurface,
   type McpToolRoute,
 } from "./tools/mcp.js";
+
+/** #328 C3: recovery settlement waiters ride the execWaiters table under a
+ * turnId that can never collide with a real turn (turn ids are ULIDs or
+ * `compact-*`). */
+const SETTLEMENT_WAITER_MARK = "#settlement-waiter";
 
 /** Delivery caps apply to artifact reads too (omp task/types.ts:29-32). */
 function capArtifactText(
@@ -1737,23 +1743,19 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     for (const turn of this.state.turns.values()) {
       if (turn.status === "cancelling") await this.killNonTerminalExecutions(turn.turnId);
     }
-    // 3. Ruling E: re-ask every non-terminal execution (deduped downstream).
-    for (const execution of [...this.state.executions.values()]) {
-      if (executionTerminal(execution)) continue;
-      if (execution.attempts >= this.cfg.maxDispatchAttempts) continue;
-      if (execution.tool === "wait" || execution.tool === "ask") {
-        // Blocking edge executors park on their wake channels — awaiting them
-        // here would deadlock recovery itself (every RPC gates on ready()).
-        // Start detached: a lost run stays non-terminal and the next
-        // recovery re-asks again (same at-least-once dispatch as ever).
-        void this.dispatchExecution(execution.turnId, execution.executionId).catch(
-          (error: unknown) => {
-            console.error(`recovery dispatch of ${execution.executionId} failed`, error);
-          },
-        );
-        continue;
-      }
-      await this.dispatchExecution(execution.turnId, execution.executionId);
+    // 3. Ruling E: re-ask every non-terminal execution (deduped downstream),
+    // in batch-schedule wave order (#328 C3) — same-file conflicts re-dispatch
+    // only after the earlier wave settles, so the mutex survives eviction.
+    // Detached: recovery must not gate ready() on execution settlement (the
+    // blocking edge executors park on their wake channels by design).
+    const reaskable = [...this.state.executions.values()].filter(
+      (execution) =>
+        !executionTerminal(execution) && execution.attempts < this.cfg.maxDispatchAttempts,
+    );
+    if (reaskable.length > 0) {
+      void this.redispatchScheduled(reaskable).catch((error: unknown) => {
+        console.error("scheduled recovery re-dispatch failed", error);
+      });
     }
     // 4. Ruling F closure: results journaled by the service but not acked
     // (crash between append and ack) are re-delivered; the dedup here
@@ -2296,7 +2298,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           self.ctx.waitUntil(self.maybeAutoCompactAfterTurn());
           return;
         }
-        const executionIds: string[] = [];
+        const batch: BatchScheduleItem[] = [];
         for (const toolCall of outcome.toolCalls) {
           const record = yield* Effect.promise(() =>
             self.appendEvent("tool.call", {
@@ -2307,24 +2309,54 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
               timeoutMs: self.cfg.execTimeoutMs,
             }),
           );
-          executionIds.push(executionIdFor(self.requireThread(), record.seq));
+          batch.push({
+            executionId: executionIdFor(self.requireThread(), record.seq),
+            tool: toolCall.name,
+            arguments: toolCall.arguments,
+          });
         }
-        yield* Effect.forEach(
-          executionIds,
-          (executionId) => Effect.promise(() => self.dispatchExecution(turnId, executionId)),
-          {
-            concurrency: "unbounded",
-            discard: true,
-          },
-        );
-        const waitOutcome: "done" | "cancelled" | "turn_failed" = yield* Effect.promise(() =>
-          self.waitForExecutions(turnId, executionIds, signal),
-        );
-        if (waitOutcome === "cancelled") {
-          yield* Effect.promise(() => self.finalizeCancel(turnId));
+        // #328 C3: conflict-aware batch scheduling (pi agent-loop anchor).
+        // The batch splits into waves of mutually non-conflicting calls —
+        // read-only calls run together, same-file write/write and read/write
+        // conflicts serialize — and each wave settles before the next
+        // dispatches, so a conflicting call can never execute concurrently
+        // with its predecessor.
+        const waves = scheduleBatch(batch);
+        for (let waveIndex = 0; waveIndex < waves.length; waveIndex++) {
+          const wave = waves[waveIndex];
+          if (wave === undefined) continue;
+          const midBatchTurn = self.state.turns.get(turnId);
+          if (midBatchTurn === undefined || turnTerminal(midBatchTurn)) return;
+          if (midBatchTurn.status === "cancelling") {
+            // Cancel landed between waves: undispatched executions have no
+            // daemon presence (kill no-ops on unknown ids; watchdog re-asks
+            // require a dispatch row) — seal them so the turn converges.
+            yield* Effect.promise(() =>
+              self.sealUndispatchedExecutions(turnId, waves.slice(waveIndex).flat()),
+            );
+            yield* Effect.promise(() => self.finalizeCancel(turnId));
+            return;
+          }
+          yield* Effect.forEach(
+            wave,
+            (executionId) => Effect.promise(() => self.dispatchExecution(turnId, executionId)),
+            {
+              concurrency: "unbounded",
+              discard: true,
+            },
+          );
+          const waitOutcome: "done" | "cancelled" | "turn_failed" = yield* Effect.promise(() =>
+            self.waitForExecutions(turnId, wave, signal),
+          );
+          if (waitOutcome === "done") continue;
+          yield* Effect.promise(() =>
+            self.sealUndispatchedExecutions(turnId, waves.slice(waveIndex + 1).flat()),
+          );
+          if (waitOutcome === "cancelled") {
+            yield* Effect.promise(() => self.finalizeCancel(turnId));
+          }
           return;
         }
-        if (waitOutcome === "turn_failed") return;
       }
     });
   }
@@ -2907,6 +2939,84 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
             : `host_offline: override target "${overriddenMachineId}" has no live daemon session`,
       });
     }
+  }
+
+  /**
+   * Recovery re-ask driver (#328 C3): waves of mutually non-conflicting
+   * executions; each wave settles before the next dispatches, so a same-file
+   * conflict re-dispatches only after its predecessor is terminal — the
+   * mutex survives eviction. Per-execution semantics are unchanged
+   * at-least-once re-ask (service journal dedups; the service DO settles
+   * dispatch at spawn-ack, results arrive via onExecutionUpdate). Blocking
+   * edge executors (wait/ask) dispatch without awaiting and never join a
+   * settlement wait — they park on their wake channels until answered or
+   * capped.
+   */
+  private async redispatchScheduled(executions: ExecutionRuntime[]): Promise<void> {
+    const waves = scheduleBatch(
+      executions.map((execution) => {
+        const callData = this.eventData(execution.callSeq);
+        return {
+          executionId: execution.executionId,
+          tool: execution.tool,
+          arguments: callData?.type === "tool.call" ? callData.data.arguments : {},
+        };
+      }),
+    );
+    for (const wave of waves) {
+      const dispatches: Promise<void>[] = [];
+      const settleable: string[] = [];
+      for (const executionId of wave) {
+        const execution = this.state.executions.get(executionId);
+        if (execution === undefined || executionTerminal(execution)) continue;
+        if (execution.tool === "wait" || execution.tool === "ask") {
+          // Blocking edge executors park — the same detached dispatch the
+          // inline recovery loop always ran; a lost run stays non-terminal
+          // and the next recovery re-asks again.
+          void this.dispatchExecution(execution.turnId, executionId).catch((error: unknown) => {
+            console.error(`recovery dispatch of ${executionId} failed`, error);
+          });
+          continue;
+        }
+        dispatches.push(
+          this.dispatchExecution(execution.turnId, executionId).catch((error: unknown) => {
+            console.error(`recovery dispatch of ${executionId} failed`, error);
+          }),
+        );
+        settleable.push(executionId);
+      }
+      await Promise.all(dispatches);
+      if (settleable.length > 0) await this.waitForExecutionSettlement(settleable);
+    }
+  }
+
+  /** Resolves when every named execution is terminal (settlement wake). */
+  private waitForExecutionSettlement(executionIds: string[]): Promise<void> {
+    const { promise, resolve } = Promise.withResolvers<undefined>();
+    const check = (): void => {
+      if (
+        executionIds.every((executionId) => {
+          const execution = this.state.executions.get(executionId);
+          return execution === undefined || executionTerminal(execution);
+        })
+      ) {
+        for (const executionId of executionIds) {
+          const waiters = this.execWaiters.get(executionId);
+          if (waiters === undefined) continue;
+          const filtered = waiters.filter((waiter) => waiter.turnId !== SETTLEMENT_WAITER_MARK);
+          if (filtered.length === 0) this.execWaiters.delete(executionId);
+          else this.execWaiters.set(executionId, filtered);
+        }
+        resolve(undefined);
+      }
+    };
+    for (const executionId of executionIds) {
+      const existing = this.execWaiters.get(executionId) ?? [];
+      existing.push({ turnId: SETTLEMENT_WAITER_MARK, wake: check });
+      this.execWaiters.set(executionId, existing);
+    }
+    check();
+    return promise;
   }
 
   /** `read agent://…` / `read history://…` — resolve in the DO mesh, journal
@@ -3624,6 +3734,28 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       } catch {
         // Ruling I: kill is at-least-once; recovery re-sends after eviction.
       }
+    }
+  }
+
+  /**
+   * #328 C3 wave scheduling: executions a settling turn never dispatched
+   * have no daemon presence — `kill` no-ops on unknown ids and the watchdog
+   * re-ask requires a dispatch row (`lastDispatchAt`) — so without a seal
+   * they would dangle non-terminal forever and cancellation could not
+   * converge. The call never left the DO: "cancelled" is the honest
+   * terminal, journaled here (I6: at most one result per executionId).
+   */
+  private async sealUndispatchedExecutions(turnId: string, executionIds: string[]): Promise<void> {
+    for (const executionId of executionIds) {
+      const execution = this.state.executions.get(executionId);
+      if (execution === undefined || executionTerminal(execution)) continue;
+      await this.appendEvent("tool.result", {
+        turnId,
+        executionId,
+        status: "cancelled",
+        exitCode: null,
+        output: "",
+      });
     }
   }
 
