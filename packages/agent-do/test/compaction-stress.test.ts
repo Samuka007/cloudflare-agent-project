@@ -488,60 +488,49 @@ describe("#313 — AgentDO × compaction context stress (sustained API campaign)
     expect(postWire.length).toBeLessThan(Math.floor(last.length / 2));
   });
 
-  test("replay consistency (#116): the final log re-projects every non-shadowed captured request", () => {
-    const { events, turnIds } = campaign;
-    // The multi-cut shadow (pinned in the next test): requests captured while
-    // cut A was armed whose replay now sees pair B. Only cutB's FIRST call
-    // joins the post-A turns: once pair B's checkpoint executes, the live fold
-    // itself projects cutless (active phase) for the rest of the turn — and
-    // the replay reconstructs exactly that.
-    const shadowed = new Set<string>();
-    for (const label of ["postA1", "postA2"] as const) {
-      shadowed.add(`${turnIds[label]}#${firstCallSeq(events, turnIds[label])}`);
-    }
-    const cutBFirstSeq = callSeqsOf(events, turnIds.cutB)[0];
-    if (cutBFirstSeq === undefined) throw new Error("no cutB calls");
-    shadowed.add(`${turnIds.cutB}#${cutBFirstSeq}`);
-
+  test("replay consistency (#116): the final log re-projects every captured request", () => {
+    const { events } = campaign;
+    // Same log → same request, even though 12 turns and two cuts now follow:
+    // the temporal folds (async boundaries, steer ledger, prior-turn slices,
+    // and — since #325 — the as-of-call rewind cut) reconstruct every request
+    // as it was THEN. 20/20, no shadow set.
     let checked = 0;
     for (const request of campaign.captured) {
-      const key = `${request.turnId}#${request.modelCallId}`;
-      if (shadowed.has(key)) continue;
-      // Same log → same request, even though 12 turns and two cuts now follow:
-      // the temporal folds (async boundaries, steer ledger, prior-turn slices)
-      // reconstruct the request as it was THEN.
-      expect(projectedFrom(events, request.turnId, request.modelCallId), key).toEqual(request);
+      expect(
+        projectedFrom(events, request.turnId, request.modelCallId),
+        `${request.turnId}#${request.modelCallId}`,
+      ).toEqual(request);
       checked += 1;
     }
-    expect(checked).toBe(EXPECTED_CALLS - shadowed.size);
+    expect(checked).toBe(EXPECTED_CALLS);
   });
 
-  test("multi-cut shadow (pinned defect #325): replay of mid-campaign requests drops the then-armed cut", () => {
-    // translate.ts's temporal contract — "replaying an earlier call's request
-    // from a longer final log must reconstruct the request as it was THEN" —
-    // holds for every fold EXCEPT the rewind cut: rewindContextCut
-    // (session-tree.ts) projects the LATEST completed pair with no as-of-call
-    // guard. Requests built under cut A (postA1, postA2, and cutB's first
-    // call) replay cutless once pair B exists: pair B's rewind turn had not
-    // terminalized at those turns' inputs, so the arming rule refuses and the
-    // branch summary vanishes from the reconstructed request (and the hidden
-    // span re-enters via priorTurns). Live behavior is unaffected — requests
-    // are built at call time — so this is a replay-semantics gap, not a
-    // serving defect. Filed as #325 and pinned here so the fix (as-of-call
-    // cut selection) flips this test together with the replay-consistency
-    // shadow set.
-    const { events, turnIds } = campaign;
-    const shadowedTurns: { label: "postA1" | "postA2" | "cutB"; callSeqs: number[] }[] = [
+  test("multi-cut replay (#325): mid-campaign requests replay with the then-armed cut", () => {
+    // The #325 fix: rewindContextCut selects the pair as of the replayed call
+    // (checkpointRewindState bounded at modelCallId), so requests built under
+    // cut A — postA1, postA2, and cutB's FIRST call — replay branchCut = cutA
+    // instead of dropping it (the former pinned shadow: the latest-pair fold
+    // saw pair B, whose rewind turn had not terminalized at those turns'
+    // inputs, and the arming rule refused). cutB's later calls stay cutless in
+    // both views — once pair B's checkpoint executes the fold goes active,
+    // and its own turn replays uncut under the turn-end arming rule.
+    const { events, threadId, turnIds } = campaign;
+    const cutA = {
+      checkpointResultSeq: okResultSeq(events, threadId, "checkpoint", 0),
+      rewindResultSeq: okResultSeq(events, threadId, "rewind", 0),
+      summary: REPORT_A,
+    };
+    const thenArmed: { label: "postA1" | "postA2" | "cutB"; callSeqs: number[] }[] = [
       { label: "postA1", callSeqs: [firstCallSeq(events, turnIds.postA1)] },
       { label: "postA2", callSeqs: [firstCallSeq(events, turnIds.postA2)] },
       { label: "cutB", callSeqs: [callSeqsOf(events, turnIds.cutB)[0] ?? -1] },
     ];
-    for (const { label, callSeqs } of shadowedTurns) {
+    for (const { label, callSeqs } of thenArmed) {
       for (const seq of callSeqs) {
         const live = capturedCall(turnIds[label], seq);
-        expect(live.branchCut, `${label}#${seq} was armed at call time`).toBeDefined();
+        expect(live.branchCut, `${label}#${seq} was armed with cut A at call time`).toEqual(cutA);
         const replayed = modelRequestFromEvents(events, turnIds[label], seq);
-        expect(replayed.branchCut, `${label}#${seq} replays cutless`).toBeUndefined();
+        expect(replayed.branchCut, `${label}#${seq} replays the then-armed cut`).toEqual(cutA);
       }
     }
   });
@@ -590,11 +579,10 @@ describe("#313 — AgentDO × compaction context stress (sustained API campaign)
     expect(after?.kept.at(-1)?.seq).toBe(okResultSeq(events, threadId, "checkpoint", 0));
 
     // The pre-eviction live capture equals the revived journal's projection:
-    // in-memory state === replay state (the DO-eviction expectation). The
-    // anchor is the eviction-moment journal (eventsPreEvict) — projecting
-    // postA1 from the FINAL log hits the pinned multi-cut shadow above (pair
-    // B post-dates this request), which is a replay-semantics gap, not an
-    // eviction one.
+    // in-memory state === replay state (the DO-eviction expectation), anchored
+    // on the eviction-moment journal (eventsPreEvict); the final-log projection
+    // of the same request is the replay-consistency test above (the #325
+    // multi-cut shadow lives there no more).
     const postA1Seq = firstCallSeq(events, turnIds.postA1);
     expect(projectedFrom(eventsPreEvict, turnIds.postA1, postA1Seq)).toEqual(
       capturedCall(turnIds.postA1, postA1Seq),

@@ -259,6 +259,16 @@ projection`）渲染只读投影 + 「编辑走部署 env」指针（对照 ops/
 
 ### Fixed
 
+- **#325 (W5) 多压缩对回放投影丢当时 armed cut——rewindContextCut 补 as-of-call 时间锚**：
+  `checkpointRewindState` 增 `beforeSeq` 独占上界（只折 `seq < beforeSeq` 的行），
+  `rewindContextCut` 签名增 `modelCallId` 锚（translate.ts 调用点传入当前
+  call_started seq）：回放早先 call 的请求按 call 时点选对——更晚的对（仅
+  checkpoint、已 rewind、或 rewind turn 未 terminalize）既不武装也不解除当时
+  已 armed 的对；cutB 自身 turn 内 completed(A)→active(B)→completed(B) 的状态
+  演化在锚下逐 call 精确重建。call 时点锚是无操作（call_started 之后的行尚不
+  存在），live 投影零变化。compaction-stress shadow 集清零（20/20 captured ===
+  final-log 重投影），pin 测试翻转为正断言（postA1/postA2/cutB#1 重投影
+  branchCut = cutA）；session-tree 增双对 as-of 锚单测。
 - **#226 (P0) Stop request 无效**：`POST /threads/:id/stop` 是 no-op 存根——SPA
   Stop 打进死路由，turn 永不落终态；ask pending（DO 有意挂起看门狗的「用户即
   deadline」态）彻底挂死。路由现在从 agent DO 原始 journal 折出活动 turn
