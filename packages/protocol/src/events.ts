@@ -50,25 +50,31 @@ export type TurnPhase = z.infer<typeof turnPhaseSchema>;
  * HTTP-only visibility fields — the journal carries runtime truth, the
  * request layer carries presentation concerns.
  */
+export const localImageContentSchema = z.object({
+  type: z.literal("localImage"),
+  /**
+   * Absolute paths and URI-like values are passed through to the runtime.
+   * Relative paths are server-managed attachment references (#316 R2
+   * family), not workspace relative files.
+   */
+  path: z.string(),
+});
+export type LocalImageContent = z.infer<typeof localImageContentSchema>;
+
+export const localFileContentSchema = z.object({
+  type: z.literal("localFile"),
+  path: z.string(),
+  name: z.string().optional(),
+  sizeBytes: z.number().int().nonnegative().optional(),
+  mimeType: z.string().optional(),
+});
+export type LocalFileContent = z.infer<typeof localFileContentSchema>;
+
 export const promptContentSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
   z.object({ type: z.literal("image"), url: z.url() }),
-  z.object({
-    type: z.literal("localImage"),
-    /**
-     * Absolute paths and URI-like values are passed through to the runtime.
-     * Relative paths are server-managed attachment references (#316 R2
-     * family), not workspace relative files.
-     */
-    path: z.string(),
-  }),
-  z.object({
-    type: z.literal("localFile"),
-    path: z.string(),
-    name: z.string().optional(),
-    sizeBytes: z.number().int().nonnegative().optional(),
-    mimeType: z.string().optional(),
-  }),
+  localImageContentSchema,
+  localFileContentSchema,
 ]);
 export type PromptContent = z.infer<typeof promptContentSchema>;
 

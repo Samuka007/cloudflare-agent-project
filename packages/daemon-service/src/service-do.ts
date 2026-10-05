@@ -1589,6 +1589,18 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     };
   }
 
+  /**
+   * #318 attachment pickup session binding (bb
+   * requireAuthenticatedDaemonSession): the queried session must be this
+   * DO's LIVE session and belong to the claiming host — a replaced or
+   * closed session authorizes nothing.
+   */
+  async verifyAttachmentSession(hostId: string, sessionId: string): Promise<boolean> {
+    await this.ready();
+    const session = this.state.session;
+    return session !== null && session.hostId === hostId && session.sessionId === sessionId;
+  }
+
   /** L1/seam tests re-point the record at an injected spawn clock. */
   async debugForceLeaseExpiry(): Promise<void> {
     await this.ready();

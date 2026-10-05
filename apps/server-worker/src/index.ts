@@ -15,6 +15,7 @@ import {
 } from "@cap/provider-app";
 import { createApp } from "./app.js";
 import { updateHostRow, upsertAttachedHost } from "./db/hosts.js";
+import { projectAttachmentReader } from "./services/attachment-pickup.js";
 import { NotificationHubDO } from "./ws/hub.js";
 import { LeaseStoreDO } from "./leases/lease-do.js";
 import type { Env } from "./env.js";
@@ -64,8 +65,15 @@ export class ComposedHostOrchestratorDO extends HostOrchestratorDO {
   }
 }
 
-/** Route prefixes owned by the daemon-service front (#34) — never SPA/API. */
-const DAEMON_ROUTE_PREFIXES = ["/enroll", "/session/open", "/agent/", "/agent-sink/"];
+/** Route prefixes owned by the daemon-service front (#34) — never SPA/API.
+ * /internal/session/ is the #318 attachment pickup family (bb /internal/*). */
+const DAEMON_ROUTE_PREFIXES = [
+  "/enroll",
+  "/session/open",
+  "/agent/",
+  "/agent-sink/",
+  "/internal/session/",
+];
 
 function isDaemonFace(request: Request, path: string): boolean {
   if (DAEMON_ROUTE_PREFIXES.some((prefix) => path === prefix || path.startsWith(prefix))) {
@@ -109,6 +117,9 @@ export default {
         onDaemonProtocolReject: async (hostId, protocolVersion) => {
           await updateHostRow(env, hostId, { lastRejectedProtocolVersion: protocolVersion });
         },
+        // #318: the pickup route's thread→project cross-check + R2 read,
+        // answered from the control plane's D1 + A1 attachment family.
+        readProjectAttachment: projectAttachmentReader(env),
       };
       return daemonServiceWorker.fetch(request, serviceEnv);
     }

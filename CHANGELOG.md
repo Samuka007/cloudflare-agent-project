@@ -7,6 +7,26 @@
 
 ### Added
 
+- **#318 (W5) 图片 A3——daemon 取件通道 + staging 落盘 + 失败清理（依赖 #316 A1、#317 A2）**：
+  daemon-service 三件（bb `prompt-attachments.ts`/`server-client.ts`/`internal/session` 语义照搬，
+  适配 #316 R2 存储面）。① 取件通道：daemon face 新路由
+  `GET /internal/session/project-attachment-content`（Bearer hostKey 三级 auth ladder → DO
+  `verifyAttachmentSession` 活会话绑定 → 部署桥 `readProjectAttachment`——组合入口以
+  `projectAttachmentReader` 落 D1 thread→project / thread→bound-host 交叉校验（bb 403 判词
+  verbatim）+ R2 读）；客户端 `project-attachments.ts`：HTTPS 强制（loopback 放宽）、
+  content-length/字节流双重校验（bb server-client.ts:203-296/397-435 verbatim）。② staging：
+  `prompt-attachments.ts` 移植——相对路径 `localImage/localFile` 落
+  `<sandboxRoot>/<threadId>/Attachments/`（sanitize + `-2` 去重后缀 + 0600，限额图 10MB/文件
+  25MB 与服务端同值，localFile `sizeBytes` 对账，逃逸 threadId → `invalid_path`）；成功后文件
+  常驻（thread storage），仅 staging 失败 / execute 崩溃全量清理（bb cleanupAfterPostStagingFailure）。
+  ③ 派发面：`tool.exec` 帧增 additive `attachments{projectId, items}` leg（#317 契约词汇子集，
+  协议层抽出 `localImageContentSchema/localFileContentSchema` 成员复用），
+  `dispatchToolExec` 在工具执行前 staging，取件失败回 `tool.exited` 业务 error
+  （`attachment_unavailable` upstream 判词），拒绝-spawn 语义不背锅。测试：workerd
+  `l1-attachment-pickup.test.ts` 6 例（401/422/403 会话绑定/桥字节/桥拒绝映射/无桥 500）+
+  bun `l1-prompt-attachments.test.ts` 10 例（staging 路径+0600+去重+直通透传+失败清理+限额+
+  尺寸对账+先验限额+逃逸 + 派发接线两态）+ server-worker `attachment-pickup.test.ts` 4 例
+  （桥 D1/R2 端到端 + 两 403 判词 + A1 404 映射）。
 - **#317 (W5) 图片 A2——协议 image union + 422 门解锁 + 引用校验（依赖 #316 A1 keystone）**：
   ① 协议 additive：`promptContentSchema` 增 `image{url}/localImage{path}/localFile{path,name?,sizeBytes?,mimeType?}`
   （契约词汇镜像 `promptInputSchema`，去 HTTP 层 visibility 字段——journal 载运行时真值），

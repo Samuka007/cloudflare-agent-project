@@ -47,4 +47,9 @@ export {
   type MintedJoinCode,
 } from "./join-codes.js";
 export { DaemonServiceDO, type DaemonServiceEnv, type HostRpcOutcome } from "./service-do.js";
-export { default as daemonServiceWorker, type WorkerEnv } from "./worker.js";
+export {
+  default as daemonServiceWorker,
+  type ProjectAttachmentContentResult,
+  type ProjectAttachmentReader,
+  type WorkerEnv,
+} from "./worker.js";
