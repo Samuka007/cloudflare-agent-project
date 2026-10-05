@@ -172,10 +172,20 @@ export class AnthropicRelayProvider implements ModelProvider {
             } else if (delta?.type === "input_json_delta" && delta.partial_json !== undefined) {
               const block = blocksByIndex.get(payload.index ?? -1);
               if (block !== undefined) block.json += delta.partial_json;
+            } else if (delta?.type === "thinking_delta" && delta.thinking !== undefined) {
+              // #257 CoT stream: the reasoning half of the call, surfaced as
+              // its own chunk kind (never answer text) — the DO journals it
+              // as `model.thinking` rows and the ux projection renders the
+              // `item/reasoning/textDelta` stream the SPA folds into
+              // activeThinking. With the harness thinking budget unset these
+              // blocks never arrive (M0 disables), so this only fires for
+              // re-enabled deployments.
+              yield { kind: "thinking-delta", text: delta.thinking };
             }
-            // thinking / signature deltas are reasoning-side effects: never
-            // surfaced as answer text (probe: glm reasoning rides `thinking`
-            // blocks; M0 disables, the handler stays for re-enable).
+            // `signature_delta` stays swallowed: opaque verification
+            // material with no UX face, and replaying thinking blocks is
+            // deliberately out of scope (#257 note in wire.ts — the M0 wire
+            // rebuilds assistant slices from text+tool_use only).
             break;
           }
           case "content_block_stop": {
@@ -247,7 +257,14 @@ interface SseEventPayload {
   type: string;
   index?: number;
   error?: { type?: string; message?: string };
-  delta?: { stop_reason?: string | null; type?: string; text?: string; partial_json?: string };
+  delta?: {
+    stop_reason?: string | null;
+    type?: string;
+    text?: string;
+    partial_json?: string;
+    /** thinking content blocks: `thinking_delta` carries the reasoning text. */
+    thinking?: string;
+  };
   content_block?: { type: string; id?: string; name?: string };
 }
 

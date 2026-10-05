@@ -80,6 +80,7 @@ import {
 import { settleThreadTurnStatus } from "../services/thread-run-settlement.js";
 import {
   buildConversationOutline,
+  buildActiveThinking,
   buildTimelinePage,
   mergeTimelineRows,
   projectTimelineRows,
@@ -559,6 +560,10 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       summaryOnly,
     };
     const page = buildTimelinePage(allRows, pageQuery);
+    // bb tail-only state gates on the LATEST page (thread-timeline.ts:2073);
+    // activeThinking additionally gates on thread status === active (bb
+    // thread-view buildProjectionActiveThinking, #257 CoT surface).
+    const activeThinking = buildActiveThinking(events, row.status);
     const paramsKey = `${row.id}|${row.status}|${kind}|${segmentLimit}|${String(includeNestedRows)}|${String(summaryOnly)}|${String(includeUnhandledProviderEvents)}`;
     let delta;
     if (query.afterSequence !== undefined && kind === "latest") {
@@ -573,7 +578,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     return ctx.json({
       rows: summaryOnly ? [] : page.rows,
       activePromptMode: null,
-      activeThinking: null,
+      activeThinking,
       activeWorkflows: [],
       activeBackgroundCommands: [],
       pendingTodos: null,

@@ -42,6 +42,7 @@ const MIGRATIONS: readonly { version: number; name: string; statements: readonly
 /** String fields eligible for the R2 bypass, per event type. */
 const BLOBBABLE_FIELD: Partial<Record<AgentEventType, string>> = {
   "model.delta": "text",
+  "model.thinking": "text",
   "tool.output": "chunk",
   "tool.result": "output",
 };

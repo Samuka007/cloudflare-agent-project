@@ -136,6 +136,27 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
         });
         break;
       }
+      case "model.thinking": {
+        // #257 CoT stream — 1:1 row → `item/reasoning/textDelta` (bb event
+        // name; M0 folds the bb summary field). Same answer-text guards as
+        // the agentMessage delta: blob-offloaded rows and empties contribute
+        // nothing to the UX face (the raw log view carries the blob).
+        const { text, modelCallId } = event.data;
+        if (typeof text !== "string" || text === "" || turnId === undefined) break;
+        ux = buildThreadEvent({
+          id: event.id,
+          threadId: event.threadId,
+          seq: event.seq,
+          type: "item/reasoning/textDelta",
+          data: {
+            turnId,
+            itemId: `itm-rs-${turnId}:${modelCallId}`,
+            delta: text,
+          },
+          createdAt: event.createdAt,
+        });
+        break;
+      }
       case "model.call_completed": {
         const text = event.data.text;
         if (text === "" || turnId === undefined) break;

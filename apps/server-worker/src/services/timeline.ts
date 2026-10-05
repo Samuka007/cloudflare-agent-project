@@ -1,5 +1,6 @@
 import { timelineRowSchema, type TimelineRow } from "../contract/thread-timeline.js";
 import { threadEventDataSchemas } from "@cap/protocol";
+import { activeThinkingSchema, type ActiveThinking } from "../contract/domain/active-thinking.js";
 import type { JsonValue } from "../contract/domain/json-value.js";
 import type { UxThreadEvent } from "../seam/agent-do.js";
 
@@ -97,6 +98,87 @@ function textOfContent(content: readonly unknown[]): string {
         : "",
     )
     .join("");
+}
+
+// --- activeThinking (#257 CoT surface) ------------------------------------------------
+
+interface ThinkingLifecycle {
+  id: string;
+  text: string;
+  startedAt: number;
+  updatedAt: number;
+  lastSeq: number;
+}
+
+/**
+ * bb buildProjectionActiveThinking (thread-view reasoning-lifecycle-
+ * projection.ts:85-106) M0 fold: the thread's live chain-of-thought text,
+ * surfaced only while the thread has an active turn. One lifecycle per
+ * reasoning item (`itm-rs-<turnId>:<modelCallId>`, folded from the ux
+ * projection of the journal's `model.thinking` rows); `item/reasoning/
+ * textDelta` appends; the same call's answer delta closes it — bb closes at
+ * the reasoning item's completion, and the M0 journal carries no separate
+ * reasoning-completion row (the answer delta is the call's own
+ * thinking→answering boundary). The latest lifecycle by last delta seq wins
+ * (bb isNewerActiveThinkingLifecycle seq tie-break); everything drops when
+ * the thread leaves `active` (bb threadStatus gate).
+ */
+export function buildActiveThinking(
+  events: readonly UxThreadEvent[],
+  threadStatus: string,
+): ActiveThinking | null {
+  if (threadStatus !== "active") {
+    return null;
+  }
+  const lifecycles = new Map<string, ThinkingLifecycle>();
+  for (const event of events) {
+    if (event.type === "item/reasoning/textDelta") {
+      const parsed = threadEventDataSchemas["item/reasoning/textDelta"].safeParse(event.data);
+      if (!parsed.success) {
+        continue;
+      }
+      const { itemId, delta } = parsed.data;
+      const existing = lifecycles.get(itemId);
+      lifecycles.set(itemId, {
+        id: itemId,
+        text: (existing?.text ?? "") + delta,
+        startedAt: existing?.startedAt ?? event.createdAt,
+        updatedAt: event.createdAt,
+        lastSeq: event.seq,
+      });
+      continue;
+    }
+    if (event.type === "item/agentMessage/delta") {
+      const turnId = pickTurnId(rawEventData(event));
+      if (turnId === null) {
+        continue;
+      }
+      for (const itemId of lifecycles.keys()) {
+        if (itemId.startsWith(`itm-rs-${turnId}:`)) {
+          lifecycles.delete(itemId);
+        }
+      }
+    }
+  }
+  let latest: ThinkingLifecycle | null = null;
+  for (const lifecycle of lifecycles.values()) {
+    if (latest === null || lifecycle.lastSeq > latest.lastSeq) {
+      latest = lifecycle;
+    }
+  }
+  if (latest === null) {
+    return null;
+  }
+  return activeThinkingSchema.parse({
+    id: latest.id,
+    text: latest.text,
+    startedAt: latest.startedAt,
+    updatedAt: latest.updatedAt,
+  });
+}
+
+function rawEventData(event: UxThreadEvent): EventData {
+  return event.data !== null && typeof event.data === "object" ? (event.data as EventData) : {};
 }
 
 export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineRow[] {
