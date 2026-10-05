@@ -34,6 +34,13 @@ export interface Env {
   readonly DAEMON_RATE_LIMIT_REFILL_PER_SEC?: string;
   /** Static SPA bundle (bb apps/app dist). */
   ASSETS: Fetcher;
+  /**
+   * R2 bucket backing the project attachment family
+   * `attachment/<projectId>/<sha256><ext>` (#316). Optional like
+   * provider-app's BLOBS (#29 precedent); upload/copy/content answer 500
+   * with an explicit message when it is absent.
+   */
+  readonly BLOBS?: R2Bucket;
 
   // --- vars -----------------------------------------------------------------
 
