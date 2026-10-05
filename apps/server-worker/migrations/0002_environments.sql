@@ -7,8 +7,13 @@
 -- reader: thread list/detail inlining + GET /environments. threads.environment_id
 -- (0001) keeps no FK — the column predates this table, and SQLite cannot add an
 -- FK by ALTER; integrity is app-level (resolution only stores ids it just read).
+--
+-- #295: the staging deploy chain replays every migrations/*.sql on EVERY
+-- deploy (scripts/deploy-staging.sh). Every statement in this file MUST stay
+-- idempotent (CREATE ... IF NOT EXISTS) so replaying against any DB state —
+-- bare, partially-migrated, or fully-migrated — is a clean no-op.
 
-CREATE TABLE environments (
+CREATE TABLE IF NOT EXISTS environments (
   id TEXT PRIMARY KEY NOT NULL,
   name TEXT,
   project_id TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
@@ -33,9 +38,9 @@ CREATE TABLE environments (
 
 -- A workspace path is claimed per project, not globally. Two projects may
 -- point at the same folder; each gets its own environment for it (bb note).
-CREATE UNIQUE INDEX environments_project_host_path_idx ON environments (project_id, host_id, path);
+CREATE UNIQUE INDEX IF NOT EXISTS environments_project_host_path_idx ON environments (project_id, host_id, path);
 -- Host-leading lookups: every environment on a host, and every project's
 -- environment for one physical directory (bb note).
-CREATE INDEX environments_host_path_lookup_idx ON environments (host_id, path);
-CREATE INDEX environments_project_idx ON environments (project_id);
-CREATE INDEX environments_status_idx ON environments (status);
+CREATE INDEX IF NOT EXISTS environments_host_path_lookup_idx ON environments (host_id, path);
+CREATE INDEX IF NOT EXISTS environments_project_idx ON environments (project_id);
+CREATE INDEX IF NOT EXISTS environments_status_idx ON environments (status);
