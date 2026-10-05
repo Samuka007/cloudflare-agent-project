@@ -35,6 +35,7 @@ export default tseslint.config(
       // tsconfigs) and the project service cannot type them.
       "packages/daemon-service/test/tool-runtime.test.ts",
       "packages/daemon-service/test/eval-kernel.test.ts",
+      "packages/daemon-service/test/host-directory.test.ts",
       "packages/daemon-service/test/l1-read-semantics.test.ts",
       "packages/daemon-service/test/l1-glob-grep-semantics.test.ts",
       "packages/daemon-service/test/l1-edit-semantics.test.ts",

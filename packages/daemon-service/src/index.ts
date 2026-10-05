@@ -26,6 +26,12 @@ export {
   type ExecSpawnAckFrame,
   type ExecSpawnServiceFrame,
   type ExecStartedFrame,
+  type HostBrowseDirectoryCommand,
+  type HostDirectoryEntry,
+  type HostDirectoryListing,
+  type HostRpcCommand,
+  type HostRpcRequestFrame,
+  type HostRpcResponseFrame,
   type KillListServiceFrame,
   type ObservedExecution,
   type ObservedState,
@@ -40,5 +46,5 @@ export {
   type JoinCodeRecord,
   type MintedJoinCode,
 } from "./join-codes.js";
-export { DaemonServiceDO, type DaemonServiceEnv } from "./service-do.js";
+export { DaemonServiceDO, type DaemonServiceEnv, type HostRpcOutcome } from "./service-do.js";
 export { default as daemonServiceWorker, type WorkerEnv } from "./worker.js";

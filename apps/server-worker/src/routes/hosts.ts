@@ -1,7 +1,15 @@
 import { Hono } from "hono";
-import { DAEMON_PROTOCOL_VERSION, mintJoinCode, type DaemonServiceDO } from "@cap/daemon-service";
+import {
+  DAEMON_PROTOCOL_VERSION,
+  mintJoinCode,
+  type DaemonServiceDO,
+  type HostDirectoryListing,
+  type HostRpcCommand,
+} from "@cap/daemon-service";
 import {
   createHostJoinCodeRequestSchema,
+  hostDirectoryListingSchema,
+  hostDirectoryQuerySchema,
   updateHostPermissionCeilingRequestSchema,
   updateHostRequestSchema,
 } from "../contract/api/hosts.js";
@@ -11,6 +19,10 @@ import { parseOr422, requireJsonBody } from "../shared/route-utils.js";
 import { getHostRow, listNonDestroyedHostRows, updateHostRow } from "../db/hosts.js";
 import { daemonConnected, toHostRecord } from "../services/host-records.js";
 import type { Env, HonoBindings } from "../app-types.js";
+
+/** bb COMMAND_TIMEOUT_MS (apps/server/src/constants.ts:1) — the host online
+ * RPC window (directory browsing today, #302). */
+const HOST_COMMAND_TIMEOUT_MS = 30_000;
 
 /**
  * Hosts face (ruling #7 "hosts 最小"): fleet list/get/rename/ceiling/delete.
@@ -67,20 +79,84 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
   routes.get("/hosts/:id/provider-clis/status", async (ctx) => {
     // bb assertUsableHostId (routes/hosts.ts:288): unknown/destroyed host → 404.
     await requireHost(ctx.env, ctx.req.param("id"));
-    // bb providerCliStatus RPCs provider_cli.status to the host daemon
-    // (routes/hosts.ts:286-297); without a connected daemon the retryable RPC
-    // surfaces 502 host_unavailable "Host is not connected" (services/hosts/
-    // online-rpc.ts:162-163). The M0 control plane has no daemon-RPC
-    // transport (providers face permanently cropped, matrix E8), so every
-    // host is exactly that offline state. The SPA's own bb mechanism renders
-    // the degraded "Status unavailable" row for the error
-    // (MachineSettingsView.tsx:332-356) instead of a hard failure — the
-    // #76 hide-via-bb-mechanism ruling.
-    throw new ApiError({
-      status: 502,
-      code: "host_unavailable",
-      message: "Host is not connected",
+    // The providers face stays permanently cropped (matrix E8): the web-only
+    // deployment never installs or manages codex/claude-code CLIs, so there
+    // is no daemon-RPC answer to fake. But the old constant 502
+    // host_unavailable was the WRONG crop shape — the compose page polls
+    // this on every project-add open (RootComposeView.tsx:902) and the
+    // machine settings page rendered a permanent "Status unavailable" error
+    // row (MachineSettingsView.tsx:337) for what is really an empty state.
+    // #302 re-ruling: answer the bb success shape with the empty record —
+    // schema-valid (ProviderCliStatusResponse is a record), consumed as "no
+    // CLIs installed" (providerCliEntries({}) → [] → "None installed"), and
+    // indistinguishable from bb's healthy "nothing to manage" state.
+    return ctx.json({});
+  });
+
+  // bb routes/hosts.ts:219-233: the Add-project path browser's single-level
+  // listing — the call whose 404 surfaced as the dialog's inline "Route not
+  // found" (#302). Omitting `path` lists the host's home directory (resolved
+  // on the host). Served over the daemon online-RPC seam (hostOnlineRpc);
+  // bb's retryable-transport wait (online-rpc.ts:75-95) is a single-attempt
+  // ask here — the SPA's react-query retry covers the just-connecting race.
+  routes.get("/hosts/:id/directory", async (ctx) => {
+    const query = parseOr422(hostDirectoryQuerySchema, ctx.req.query());
+    const command: HostRpcCommand = {
+      type: "host.browse_directory",
+      ...(query.path !== undefined ? { path: query.path } : {}),
+    };
+    const hostId = ctx.req.param("id");
+    // bb assertUsableHostId (routes/hosts.ts:222-223): unknown/destroyed → 404.
+    await requireHost(ctx.env, hostId);
+    const stub = daemonStubOrNull(ctx.env, hostId);
+    if (stub === null) throw hostUnavailable();
+    const outcome = await stub.hostOnlineRpc({
+      hostId,
+      command,
+      timeoutMs: HOST_COMMAND_TIMEOUT_MS,
     });
+    switch (outcome.kind) {
+      case "host_offline":
+        throw hostUnavailable();
+      case "timeout":
+        // bb online-rpc.ts:154-156.
+        throw new ApiError({
+          status: 504,
+          code: "command_timeout",
+          message: "Timed out waiting for command result",
+        });
+      case "ok": {
+        const response = outcome.response;
+        if (!response.ok) {
+          // bb online-rpc.ts:98-99: a daemon-side dispatch failure surfaces
+          // as 502 with the daemon's own code verbatim (invalid_path, ENOENT…).
+          throw new ApiError({
+            status: 502,
+            code: response.errorCode,
+            message: response.errorMessage,
+            retryable: false,
+          });
+        }
+        if (response.commandType !== command.type) {
+          // bb online-rpc.ts:102-108.
+          throw new ApiError({
+            status: 500,
+            code: "command_result_type_mismatch",
+            message: `Host RPC ${response.requestId} completed with unexpected type ${response.commandType}`,
+          });
+        }
+        const parsed = hostDirectoryListingSchema.safeParse(response.result);
+        if (!parsed.success) {
+          throw new ApiError({
+            status: 500,
+            code: "command_result_invalid",
+            message: `Host RPC ${response.requestId} returned a malformed listing`,
+            details: { issues: parsed.error.issues },
+          });
+        }
+        return ctx.json(parsed.data satisfies HostDirectoryListing);
+      }
+    }
   });
 
   routes.patch("/hosts/:id", async (ctx) => {
@@ -202,6 +278,18 @@ async function requireHost(env: Env, hostId: string) {
     });
   }
   return row;
+}
+
+/**
+ * bb HostOnlineRpcUnavailableError → ApiError (services/hosts/online-rpc.ts:
+ * 162-163): the host online RPC asked a machine with no live daemon session.
+ */
+function hostUnavailable(): ApiError {
+  return new ApiError({
+    status: 502,
+    code: "host_unavailable",
+    message: "Host is not connected",
+  });
 }
 
 /**
