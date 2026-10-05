@@ -18,8 +18,10 @@ describe("criterion 2: thread list bare array", () => {
   // window lives in the workers-pool runtime (workerd isolate scheduling), a
   // domain vi.useFakeTimers cannot advance.
   const backoff = (ms: number): Promise<void> => {
-    const { promise, resolve } = Promise.withResolvers<void>();
-    setTimeout(resolve, ms);
+    const { promise, resolve } = Promise.withResolvers<undefined>();
+    setTimeout(() => {
+      resolve(undefined);
+    }, ms);
     return promise;
   };
 
