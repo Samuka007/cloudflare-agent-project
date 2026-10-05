@@ -30,7 +30,24 @@ export interface AgentDoRpc {
     /** Log-bootstrap title; empty string when the thread is created untitled
      * (control-plane D1 keeps `title: null` for SPA titleFallback display). */
     title: string;
+    /**
+     * #288: the resolved binding's machine — freezes into
+     * `thread.created.machineId` on the direct path. The composed path takes
+     * the harness hostBinding instead (#31 identity discipline: the journal
+     * host IS the composition machine; multi-host execution routing is #14).
+     */
+    machineId?: string;
   }): Promise<{ threadId: string; duplicated: boolean }>;
+  /**
+   * #288 explicit rebind: appends `thread.rebound` (the trajectory half; the
+   * threads row update is the caller's). Direct path only — the composed
+   * single-host execution cannot follow a moved binding yet, so it fails
+   * loudly instead of desyncing trajectory and execution.
+   */
+  rebindThread(args: { machineId: string; environmentId?: string }): Promise<{
+    machineId: string;
+    duplicated: boolean;
+  }>;
   sendMessage(args: {
     clientRequestId: string;
     content: { type: "text"; text: string }[];
@@ -168,7 +185,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
   // Reads stay direct: the event log projection lives on the per-thread DO.
   const reader = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId)) as unknown as Pick<
     AgentDoRpc,
-    "getEvents" | "listInteractions" | "resolveInteraction"
+    "getEvents" | "listInteractions" | "resolveInteraction" | "rebindThread"
   >;
 
   async function dispatch(command: AdapterCommand): Promise<AdapterCommandOutcome> {
@@ -195,6 +212,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
         type: "thread/start",
         threadId,
         cwd: env.DATA_DIR ?? "/data",
+        ...(args.machineId !== undefined ? { machineId: args.machineId } : {}),
         ...(args.title ? { input: [{ type: "text", text: args.title, mentions: [] }] } : {}),
         options: bridgeContext(env),
         instructionMode: "append",
@@ -202,6 +220,13 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
       const outcome = await dispatch(command);
       if (!outcome.ok) bridgeFailure("thread/start", outcome);
       return { threadId, duplicated: false };
+    },
+
+    // The rebind append is a trajectory operation — it lands on the per-thread
+    // DO exactly like resolveInteraction; composed execution keeps routing via
+    // the journal host (bindings stay advisory there until #14).
+    async rebindThread(rebindArgs) {
+      return reader.rebindThread(rebindArgs);
     },
 
     async sendMessage(args) {

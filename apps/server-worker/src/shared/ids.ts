@@ -25,6 +25,10 @@ export function createHostId(): string {
   return createId("host");
 }
 
+export function createEnvironmentId(): string {
+  return createId("env");
+}
+
 export function createProjectId(): string {
   return createId("proj");
 }

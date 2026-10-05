@@ -215,6 +215,9 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
     switch (event.type) {
       // No UX rendering: the SPA rebuilds these from item lifecycle events.
       case "thread.created":
+      // #288 rebind: binding truth is state (thread header read face), not a
+      // timeline row; the SPA surface is the environments family's job.
+      case "thread.rebound":
       case "model.call_retry":
       case "experimental_context_notes":
       // M1.5 T2 JobRegistry journal family: projected by tools/job-registry,

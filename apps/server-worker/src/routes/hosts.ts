@@ -1,21 +1,15 @@
 import { Hono } from "hono";
-import {
-  DAEMON_PROTOCOL_VERSION,
-  mintJoinCode,
-  type DaemonServiceDO,
-} from "@cap/daemon-service";
+import { DAEMON_PROTOCOL_VERSION, mintJoinCode, type DaemonServiceDO } from "@cap/daemon-service";
 import {
   createHostJoinCodeRequestSchema,
   updateHostPermissionCeilingRequestSchema,
   updateHostRequestSchema,
 } from "../contract/api/hosts.js";
 import { createHostId } from "../shared/ids.js";
-import { hostSchema } from "../contract/domain/host.js";
-import type { Host } from "../contract/domain/host.js";
-import type { HostDbRow } from "../db/rows.js";
 import { ApiError } from "../shared/api-error.js";
 import { parseOr422, requireJsonBody } from "../shared/route-utils.js";
 import { getHostRow, listNonDestroyedHostRows, updateHostRow } from "../db/hosts.js";
+import { daemonConnected, toHostRecord } from "../services/host-records.js";
 import type { Env, HonoBindings } from "../app-types.js";
 
 /**
@@ -242,38 +236,6 @@ function daemonStubOrNull(env: Env, hostId: string): (DurableObjectStub & Daemon
   const namespace = env.DAEMON_SERVICE;
   if (namespace === undefined) return null;
   return namespace.get(namespace.idFromName(hostId)) as DurableObjectStub & DaemonServiceDO;
-}
-
-/**
- * bb toHostRecord reads the status out of the live session before shaping
- * the response (entity-lookup.ts:82-94); same here, one DO round trip per
- * host. Every non-connected answer — no DAEMON_SERVICE binding in this
- * deployment, a failed or cold RPC, no current session — degrades to
- * "disconnected", exactly bb's reading for an unregistered host.
- */
-async function toHostRecord(env: Env, row: HostDbRow): Promise<Host> {
-  return hostSchema.parse({
-    id: row.id,
-    name: row.name,
-    type: row.type,
-    status: (await daemonConnected(env, row.id)) ? "connected" : "disconnected",
-    maxPermissionMode: row.maxPermissionMode,
-    lastSeenAt: row.lastSeenAt,
-    lastRejectedProtocolVersion: row.lastRejectedProtocolVersion,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  });
-}
-
-async function daemonConnected(env: Env, hostId: string): Promise<boolean> {
-  const namespace = env.DAEMON_SERVICE;
-  if (namespace === undefined) return false;
-  const stub = namespace.get(namespace.idFromName(hostId)) as DurableObjectStub & DaemonServiceDO;
-  try {
-    return (await stub.hostLiveness({ hostId })).connected;
-  } catch {
-    return false;
-  }
 }
 
 /** Realtime hub fan-out (threads.ts hub idiom): host changed frames. */

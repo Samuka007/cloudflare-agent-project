@@ -38,110 +38,28 @@ export type ThreadContextWindowUsage = z.infer<typeof threadContextWindowUsageSc
 export { gitBranchNameSchema };
 export type { GitBranchName };
 
-/**
- * Pre-thread checkout intent for an unmanaged workspace. Omitting this from
- * the workspace request means "don't touch HEAD"; including it asks the
- * daemon to switch to the named branch or create a server-named branch from
- * `baseBranch` before the thread starts.
- */
-export const unmanagedBranchSpecSchema = z.discriminatedUnion("kind", [
-  z
-    .object({
-      kind: z.literal("existing"),
-      name: gitBranchNameSchema,
-    })
-    .strict(),
-  z.object({ kind: z.literal("new"), baseBranch: gitBranchNameSchema }).strict(),
-]);
-export type UnmanagedBranchSpec = z.infer<typeof unmanagedBranchSpecSchema>;
-
-export const unmanagedWorkspaceSchema = z.object({
-  type: z.literal("unmanaged"),
-  path: z.string().min(1).nullable(),
-  /**
-   * If set, the daemon checks out this branch in the unmanaged workspace
-   * before the thread starts. `existing` switches to a named branch; `new`
-   * asks the server to mint a thread-scoped branch name and create it from
-   * the requested base branch.
-   */
-  branch: unmanagedBranchSpecSchema.optional(),
-});
-
-/**
- * Identifies the base branch a managed worktree should be created from.
- * `named` carries an explicit branch name; `default` defers to the source's
- * default branch (resolved server-side so the daemon always receives a real
- * branch name).
- */
-export const baseBranchSpecSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("named"), name: gitBranchNameSchema }),
-  z.object({ kind: z.literal("default") }),
-]);
-export type BaseBranchSpec = z.infer<typeof baseBranchSpecSchema>;
-
-export const managedWorktreeWorkspaceSchema = z.object({
-  type: z.literal("managed-worktree"),
-  /** Branch the new worktree should be based on. */
-  baseBranch: baseBranchSpecSchema,
-});
-
-export const personalWorkspaceSchema = z.object({
-  type: z.literal("personal"),
-});
-
-export const workspaceArgsSchema = z.discriminatedUnion("type", [
-  unmanagedWorkspaceSchema,
+// #288 (inventory §2.A5): the environment/workspace binding vocabulary lives
+// in @cap/protocol — the single home for protocol definitions. Re-exported
+// here under the historical local names so the bb-ported call sites compile
+// unchanged; the definitions are no longer duplicated in this repo.
+export {
+  baseBranchSpecSchema,
+  createThreadEnvironmentArgsSchema,
+  environmentArgsSchema,
+  hostEnvironmentSchema,
   managedWorktreeWorkspaceSchema,
   personalWorkspaceSchema,
-]);
-export type WorkspaceArgs = z.infer<typeof workspaceArgsSchema>;
-
-export const reuseEnvironmentSchema = z.object({
-  type: z.literal("reuse"),
-  environmentId: z.string().min(1),
-});
-
-export const hostEnvironmentSchema = z
-  .object({
-    type: z.literal("host"),
-    hostId: z.string().min(1).optional(),
-    workspace: workspaceArgsSchema,
-  })
-  .superRefine((value, ctx) => {
-    if (value.workspace.type !== "personal" && value.hostId === undefined) {
-      ctx.addIssue({
-        code: "custom",
-        message: "hostId is required unless workspace.type is personal",
-        path: ["hostId"],
-      });
-    }
-  });
-
-export const environmentArgsSchema = z.discriminatedUnion("type", [
-  reuseEnvironmentSchema,
-  hostEnvironmentSchema,
-]);
-export type EnvironmentArgs = z.infer<typeof environmentArgsSchema>;
-
-/**
- * Server-resolved environment default for thread creation: the server picks
- * the host and workspace using its own defaulting policy (personal workspace
- * for the personal project; otherwise a managed worktree when the primary
- * source has a usable base branch, or that source checkout when it does not).
- * For callers — plugins, scripts — that should not re-derive compose-flow
- * policy. Accepted only by thread creation; other surfaces keep the explicit
- * {@link environmentArgsSchema}.
- */
-export const projectDefaultEnvironmentSchema = z.object({
-  type: z.literal("project-default"),
-});
-
-export const createThreadEnvironmentArgsSchema = z.discriminatedUnion("type", [
-  reuseEnvironmentSchema,
-  hostEnvironmentSchema,
   projectDefaultEnvironmentSchema,
-]);
-export type CreateThreadEnvironmentArgs = z.infer<typeof createThreadEnvironmentArgsSchema>;
+  reuseEnvironmentSchema,
+  unmanagedBranchSpecSchema,
+  unmanagedWorkspaceSchema,
+  workspaceArgsSchema,
+  type BaseBranchSpec,
+  type CreateThreadEnvironmentArgs,
+  type EnvironmentArgs,
+  type UnmanagedBranchSpec,
+  type WorkspaceArgs,
+} from "@cap/protocol";
 
 export const pathListIncludeQueryValueSchema = z.enum(["true", "false"]);
 export type PathListIncludeQueryValue = z.infer<typeof pathListIncludeQueryValueSchema>;
