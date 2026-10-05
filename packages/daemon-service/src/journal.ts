@@ -53,6 +53,8 @@ export type JournalOp =
       tool: string | null;
       /** JSON of the dispatch arguments (tool path only). */
       argumentsJson: string | null;
+      /** JSON of the frame workspace ref (#290 C1); null = sandbox default. */
+      workspaceJson: string | null;
       command: string;
       cwd: string;
       timeoutMs: number;
@@ -130,6 +132,8 @@ export interface ExecutionRecord {
   tool: string | null;
   /** JSON of the dispatch arguments (tool path only; null for bash). */
   argumentsJson: string | null;
+  /** JSON of the frame workspace ref (#290 C1); null = sandbox default. */
+  workspaceJson: string | null;
   timeoutMs: number;
   bootId: string | null;
   state: ExecutionState;
@@ -194,6 +198,7 @@ function recordOf(
       cwd: ".",
       tool: null,
       argumentsJson: null,
+      workspaceJson: null,
       timeoutMs: 0,
       bootId: null,
       state: "RUNNING",
@@ -251,6 +256,9 @@ export function foldOp(state: ServiceStateData, op: JournalOp): void {
       record.bootId = op.bootId;
       record.tool = op.tool;
       record.argumentsJson = op.argumentsJson;
+      // Pre-#290 rows predate the field — the JSON payload omits it; the
+      // record type stays total (null = sandbox default).
+      record.workspaceJson = op.workspaceJson ?? null;
       record.command = op.command;
       record.cwd = op.cwd;
       record.timeoutMs = op.timeoutMs;

@@ -271,6 +271,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
       machineId: request.machineId,
       tool: request.tool,
       argumentsJson: JSON.stringify(request.arguments),
+      workspaceJson: JSON.stringify(request.workspace ?? null),
       command: "",
       cwd: ".",
       timeoutMs,
@@ -1228,6 +1229,12 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
               tool: record.tool,
               arguments: JSON.parse(record.argumentsJson ?? "{}") as Record<string, unknown>,
               timeoutMs: record.timeoutMs,
+              // The re-forward must rebuild the frame the journal holds
+              // (§0 rule 2: replay is truth) — the workspace leg included.
+              workspace:
+                record.workspaceJson === null
+                  ? undefined
+                  : (JSON.parse(record.workspaceJson) as ToolDispatchRequest["workspace"]),
             });
           } else {
             this.send(socket, {
@@ -1316,6 +1323,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
       tool: request.tool,
       arguments: request.arguments,
       timeoutMs,
+      workspace: request.workspace,
     });
     return promise;
   }
