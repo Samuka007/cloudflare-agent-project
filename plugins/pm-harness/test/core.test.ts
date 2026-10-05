@@ -34,7 +34,6 @@ import {
   slugify,
   snapshot,
   type CloseoutEvent,
-  type GqlFn,
   type JudgeAnswer,
   type JudgeReply,
   type LeaseEvent,
