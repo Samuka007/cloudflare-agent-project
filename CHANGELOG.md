@@ -7,6 +7,21 @@
 
 ### Added
 
+- **#320 (W5) 图片 A5——SPA 渲染面回接（依赖 #316-A4；SPA 零新码）**：
+  timeline 投影喂上唯一断点——`projectTimelineRows` 的 userMessage 行
+  `attachments: null` 三处硬编码中仅用户行是真缺口（assistant 行 upstream
+  verbatim null，build-thread-timeline.ts:573），按 bb user-message-parsing
+  `parsePromptInput` 计数 + `toConversationAttachments` 填充移植
+  `conversationAttachmentsOf`：`image` 计 webImages 收 imageUrls、
+  `localImage`/`localFile` 计数收 server 管理路径；无附件部件回 null（保留
+  M0 存量行形状；upstream 的零计数对象 SPA 渲染等价
+  ConversationAttachments.tsx:128 早退）。钉版 SPA 渲染面由此点亮：
+  ConversationAttachments 缩略图/文件 chip + lightbox「点开见原图」走
+  `toUserAttachmentImageSrc` → `GET /projects/:id/attachments/content`
+  （#316 A1 读面，mime 回填），outline `attachmentSummary` 计数通路
+  （#304 G7「已在」）随喂值自动生效。测试：server-worker
+  `timeline-attachments.test.ts` 5 例（create/send 两面喂值、text-only null、
+  绝对路径直通计数、outline 摘要派生）。
 - **#319 (W5) 图片 A4——模型消费 image block + 能力位 + 降级（依赖 #318 A3）**：
   ① relay 图块：`AnthropicImageBlock`（Anthropic vision source——`url` http(s) 直通 /
   `base64`（data: URI 解码，media type 限 jpeg/png/gif/webp））入 `AnthropicUserBlock`。

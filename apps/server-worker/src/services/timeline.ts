@@ -1,10 +1,11 @@
 import {
+  type TimelineConversationAttachments,
   timelineRowSchema,
   type TimelineDelegationWorkRow,
   type TimelineRow,
 } from "../contract/thread-timeline.js";
 import { backgroundTaskItemStatus } from "../contract/domain/background-task.js";
-import { threadEventDataSchemas } from "@cap/protocol";
+import { threadEventDataSchemas, type PromptContent } from "@cap/protocol";
 import { activeThinkingSchema, type ActiveThinking } from "../contract/domain/active-thinking.js";
 import type { ThreadContextWindowUsage } from "../contract/api/shared.js";
 import type { JsonValue } from "../contract/domain/json-value.js";
@@ -110,6 +111,51 @@ function textOfContent(content: readonly unknown[]): string {
         : "",
     )
     .join("");
+}
+
+/**
+ * #320 A5: the user row's attachment block, derived from the prompt content —
+ * bb thread-view user-message-parsing.ts parsePromptInput (attachment
+ * counting) + build-thread-timeline.ts toConversationAttachments (array
+ * fills). image parts count as web images and collect their URLs;
+ * localImage/localFile parts collect their server-managed paths. Content with
+ * no attachment parts projects null, preserving the shipped M0 row shape for
+ * text-only history (upstream builds a zero-count object instead — the SPA
+ * renders both identically: ConversationAttachments.tsx:128 early-return).
+ * The upstream `visibility: "agent-only"` skip does not apply: the journal
+ * carries runtime truth only (protocol events.ts #317 note).
+ */
+function conversationAttachmentsOf(
+  content: readonly PromptContent[],
+): TimelineConversationAttachments | null {
+  let webImages = 0;
+  let localImages = 0;
+  let localFiles = 0;
+  const imageUrls: string[] = [];
+  const localImagePaths: string[] = [];
+  const localFilePaths: string[] = [];
+  for (const part of content) {
+    if (part.type === "image") {
+      webImages += 1;
+      if (part.url.length > 0) {
+        imageUrls.push(part.url);
+      }
+    } else if (part.type === "localImage") {
+      localImages += 1;
+      if (part.path.length > 0) {
+        localImagePaths.push(part.path);
+      }
+    } else if (part.type === "localFile") {
+      localFiles += 1;
+      if (part.path.length > 0) {
+        localFilePaths.push(part.path);
+      }
+    }
+  }
+  if (webImages === 0 && localImages === 0 && localFiles === 0) {
+    return null;
+  }
+  return { webImages, localImages, localFiles, imageUrls, localImagePaths, localFilePaths };
 }
 
 // --- delegation rows (#275 J4) --------------------------------------------------------
@@ -347,7 +393,9 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
             startedAt: event.createdAt,
             createdAt: event.createdAt,
             text: textOfContent(item.content),
-            attachments: null,
+            // #320 A5: bb user-message-parsing parsePromptInput counts — the
+            // row-level gap the pinned SPA's ConversationAttachments renders.
+            attachments: conversationAttachmentsOf(item.content),
             initiator: "user",
             senderThreadId: null,
             systemMessageKind: "unlabeled",
