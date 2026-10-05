@@ -46,6 +46,14 @@ export default tseslint.config(
       // workers-side program's ambient set conflicts): outside the project
       // service's default tsconfig discovery, prettier-formatted only.
       "packages/daemon-service/test/l1-ws-close-reconnect.test.ts",
+      // Vendored upstream code (matrix C2 #327): packages/mcp/src and
+      // packages/mcp/test are a byte-identical direct port of
+      // @earendil-works/pi-mcp 1.0.3 (see that package's README provenance
+      // section) — editing them to satisfy repo lint would break the
+      // re-vendor diff. The repo-owned surfaces of the package
+      // (conformance/, packaging) stay fully linted.
+      "packages/mcp/src/**",
+      "packages/mcp/test/**",
     ],
   },
   ...tseslint.configs.strictTypeChecked.map((config) => ({

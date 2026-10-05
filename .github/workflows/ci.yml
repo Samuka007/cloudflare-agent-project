@@ -37,3 +37,8 @@ jobs:
         with:
           bun-version: 1
       - run: pnpm --dir packages/daemon-service test:runtime
+      # Matrix C2 (#327): the official MCP client conformance suite against
+      # the vendored @cap/mcp client — Bun runs the TS runner/client directly;
+      # the pinned upstream suite is fetched via npx (network, install
+      # scripts disabled) and compared against conformance/baseline.json.
+      - run: pnpm --dir packages/mcp test:conformance
