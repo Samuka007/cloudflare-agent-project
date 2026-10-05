@@ -1,5 +1,5 @@
 import type { Env } from "../env.js";
-import type { PendingInteractionRow } from "@cap/protocol";
+import type { PendingInteractionRow, PromptContent } from "@cap/protocol";
 import type {
   AdapterCommand,
   AdapterCommandOutcome,
@@ -50,7 +50,8 @@ export interface AgentDoRpc {
   }>;
   sendMessage(args: {
     clientRequestId: string;
-    content: { type: "text"; text: string }[];
+    /** #317: the full journal prompt-content union rides the seam verbatim. */
+    content: PromptContent[];
     mode: "auto" | "start" | "steer";
   }): Promise<{ turnId: string; steer: boolean; duplicated: boolean }>;
   getEvents(args: {
@@ -234,8 +235,14 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
       if (session === null) {
         throw new Error(`sendMessage failed: no provider session for thread ${threadId}`);
       }
+      // The daemon seam's PromptInput already carries the full union (#317):
+      // text is re-anchored with the mention list it loses over the RPC, the
+      // image members forward verbatim for the provider application layer.
       const input: Extract<AdapterCommand, { type: "turn/start" }>["input"] = args.content.map(
-        (part) => ({ type: "text", text: part.text, mentions: [] }),
+        (part) =>
+          part.type === "text"
+            ? { type: "text" as const, text: part.text, mentions: [] }
+            : part,
       );
 
       const steerTurn = async (): Promise<AdapterCommandOutcome | null> => {

@@ -1,4 +1,5 @@
 import type { UploadedPromptAttachment } from "../contract/api/projects.js";
+import type { PromptInput } from "../contract/domain/shared-types.js";
 import { ApiError } from "../shared/api-error.js";
 
 /**
@@ -107,6 +108,46 @@ export function resolveAttachmentName(projectId: string, path: string): string {
     });
   }
   return normalized;
+}
+
+/** bb pathLooksRuntimeReadable (attachments.ts:87-96): absolute paths and
+ * URI-like (`scheme:`) values ride to the runtime untouched; everything else
+ * is a server-managed attachment reference the send face must verify. */
+const RUNTIME_READABLE_PATH_PATTERN = /^(?:[\\/]|[a-zA-Z][a-zA-Z0-9+.-]*:)/u;
+
+/**
+ * bb validatePromptAttachmentReferences (attachments.ts:97-138), ported onto
+ * the R2 family: a relative localImage/localFile path must resolve inside the
+ * sending project's attachment family (containment 400s from
+ * resolveAttachmentName) and already exist there (the upload face minted it);
+ * a contained-but-missing reference is bb's 400 "was not uploaded". Absolute
+ * and URI-like paths are runtime-readable and pass through unvalidated.
+ */
+export async function validatePromptAttachmentReferences(
+  blobs: R2Bucket | undefined,
+  projectId: string,
+  input: readonly PromptInput[],
+): Promise<void> {
+  for (const entry of input) {
+    if (entry.type !== "localImage" && entry.type !== "localFile") {
+      continue;
+    }
+    if (RUNTIME_READABLE_PATH_PATTERN.test(entry.path)) {
+      continue;
+    }
+    if (blobs === undefined) {
+      throw missingR2Binding();
+    }
+    const name = resolveAttachmentName(projectId, entry.path);
+    const object = await blobs.head(attachmentKey(projectId, name));
+    if (object === null) {
+      throw new ApiError({
+        status: 400,
+        code: "invalid_request",
+        message: `attachment ${entry.path} was not uploaded`,
+      });
+    }
+  }
 }
 
 async function getAttachment(
