@@ -198,7 +198,9 @@ describe("#303 — reasoning operation rows (bb #3250 parity)", () => {
     expect(delegation).toBeDefined();
     if (delegation === undefined) return;
     const [child] = delegation.childRows;
-    expect(child).toBeDefined();
+    if (child === undefined) {
+      throw new Error("expected a nested reasoning child row");
+    }
     expect(isReasoningRow(child)).toBe(true);
     expect(child).toMatchObject({
       reasoningId: "itm-rs-t1:child",
