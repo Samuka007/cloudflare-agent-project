@@ -86,11 +86,37 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
     // this on every project-add open (RootComposeView.tsx:902) and the
     // machine settings page rendered a permanent "Status unavailable" error
     // row (MachineSettingsView.tsx:337) for what is really an empty state.
-    // #302 re-ruling: answer the bb success shape with the empty record —
-    // schema-valid (ProviderCliStatusResponse is a record), consumed as "no
-    // CLIs installed" (providerCliEntries({}) → [] → "None installed"), and
-    // indistinguishable from bb's healthy "nothing to manage" state.
-    return ctx.json({});
+    // #302 hotfix (post-#330 staging crash): the pinned SPA does NOT tolerate
+    // an empty record — providerCliEntries maps over the FIXED managed list
+    // (codex/claudeCode) and buildProviderCliIssue immediately dereferences
+    // `status.installed`, so a missing key is a TypeError that kills the
+    // whole SPA (observed: home page "bb hit an error and stopped", reading
+    // 'installed' of undefined). bb's server always returns every managed
+    // key; mirror that with explicit not-installed entries.
+    return ctx.json({
+      codex: notInstalledCliStatus("Codex", "codex"),
+      claudeCode: notInstalledCliStatus("Claude Code", "claude"),
+    });
+  });
+
+  // bb providerCliStatusSchema (host-daemon-contract local.ts:217-231) with
+  // every field present, describing a CLI this web-only deployment never
+  // manages. installSource "notInstalled" is the enum's explicit member for
+  // exactly this state.
+  const notInstalledCliStatus = (displayName: string, executableName: string) => ({
+    displayName,
+    executableName,
+    executablePath: null,
+    installed: false,
+    installSource: "notInstalled",
+    currentVersion: null,
+    latestVersion: null,
+    minimumSupportedVersion: null,
+    npmPackageName: null,
+    npmGlobalPackageVersion: null,
+    installAction: null,
+    needsUpdate: false,
+    versionUnsupported: false,
   });
 
   // bb routes/hosts.ts:219-233: the Add-project path browser's single-level

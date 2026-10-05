@@ -209,11 +209,18 @@ describe("E9/A6: provider-clis/status answers the E8 crop as an empty state (#30
     const known = await exports.default.fetch(
       "https://example.com/api/v1/hosts/host_cli_status/provider-clis/status",
     );
-    // #302: the compose page polls this in the Add-project flow and the
-    // machine page rendered a permanent "Status unavailable" error row for
-    // what is really an empty state. The empty record is schema-valid
-    // (ProviderCliStatusResponse is a record) and renders "None installed".
+    // #302 hotfix: the compose page polls this in the Add-project flow; the
+    // pinned SPA's providerCliEntries maps over the FIXED managed list and
+    // dereferences `status.installed` — an empty record crashed the SPA
+    // (reading 'installed' of undefined, staging post-#330). Mirror bb's
+    // always-every-key shape with explicit not-installed entries.
     expect(known.status).toBe(200);
-    expect(await known.json<Record<string, never>>()).toEqual({});
+    const body = await known.json<
+      Record<string, { installed: boolean; displayName: string }>
+    >();
+    expect(Object.keys(body).sort()).toEqual(["claudeCode", "codex"]);
+    expect(body.codex?.installed).toBe(false);
+    expect(body.claudeCode?.installed).toBe(false);
+    expect(body.codex?.displayName).toBe("Codex");
   });
 });
