@@ -34,6 +34,20 @@ export type ToolBackend = { kind: "daemon-dispatch" } | { kind: "do-local" };
 /** Intent-field injection policy — omp agent-loop.ts resolveIntentMode. */
 export type IntentMode = "require" | "optional" | "omit";
 
+/**
+ * #328 C3 batch parallel-scheduling class (tools/batch-scheduler.ts):
+ * "read" calls key on their path argument and never conflict with each
+ * other; "detached" calls share no surface with the batch (pure scratchpad,
+ * upstream web queries, and the blocking wait/ask pair — those park on
+ * in-DO wake channels, touch no file, and the t19 photo-finish batch
+ * `[wait, write proc://<job>/kill]` only terminates when both dispatch
+ * together) and never conflict; "exclusive" calls serialize against
+ * same-key calls and — when they carry no key (bash, task, eval, the whole
+ * unkeyed tail) — against the entire batch. pi anchor: executionMode
+ * "sequential" + tools/file-mutation-queue.ts.
+ */
+export type BatchScheduleClass = "read" | "detached" | "exclusive";
+
 export interface ToolRegistryRow {
   name: string;
   /** ArkType schema, omp verbatim. Wire rendering calls `toJsonSchema()`. */
@@ -44,6 +58,8 @@ export interface ToolRegistryRow {
   class: ToolClass;
   backend: ToolBackend;
   intent: IntentMode;
+  /** #328 C3: batch parallel-scheduling class (see type doc). */
+  schedule: BatchScheduleClass;
 }
 
 // ---------------------------------------------------------------------------
@@ -655,6 +671,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",
+    schedule: "exclusive",
   },
   {
     // M1.5/T5' #128: read is vendored-runtime host class — the daemon client
@@ -665,6 +682,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",
+    schedule: "read",
   },
   {
     // M1.5/T5' #128: edit rides the same embedded runtime; hashline mode is
@@ -675,6 +693,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",
+    schedule: "exclusive",
   },
   {
     // M1.5/T5' #128: glob — natives glob engine, executed by the daemon host.
@@ -684,6 +703,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",
+    schedule: "read",
   },
   {
     // M1.5/T5' #128: grep — natives ripgrep engine, executed by the daemon host.
@@ -693,6 +713,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",
+    schedule: "read",
   },
   {
     // omp tools/ask.ts:544-574 — discoverable edge: the model's structured
@@ -705,6 +726,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "edge",
     backend: { kind: "do-local" },
     intent: "require",
+    schedule: "detached",
   },
   {
     // M1.5/T11 #101: find — jfind cascade executed by the daemon host; the
@@ -718,6 +740,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",
+    schedule: "read",
   },
   {
     // omp tools/checkpoint.ts:53-87 — session-tree boundary marker; no
@@ -730,6 +753,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "edge",
     backend: { kind: "do-local" },
     intent: "omit",
+    schedule: "exclusive",
   },
   {
     // omp tools/checkpoint.ts:89-131 (RewindTool) — the rewind half of the
@@ -741,6 +765,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "edge",
     backend: { kind: "do-local" },
     intent: "omit",
+    schedule: "exclusive",
   },
   {
     // omp tools/context-notes.ts:80-94 — session notebook, DO-local journal.
@@ -750,6 +775,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "edge",
     backend: { kind: "do-local" },
     intent: "require",
+    schedule: "exclusive",
   },
   {
     // omp tools/context-notes.ts:150-158 — turn-local rollover signal.
@@ -759,6 +785,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "edge",
     backend: { kind: "do-local" },
     intent: "require",
+    schedule: "exclusive",
   },
   {
     // omp tools/security-scan.ts:107-289 — discoverable `security_scan`
@@ -776,6 +803,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",
+    schedule: "exclusive",
   },
   {
     // omp task/index.ts — essential hybrid `task`, edge half (M1.5 T16):
@@ -790,6 +818,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "edge",
     backend: { kind: "do-local" },
     intent: "require",
+    schedule: "exclusive",
   },
   {
     // omp tools/wait.ts:49-59 — blocking wait over owned jobs + peer messages;
@@ -801,6 +830,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "edge",
     backend: { kind: "do-local" },
     intent: "optional",
+    schedule: "detached",
   },
   {
     // omp tools/todo.ts:712-728 — journal-backed phase/task state machine,
@@ -812,6 +842,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "edge",
     backend: { kind: "do-local" },
     intent: "require",
+    schedule: "exclusive",
   },
   {
     // M1.5/T12 #102: web_search edge port — DO-native fetch provider surface
@@ -827,6 +858,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "edge",
     backend: { kind: "do-local" },
     intent: "require",
+    schedule: "detached",
   },
   {
     // omp tools/think.ts:51-59 — private scratchpad, zero I/O; omp declares
@@ -838,6 +870,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "edge",
     backend: { kind: "do-local" },
     intent: "omit",
+    schedule: "detached",
   },
   {
     // M1.5/T5' #128: write — the last of the five vendored-runtime host
@@ -848,6 +881,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",
+    schedule: "exclusive",
   },
   {
     // M1.5/T10' #100: eval executes through the vendored omp kernel seam
@@ -861,6 +895,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",
+    schedule: "exclusive",
   },
   {
     // M1.5/T6 #96: manage_skill — SKILL.md exclusive management under the
@@ -875,6 +910,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "host",
     backend: { kind: "daemon-dispatch" },
     intent: "require",
+    schedule: "exclusive",
   },
   {
     // omp tools/yield.ts:289-293 — the subagent terminal channel (M1.5 T16
@@ -888,6 +924,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     class: "edge",
     backend: { kind: "do-local" },
     intent: "omit",
+    schedule: "exclusive",
   },
 ];
 
