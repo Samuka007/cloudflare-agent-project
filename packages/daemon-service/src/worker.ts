@@ -14,6 +14,10 @@ import {
 } from "./edge.js";
 import { TestAgentSinkDO } from "./agent-sink.js";
 import { consumeJoinCode } from "./join-codes.js";
+import {
+  projectAttachmentContentQuerySchema,
+  type ProjectAttachmentContentQuery,
+} from "./protocol.js";
 import { DaemonServiceDO, type DaemonServiceEnv, type OpenSessionResult } from "./service-do.js";
 // Wrangler requires the DO classes on the deployed entry (main).
 export { DaemonServiceDO, TestAgentSinkDO };
@@ -62,6 +66,13 @@ export interface WorkerEnv extends DaemonServiceEnv {
    * run on the env-key path only (L1 rig, hookup) skip every KV touch.
    */
   DAEMON_EDGE_KV?: KVNamespace;
+  /**
+   * #318 attachment pickup storage bridge: the deployment's thread→project
+   * cross-check + R2 read (#316 family). Optional — standalone rigs (L1,
+   * hookup) install a fake per test; an absent bridge answers 500 with an
+   * explicit message (the missingR2Binding posture).
+   */
+  readProjectAttachment?: ProjectAttachmentReader;
   /** Edge-shield tunables (string vars; named-constant defaults). */
   DAEMON_NEGATIVE_CACHE_MS?: string;
   DAEMON_RATE_LIMIT_CAPACITY?: string;
@@ -111,7 +122,92 @@ async function route(request: Request, env: WorkerEnv): Promise<Response> {
     return handleAgentRoute(path, request, env);
   }
 
+  if (path === "/internal/session/project-attachment-content" && request.method === "GET") {
+    const auth = await authorize(request, env);
+    if (auth === null) return unauthorized();
+    return handleProjectAttachmentContent(request, env);
+  }
+
   return errorResponse("not_found", `no route ${request.method} ${path}`);
+}
+
+// ---------------------------------------------------------------------------
+// Internal attachment pickup (#318) — bb
+// /internal/session/project-attachment-content (internal/session.ts:149-192):
+// Bearer hostKey (the ladder above) → live-session binding (the DO) → the
+// deployment's storage bridge. The bridge owns the thread→project cross-check
+// and the byte read ("Attachment paths are project-scoped upload tokens, so
+// cross-check projectId before reading bytes even though threadId identifies
+// a thread", upstream :163-178) against the control plane's D1 + R2 face
+// (#316); standalone rigs (L1, hookup) install a fake via the route env.
+// ---------------------------------------------------------------------------
+
+/** One attachment read answered by the deployment bridge (#316 R2 family). */
+export type ProjectAttachmentContentResult =
+  | { ok: true; bytes: Uint8Array; mimeType?: string }
+  | { ok: false; status: number; code: string; message: string };
+
+export type ProjectAttachmentReader = (args: {
+  hostId: string;
+  query: ProjectAttachmentContentQuery;
+}) => Promise<ProjectAttachmentContentResult>;
+
+/**
+ * #318 reader injection seam (apps/daemon-worker injection.ts pattern): the
+ * vitest pool drives exports.default.fetch with the DEPLOYMENT env, so an
+ * env-carried fake cannot reach the route — L1 rigs install the bridge here
+ * instead. Production composes via env.readProjectAttachment, which wins.
+ */
+let installedAttachmentReader: ProjectAttachmentReader | undefined;
+
+export function setAttachmentReader(reader: ProjectAttachmentReader | undefined): void {
+  installedAttachmentReader = reader;
+}
+
+async function handleProjectAttachmentContent(request: Request, env: WorkerEnv): Promise<Response> {
+  const parsed = projectAttachmentContentQuerySchema.safeParse(
+    Object.fromEntries(new URL(request.url).searchParams),
+  );
+  if (!parsed.success) {
+    return errorResponse(
+      "validation_failed",
+      "hostId, sessionId, threadId, projectId and path are required",
+    );
+  }
+  const query = parsed.data;
+  let sessionBound = false;
+  try {
+    sessionBound = await stubForHost(env, query.hostId).verifyAttachmentSession(
+      query.hostId,
+      query.sessionId,
+    );
+  } catch {
+    // An unreachable DO cannot vouch for any session.
+    sessionBound = false;
+  }
+  if (!sessionBound) {
+    return errorResponse("forbidden", "session does not belong to host", 403);
+  }
+  const reader = env.readProjectAttachment ?? installedAttachmentReader;
+  if (reader === undefined) {
+    return errorResponse(
+      "internal",
+      "attachment pickup requires the deployment readProjectAttachment bridge but none is configured",
+    );
+  }
+  const result = await reader({ hostId: query.hostId, query });
+  if (!result.ok) {
+    return errorResponse(result.code, result.message, result.status);
+  }
+  // content-length is contract: the client's byte verification pre-checks it
+  // before reading the body (bb server-client.ts:424-429).
+  return new Response(result.bytes, {
+    status: 200,
+    headers: {
+      "content-type": result.mimeType ?? "application/octet-stream",
+      "content-length": String(result.bytes.byteLength),
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------

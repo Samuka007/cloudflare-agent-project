@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { localFileContentSchema, localImageContentSchema } from "@cap/protocol";
 import { DAEMON_PROTOCOL_VERSION } from "./constants.js";
 
 /**
@@ -292,6 +293,24 @@ export const toolExecFrameSchema = z.object({
   timeoutMs: z.number().int().positive(),
   /** Optional workspace binding (#290 C1); absent = sandbox default. */
   workspace: workspaceRefSchema.optional(),
+  /**
+   * #318 attachment staging leg: the dispatching turn's server-managed
+   * attachment references (the #317 prompt-content vocabulary, attachment
+   * members only). The client picks each member's bytes up over the
+   * internal attachment route and stages them into
+   * `<sandboxRoot>/<threadId>/Attachments/` (bb prompt-attachments.ts
+   * semantics: sanitize + dedup suffix + 0600, failure cleans everything)
+   * before the tool runs. Absent = plain dispatch, zero staging.
+   */
+  attachments: z
+    .object({
+      /** The project family the attachment paths resolve against. */
+      projectId: z.string().min(1),
+      items: z.array(
+        z.discriminatedUnion("type", [localImageContentSchema, localFileContentSchema]),
+      ),
+    })
+    .optional(),
 });
 
 export const execResumeFrameSchema = z.object({
@@ -371,6 +390,25 @@ export type ExecSpawnServiceFrame = Extract<ServiceFrame, { type: "exec.spawn" }
 export type ToolExecServiceFrame = Extract<ServiceFrame, { type: "tool.exec" }>;
 export type KillListServiceFrame = Extract<ServiceFrame, { type: "kill.list" }>;
 export type ExecOutputAckServiceFrame = Extract<ServiceFrame, { type: "exec.output_ack" }>;
+
+// ---------------------------------------------------------------------------
+// Internal attachment pickup (#318, daemon-face HTTP). bb
+// `/internal/session/project-attachment-content` (host-daemon-contract
+// session.ts:179-184) served by the service worker front for the client's
+// staging step. `hostId` rides the query because the env-key auth ladder has
+// no key→host inversion (one deployment key answers every rig host): the
+// client claims its hostId and the service DO's live session binding is the
+// authority — the same posture session/open takes with its body hostId.
+// ---------------------------------------------------------------------------
+
+export const projectAttachmentContentQuerySchema = z.object({
+  hostId: z.string().min(1),
+  sessionId: z.string().min(1),
+  threadId: z.string().min(1),
+  projectId: z.string().min(1),
+  path: z.string().min(1),
+});
+export type ProjectAttachmentContentQuery = z.infer<typeof projectAttachmentContentQuerySchema>;
 
 // ---------------------------------------------------------------------------
 // Helpers.

@@ -76,7 +76,8 @@ export class SimulatedClient {
   bootId: string;
   generation = 0;
   private socket: WebSocket | null = null;
-  private sessionId: string | null = null;
+  /** Live session id (dial sets it) — the #318 pickup query's binding leg. */
+  sessionId: string | null = null;
   readonly inbound: ServiceFrame[] = [];
   /** Close frames observed on the current socket (code + reason). */
   readonly closeEvents: { code: number; reason: string }[] = [];
