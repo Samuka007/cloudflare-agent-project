@@ -14,6 +14,11 @@ import {
   gateOf,
   intake,
   INTAKE_QUESTIONS,
+  activeLeases,
+  browserInvolved,
+  ledger,
+  lease,
+  release,
   lane,
   JEV_MODEL,
   JEV_URL,
@@ -27,6 +32,7 @@ import {
   type GqlFn,
   type JudgeAnswer,
   type JudgeReply,
+  type LeaseEvent,
   type SpawnRequest,
   type Ticket,
 } from "../pm-autopilot.js";
@@ -40,20 +46,30 @@ import {
  * runs; only the wire is canned. Live writes never happen here.
  *
  * node:fs is mocked wholesale: pm-autopilot touches the filesystem only to
- * read the gitignored .env.local for JEV_API_KEY, and mocking it makes the
- * key-resolution tests deterministic (no dependence on a developer machine's
- * real file).
+ * read the gitignored .env.local for JEV_API_KEY and to append the #240 lease
+ * ledger jsonl, and mocking it makes both deterministic (an in-memory file
+ * map — no dependence on a developer machine's real filesystem).
  */
 
-const fsProbe = vi.hoisted(() => ({ envLocalBody: null as string | null }));
+const fsProbe = vi.hoisted(() => ({
+  envLocalBody: null as string | null,
+  files: new Map<string, string>(),
+}));
 
 vi.mock("node:fs", () => ({
   readFileSync: (path: unknown): string => {
     if (fsProbe.envLocalBody !== null && typeof path === "string" && path.endsWith(".env.local")) {
       return fsProbe.envLocalBody;
     }
+    const cached = fsProbe.files.get(String(path));
+    if (cached !== undefined) return cached;
     throw new Error(`mock fs: ${String(path)} unavailable`);
   },
+  appendFileSync: (path: unknown, data: string): void => {
+    const key = String(path);
+    fsProbe.files.set(key, (fsProbe.files.get(key) ?? "") + data);
+  },
+  existsSync: (path: unknown): boolean => fsProbe.files.has(String(path)),
 }));
 
 // ---------------------------------------------------------------------------
@@ -2022,5 +2038,354 @@ describe("AP.lane spawn transport (#206)", () => {
       expect(r.statusFlipped).toBe(false);
     }
     expect(reps.every((r) => r.dryRun)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Browser lease ledger (#240) — shared CDP/thread resources under a written
+// ledger; AP.lane auto-carries it; AP.audit rule 6 reads it.
+// ---------------------------------------------------------------------------
+
+const LEASE_PATH = "test-leases.jsonl";
+
+const leaseAcquire = (
+  over: Partial<LeaseEvent> & Pick<LeaseEvent, "lane" | "tabName" | "threadPrefix">,
+): LeaseEvent => ({
+  event: "acquired",
+  type: "browser",
+  number: null,
+  acquiredAt: "2026-10-03T00:00:00Z",
+  releasedAt: null,
+  ...over,
+});
+
+describe("browser lease ledger (#240)", () => {
+  const NOW = new Date("2026-10-05T06:00:00Z");
+  const l238 = {
+    lane: "lane-238-working",
+    tabName: "l238-working",
+    threadPrefix: "l238-",
+    number: 238,
+  };
+  const l239 = {
+    lane: "lane-239-accept",
+    tabName: "l239-accept",
+    threadPrefix: "l239-",
+    number: 239,
+  };
+
+  beforeEach(() => {
+    fsProbe.files.clear();
+  });
+
+  it("browserInvolved reads the same words the discipline names, title or body", () => {
+    for (const text of ["浏览器验收", "browser UX", "CDP 截图", "Chrome tab 管理"]) {
+      expect(browserInvolved({ title: text, body: "" })).toBe(true);
+    }
+    expect(browserInvolved({ title: "t", body: "上游锚：bb §2.1\n验收：端到端" })).toBe(false);
+  });
+
+  it("lease registers an acquisition; ledger replays the active set", () => {
+    const rec = lease("browser", l238, { path: LEASE_PATH, now: NOW });
+    expect(rec).toMatchObject({
+      event: "acquired",
+      type: "browser",
+      lane: "lane-238-working",
+      tabName: "l238-working",
+      threadPrefix: "l238-",
+      number: 238,
+      releasedAt: null,
+    });
+    const view = ledger({ path: LEASE_PATH });
+    expect(view.events).toHaveLength(1);
+    expect(view.active.map((a) => a.tabName)).toEqual(["l238-working"]);
+  });
+
+  it("collisions refuse with zero writes: same tab, same thread prefix, same lane re-acquire, blank fields", () => {
+    lease("browser", l238, { path: LEASE_PATH });
+    expect(() =>
+      lease(
+        "browser",
+        { lane: "lane-239-accept", tabName: "l238-working", threadPrefix: "l239-" },
+        { path: LEASE_PATH },
+      ),
+    ).toThrow(/collision/); // tab clash
+    expect(() =>
+      lease(
+        "browser",
+        { lane: "lane-239-accept", tabName: "l239-accept", threadPrefix: "l238-" },
+        { path: LEASE_PATH },
+      ),
+    ).toThrow(/collision/); // thread-prefix clash
+    expect(() => lease("browser", l238, { path: LEASE_PATH })).toThrow(/already holds/);
+    expect(() =>
+      lease("browser", { lane: "lane-x", tabName: "  ", threadPrefix: "x-" }, { path: LEASE_PATH }),
+    ).toThrow(/required/);
+    expect(ledger({ path: LEASE_PATH }).active).toHaveLength(1);
+    expect(ledger({ path: LEASE_PATH }).events).toHaveLength(1);
+  });
+
+  it("release closes the lease and the jsonl keeps both events; releasing nothing throws", () => {
+    lease("browser", l239, { path: LEASE_PATH, now: NOW });
+    const closed = release(
+      "browser",
+      { lane: "lane-239-accept" },
+      {
+        path: LEASE_PATH,
+        now: new Date(NOW.getTime() + 1_000),
+      },
+    );
+    expect(closed.event).toBe("released");
+    expect(closed.releasedAt).not.toBeNull();
+    expect(closed.acquiredAt).toBe(NOW.toISOString()); // echoes the acquisition
+    expect(ledger({ path: LEASE_PATH })).toMatchObject({ active: [] });
+    expect(ledger({ path: LEASE_PATH }).events).toHaveLength(2);
+    expect(() => release("browser", { lane: "lane-239-accept" }, { path: LEASE_PATH })).toThrow(
+      /nothing to release/,
+    );
+  });
+
+  it("acceptance demo: two concurrent browser lanes hold distinct leases with zero collisions", () => {
+    lease("browser", l238, { path: LEASE_PATH, now: NOW });
+    lease("browser", l239, { path: LEASE_PATH, now: new Date(NOW.getTime() + 500) });
+    const active = ledger({ path: LEASE_PATH }).active;
+    expect(active.map((a) => [a.lane, a.tabName, a.threadPrefix])).toEqual([
+      ["lane-238-working", "l238-working", "l238-"],
+      ["lane-239-accept", "l239-accept", "l239-"],
+    ]);
+    const tabs = new Set(active.map((a) => a.tabName));
+    const prefixes = new Set(active.map((a) => a.threadPrefix));
+    expect(tabs.size).toBe(active.length);
+    expect(prefixes.size).toBe(active.length);
+    // sequential reuse: release then re-acquire the same names is legal
+    release("browser", { lane: "lane-238-working" }, { path: LEASE_PATH });
+    expect(() => lease("browser", l238, { path: LEASE_PATH })).not.toThrow();
+  });
+
+  it("PM_LEASES_PATH redirects the default store; a missing file reads as an empty ledger", () => {
+    process.env.PM_LEASES_PATH = "env-leases.jsonl";
+    lease("browser", l238);
+    expect(ledger().active).toHaveLength(1);
+    expect(ledger({ path: LEASE_PATH }).events).toHaveLength(0);
+  });
+
+  it("activeLeases replays acquire/release pairs; a corrupt jsonl line names the file and line", () => {
+    expect(activeLeases([leaseAcquire(l238), leaseAcquire(l239)])).toHaveLength(2);
+    expect(
+      activeLeases([
+        leaseAcquire(l238),
+        { ...leaseAcquire(l238), event: "released", releasedAt: "x" },
+      ]),
+    ).toHaveLength(0);
+    fsProbe.files.set(LEASE_PATH, `${JSON.stringify(leaseAcquire(l238))}\nnot-json\n`);
+    expect(() => ledger({ path: LEASE_PATH })).toThrow(/corrupt jsonl .*test-leases\.jsonl:2/);
+  });
+});
+
+describe("AP.lane browser lease auto-carry (#240)", () => {
+  const browserTicket = (over: Partial<Ticket> = {}): Ticket =>
+    laneTicket({
+      number: 240,
+      id: "I240",
+      title: "[track:pm] 浏览器 CDP 验收",
+      ...over,
+    });
+
+  beforeEach(() => {
+    fsProbe.files.clear();
+    delete kernelScope.agent;
+  });
+  afterEach(() => {
+    _inject(null);
+    registerSpawn(null);
+    delete kernelScope.agent;
+  });
+
+  it("dry-run: browser ticket plans a lease and carries the lease section; nothing registered", async () => {
+    const rep = await lane(browserTicket());
+    expect(rep.lease).toMatchObject({
+      browserInvolved: true,
+      tabName: "l240",
+      threadPrefix: "l240-",
+      registered: false,
+    });
+    expect(rep.lease?.lane).toBe(rep.worktree.branch.replaceAll("/", "-"));
+    expect(rep.spawn?.task).toContain("# Browser lease");
+    expect(rep.spawn?.task).toContain("tab: l240（具名 tab；禁默认 tab、禁他人 tab）");
+    expect(rep.spawn?.task).toContain("staging thread=抢占资源");
+    expect(rep.spawn?.task).toContain('AP.release("browser"');
+    expect(ledger().active).toHaveLength(0); // dry-run writes nothing
+  });
+
+  it("agentSpec.lease overrides the derived tab/prefix names", async () => {
+    const rep = await lane(browserTicket(), {
+      lease: { tabName: "l240-accept", threadPrefix: "l240a-" },
+    });
+    expect(rep.lease).toMatchObject({ tabName: "l240-accept", threadPrefix: "l240a-" });
+    expect(rep.spawn?.task).toContain("tab: l240-accept");
+    expect(rep.spawn?.task).toContain("prefix: l240a-");
+  });
+
+  it("non-browser ticket: lease is null and the context carries no lease section", async () => {
+    const rep = await lane(laneTicket());
+    expect(rep.lease).toBeNull();
+    expect(rep.spawn?.task).not.toContain("Browser lease");
+  });
+
+  it("confirm: registers the lease at spawn time; the PM release closes it", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    _inject({ gql: laneBoard(240).gql, runGit: () => "" });
+    registerSpawn(() => "L240browser");
+    const rep = await lane(browserTicket(), {}, { confirm: true, leasesPath: LEASE_PATH });
+    logSpy.mockRestore();
+    expect(rep.ok).toBe(true);
+    expect(rep.spawned).toBe(true);
+    expect(rep.lease?.registered).toBe(true);
+    expect(ledger({ path: LEASE_PATH }).active.map((a) => [a.tabName, a.number])).toEqual([
+      ["l240", 240],
+    ]);
+    release("browser", { lane: rep.lease?.lane ?? "" }, { path: LEASE_PATH });
+    expect(ledger({ path: LEASE_PATH }).active).toHaveLength(0);
+  });
+
+  it("spawn throw rolls the lease registration back", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    _inject({ gql: laneBoard(240).gql, runGit: () => "" });
+    registerSpawn(() => {
+      throw new Error("kernel refused spawn");
+    });
+    const rep = await lane(browserTicket(), {}, { confirm: true, leasesPath: LEASE_PATH });
+    logSpy.mockRestore();
+    expect(rep.spawned).toBe(false);
+    expect(rep.ok).toBe(false);
+    expect(rep.lease?.registered).toBe(false);
+    expect(ledger({ path: LEASE_PATH }).events.map((e) => e.event)).toEqual([
+      "acquired",
+      "released",
+    ]);
+    expect(ledger({ path: LEASE_PATH }).active).toHaveLength(0);
+  });
+
+  it("a lease collision aborts the dispatch before the spawn", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    lease(
+      "browser",
+      { lane: "lane-238-working", tabName: "l240", threadPrefix: "l238-" },
+      { path: LEASE_PATH },
+    );
+    _inject({ gql: laneBoard(240).gql, runGit: () => "" });
+    registerSpawn(() => "L240browser");
+    const rep = await lane(browserTicket(), {}, { confirm: true, leasesPath: LEASE_PATH });
+    logSpy.mockRestore();
+    expect(rep.ok).toBe(false);
+    expect(rep.spawned).toBe(false);
+    expect(rep.statusFlipped).toBe(false);
+    expect(rep.errors[0]).toContain("browser lease registration failed");
+    expect(rep.errors[0]).toContain("collision");
+    expect(ledger({ path: LEASE_PATH }).events).toHaveLength(1); // nothing appended
+  });
+});
+
+describe("AP.audit rule 6 — browser lease drift (#240)", () => {
+  const NOW = new Date("2026-10-04T00:00:00Z");
+  const mk = (over: Partial<Ticket> & Pick<Ticket, "number">): Ticket => ({
+    id: `I${over.number}`,
+    title: `t${over.number}`,
+    body: "",
+    state: "OPEN",
+    milestone: "M1",
+    labels: [],
+    blockedBy: [],
+    itemId: `PVTItem_${over.number}`,
+    status: "Todo",
+    priority: null,
+    updatedAt: "2026-10-03T00:00:00Z",
+    ...over,
+  });
+  const browserMk = (over: Partial<Ticket> & Pick<Ticket, "number">): Ticket =>
+    mk({ title: `浏览器 CDP 验收 t${over.number}`, ...over });
+
+  it("6a: an active browser lane without a lease is flagged mutation-free; a leased lane is silent", () => {
+    const leased = audit(
+      { tickets: [browserMk({ number: 239, status: "In Progress" })] },
+      {
+        activeLanes: [239],
+        leases: [
+          leaseAcquire({
+            lane: "lane-239-accept",
+            tabName: "l239",
+            threadPrefix: "l239-",
+            number: 239,
+          }),
+        ],
+        now: NOW,
+      },
+    );
+    expect(leased.clean).toBe(true);
+    const unleased = audit(
+      { tickets: [browserMk({ number: 240, status: "In Progress" })] },
+      { activeLanes: [240], leases: [], now: NOW },
+    );
+    expect(unleased.drift.map((d) => [d.rule, d.number, d.mutation])).toEqual([
+      ["browserLeaseMissing", 240, null],
+    ]);
+    expect(unleased.mutations).toEqual([]);
+    // not browser, or browser but not an active lane → rule 6a silent
+    const scoped = audit(
+      { tickets: [browserMk({ number: 241 }), mk({ number: 7 })] },
+      { activeLanes: [241, 7], leases: [], now: NOW },
+    );
+    // rule 3 also fires (Todo on an active lane); scope to the rule-6 finding
+    expect(
+      scoped.drift.filter((d) => d.rule === "browserLeaseMissing").map((d) => d.number),
+    ).toEqual([241]);
+  });
+
+  it("6b: one tab or one thread prefix on two lanes collides — one finding per late holder", () => {
+    const rep = audit(
+      { tickets: [mk({ number: 238 }), mk({ number: 239 })] },
+      {
+        leases: [
+          leaseAcquire({ lane: "lane-238-a", tabName: "l238", threadPrefix: "l238-", number: 238 }),
+          leaseAcquire({ lane: "lane-239-b", tabName: "l238", threadPrefix: "l239-", number: 239 }),
+          leaseAcquire({ lane: "lane-239-b", tabName: "l239", threadPrefix: "l238-", number: 239 }),
+        ],
+        now: NOW,
+      },
+    );
+    const collisions = rep.drift.filter((d) => d.rule === "browserLeaseCollision");
+    expect(collisions).toHaveLength(2); // tab:l238 late holder + prefix:l238 late holder
+    expect(collisions.every((d) => d.detail.includes("held concurrently by lanes lane-238-a")));
+    expect(collisions.every((d) => d.mutation === null)).toBe(true);
+  });
+
+  it("6c: a delivered ticket with an open lease is flagged; the release closes the finding", () => {
+    const held = leaseAcquire({
+      lane: "lane-239-accept",
+      tabName: "l239",
+      threadPrefix: "l239-",
+      number: 239,
+    });
+    const delivered: Ticket[] = [browserMk({ number: 239, state: "CLOSED", status: "Done" })];
+    const open = audit({ tickets: delivered }, { leases: [held], now: NOW });
+    expect(open.drift.map((d) => [d.rule, d.number])).toEqual([["browserLeaseUnreleased", 239]]);
+    expect(open.drift[0]?.detail).toContain("AP.release");
+    const closed = audit(
+      { tickets: delivered },
+      {
+        leases: [held, { ...held, event: "released", releasedAt: "2026-10-04T00:00:00Z" }],
+        now: NOW,
+      },
+    );
+    expect(closed.clean).toBe(true);
+  });
+
+  it("rule 6 is silent without the ledger — a missing lease store fabricates nothing", () => {
+    const rep = audit(
+      { tickets: [browserMk({ number: 240, status: "In Progress" })] },
+      { activeLanes: [240], now: NOW },
+    );
+    expect(rep.drift).toEqual([]);
+    expect(rep.clean).toBe(true);
   });
 });

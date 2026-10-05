@@ -89,6 +89,32 @@
  * reminders (mutation: null — the repair is AP.lane, not a write). Re-run
  * audit after the apply: `clean` is the beat's green light.
  *
+ * Shared-resource lease ledger (#240) — browser (CDP/thread) first. 口头纪律
+ * 结构化 (#239 comment 5988466175): every browser lane holds a NAMED tab and a
+ * dedicated staging-thread prefix, and releases on delivery — the ledger
+ * enforces it mechanically instead of by PM recall. Storage is an append-only
+ * repo-local jsonl (`.pm-leases.jsonl`, gitignored; `PM_LEASES_PATH` env or
+ * the `leasesPath` option overrides):
+ *
+ *     AP.lease("browser", { lane: "lane-239-x", tabName: "l239-accept",
+ *                           threadPrefix: "l239-", number: 239 });
+ *                                      // registers; REFUSES a collision (same
+ *                                      // tab/prefix actively held by another lane)
+ *     AP.release("browser", { lane: "lane-239-x" });
+ *                                      // sets releasedAt; no active lease ⇒ throw
+ *     AP.ledger();                     // { events, active } — the audit's rule-6 input
+ *     AP.audit(snap, { activeLanes, leases: AP.ledger().events });
+ *                                      // rule 6 drift list: browser lane without a
+ *                                      // lease · same tab/prefix held by two lanes ·
+ *                                      // delivered ticket with the lease still open
+ *
+ * AP.lane auto-carries it: a ticket mentioning 浏览器/browser/CDP/Chrome gets a
+ * deterministic lease (tab `l<number>`, thread prefix `l<number>-`, roster
+ * lane id) — the spawn context carries the lease section (named tab + thread
+ * prefix + release obligation) and the confirm path registers the lease at
+ * spawn time, rolling it back if the spawn throws. Dry-run plans it, writes
+ * nothing.
+ *
  * PM session bootstrap = ONE cell (persistent carrier, #206):
  *
  *     %load "scripts/pm-harness.ts"
@@ -120,9 +146,9 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // ---------------------------------------------------------------------------
@@ -775,6 +801,10 @@ export interface LaneDispatchReport {
   worktreeCreated: boolean;
   /** Null when refused — a refused ticket never yields a spawn packet. */
   spawn: LaneSpawnSpec | null;
+  /** #240 browser lease plan — null when the ticket never mentions a browser.
+   *  Dry-run: planned, not registered; confirm: registered in the ledger at
+   *  spawn time (rolled back if the spawn throws). */
+  lease: LaneLeasePlan | null;
   /** #206 confirm path: the transport actually spawned. False on dry-run,
    *  refusal, transport-missing, or a spawn throw. */
   spawned: boolean;
@@ -804,6 +834,9 @@ export interface LaneAgentSpec {
   model?: string;
   /** Shared context — contracts/interfaces lanes must honour. */
   context?: string;
+  /** #240 browser-lease name override — defaults derive from the ticket
+   *  number (tab `l<number>`, thread prefix `l<number>-`). */
+  lease?: { tabName?: string; threadPrefix?: string };
 }
 
 /** What the gate hands a spawn transport (#206): the full lane task, the
@@ -910,6 +943,16 @@ function renderLaneReport(r: LaneDispatchReport): string {
       (r.worktreeCreated ? " (created)" : r.dryRun ? " (dry-run)" : ""),
   );
   lines.push(`  COMMAND   ${r.worktree.command}`);
+  if (r.lease !== null) {
+    lines.push(
+      `  LEASE     tab=${r.lease.tabName} prefix=${r.lease.threadPrefix}` +
+        (r.lease.registered
+          ? " (registered)"
+          : r.dryRun
+            ? " (dry-run — registered on confirm)"
+            : " (NOT registered)"),
+    );
+  }
   if (r.spawn !== null) {
     lines.push(
       `  SPAWN     agent=${r.spawn.agent} isolated=${String(r.spawn.isolated)}` +
@@ -974,19 +1017,19 @@ function renderLaneReport(r: LaneDispatchReport): string {
 export async function lane(
   ticket: number | Ticket,
   agentSpec?: LaneAgentSpec,
-  opts?: { confirm?: boolean; base?: string; cwd?: string },
+  opts?: { confirm?: boolean; base?: string; cwd?: string; leasesPath?: string },
 ): Promise<LaneDispatchReport>;
 
 export async function lane(
   ticket: (number | Ticket)[],
   agentSpec?: LaneAgentSpec,
-  opts?: { confirm?: boolean; base?: string; cwd?: string },
+  opts?: { confirm?: boolean; base?: string; cwd?: string; leasesPath?: string },
 ): Promise<LaneDispatchReport[]>;
 
 export async function lane(
   ticket: number | Ticket | (number | Ticket)[],
   agentSpec: LaneAgentSpec = {},
-  opts: { confirm?: boolean; base?: string; cwd?: string } = {},
+  opts: { confirm?: boolean; base?: string; cwd?: string; leasesPath?: string } = {},
 ): Promise<LaneDispatchReport | LaneDispatchReport[]> {
   if (Array.isArray(ticket)) {
     return Promise.all(ticket.map((t) => laneOne(t, agentSpec, opts)));
@@ -997,12 +1040,24 @@ export async function lane(
 async function laneOne(
   ticket: number | Ticket,
   agentSpec: LaneAgentSpec,
-  opts: { confirm?: boolean; base?: string; cwd?: string },
+  opts: { confirm?: boolean; base?: string; cwd?: string; leasesPath?: string },
 ): Promise<LaneDispatchReport> {
   const t = typeof ticket === "number" ? await ticketOnBoard(ticket) : ticket;
   const [packet] = dispatchPackets([t]);
   if (packet === undefined) throw new Error("AP.lane: dispatchPackets returned no packet");
   const dor = dorChecklist(t.body);
+  // #240: a ticket that mentions a browser gets a lease — deterministic names
+  // from the ticket number (agentSpec.lease overrides), roster lane id from
+  // the same label the spawn transport uses.
+  const leasePlan: LaneLeasePlan | null = browserInvolved(t)
+    ? {
+        browserInvolved: true,
+        lane: packet.worktree.branch.replaceAll("/", "-"),
+        tabName: agentSpec.lease?.tabName ?? `l${t.number}`,
+        threadPrefix: agentSpec.lease?.threadPrefix ?? `l${t.number}-`,
+        registered: false,
+      }
+    : null;
   const isDispatchable = dispatchable({ tickets: [t] }).length > 0;
   const refusalReasons: string[] = [];
   if (!isDispatchable) {
@@ -1023,6 +1078,7 @@ async function laneOne(
     worktree: packet.worktree,
     worktreeCreated: false,
     spawn: null,
+    lease: leasePlan,
     spawned: false,
     transport: null,
     agentHandle: null,
@@ -1041,7 +1097,8 @@ async function laneOne(
     isolated: true,
     context: agentSpec.context ?? null,
     ...(agentSpec.model !== undefined ? { model: agentSpec.model } : {}),
-    task: packet.context,
+    task:
+      leasePlan !== null ? `${packet.context}\n\n${renderLeaseSection(leasePlan)}` : packet.context,
   };
   if (dryRun) {
     report.ok = true;
@@ -1077,6 +1134,31 @@ async function laneOne(
     return report;
   }
   report.transport = spawn.transport;
+  // #240: register the browser lease BEFORE spawning — a collision aborts the
+  // dispatch before a second lane ever touches the contested tab/thread, and
+  // a spawn throw below rolls the registration back (the ledger must not hold
+  // a lease for a lane that never started).
+  if (leasePlan !== null) {
+    try {
+      lease(
+        "browser",
+        {
+          lane: leasePlan.lane,
+          tabName: leasePlan.tabName,
+          threadPrefix: leasePlan.threadPrefix,
+          number: t.number,
+        },
+        { path: opts.leasesPath },
+      );
+      leasePlan.registered = true;
+    } catch (err) {
+      report.errors.push(
+        `browser lease registration failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      console.log(renderLaneReport(report));
+      return report;
+    }
+  }
   try {
     report.agentHandle = await spawn.fn({
       prompt: packet.context,
@@ -1089,6 +1171,18 @@ async function laneOne(
     report.agentId = agentIdOf(report.agentHandle);
   } catch (err) {
     report.spawnError = err instanceof Error ? err.message : String(err);
+    if (leasePlan?.registered === true) {
+      try {
+        release("browser", { lane: leasePlan.lane }, { path: opts.leasesPath });
+        leasePlan.registered = false;
+      } catch (rollbackErr) {
+        report.errors.push(
+          `browser lease rollback failed: ${
+            rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)
+          } — release manually via AP.release`,
+        );
+      }
+    }
     console.log(renderLaneReport(report));
     return report;
   }
@@ -1410,16 +1504,259 @@ export function planCascade(
 }
 
 // ---------------------------------------------------------------------------
+// Browser lease ledger (#240) — shared CDP/thread resources under a written
+// ledger. 口头纪律结构化 (#239 comment 5988466175, 入验收规范): ① per-lane named
+// tab, never the default tab or another lane's; ② the staging thread is a
+// preemption resource (one in-flight turn per thread) — interactive tests
+// create a dedicated thread under the lane's prefix, shared threads are
+// forbidden, read-only observation sends nothing; ③ release on delivery.
+// The store is an append-only jsonl — one LeaseEvent per line, replayed to
+// derive the active set. AP.lane writes on dispatch; audit rule 6 reads.
+// ---------------------------------------------------------------------------
+
+/** Resource classes sharing the machine — browser first (#240); more classes
+ *  (staging deploys, reserved threads, panels) join by extending the union. */
+export type LeaseType = "browser";
+
+/** Who holds what: the roster lane id, the named tab, the dedicated
+ *  staging-thread prefix. `number` scopes the lease to its ticket when the
+ *  holder is a ticket lane. */
+export interface BrowserLeaseSpec {
+  lane: string;
+  tabName: string;
+  threadPrefix: string;
+  number?: number;
+}
+
+/** One jsonl line. A release event echoes the acquisition fields — the
+ *  (type, lane, tabName, threadPrefix) tuple is the close key. */
+export interface LeaseEvent {
+  event: "acquired" | "released";
+  type: LeaseType;
+  lane: string;
+  tabName: string;
+  threadPrefix: string;
+  number: number | null;
+  acquiredAt: string;
+  releasedAt: string | null;
+}
+
+/** The lane-facing lease plan AP.lane computes for a browser ticket and
+ *  mirrors on LaneDispatchReport. */
+export interface LaneLeasePlan {
+  browserInvolved: boolean;
+  /** Roster id (`lane-<number>-<slug>`) — the same label the spawn uses. */
+  lane: string;
+  tabName: string;
+  threadPrefix: string;
+  /** True once the confirm path registered the lease (false on dry-run,
+   *  refusal, and after a spawn-throw rollback). */
+  registered: boolean;
+}
+
+export interface LeaseOptions {
+  /** Ledger file override (default: `.pm-leases.jsonl` at the repo root, or
+   *  the `PM_LEASES_PATH` env). */
+  path?: string;
+  /** Reference clock (tests inject; default now). */
+  now?: Date;
+}
+
+/** Default ledger: repo-local append-only jsonl next to `.env.local` —
+ *  runtime state, gitignored, never committed. */
+const DEFAULT_LEASES_PATH = join(
+  dirname(dirname(fileURLToPath(import.meta.url))),
+  ".pm-leases.jsonl",
+);
+
+const resolveLeasePath = (over?: string): string =>
+  over ?? process.env.PM_LEASES_PATH ?? DEFAULT_LEASES_PATH;
+
+function readLedger(path: string): LeaseEvent[] {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return []; // missing file = empty ledger, not an error
+  }
+  const events: LeaseEvent[] = [];
+  for (const [i, line] of raw.split("\n").entries()) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    try {
+      events.push(JSON.parse(trimmed) as LeaseEvent);
+    } catch {
+      throw new Error(
+        `AP.lease ledger: corrupt jsonl at ${path}:${i + 1} — repair or delete the file`,
+      );
+    }
+  }
+  return events;
+}
+
+function appendLedger(record: LeaseEvent, path: string): void {
+  appendFileSync(path, `${JSON.stringify(record)}\n`, "utf8");
+}
+
+/** Replay the event log to the active set (acquisition order). Exported pure:
+ *  audit rule 6 consumes exactly this view. */
+export function activeLeases(events: readonly LeaseEvent[]): LeaseEvent[] {
+  const open = new Map<string, LeaseEvent>();
+  for (const e of events) {
+    const key = [e.type, e.lane, e.tabName, e.threadPrefix].join("\u0000");
+    if (e.event === "acquired") open.set(key, e);
+    else open.delete(key);
+  }
+  return [...open.values()];
+}
+
+/** Ticket text involving a browser — the same words the discipline names
+ *  (浏览器/browser/CDP/Chrome). Deliberately narrow: a false positive costs a
+ *  needless lease; a false negative leaks an unaccounted browser lane. */
+const BROWSER_TASK_PATTERN = /浏览器|browser|CDP|chrome/i;
+
+export function browserInvolved(t: Pick<Ticket, "title" | "body">): boolean {
+  return BROWSER_TASK_PATTERN.test(`${t.title}\n${t.body}`);
+}
+
+/**
+ * Register a lease acquisition (#240). Refuses — zero writes — on a collision:
+ * the same tab or the same thread prefix actively held by ANOTHER lane, or the
+ * same lane already holding the tab (release first, then re-acquire). This is
+ * the enforcement point; audit rule 6 is the net for hand-edited ledgers.
+ */
+export function lease(
+  type: LeaseType,
+  spec: BrowserLeaseSpec,
+  opts: LeaseOptions = {},
+): LeaseEvent {
+  const lane = spec.lane.trim();
+  const tabName = spec.tabName.trim();
+  const threadPrefix = spec.threadPrefix.trim();
+  if (lane.length === 0 || tabName.length === 0 || threadPrefix.length === 0) {
+    throw new Error(
+      "AP.lease: lane, tabName and threadPrefix are all required — an anonymous lease is no lease",
+    );
+  }
+  const path = resolveLeasePath(opts.path);
+  const active = activeLeases(readLedger(path));
+  const clash = active.find(
+    (a) => a.lane !== lane && (a.tabName === tabName || a.threadPrefix === threadPrefix),
+  );
+  if (clash !== undefined) {
+    throw new Error(
+      `AP.lease: collision — ${type} tab=${clash.tabName} prefix=${clash.threadPrefix} ` +
+        `is held by lane ${clash.lane} (acquired ${clash.acquiredAt}); release it or pick a distinct tab/prefix`,
+    );
+  }
+  // No `a.type === type` guard yet: LeaseType has the single "browser" member,
+  // so the comparison is statically vacuous. Re-add it when a second class
+  // (staging deploy, reserved thread, …) joins the union.
+  const held = active.find((a) => a.lane === lane && a.tabName === tabName);
+  if (held !== undefined) {
+    throw new Error(
+      `AP.lease: lane ${lane} already holds ${type} tab=${held.tabName} ` +
+        `(acquired ${held.acquiredAt}) — release before re-acquiring`,
+    );
+  }
+  const record: LeaseEvent = {
+    event: "acquired",
+    type,
+    lane,
+    tabName,
+    threadPrefix,
+    number: spec.number ?? null,
+    acquiredAt: (opts.now ?? new Date()).toISOString(),
+    releasedAt: null,
+  };
+  appendLedger(record, path);
+  return record;
+}
+
+/**
+ * Close a lease (#240): sets releasedAt on the active lease matching the ref.
+ * No active lease ⇒ throw (a release that closes nothing is drift, never a
+ * silent no-op); an ambiguous ref (several active leases for the lane) ⇒
+ * throw with a narrowing hint.
+ */
+export function release(
+  type: LeaseType,
+  ref: { lane: string; tabName?: string; threadPrefix?: string },
+  opts: LeaseOptions = {},
+): LeaseEvent {
+  const path = resolveLeasePath(opts.path);
+  const matches = activeLeases(readLedger(path)).filter(
+    (a) =>
+      a.lane === ref.lane.trim() &&
+      (ref.tabName === undefined || a.tabName === ref.tabName.trim()) &&
+      (ref.threadPrefix === undefined || a.threadPrefix === ref.threadPrefix.trim()),
+  );
+  if (matches.length === 0) {
+    throw new Error(
+      `AP.release: no active ${type} lease for lane ${ref.lane}` +
+        (ref.tabName !== undefined ? ` tab=${ref.tabName}` : "") +
+        " — nothing to release",
+    );
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `AP.release: ${matches.length} active ${type} leases for lane ${ref.lane} — ` +
+        "narrow with tabName/threadPrefix",
+    );
+  }
+  const target = matches[0];
+  if (target === undefined) {
+    throw new Error(
+      `AP.release: no active ${type} lease for lane ${ref.lane} — nothing to release`,
+    );
+  }
+  const closed: LeaseEvent = {
+    ...target,
+    event: "released",
+    releasedAt: (opts.now ?? new Date()).toISOString(),
+  };
+  appendLedger(closed, path);
+  return closed;
+}
+
+/** Ledger view: every event plus the replayed active set — the audit's
+ *  rule-6 input (`leases: AP.ledger().events`). */
+export function ledger(opts: LeaseOptions = {}): { events: LeaseEvent[]; active: LeaseEvent[] } {
+  const events = readLedger(resolveLeasePath(opts.path));
+  return { events, active: activeLeases(events) };
+}
+
+/** The lease section appended to a browser lane's spawn context: named tab +
+ *  thread prefix + release obligation, verbatim from the #239 discipline. */
+function renderLeaseSection(plan: LaneLeasePlan): string {
+  return [
+    `# Browser lease (CDP/thread discipline, #240 — registered: ${plan.lane})`,
+    `- tab: ${plan.tabName}（具名 tab；禁默认 tab、禁他人 tab）`,
+    `- thread prefix: ${plan.threadPrefix}（staging thread=抢占资源，一 thread 一在飞 turn；` +
+      `交互测试一律新建专属线程，禁用共享线程；只读观察零发送）`,
+    `- release: 交付后由 PM \`AP.release("browser", { lane: "${plan.lane}" })\` 关账；` +
+      `报告必须回报 tab/thread 使用与关闭状态`,
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // AP.audit (#181) — per-beat drift rules. Pure: reads a snapshot, reports
 // board-vs-reality drift as findings + AP.apply-ready mutations, so the PM
 // beat reconciles in one guarded apply BEFORE dispatching.
 // ---------------------------------------------------------------------------
 
-/** Drift rule ids (#181), disjoint — one finding per (ticket, rule):
+/** Drift rule ids (#181, #240), disjoint — one finding per (ticket, rule):
  *  1 staleClosedStatus · 2 inProgressOnClosed · 3 laneStatusMismatch ·
- *  4 frontierAging. */
+ *  4 frontierAging · 6 browserLeaseMissing / browserLeaseCollision /
+ *  browserLeaseUnreleased (armed only when `opts.leases` carries the ledger). */
 export type DriftRule =
-  "staleClosedStatus" | "inProgressOnClosed" | "laneStatusMismatch" | "frontierAging";
+  | "staleClosedStatus"
+  | "inProgressOnClosed"
+  | "laneStatusMismatch"
+  | "frontierAging"
+  | "browserLeaseMissing"
+  | "browserLeaseCollision"
+  | "browserLeaseUnreleased";
 
 /** Rule-4 threshold: a dispatchable Todo untouched this many days is aged
  *  (reminder class — the repair is a dispatch, not a board write). */
@@ -1442,7 +1779,8 @@ export interface DriftFinding {
 
 export interface AuditReport {
   /** Findings in rule order (rules 1-3 in ticket order, then rule 4, then
-   *  roster contradictions). */
+   *  roster contradictions, then rule 6: missing in ticket order, unreleased
+   *  in ledger order, collisions last). */
   drift: DriftFinding[];
   /** The apply-ready flat list — `AP.apply(rep.mutations, { confirm: true })`
    *  is the one-shot reconcile. */
@@ -1452,12 +1790,17 @@ export interface AuditReport {
 
 export interface AuditOptions {
   /** Lane numbers the PM believes alive: rule 3 checks their board Status,
-   *  rule 4 stops counting them as undispatched. */
+   *  rule 4 stops counting them as undispatched, rule 6a scopes the
+   *  browser-lease check to live lanes. */
   activeLanes?: readonly number[];
   /** Rule-4 threshold override (default FRONTIER_AGE_DAYS). */
   frontierAgeDays?: number;
   /** Reference clock for rule 4 (tests inject; default now). */
   now?: Date;
+  /** Rule-6 input (#240): the lease ledger — pass `AP.ledger().events`.
+   *  Omitted → rule 6 is silent: audit stays pure, and a missing ledger must
+   *  never fabricate browser-lease findings. */
+  leases?: readonly LeaseEvent[];
 }
 
 /**
@@ -1480,6 +1823,17 @@ export interface AuditOptions {
  *     clears), not on any active lane, issue untouched longer than N days:
  *     reminder, `mutation: null` — the repair is AP.lane. updatedAt is an
  *     aging PROXY (any issue event refreshes it); never a guard input.
+ *  6. browser lease ledger (#240, armed by `opts.leases`) — all repairs are
+ *     AP.lease/AP.release actions, `mutation: null`:
+ *     6a browserLeaseMissing — an active lane whose ticket mentions a browser
+ *        (浏览器/browser/CDP/Chrome) with no active browser lease for its
+ *        number: the lane is touching CDP/thread resources off-ledger.
+ *     6b browserLeaseCollision — the same tab or thread prefix actively held
+ *        by two lanes (lease() refuses this at acquisition; the audit is the
+ *        net for hand-edited ledgers).
+ *     6c browserLeaseUnreleased — an active lease whose ticket is delivered
+ *        (CLOSED, or Status Done/Canceled): the release obligation was
+ *        skipped at closeout.
  */
 export function audit(snap: Pick<Snapshot, "tickets">, opts: AuditOptions = {}): AuditReport {
   const drift: DriftFinding[] = [];
@@ -1560,6 +1914,71 @@ export function audit(snap: Pick<Snapshot, "tickets">, opts: AuditOptions = {}):
           "active lane on a converged ticket — board already closed it out; stale roster entry",
         mutation: null,
       });
+    }
+  }
+
+  // Rule 6 (#240): browser lease discipline over the CDP/thread ledger.
+  if (opts.leases !== undefined) {
+    // "browser" is the only LeaseType today — the ledger is browser-scoped by
+    // construction; re-filter per type when the union grows.
+    const held = activeLeases(opts.leases);
+    // 6a: an active browser lane with nothing on the ledger.
+    for (const t of snap.tickets) {
+      if (t.state !== "OPEN" || !active.has(t.number) || !browserInvolved(t)) continue;
+      if (held.some((a) => a.number === t.number)) continue;
+      drift.push({
+        rule: "browserLeaseMissing",
+        number: t.number,
+        title: t.title,
+        detail:
+          'active browser lane with no lease registered — AP.lease("browser", { lane, tabName, threadPrefix, number }) before browser work',
+        mutation: null,
+      });
+    }
+    // 6c: delivered ticket, lease still open — the release obligation was
+    // skipped at closeout (the 空框不可关 companion: close the lease first).
+    for (const a of held) {
+      if (a.number === null) continue;
+      const t = snap.tickets.find((x) => x.number === a.number);
+      if (t === undefined) continue;
+      const delivered = t.state === "CLOSED" || t.status === "Done" || t.status === "Canceled";
+      if (!delivered) continue;
+      drift.push({
+        rule: "browserLeaseUnreleased",
+        number: a.number,
+        title: t.title,
+        detail:
+          `ticket delivered (state=${t.state}, Status=${t.status ?? "null"}) but the ` +
+          `browser lease tab=${a.tabName} is still open — AP.release("browser", { lane: "${a.lane}" })`,
+        mutation: null,
+      });
+    }
+    // 6b: one tab / one thread prefix held by two lanes at once. Grouped by
+    // contested key; one finding per late holder against the incumbent.
+    const byKey = new Map<string, LeaseEvent[]>();
+    for (const a of held) {
+      for (const key of [`tab:${a.tabName}`, `prefix:${a.threadPrefix}`]) {
+        const holders = byKey.get(key) ?? [];
+        if (!holders.some((x) => x.lane === a.lane)) holders.push(a);
+        byKey.set(key, holders);
+      }
+    }
+    for (const [key, holders] of byKey) {
+      const incumbent = holders[0];
+      if (incumbent === undefined || holders.length < 2) continue;
+      const late = holders.slice(1);
+      for (const l of late) {
+        const number = l.number ?? incumbent.number ?? 0;
+        drift.push({
+          rule: "browserLeaseCollision",
+          number,
+          title: snap.tickets.find((x) => x.number === number)?.title ?? "(not on board)",
+          detail:
+            `${key} held concurrently by lanes ${incumbent.lane} (acquired ${incumbent.acquiredAt}) ` +
+            `and ${l.lane} (acquired ${l.acquiredAt}) — release or rename one`,
+          mutation: null,
+        });
+      }
     }
   }
 
@@ -2801,9 +3220,21 @@ export const AP = {
   dispatchPackets,
   lane,
   registerSpawn,
+  lease,
+  release,
+  ledger,
   dorChecklist,
   /** Pure internals, exposed for tests/inspection. */
-  pure: { slugify, planDiff, planCascade, budgetOf, FILE_CONFIDENCE_FLOOR, FRONTIER_AGE_DAYS },
+  pure: {
+    slugify,
+    planDiff,
+    planCascade,
+    budgetOf,
+    FILE_CONFIDENCE_FLOOR,
+    FRONTIER_AGE_DAYS,
+    browserInvolved,
+    activeLeases,
+  },
   /** Judge layer: question oracle + real transport (tests mock via fetch). */
   judge: { INTAKE_QUESTIONS, JEV_URL, JEV_MODEL, defaultJudge },
   /** Config actually in effect. */

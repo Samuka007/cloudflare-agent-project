@@ -13,7 +13,7 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 ### 派单
 
-**PM 每拍先 audit 再派发（#181）**：`const rep = AP.audit(snapshot, { activeLanes })` → `AP.apply(rep.mutations, { confirm: true })` 一键消漂移，复拍读 `clean` 才继续派发。规则：①issue CLOSED 但 Status∉{Done,Canceled}（收敛写=补落 sync 漏写，wontfix→Canceled 其余→Done）②Status=In Progress 但 CLOSED（lane 死亡未收口）③活跃 lane 票 Status≠In Progress（lane(confirm) 翻转丢失→补翻）④dispatchable Todo 超 N 天未派（frontier 老化提醒，无 mutation，动作是派发）。见 scripts/pm-autopilot.ts。
+**PM 每拍先 audit 再派发（#181）**：`const rep = AP.audit(snapshot, { activeLanes })` → `AP.apply(rep.mutations, { confirm: true })` 一键消漂移，复拍读 `clean` 才继续派发。规则：①issue CLOSED 但 Status∉{Done,Canceled}（收敛写=补落 sync 漏写，wontfix→Canceled 其余→Done）②Status=In Progress 但 CLOSED（lane 死亡未收口）③活跃 lane 票 Status≠In Progress（lane(confirm) 翻转丢失→补翻）④dispatchable Todo 超 N 天未派（frontier 老化提醒，无 mutation，动作是派发）⑤浏览器租约（#240，传 `leases: AP.ledger().events` 才武装）：涉浏览器 lane 无租约登记／租约碰撞（同 tab／同线程前缀并发）／交付后未释放，均无 mutation（动作是 AP.lease/AP.release）。见 scripts/pm-autopilot.ts。
 
 票面三项齐才派（DoR 票门，#224 裁减为三项；工程纪律全定义仍见 AGENTS.md）：①复用三问字面答案（手写票含三问否定论证）②验收产品面可观察 ③bb/omp 上游锚点。预算行与参照往例不再是票门：预算仅作派单 packet 信息行（见下），往例估算（参考类预测）是人类纪律（AGENTS.md），均不进票门。
 
@@ -22,6 +22,7 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 - **worktree + spawn 经 AP.lane（派发钩子，#171；#199 校准为纯 spawn 脚手架）**：派发 = `AP.lane(number | ticket, agentSpec)`（scripts/pm-autopilot.ts；传数字时自查 snapshot，票不在板上才抛）——唯一硬拒 = board 谓词（open ∧ Todo ∧ 无未关 blocking 边 ∧ ¬rfh）；DoR 三项表（①三问引用②验收面③上游锚点，#224）降为 **advisory**：表照打、缺项不拒派（假的严谨约束等于真的破坏推进），缺真锚点由 PM 派单前自行拦 → 确认后自动预建 worktree（`git worktree add ~/.herdr/worktrees/<repo>/<branch-as-dash> -b lane/<ticket>-<slug> origin/main`，dry-run 默认零写）→ 产出 `isolated: true` 的 task spawn 包（worktree 命令生成复用 `AP.dispatchPackets`）。lane cd 入内即工作，全程在该树；**主仓 checkout 归 PM 独占**（劫持事故条款：lane 入主仓或自建树 = 违规）。关账后 PM 回收 worktree（`git worktree remove <path>`）；盘点 `git worktree list` / `herdr worktree list`。**PM 会话启动 = 一个 cell `%load scripts/pm-harness.ts`（#206 持久装载体：cache-bust 动态 import→globalThis.AP、织入 spawn 传输、AP_READY 标志）**——lane(confirm) 端到端真派发：内建默认 SpawnFn = `globalThis.agent(prompt, {isolated: true, label})` 包一层（#200 内核配方；`registerSpawn` 覆盖槽供测试 mock/自定义织入；无 agent 全局时报告 transport-missing 不静默），支持批量 `AP.lane([a, b])`。
 - **效率预算行**：预期墙钟／资源上限／等待方式（交付即回 or 脚本化监控）；超 50% 须解释。
 - **资源所有权账本**：owned files/dirs + worktree 路径 + owned 外部资源（staging 部署、secret、面板）。PM 派单前做**不相交断言**——两 lane 地盘相交 = 派单错误。
+- **浏览器租约（#240）**：票面提及浏览器／CDP／Chrome 的派单由 `AP.lane` 自动登记租约——具名 tab `l<票号>`＋专属线程前缀 `l<票号>-`＋释放义务——并随 spawn 上下文携带；手工派发同款必填。台账 `AP.lease`／`AP.release`／`AP.ledger`（仓内 `.pm-leases.jsonl`，gitignored）。
 - **分支纪律**：lane 只推 `lane/<ticket>-<slug>`，PR 由 PM 审后 merge。**main 分支保护=一切经 PR（2026-10-04 起，repo rule 强制）**——PM 文档/热修同样走短命分支 PR；对 main 的 push 非 ff 拒绝=硬停，先 `git status --branch` 看分叉方向，force 类操作仅限事故回滚本身且须 --force-with-lease 钉基线。
 - **POMDP 条款**：根因未证实不动码；60 分钟未定位根因 → 报告而非猜改。
 - **验收 checklist**；lane 报告必带：commit hash、CI run、测试计数、file:line 根因（修 bug 票）。
@@ -54,6 +55,8 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 3. 关票评论附证据（测试数、部署 URL、run 链接、file:line）；**无证据不关票**。
 4. 验收判据 = 用户打开能看到什么（反例 #53：字段全部"就位"但 Priority 列五个视图全不可见，验收却已通过）。
 5. staging 验证经 `scripts/deploy-staging.sh` 两条调用面（#175）：merge→main 由 GHA `deploy-staging` workflow 自动部署；任意 commit 手动经 `nix run .#staging-deploy`。
+6. **CDP 三层纪律（用户裁决 2026-10-05，#240 audit 规则 6）**：①每 lane 具名 tab（`l<票号>-<用途>`），禁默认 tab 与他人 tab；②**staging thread=抢占资源**（一 thread 一在飞 turn）——交互测试一律新建专属线程（前缀 `l<票号>-`），禁用共享线程（`thr_jk45qe4786`=PM 保留），只读观察可访现有线程但零发送；③用毕关闭——交付关账前 `AP.release("browser", { lane })` 释放租约。涉浏览器 lane 无租约登记／租约碰撞／交付后未释放 = `AP.audit` 规则 6 漂移清单。
+7. **空框不可关票（#239，人工门）**：bb-ux 面票 staging 手验框空 = 不可关票——验证空转（框开着但没验到行为）视同未验收；脊柱落地前这是唯一防线，欠账票逐张回扫回填。
 
 ## 2. 角色
 
