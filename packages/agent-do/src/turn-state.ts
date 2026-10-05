@@ -541,6 +541,12 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       // FSM state (same rule as the task family above).
       return;
     }
+    case "imageView": {
+      // B1 (#321): thread-scoped ux-carrier row — the ux projection
+      // (ux-projection.ts) folds it into the bb item lifecycle pair, never
+      // FSM state (same rule as the notebook/job families above).
+      return;
+    }
     case "task.subagent_identity": {
       // Exactly one identity row per child DO: runSubagent dedups by the
       // identity projection before appending, so a second row is a spawn bug.

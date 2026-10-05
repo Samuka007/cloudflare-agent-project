@@ -209,6 +209,8 @@ export function projectLifecycle(events: readonly AnyAgentEvent[]): LifecycleVie
       case "job.delivered":
       case "job.registered":
       case "job.settled":
+      // B1 (#321): the ux projection owns the row, never registry state.
+      case "imageView":
       case "task.async_result":
       case "task.budget_notice":
       // #276 J5 activity backflow: not registry state.

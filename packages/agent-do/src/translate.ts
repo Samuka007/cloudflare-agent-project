@@ -211,6 +211,8 @@ export function modelRequestFromEvents(
       case "turn.phase":
       case "interaction.registered":
       case "interaction.resolved":
+      // B1 (#321): the image rides the host-files face, never turn content.
+      case "imageView":
       case "job.delivered":
       case "job.registered":
       case "job.settled":

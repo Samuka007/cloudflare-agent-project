@@ -295,6 +295,8 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
       case "job.delivered":
       case "job.registered":
       case "job.settled":
+      // B1 (#321): the ux projection owns the row, not the child-run fold.
+      case "imageView":
       case "model.call_failed":
       case "model.call_retry":
       case "model.call_sealed":
@@ -797,6 +799,8 @@ export function renderAgentHistory(events: readonly AnyAgentEvent[], agentId: st
       case "job.delivered":
       case "job.registered":
       case "job.settled":
+      // B1 (#321): the ux projection owns the row, not the transcript fold.
+      case "imageView":
       case "model.call_failed":
       case "model.call_retry":
       case "model.call_sealed":
