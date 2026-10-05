@@ -14,6 +14,7 @@ import { serviceFrameSchema, type ObservedExecution, type ServiceFrame } from ".
 import { loadIdentity, type ClientConfig, type ClientIdentity } from "./identity.js";
 import { Executor, scanMarkerProcesses } from "./executor.js";
 import { HostRpcCommandError, browseHostDirectory } from "./host-directory.js";
+import { readHostFile } from "./host-files.js";
 import { ExecutionBuffer } from "./buffers.js";
 import {
   stagePromptAttachments,
@@ -460,7 +461,11 @@ export function dispatchHostRpc(
   // fire-and-forget for the pump, an awaitable signal for tests. An unknown
   // commandType cannot reach here: serviceFrameSchema's hostRpcCommandSchema
   // refuses it in handleServiceFrame (version skew answered there).
-  return browseHostDirectory(command).then(
+  const executed =
+    command.type === "host.browse_directory"
+      ? browseHostDirectory(command)
+      : readHostFile(command);
+  return executed.then(
     (result) => {
       respond({ type: "host-rpc.response", ok: true, result });
     },

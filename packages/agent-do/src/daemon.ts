@@ -48,6 +48,13 @@ export interface ToolResultPayload {
   exitCode: number | null;
   output: string;
   outputTruncated?: boolean;
+  /**
+   * B1 (#321): image artifacts this tool produced, by host-disk path. Each
+   * lands its own `imageView` journal row (parentToolCallId = the call
+   * executionId) before the closing tool.result; the wire twin is
+   * daemon-service toolResultPayloadSchema.images.
+   */
+  images?: { path: string }[];
 }
 
 export type ExecutionUpdate =

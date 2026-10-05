@@ -842,6 +842,45 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
         });
         break;
       }
+      case "imageView": {
+        // B1 (#321): one journal row → the bb item lifecycle pair (bb
+        // web-activity-lifecycle.ts:75-89 parses imageView off BOTH
+        // item/started and item/completed; callId = item.id). extraUx
+        // precedes the main row in the flush below, so the started row is
+        // the extra and the completed row is the main — same-seq emission,
+        // thread/compacted precedent.
+        const itemId = `itm-iv-${event.data.turnId}:${event.seq}`;
+        const item = {
+          type: "imageView" as const,
+          id: itemId,
+          path: event.data.path,
+          parentToolCallId: event.data.parentToolCallId,
+        };
+        extraUx.push(
+          buildThreadEvent({
+            id: event.id,
+            threadId: event.threadId,
+            seq: event.seq,
+            type: "item/started",
+            data: { turnId: event.data.turnId, item },
+            createdAt: event.createdAt,
+          }),
+        );
+        ux = buildThreadEvent({
+          id: event.id,
+          threadId: event.threadId,
+          seq: event.seq,
+          type: "item/completed",
+          data: {
+            turnId: event.data.turnId,
+            // bb imageView item has no status member — the lifecycle lives
+            // in the event type (web-activity-lifecycle.ts:83 kind begin/end).
+            item,
+          },
+          createdAt: event.createdAt,
+        });
+        break;
+      }
     }
     // Extras (the J6 reasoning terminals) precede the main row — a call's
     // thinking precedes the answer it produced.

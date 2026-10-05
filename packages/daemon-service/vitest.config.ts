@@ -15,6 +15,8 @@ export default defineConfig({
       "test/tool-runtime.test.ts",
       "test/eval-kernel.test.ts",
       "test/host-directory.test.ts",
+      // B1 host-file read lane: node:fs + node:crypto real-fs suite — Bun-only.
+      "test/host-files.test.ts",
       "test/l1-read-semantics.test.ts",
       "test/l1-glob-grep-semantics.test.ts",
       "test/l1-edit-semantics.test.ts",

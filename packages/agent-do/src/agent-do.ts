@@ -3469,6 +3469,19 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     options: { ack: boolean } = { ack: true },
   ): Promise<void> {
     if (executionTerminal(execution)) return;
+    // B1 (#321): image artifacts ride the result payload; each lands its own
+    // journal row BEFORE the closing tool.result (todo_phases
+    // journal-before-result ordering, parentToolCallId = the bare call
+    // executionId). The terminal guard above is the idempotency: a result
+    // redelivered after ack is dropped, so the rows append exactly once per
+    // settled execution.
+    for (const image of result.images ?? []) {
+      await this.appendEvent("imageView", {
+        turnId: execution.turnId,
+        parentToolCallId: execution.executionId,
+        path: image.path,
+      });
+    }
     const record = await this.appendEvent("tool.result", {
       turnId: execution.turnId,
       executionId: execution.executionId,

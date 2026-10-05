@@ -137,6 +137,8 @@ export function projectActivityFlush(
       case "interaction.interrupted":
       case "interaction.registered":
       case "interaction.resolved":
+      // B1 (#321): no flushable child activity (the ux projection owns the row).
+      case "imageView":
       case "job.delivered":
       case "job.registered":
       case "job.settled":
