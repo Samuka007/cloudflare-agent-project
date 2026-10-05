@@ -1,5 +1,12 @@
 /**
- * scripts/pm-autopilot.ts — #131 PM autopilot: the eval-resident board-keeper.
+ * plugins/pm-harness/src/core.ts — #131 PM autopilot core, relocated #270.
+ *
+ * #270 relocation: this was scripts/pm-autopilot.ts. The omp custom-tool
+ * plugin package (plugins/pm-harness — pm_lane/pm_apply/pm_audit/pm_release/
+ * pm_ledger in ./tools.ts) now owns it; scripts/pm-harness.ts still
+ * cache-bust-imports this file for the eval-kernel %load flow, and the L1
+ * suite lives beside it in ../test/. Nothing about the module contract
+ * changed: %load-able TypeScript, stateless-reentrant, board = only truth.
  *
  * README
  * ======
@@ -12,7 +19,7 @@
  *
  * Usage (eval session, JS kernel, from the repo root):
  *
- *     %load "scripts/pm-autopilot.ts"
+ *     %load "plugins/pm-harness/src/core.ts"
  *     // → installs globalThis.AP (also exported as a named export for vitest)
  *
  * One full PM turn (dispatch):
@@ -821,8 +828,9 @@ export interface LaneDispatchReport {
    *  refusal, transport-missing, or a spawn throw. */
   spawned: boolean;
   /** Which transport fired: the registerSpawn slot, the default kernel
-   *  global, or "missing" — reported, never silent. Null before spawn. */
-  transport: "registered" | "default" | "missing" | null;
+   *  global, the #270 detached-omp fallback, or "missing" — reported, never
+   *  silent. Null before spawn. */
+  transport: SpawnTransportKind | "missing" | null;
   /** Raw handle from the transport (omp `agent()` handle); null otherwise. */
   agentHandle: unknown;
   /** Roster id extracted from the handle, when it carries one. */
@@ -864,6 +872,11 @@ export interface SpawnRequest {
   /** Shared context, or null. */
   context: string | null;
   model?: string;
+  /** #270: the provisioned worktree path (home-expanded), when the dispatch
+   *  pipeline created one. The detached-omp fallback transports the lane
+   *  there via `--cwd`; kernel transports ignore it (the lane context text
+   *  already names the path). */
+  cwd?: string;
 }
 
 /** One isolated subagent spawn. The default impl wraps the omp eval kernel's
@@ -882,23 +895,54 @@ export function registerSpawn(fn: SpawnFn | null): void {
   spawnOverride = fn;
 }
 
+/** #270 fallback tier, installed by the plugin's tool layer at factory time:
+ *  a host-side detached `omp -p` lane (no eval kernel required). Tests import
+ *  core directly and never install it, so the transport-missing contract is
+ *  unchanged there. Pass null to uninstall. */
+let spawnFallback: SpawnFn | null = null;
+
+export function registerSpawnFallback(fn: SpawnFn | null): void {
+  spawnFallback = fn;
+}
+
+/** Test seam (#270, _inject convention): whether the fallback slot holds a
+ *  transport — lets the tools suite assert the factory installs it without
+ *  dispatching through a real detached spawn. */
+export function _spawnFallbackInstalled(): boolean {
+  return spawnFallback !== null;
+}
+
+export type SpawnTransportKind = "registered" | "default" | "fallback";
+
 /** Resolves the transport in force at spawn time: registered override →
- *  default kernel global → "missing" (reported on the report, never a silent
- *  skip — a confirm run without a transport is an incomplete dispatch). */
+ *  default kernel global → #270 plugin fallback → "missing" (reported on the
+ *  report, never a silent skip — a confirm run without a transport is an
+ *  incomplete dispatch). */
 function resolveSpawn():
-  { fn: SpawnFn; transport: "registered" | "default" } | { missing: string } {
+  { fn: SpawnFn; transport: SpawnTransportKind } | { missing: string } {
   if (spawnOverride !== null) return { fn: spawnOverride, transport: "registered" };
   // omp eval-kernel global as a named unchecked view by design: the typeof
   // guard below is the runtime validation (absent global → transport-missing).
   const kernelScope = globalThis as { agent?: KernelAgent };
-  if (typeof kernelScope.agent !== "function") {
+  if (typeof kernelScope.agent === "function") {
+    const agent = kernelScope.agent;
+    return { fn: (p) => agent(p.prompt, { isolated: true, label: p.label }), transport: "default" };
+  }
+  const noDetach = process.env.PM_LANE_NO_DETACH === "1";
+  if (spawnFallback !== null && !noDetach) return { fn: spawnFallback, transport: "fallback" };
+  if (noDetach) {
     return {
       missing:
-        "no spawn transport: typeof globalThis.agent !== 'function' — %load scripts/pm-harness.ts in the omp eval kernel, or AP.registerSpawn(fn) (tests/custom weaves)",
+        "no spawn transport: typeof globalThis.agent !== 'function' and the detached-omp " +
+        "fallback is disabled (PM_LANE_NO_DETACH=1) — %load scripts/pm-harness.ts in the omp " +
+        "eval kernel, or AP.registerSpawn(fn) (tests/custom weaves)",
     };
   }
-  const agent = kernelScope.agent;
-  return { fn: (p) => agent(p.prompt, { isolated: true, label: p.label }), transport: "default" };
+  return {
+    missing:
+      "no spawn transport: typeof globalThis.agent !== 'function' and no fallback registered " +
+      "(tools.ts installs one; tests/custom weaves use AP.registerSpawn(fn))",
+  };
 }
 
 /** Best-effort roster id from a transport handle: string handles pass
@@ -1177,6 +1221,7 @@ async function laneOne(
       label: packet.worktree.branch.replaceAll("/", "-"),
       agent: report.spawn.agent,
       context: report.spawn.context,
+      cwd: target,
       ...(report.spawn.model !== undefined ? { model: report.spawn.model } : {}),
     });
     report.spawned = true;
@@ -2744,7 +2789,8 @@ async function verifyBatch(batch: readonly ResolvedOp[]): Promise<string[]> {
   return errors;
 }
 
-function renderPreflight(report: PreflightReport): string {
+/** #270: exported for the pm_apply tool wrapper — same diff, tool-facing. */
+export function renderPreflight(report: PreflightReport): string {
   const lines: string[] = ["== pm-autopilot preflight (dry-run diff) =="];
   for (const c of report.willChange) {
     lines.push(`  CHANGE #${c.mutation.number} ${c.field}: ${c.from ?? "∅"} → ${c.to}`);

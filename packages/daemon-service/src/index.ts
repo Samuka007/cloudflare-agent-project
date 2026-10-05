@@ -31,5 +31,14 @@ export {
   type ObservedState,
   type ServiceFrame,
 } from "./protocol.js";
+export {
+  consumeJoinCode,
+  JOIN_CODE_TTL_S,
+  joinCodeKvKey,
+  mintJoinCode,
+  sha256Hex,
+  type JoinCodeRecord,
+  type MintedJoinCode,
+} from "./join-codes.js";
 export { DaemonServiceDO, type DaemonServiceEnv } from "./service-do.js";
 export { default as daemonServiceWorker, type WorkerEnv } from "./worker.js";

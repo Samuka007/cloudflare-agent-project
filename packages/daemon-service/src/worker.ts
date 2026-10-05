@@ -13,6 +13,7 @@ import {
   takeToken,
 } from "./edge.js";
 import { TestAgentSinkDO } from "./agent-sink.js";
+import { consumeJoinCode } from "./join-codes.js";
 import { DaemonServiceDO, type DaemonServiceEnv, type OpenSessionResult } from "./service-do.js";
 // Wrangler requires the DO classes on the deployed entry (main).
 export { DaemonServiceDO, TestAgentSinkDO };
@@ -114,8 +115,13 @@ async function route(request: Request, env: WorkerEnv): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
-// Enroll (bb §5 shape): one-time enrollKey → long-lived {hostId, hostKey}.
-// POC stores the key as an env var; M1 moves issuance into a keyed registry.
+// Enroll (bb §5 shape): one-time credential → long-lived {hostId, hostKey}.
+// Two credential classes (#258): the POC static env ENROLL_KEY (hostId comes
+// from the body/deployment identity) and a one-time join code minted by the
+// control plane's POST /hosts/join-codes (the minted hostId is the authority
+// — bb machine-auth.enrollHost redeems the key's metadata, the daemon never
+// self-assigns: internal/hosts.ts:83-122, machine-auth.ts:360-401). M1's key
+// registry replaces both seams with per-host keys.
 // ---------------------------------------------------------------------------
 
 async function handleEnroll(request: Request, env: WorkerEnv): Promise<Response> {
@@ -126,11 +132,23 @@ async function handleEnroll(request: Request, env: WorkerEnv): Promise<Response>
     return errorResponse("bad_request", "invalid json body");
   }
   const parsed = body as { enrollKey?: unknown; hostId?: unknown } | null;
-  if (typeof parsed?.enrollKey !== "string" || parsed.enrollKey !== env.ENROLL_KEY) {
+  if (typeof parsed?.enrollKey !== "string" || parsed.enrollKey === "") {
     return unauthorized();
   }
-  const hostId =
-    typeof parsed.hostId === "string" ? parsed.hostId : (env.DAEMON_HOST_ID ?? "poc-local");
+  const credential = parsed.enrollKey;
+  let hostId: string;
+  if (credential === env.ENROLL_KEY) {
+    hostId =
+      typeof parsed.hostId === "string" ? parsed.hostId : (env.DAEMON_HOST_ID ?? "poc-local");
+  } else if (env.DAEMON_EDGE_KV !== undefined) {
+    // Join-code path: the mint record's hostId wins over any body claim.
+    const mintedHostId = await consumeJoinCode(env.DAEMON_EDGE_KV, credential);
+    if (mintedHostId === null) return unauthorized();
+    hostId = mintedHostId;
+  } else {
+    // No KV binding → no mint surface exists → nothing to redeem.
+    return unauthorized();
+  }
   const hostName = readString(parsed, "hostName");
   // Auth-ladder order (#36): DO mirror first (the authority), KV cache
   // second. The mirror lands in the deployment-identity DO — the one the

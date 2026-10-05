@@ -16,7 +16,14 @@ export interface ClientConfig {
   baseUrl: string;
   dataDir: string;
   sandboxRoot: string;
+  /** Static deployment enrollment key (#176 env model). */
   enrollKey: string;
+  /**
+   * One-time join code from the control plane's POST /hosts/join-codes
+   * (#258) — the add-a-machine path. Alternative to `enrollKey`; exactly one
+   * is required (the CLI entry validates and exits otherwise).
+   */
+  joinCode: string | null;
   /** T20 #110 isolation policy — decoded from DAEMON_TASK_ISOLATION. */
   taskIsolation: TaskIsolationConfig;
   /** #145 provider channel — decoded from DAEMON_AGENT_AUTH. */
@@ -54,7 +61,10 @@ async function enroll(
     headers: { "content-type": "application/json" },
     // hostName rides the first registry insert (bb /hosts/enroll upserts the
     // daemon's self-reported name, internal/hosts.ts:110).
-    body: JSON.stringify({ enrollKey: config.enrollKey, hostName: hostname() }),
+    body: JSON.stringify({
+      enrollKey: config.joinCode ?? config.enrollKey,
+      hostName: hostname(),
+    }),
   });
   const text = await response.text();
   if (response.status !== 201) {

@@ -1,14 +1,20 @@
 import { Hono } from "hono";
-import { DAEMON_PROTOCOL_VERSION, type DaemonServiceDO } from "@cap/daemon-service";
 import {
+  DAEMON_PROTOCOL_VERSION,
+  mintJoinCode,
+  type DaemonServiceDO,
+} from "@cap/daemon-service";
+import {
+  createHostJoinCodeRequestSchema,
   updateHostPermissionCeilingRequestSchema,
   updateHostRequestSchema,
 } from "../contract/api/hosts.js";
+import { createHostId } from "../shared/ids.js";
 import { hostSchema } from "../contract/domain/host.js";
 import type { Host } from "../contract/domain/host.js";
 import type { HostDbRow } from "../db/rows.js";
 import { ApiError } from "../shared/api-error.js";
-import { requireJsonBody } from "../shared/route-utils.js";
+import { parseOr422, requireJsonBody } from "../shared/route-utils.js";
 import { getHostRow, listNonDestroyedHostRows, updateHostRow } from "../db/hosts.js";
 import type { Env, HonoBindings } from "../app-types.js";
 
@@ -24,6 +30,33 @@ import type { Env, HonoBindings } from "../app-types.js";
  */
 export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void {
   const routes = new Hono<{ Bindings: HonoBindings }>();
+
+  // bb routes/hosts.ts:111-124: the add-a-machine mint — owner-gated like the
+  // rest of the public API ("this route intentionally does not require
+  // loopback access"), answers 201 {joinCode, hostId, expiresAt}. The code is
+  // a one-time 15-minute enrollment credential (#258's non-key layer; the M1
+  // per-host key registry stays cropped, #195 S7). Minting names a hostId but
+  // creates no host row — bb issuePersistentHostEnrollKey: "a mint must not
+  // leave phantom 'pending' machines behind" (host-enrollment.ts:12-17); the
+  // row is born at enroll time through the daemon attach bridge, which is
+  // exactly the moment the dialog's live flip looks for (S1 broadcast).
+  routes.post("/hosts/join-codes", async (ctx) => {
+    parseOr422(createHostJoinCodeRequestSchema, await ctx.req.json().catch(() => null));
+    if (ctx.env.DAEMON_EDGE_KV === undefined) {
+      // Fail closed: a mint whose record never lands would hand the user a
+      // code that 401s at enroll. Only env-key-only deployments lack the KV.
+      throw new ApiError({
+        status: 503,
+        code: "join_codes_unavailable",
+        message: "Join codes need the edge KV binding, which this deployment lacks",
+      });
+    }
+    const issued = await mintJoinCode(ctx.env.DAEMON_EDGE_KV, createHostId());
+    return ctx.json(
+      { joinCode: issued.code, hostId: issued.hostId, expiresAt: issued.expiresAt },
+      201,
+    );
+  });
 
   routes.get("/hosts", async (ctx) => {
     const rows = await listNonDestroyedHostRows(ctx.env);

@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "pnpm --filter @cap/protocol run typecheck && pnpm --filter @cap/agent-do run typecheck && pnpm --filter @cap/daemon-service run typecheck && pnpm --filter @cap/daemon-worker run typecheck && pnpm --filter @cap/provider-app run typecheck && pnpm --filter @cap/server-worker run typecheck && pnpm --filter @cap/scripts run typecheck",
+    "typecheck": "pnpm --filter @cap/protocol run typecheck && pnpm --filter @cap/agent-do run typecheck && pnpm --filter @cap/daemon-service run typecheck && pnpm --filter @cap/daemon-worker run typecheck && pnpm --filter @cap/provider-app run typecheck && pnpm --filter @cap/server-worker run typecheck && pnpm --filter @cap/scripts run typecheck && pnpm --filter pm-harness run typecheck",
     "test": "pnpm -r run test"
   },
   "devDependencies": {
