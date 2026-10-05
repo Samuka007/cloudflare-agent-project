@@ -608,6 +608,32 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
             registerTurnRow(turnId, item.id);
           }
         }
+        if (item.type === "imageView") {
+          // B1 (#321): bb build-thread-timeline.ts:674-683 — the imageView
+          // item materializes the `image-view` work row (top-level; the
+          // SPA's ImageViewWorkRowBody renders it with the lightbox). The
+          // row id / callId = the item id (bb web-activity-lifecycle.ts:79-85
+          // callId semantics); pending until the same-row item/completed.
+          rows.set(item.id, {
+            kind: "work",
+            workKind: "image-view",
+            id: item.id,
+            threadId: event.threadId,
+            turnId,
+            sourceSeqStart: event.seq,
+            sourceSeqEnd: event.seq,
+            startedAt: event.createdAt,
+            createdAt: event.createdAt,
+            status: "pending",
+            callId: item.id,
+            path: item.path,
+            completedAt: null,
+            __order: event.seq,
+          });
+          if (turnId) {
+            registerTurnRow(turnId, item.id);
+          }
+        }
         break;
       }
       case "item/agentMessage/delta": {
@@ -704,6 +730,18 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
                   : "completed";
           }
           workRow.sourceSeqEnd = event.seq;
+        } else if (
+          workRow?.kind === "work" &&
+          workRow.workKind === "image-view" &&
+          item.type === "imageView"
+        ) {
+          // bb tool-activity-web-projection.ts:129-131: the end event
+          // refreshes the path (begin can address a path that moved) and
+          // seals the row completed at the event's time.
+          workRow.path = item.path;
+          workRow.completedAt = event.createdAt;
+          workRow.status = "completed";
+          workRow.sourceSeqEnd = event.seq;
         }
         break;
       }
@@ -732,7 +770,11 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
           if (!row) {
             continue;
           }
-          if (row.kind === "work" && row.workKind === "tool" && row.status === "pending") {
+          if (
+            row.kind === "work" &&
+            (row.workKind === "tool" || row.workKind === "image-view") &&
+            row.status === "pending"
+          ) {
             row.status =
               parsed.data.status === "failed"
                 ? "error"

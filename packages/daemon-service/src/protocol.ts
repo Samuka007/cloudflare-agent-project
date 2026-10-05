@@ -138,6 +138,13 @@ export const toolResultPayloadSchema = z.object({
   exitCode: z.number().nullable(),
   output: z.string(),
   outputTruncated: z.boolean().optional(),
+  /**
+   * B1 (#321): image artifacts the tool produced, by host-disk path — the
+   * wire twin of agent-do ToolResultPayload.images. The DO folds each into
+   * an `imageView` journal row (parentToolCallId = the executionId) before
+   * the closing tool.result.
+   */
+  images: z.array(z.object({ path: z.string().min(1) })).optional(),
 });
 
 export const toolExitedFrameSchema = z.object({
@@ -164,8 +171,21 @@ export const hostBrowseDirectoryCommandSchema = z.object({
 });
 export type HostBrowseDirectoryCommand = z.infer<typeof hostBrowseDirectoryCommandSchema>;
 
+/**
+ * B1 (#321): read one file at an absolute host path — the rootless subset of
+ * bb `host.read_file` (host-daemon-contract commands.ts:487-491) that the
+ * thread host-file content face needs. No `rootPath`/`ref` terms: those ride
+ * the storage/workspace faces when a ticket opens them.
+ */
+export const hostReadFileCommandSchema = z.object({
+  type: z.literal("host.read_file"),
+  path: z.string().min(1),
+});
+export type HostReadFileCommand = z.infer<typeof hostReadFileCommandSchema>;
+
 export const hostRpcCommandSchema = z.discriminatedUnion("type", [
   hostBrowseDirectoryCommandSchema,
+  hostReadFileCommandSchema,
 ]);
 export type HostRpcCommand = z.infer<typeof hostRpcCommandSchema>;
 
@@ -184,6 +204,24 @@ export const hostDirectoryListingSchema = z.object({
   entries: z.array(hostDirectoryEntrySchema),
 });
 export type HostDirectoryListing = z.infer<typeof hostDirectoryListingSchema>;
+
+/**
+ * B1 (#321): bb `fileReadResultSchema` (host-daemon-contract
+ * commands.ts:1147-1157) verbatim minus nothing — same field set, same
+ * encodings. `contentEncoding` is "base64" for binary-image reads and for
+ * non-UTF-8 bytes, "utf8" otherwise; `sha256` covers the returned bytes so a
+ * later writer can compare-and-swap.
+ */
+export const hostFileReadResultSchema = z.object({
+  path: z.string(),
+  content: z.string(),
+  contentEncoding: z.enum(["base64", "utf8"]),
+  mimeType: z.string().optional(),
+  sizeBytes: z.number().int().nonnegative(),
+  modifiedAtMs: z.number().nonnegative().optional(),
+  sha256: z.string(),
+});
+export type HostFileReadResult = z.infer<typeof hostFileReadResultSchema>;
 
 export const hostRpcRequestFrameSchema = z.object({
   type: z.literal("host-rpc.request"),

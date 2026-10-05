@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { HostRpcCommand } from "@cap/daemon-service";
 import { activeTurnIdFromEvents } from "@cap/agent-do";
 import {
   createThreadRequestSchema,
@@ -9,6 +10,7 @@ import {
   threadSearchResponseSchema,
   threadEventsQuerySchema,
   threadGetQuerySchema,
+  threadHostFileContentQuerySchema,
   threadListQuerySchema,
   threadTimelineQuerySchema,
   updateThreadRequestSchema,
@@ -87,6 +89,14 @@ import {
 } from "../services/pending-interactions.js";
 import { settleThreadTurnStatus } from "../services/thread-run-settlement.js";
 import {
+  HOST_COMMAND_TIMEOUT_MS,
+  buildHostFileContentResponse,
+  daemonServiceStubOrNull,
+  hostFileHostUnavailable,
+  remapHostFileRouteError,
+} from "../services/host-files.js";
+import { hostFileReadResultSchema } from "../contract/api/hosts.js";
+import {
   buildConversationOutline,
   buildActiveThinking,
   buildTimelinePage,
@@ -99,7 +109,7 @@ import {
 import { computeTimelineRowDelta } from "../contract/thread-timeline.js";
 import { validatePromptAttachmentReferences } from "../services/attachments.js";
 import { agentDoCancelTurn, agentDoCompactThread, agentDoFor } from "../seam/agent-do.js";
-import { resolveThreadBinding } from "../services/thread-binding.js";
+import { deploymentHostId, resolveThreadBinding } from "../services/thread-binding.js";
 import type { PromptInput } from "../contract/domain/shared-types.js";
 import type { PromptContent } from "@cap/protocol";
 import type { Env, HonoBindings } from "../app-types.js";
@@ -114,7 +124,8 @@ const SEND_EVENT_TYPES = ["client/turn/requested"] as const;
 /**
  * M0 thread face (ruling #7 subset): base/actions/data/tabs/interactions
  * routes the SPA's active surfaces consume. Queue, edit-message, fork,
- * rate-limit-recovery, storage/host-file faces are additive families (#27+).
+ * rate-limit-recovery, storage face are additive families (#27+). The
+ * host-file face opened its minimal subset — content read only (#321).
  */
 export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): void {
   const routes = new Hono<{ Bindings: HonoBindings }>();
@@ -735,6 +746,94 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       items: buildConversationOutline(projectTimelineRows(events)),
       maxSeq: latestSeq,
     });
+  });
+
+  /**
+   * B1 (#321) — bb GET /threads/:id/host-files/content (routes/threads/
+   * data.ts:660-682): the files face's minimal subset, content read only
+   * (packages/protocol README §1 defers the rest of the family). Agent-
+   * produced images live on the host disk; the SPA's ImageViewWorkRowBody
+   * lightbox fetches their bytes here (file-content-urls.ts
+   * buildThreadHostFileContentUrl). bb demands an attached environment (409
+   * thread_environment_unavailable otherwise); this stack's deployment-host
+   * posture (#318 pickup §2.1) resolves the bound environment's host, else
+   * the deployment machine — M0 threads have no environment row and still
+   * run on a real daemon.
+   */
+  routes.get("/threads/:id/host-files/content", async (ctx) => {
+    const query = parseOr422(threadHostFileContentQuerySchema, ctx.req.query());
+    const row = await requirePublicThread(ctx);
+    let hostId = deploymentHostId(ctx.env);
+    if (row.environmentId !== null) {
+      const environment = await getEnvironmentRow(ctx.env, row.environmentId);
+      if (environment === null) {
+        throw new ApiError({
+          status: 404,
+          code: "environment_not_found",
+          message: "Thread environment not found",
+        });
+      }
+      hostId = environment.hostId;
+    }
+    const command: HostRpcCommand = { type: "host.read_file", path: query.path };
+    const stub = daemonServiceStubOrNull(ctx.env, hostId);
+    if (stub === null) {
+      throw hostFileHostUnavailable();
+    }
+    try {
+      const outcome = await stub.hostOnlineRpc({
+        hostId,
+        command,
+        timeoutMs: HOST_COMMAND_TIMEOUT_MS,
+      });
+      switch (outcome.kind) {
+        case "host_offline":
+          throw hostFileHostUnavailable();
+        case "timeout":
+          // bb online-rpc.ts:154-156 (hosts.ts directory-face twin).
+          throw new ApiError({
+            status: 504,
+            code: "command_timeout",
+            message: "Timed out waiting for command result",
+          });
+        case "ok": {
+          const response = outcome.response;
+          if (!response.ok) {
+            // bb online-rpc.ts:98-99: a daemon dispatch failure rides its
+            // own code (ENOENT, invalid_path, file_too_large) — remapped to
+            // the route statuses by the catch below.
+            throw new ApiError({
+              status: 502,
+              code: response.errorCode,
+              message: response.errorMessage,
+              retryable: false,
+            });
+          }
+          if (response.commandType !== command.type) {
+            // bb online-rpc.ts:102-108.
+            throw new ApiError({
+              status: 500,
+              code: "command_result_type_mismatch",
+              message: `Host RPC ${response.requestId} completed with unexpected type ${response.commandType}`,
+            });
+          }
+          const parsed = hostFileReadResultSchema.safeParse(response.result);
+          if (!parsed.success) {
+            throw new ApiError({
+              status: 500,
+              code: "command_result_invalid",
+              message: `Host RPC ${response.requestId} returned a malformed file read`,
+              details: { issues: parsed.error.issues },
+            });
+          }
+          return buildHostFileContentResponse(parsed.data);
+        }
+      }
+    } catch (error) {
+      // bb remapDaemonFileRouteError (data.ts:679-681): the daemon's own
+      // dispatch codes land on the route contract's statuses.
+      return remapHostFileRouteError(error);
+    }
   });
 
   /**

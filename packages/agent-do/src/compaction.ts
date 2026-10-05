@@ -213,6 +213,8 @@ export function estimateTurnTokens(events: readonly AnyAgentEvent[]): number {
       case "interaction.interrupted":
       case "interaction.registered":
       case "interaction.resolved":
+      // B1 (#321): the image rides the host-files face, not request text.
+      case "imageView":
       case "job.delivered":
       case "job.registered":
       case "job.settled":
