@@ -167,15 +167,21 @@ export const PACKET_HEADER =
 /**
  * Fixed semantic vocabulary (shape C, research §2.2): n = |vocab| is constant
  * across pages, which is exactly what makes class confidence cross-page
- * comparable. Entries + glossaries are code-owned; staged from the bb staging
- * component inventory (thread page, composer, working-turn controls) and the
- * research example set. A `not-interactive` entry absorbs enumeration noise
- * (disabled/decorative leftovers).
+ * comparable. FROZEN 2026-10-05 from the #242 recall audit's staging component
+ * inventory (thread pages + /settings: tool-call cards, agent-ask option
+ * chips, sidebar buttons, composer, settings toggles) before the first
+ * distribution run; entries + glossaries are code-owned. A
+ * `not-interactive` entry absorbs enumeration noise (disabled/decorative
+ * leftovers). The research example's `ask-card` entry became `option-card`:
+ * the ask card's actionable constituents are its option chips, not a single
+ * card element.
  */
 export const CLASS_VOCAB = [
   "stop-button",
   "send-button",
-  "ask-card",
+  "option-card",
+  "tool-card",
+  "action-button",
   "composer",
   "text-input",
   "toggle",
@@ -192,7 +198,9 @@ export type LocateClass = (typeof CLASS_VOCAB)[number];
 export const CLASS_GLOSSARY: Record<LocateClass, string> = {
   "stop-button": "Stops or cancels an in-flight operation (stop generating, cancel run).",
   "send-button": "Submits the adjacent message composer input.",
-  "ask-card": "Surfaces an ask/agent card: a prompt-like block that starts or shows an agent ask.",
+  "option-card": "A clickable option chip inside an agent ask card (choices offered to the user).",
+  "tool-card": "A collapsible card showing one tool call in the conversation timeline.",
+  "action-button": "A generic button acting in place (open panel, new thread, search, dismiss).",
   composer: "The main message input area of the conversation surface.",
   "text-input": "A generic text entry field (search, form field) that is not the composer.",
   toggle: "A switch or checkbox toggling a setting or state on/off.",
