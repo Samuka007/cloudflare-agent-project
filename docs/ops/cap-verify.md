@@ -229,3 +229,76 @@ ssh root@192.168.1.141 'set -a; . /root/.staging-daemon.env; set +a; <out>/bin/c
   抢走 session，导致第一轮 PASS 实际执行在 workstation——kill 残留、确认
   smoke 报告的 bootId 与 CT 单元 journal 的 boot 一致后才算数。**判据：smoke 的
   `session live: … bootId=` 必须等于目标机 client journal 里的 boot id。**
+
+## Appendix: 工具 shell PATH 根因与定案（#254，2026-10-05）
+
+### 现象与取证（全部实测于 CT141）
+
+用户侧事实：agent 被指示执行 `nix shell` 时 PATH 里无 nix。取证链：
+
+1. **daemon 进程 env**（`tr "\0" "\n" < /proc/<MainPID>/environ`）：PATH 是
+   systemd 编译期默认值，只有四条 store 路径——dosfstools / util-linux-minimal /
+   openssh / systemd。**无 `/run/current-system/sw/bin`**，nix/git/bash/coreutils
+   全部不可解析（`Bun.which` 全 null，`Bun.spawnSync(["nix",…])` → ENOENT）。
+2. **工具 shell 实测 PATH**（CT 上 agent 留下的 artifact
+   `~cap-daemon-data/omp-agent/artifacts/4.bash.log`）：= daemon PATH + bun run
+   前置的 node shim 目录与 node_modules/.bin 上溯项——仍然没有宿主 profile。
+3. **传播点**：工具 shell 的 env 就是 daemon 进程 env——Executor 逐字继承
+   `process.env`（`executor.ts` spawn 的 `env: {...process.env}`），内嵌 omp
+   bash 工具（pi-natives brush-core，进程内 shell）同样读宿主进程 env。
+4. **注入源**：transient unit（`systemd-run`，无 `Environment=PATH`）拿到的是
+   systemd manager 默认 PATH；`cap-daemon` wrapper 原先不设 PATH，于是把这条
+   残缺 PATH 原样传给工具 shell。
+
+票面嫌疑（"闭包不含 nix"）方向对、机理不对：**不是闭包缺二进制，而是
+systemd 默认 PATH 把宿主用户环境挡在了工具 shell 之外**。
+
+### 定案：wrapper 注入宿主 PATH 白名单（方案 C）
+
+三个候选的裁决：
+
+| 候选 | 裁决 | 理由 |
+| --- | --- | --- |
+| 闭包内提供 nix | **否** | nix 绑定宿主 store/daemon socket，闭包内再带一份是双 store 事故面；体积 +数百 MiB 级；且 PATH 问题的根因不在闭包内容 |
+| 文档化边界（不动手） | **否** | cap-verify 的本职就是 nix 验证梯；工具 shell 连 `ls`/`bash` 都解析不到，文档救不了 |
+| **注入宿主 PATH 白名单** | **采纳** | 工具宿主（NixOS）的用户 profile `/run/current-system/sw/{bin,sbin}` 就是"host 工具=用户环境"的实现；零闭包体积代价；放 **wrapper**（而非 unit env）则 systemd-run / 手动 / cron 任一启动方式都生效 |
+
+落地（`flake.nix` `packages.daemon`）：`cap-daemon` wrapper 由 makeWrapper
+前置三个 PATH 项——`/run/current-system/sw/bin`、`/run/current-system/sw/sbin`、
+`/nix/var/nix/profiles/default/bin`（非 NixOS 宿主上不存在的项被名字查找跳过，
+无害）。wrapper 自身语义不变：bun 走绝对路径，闭包解析不受宿主 profile 影响。
+
+**边界（文档化部分）**：宿主 profile 里没有的工具 = 宿主装机问题（改
+`environment.systemPackages` 或 `/nix/var/nix/profiles`），永远不往 daemon
+闭包里塞；thin-consumer 红线不变——CT 上 agent 跑 `nix shell`/`nix build`
+属于宿主侧作业，与"部署评估在构建机"的部署红线分属两层，互不豁免。
+
+### 验收与再部署
+
+```bash
+nix build .#daemon --print-out-paths
+nix copy --to ssh://root@192.168.1.141 "$(nix build .#daemon --print-out-paths)"
+ssh root@192.168.1.141 'systemctl stop cap-daemon-staging; \
+  systemd-run --unit=cap-daemon-staging \
+    -p EnvironmentFile=/root/.staging-daemon.env -p Restart=on-failure \
+    <new-out>/bin/cap-daemon'
+# 进程级证据：新 daemon env 的 PATH 前置宿主 profile，Bun.which("nix") 可解析
+# 端到端证据：CT 内跑 marker 门不变的任意命令冒烟（#254 新增 --command）
+ssh root@192.168.1.141 'set -a; . /root/.staging-daemon.env; set +a; \
+  <new-out>/bin/cap-daemon-smoke --command "nix --version && nix-shell --version"'
+```
+
+首次落地证据（2026-10-05，CT141）：
+
+- 重启注意：transient unit 名复用前须 `systemctl reset-failed cap-daemon-staging`
+  （stop 后 fragment 仍在，直接 systemd-run 报 "already loaded"）。
+- 进程级：新 daemon（`/proc/<pid>/environ`）PATH =
+  `/nix/var/nix/profiles/default/bin:/run/current-system/sw/sbin:/run/current-system/sw/bin:<systemd 默认四项>`；
+  `Bun.which("nix")` → `/run/current-system/sw/bin/nix`；`nix --version` →
+  `nix (Nix) 2.34.8`（修复前 `Bun.which` 全 null、spawn nix ENOENT）。
+- 端到端：`cap-daemon-smoke --command "nix --version && nix-shell --version"`
+  → `session live: bootId=73a46b03…`（= CT 单元 journal 的 boot id，无
+  workstation daemon 抢会话）→ dispatch accepted (tool=bash) → exited op
+  `exit 0`、输出含两行 nix 版本 + marker → acked at journal seq 406 → PASS。
+  命令经真实 omp 工具路径（brush-core 工具 shell）执行，即 agent 工具 shell
+  视角。闭包尺寸 582.2 → 582.5 MiB（wrapper 三行，+0.3 MiB）。
