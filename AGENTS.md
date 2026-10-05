@@ -1,7 +1,7 @@
 # Codebase Guidelines
 
 <current_wave>
-当前 wave（W3）：以可靠浏览器验收还原真实用户体验为前提，让 bb-agent-host 端到端正常运转——工具可用、渲染正确、事件返回、流式流动、Host disconnected 不再滞留、bb host 概念端点映射齐。不做题式完成：推进 wave 同时强化 PM 脚手架与开发框架（派发/审计/验收体验），wave 外沿项目最终愿景持续主观发掘非阻塞问题。
+当前 wave（W4 完全产品化，伞 #260）：新用户可自助上手（host onboarding #258）、可自助配置（provider 面 #255）、看得见 agent 思考与委派（CoT #257+子代理呈现 #256）、工具环境边界可理解（nix #254）、workspace/path 语义成型（#259）。验收体系组装（图 #243 组件已齐）为横切基建。W3 已收官（终检报告 #186 comment、milestone 8 关）。
 </current_wave>
 
 ## Engineering Doctrine（工程铁律——先读这个）
