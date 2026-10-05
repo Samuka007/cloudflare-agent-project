@@ -14,6 +14,14 @@ import {
 } from "@cap/protocol";
 import { EventLog } from "./event-log.js";
 import {
+  COMPACT_DIRECTIVE_TEXT,
+  DEFAULT_KEEP_RECENT_TOKENS,
+  estimateVisibleTailTokens,
+  lastUsageTotal,
+  planCompactCut,
+  type CompactCutPlan,
+} from "./compaction.js";
+import {
   applyEvent,
   computeDueWork,
   emptyReplayState,
@@ -543,6 +551,202 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   }
 
   /**
+   * #309 manual compact — journal checkpoint-style compaction (bb upstream
+   * POST /threads/:id/compact semantics, omp journal shape: the boundary is a
+   * replay-derived seq cut, never a deletion, #116). The compact turn runs
+   * one tool-free summarization call over the projected active-branch context
+   * (the request rebuild IS the summarizer's input — previousSummary chains
+   * for free, prior compact turns are journal rows like any turn), then
+   * appends the content-bearing `thread/compacted` checkpoint. pi kernel
+   * semantics ported per anchor in src/compaction.ts.
+   *
+   * Gates: Main threads only, idle only (an active turn conflicts, bb gates
+   * compact on idle|error the same way), and a retention-budget check — a
+   * journal that already fits `keepRecentTokens` has nothing to summarize.
+   * Fire-and-forget like sendMessage: the turn drives async; the journal is
+   * the only truth clients need to observe.
+   */
+  async compactThread(request: {
+    /** Client-supplied idempotency key; default UUID when omitted. */
+    clientRequestId?: string;
+    /**
+     * Retention budget for the cut planner (pi keepRecentTokens,
+     * compaction.ts:126-130); default DEFAULT_KEEP_RECENT_TOKENS. The route
+     * passes nothing — the knob exists so deployments/tests can size the
+     * retained tail explicitly.
+     */
+    keepRecentTokens?: number;
+  }): Promise<{ turnId: string; duplicated: boolean }> {
+    await this.ready();
+    this.requireThread();
+    const inputId = request.clientRequestId ?? `compact-${crypto.randomUUID()}`;
+    const existing = this.state.inputIds.get(inputId);
+    if (existing !== undefined) {
+      return { turnId: existing.turnId, duplicated: true };
+    }
+    if (this.state.subagentIdentity !== null) {
+      throw new AgentRpcError(
+        "invalid",
+        "compact is a Main-thread action; a subagent owns no session context to compress",
+      );
+    }
+    const active = this.activeTurn();
+    if (active !== undefined) {
+      throw new AgentRpcError(
+        "conflict",
+        `turn ${active.turnId} is active (${active.status}); compact requires an idle thread`,
+      );
+    }
+    const { events } = await this.readAllEvents();
+    if (!events.some((event) => event.type === "model.call_completed")) {
+      throw new AgentRpcError(
+        "invalid",
+        "nothing to compact: the journal has no completed model call",
+      );
+    }
+    const plan = planCompactCut(events, request.keepRecentTokens ?? DEFAULT_KEEP_RECENT_TOKENS);
+    if (plan === undefined) {
+      throw new AgentRpcError(
+        "invalid",
+        "nothing to compact: the whole journal fits the retention budget",
+      );
+    }
+    const usage = lastUsageTotal(events);
+    const turnId = `turn_${crypto.randomUUID()}`;
+    await this.appendEvent("turn.input", {
+      turnId,
+      inputId,
+      content: [{ type: "text", text: COMPACT_DIRECTIVE_TEXT }],
+    });
+    this.armWatchdog();
+    this.ctx.waitUntil(this.driveCompactTurn(turnId, plan, usage));
+    return { turnId, duplicated: false };
+  }
+
+  /**
+   * The compact turn driver: one summarization call (no tools), then the
+   * checkpoint row, then turn.completed. Terminal mapping mirrors
+   * turnProgram's single-call segment (§4.2: seal after first byte, bounded
+   * pre-first-byte retry); the cancellation face rides the shared
+   * cancelTurn → cancel_requested → abort → finalizeCancel path. An answer
+   * that is empty or tool-bearing seals instead of persisting — an assistant
+   * slice with neither text nor paired results has no wire shape and would
+   * poison every later projection (translate's pairing invariant).
+   */
+  private async driveCompactTurn(
+    turnId: string,
+    plan: CompactCutPlan,
+    usage: { usedTokens: number; contextWindow: number | null } | null,
+  ): Promise<void> {
+    const abort = new AbortController();
+    this.activeDrivers.set(turnId, abort);
+    try {
+      const turnLive = (): boolean => {
+        const current = this.state.turns.get(turnId);
+        return current !== undefined && !turnTerminal(current);
+      };
+      for (;;) {
+        const turn = this.state.turns.get(turnId);
+        if (turn === undefined || turnTerminal(turn)) return;
+        if (turn.status === "cancelling") {
+          await this.finalizeCancel(turnId);
+          return;
+        }
+        const started = await this.appendEvent("model.call_started", {
+          turnId,
+          consumedSteerSeqs: [],
+        });
+        const outcome = await Effect.runPromise(
+          this.consumeModelCall(turnId, started.seq, abort.signal),
+        ).catch(() => ({ kind: "failed" as const }));
+        if (outcome.kind === "cancelled") {
+          await this.finalizeCancel(turnId);
+          return;
+        }
+        if (outcome.kind === "sealed") {
+          if (turnLive()) {
+            await this.appendEvent("turn.failed", {
+              turnId,
+              reason: "interrupted_mid_stream",
+              sealed: true,
+            });
+          }
+          return;
+        }
+        if (outcome.kind === "failed_pre_first_byte") {
+          if (outcome.attempt <= this.cfg.maxPreFirstByteRetries) {
+            await this.appendEvent("model.call_retry", {
+              turnId,
+              failedModelCallId: outcome.modelCallId,
+              attempt: outcome.attempt,
+            });
+            const backoff = Promise.withResolvers<undefined>();
+            setTimeout(backoff.resolve, this.cfg.retryBackoffBaseMs * 2 ** (outcome.attempt - 1));
+            await backoff.promise;
+            continue;
+          }
+          if (turnLive()) {
+            await this.appendEvent("turn.failed", { turnId, reason: "model_error" });
+          }
+          return;
+        }
+        if (outcome.kind === "failed") {
+          if (turnLive()) {
+            await this.appendEvent("turn.failed", { turnId, reason: "model_error" });
+          }
+          return;
+        }
+        // Completed — but a cancel_requested may have landed mid-stream
+        // (turnProgram's loop-top ordering): cancelling settles as cancelled,
+        // never as a fresh checkpoint on a dying turn.
+        if (this.state.turns.get(turnId)?.status === "cancelling") {
+          await this.finalizeCancel(turnId);
+          return;
+        }
+        if (outcome.toolCalls.length > 0 || outcome.text.trim() === "") {
+          await this.appendEvent("model.call_sealed", {
+            turnId,
+            modelCallId: outcome.modelCallId,
+            prefixChars: 0,
+          });
+          await this.appendEvent("turn.failed", { turnId, reason: "model_error" });
+          return;
+        }
+        await this.appendEvent("model.call_completed", {
+          turnId,
+          modelCallId: outcome.modelCallId,
+          text: outcome.text,
+          toolCalls: [],
+        });
+        if (outcome.usage !== undefined) {
+          await this.appendEvent("model.usage_receipt", {
+            turnId,
+            modelCallId: outcome.modelCallId,
+            usage: outcome.usage,
+          });
+        }
+        const tokensAfter = estimateVisibleTailTokens({
+          keptTurns: plan.keptTurns,
+          directiveText: COMPACT_DIRECTIVE_TEXT,
+          summaryText: outcome.text,
+        });
+        await this.appendEvent("thread/compacted", {
+          turnId,
+          hideThroughSeq: plan.hideThroughSeq,
+          tokensBefore: usage?.usedTokens ?? null,
+          tokensAfter,
+          contextWindow: usage?.contextWindow ?? null,
+          method: "manual",
+        });
+        await this.appendEvent("turn.completed", { turnId });
+        return;
+      }
+    } finally {
+      this.activeDrivers.delete(turnId);
+    }
+  }
+
+  /**
    * Peer-message wake source (M1.5 T2, proposal §3: "no cross-DO RPC except
    * wake sources"). Journal-first: the `peer.message` row lands before any
    * blocked wait wakes, so a message survives eviction+replay and a replayed
@@ -581,11 +785,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * delivery never starts their turns); Main queues too. Returns whether
    * this delivery REVIVED a parked agent.
    */
-  private async reviveOrFollowUp(
-    messageId: string,
-    from: string,
-    text: string,
-  ): Promise<boolean> {
+  private async reviveOrFollowUp(messageId: string, from: string, text: string): Promise<boolean> {
     const identity = this.state.subagentIdentity;
     if (identity === null) return false;
     const view = projectLifecycle((await this.readAllEvents()).events);
@@ -647,18 +847,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     await this.ready();
     this.requireThread();
     const identity = this.state.subagentIdentity;
-    if (
-      identity?.spawnId !== request.spawnId ||
-      identity.agentId !== request.agentId
-    ) {
+    if (identity?.spawnId !== request.spawnId || identity.agentId !== request.agentId) {
       throw new AgentRpcError(
         "not_found",
         `no subagent ${request.agentId} (${request.spawnId}) on this DO`,
       );
     }
-    const record = projectLifecycle((await this.readAllEvents()).events).record(
-      identity.agentId,
-    );
+    const record = projectLifecycle((await this.readAllEvents()).events).record(identity.agentId);
     if (record?.state === "aborted") return { state: "aborted", alreadyAborted: true };
     await this.appendEvent("task.subagent_aborted", {
       spawnId: identity.spawnId,
@@ -911,9 +1106,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       childThreadId: plan.childThreadId,
       status: request.status,
       output,
-      ...(plan.parentToolCallId === undefined
-        ? {}
-        : { parentToolCallId: plan.parentToolCallId }),
+      ...(plan.parentToolCallId === undefined ? {} : { parentToolCallId: plan.parentToolCallId }),
     });
     if (plan.mode === "background" && plan.jobId !== null) {
       // Backflow marker for the parent's next run boundary; settleSpawn's
@@ -927,9 +1120,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         jobId: plan.jobId,
         status: request.status,
         output,
-        ...(plan.parentToolCallId === undefined
-          ? {}
-          : { parentToolCallId: plan.parentToolCallId }),
+        ...(plan.parentToolCallId === undefined ? {} : { parentToolCallId: plan.parentToolCallId }),
       });
     }
     this.wakeEdgeWaiter(plan.executionId, { kind: "job" });
@@ -988,9 +1179,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         spawnId: plan.spawnId,
         agentId: plan.agentId,
         childThreadId: plan.childThreadId,
-        ...(plan.parentToolCallId === undefined
-          ? {}
-          : { parentToolCallId: plan.parentToolCallId }),
+        ...(plan.parentToolCallId === undefined ? {} : { parentToolCallId: plan.parentToolCallId }),
         unit,
       });
       appended += 1;
@@ -1020,9 +1209,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       childThreadId: plan.childThreadId,
       status: "error",
       output,
-      ...(plan.parentToolCallId === undefined
-        ? {}
-        : { parentToolCallId: plan.parentToolCallId }),
+      ...(plan.parentToolCallId === undefined ? {} : { parentToolCallId: plan.parentToolCallId }),
     });
     this.wakeEdgeWaiter(plan.executionId, { kind: "job" });
     // T17 supersession chain runs on the failure path too — a subagent
@@ -1700,7 +1887,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       );
       this.ctx.waitUntil(
         hub
-          .notifyThread(threadId, ["interactions-changed"], { latestSeq, hasPendingInteraction: hasPending })
+          .notifyThread(threadId, ["interactions-changed"], {
+            latestSeq,
+            hasPendingInteraction: hasPending,
+          })
           .catch((error: unknown) => {
             console.error("hub interaction notify failed", error);
           }),
@@ -2627,8 +2817,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     } catch (error) {
       result = {
         status: "error",
-        output:
-          error instanceof AgentRpcError ? error.message : `Kill failed: ${String(error)}`,
+        output: error instanceof AgentRpcError ? error.message : `Kill failed: ${String(error)}`,
       };
     }
     await this.ingestResult(
@@ -2659,11 +2848,8 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     const callerOwnerId = this.requireThread();
     const { events } = await this.readAllEvents();
     const jobs = projectJobs(events);
-    const decision = decideKill(
-      parsed.jobId,
-      jobs.job(parsed.jobId),
-      callerOwnerId,
-      (jobId) => projectSpawnPlans(events).find((record) => record.jobId === jobId),
+    const decision = decideKill(parsed.jobId, jobs.job(parsed.jobId), callerOwnerId, (jobId) =>
+      projectSpawnPlans(events).find((record) => record.jobId === jobId),
     );
     switch (decision.kind) {
       case "unknown_job":
@@ -3235,7 +3421,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     }
     // T19 TTL park deadline rides the single alarm (practice 4 — the alarm
     // table carries no park state; refreshLifecycleAlarms recomputes it).
-    if (this.lifecycleParkDeadline !== null && (next === null || this.lifecycleParkDeadline < next)) {
+    if (
+      this.lifecycleParkDeadline !== null &&
+      (next === null || this.lifecycleParkDeadline < next)
+    ) {
       next = this.lifecycleParkDeadline;
     }
     if (next !== null) {
@@ -3275,9 +3464,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     if (this.cfg.taskAgentIdleTtlMs <= 0) return null;
     const active = this.activeTurn();
     if (active !== undefined && !turnTerminal(active)) return null;
-    const record = projectLifecycle((await this.readAllEvents()).events).record(
-      identity.agentId,
-    );
+    const record = projectLifecycle((await this.readAllEvents()).events).record(identity.agentId);
     if (record?.state !== "idle" || record.idleSince === null) {
       return null;
     }
@@ -3291,9 +3478,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     if (identity === null) return;
     const active = this.activeTurn();
     if (active !== undefined && !turnTerminal(active)) return;
-    const record = projectLifecycle((await this.readAllEvents()).events).record(
-      identity.agentId,
-    );
+    const record = projectLifecycle((await this.readAllEvents()).events).record(identity.agentId);
     if (record?.state !== "idle") return;
     await this.appendEvent("task.subagent_parked", {
       spawnId: identity.spawnId,
@@ -3616,7 +3801,8 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         return "continue";
       }
       const yieldedAfterArm = events.some(
-        (event) => event.type === "tool.call" && event.data.tool === "yield" && event.seq > armed.seq,
+        (event) =>
+          event.type === "tool.call" && event.data.tool === "yield" && event.seq > armed.seq,
       );
       return yieldedAfterArm ? "stop" : "continue";
     }

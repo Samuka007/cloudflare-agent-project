@@ -1,0 +1,251 @@
+import type { AnyAgentEvent } from "./fsm-events.js";
+
+/**
+ * #309 manual compact — the pure planning face (journal checkpoint-style
+ * compaction, #116 replay semantics: the boundary is derived from the log,
+ * never a deletion). Semantic kernel ported per anchor from pi
+ * compaction/compaction.ts via the #314 vendored kernel
+ * (test/pi-port/compaction-kernel.ts); our journal is turn-granular, so the
+ * pi entry-level walk reduces to a turn-level walk with the same guarantees:
+ *
+ * - Cut points are turn starts only (`turn.input` rows). pi cuts at
+ *   user/custom messages and never between a tool call and its result
+ *   (upstream pi #9740 regression, compaction.ts:351-501 via kernel
+ *   findProjectedCutPoint); our tool.call/tool.result pairs live strictly
+ *   inside their turn, so a turn-boundary cut cannot split a pair — the
+ *   assertion test pins this structurally.
+ * - keepRecentTokens retains the newest tail (kernel
+ *   DEFAULT_COMPACTION_SETTINGS, pi compaction.ts:126-130).
+ * - The previous summary chains naturally: prior compact turns are journal
+ *   rows like any turn, so the summarizer's (uncut) request always reads
+ *   them, and a cut that swallows them folds their text into the new summary
+ *   input (kernel previousSummary semantics, pi compaction.ts:772-936).
+ */
+
+/** pi compaction/compaction.ts:126-130 via kernel DEFAULT_COMPACTION_SETTINGS. */
+export const DEFAULT_KEEP_RECENT_TOKENS = 20_000;
+
+/**
+ * The compact turn's user-side material. It doubles as (a) the summarizer's
+ * instruction and (b) the visible history row future requests read ("the user
+ * asked for a compact; the assistant produced the summary"), so it is written
+ * to read sensibly in both positions. Structured sections follow omp
+ * compaction-summary.md (compaction-two-source-map §2.3) with the
+ * verbatim-preserve list.
+ */
+export const COMPACT_DIRECTIVE_TEXT = [
+  "[context-compact] The conversation above is near the model's context window.",
+  "Produce the structured handoff summary that replaces it. Sections:",
+  "Goal / Constraints & Preferences / Progress (Done · In Progress · Blocked) /",
+  "Key Decisions / Next Steps / Critical Context.",
+  "MUST preserve verbatim: any unanswered question awaiting the user, exact file",
+  "paths, function names, error messages, decisive tool outputs, repository state",
+  "(branch, uncommitted changes). Keep the retained recent turns as-is; do not",
+  "summarize them again.",
+].join(" ");
+
+/**
+ * bytes/4 over the turn's model-visible text material (kernel estimateTokens,
+ * pi compaction.ts:276-349 — chars/4 conservative heuristic; our journal rows
+ * are text-only, images do not exist on this surface). Turn-granular on
+ * purpose: the cut boundary is a turn start, so the unit of retention is the
+ * whole turn.
+ */
+export function estimateTurnTokens(events: readonly AnyAgentEvent[]): number {
+  let bytes = 0;
+  const encoder = new TextEncoder();
+  const count = (text: string): void => {
+    bytes += encoder.encode(text).byteLength;
+  };
+  for (const event of events) {
+    switch (event.type) {
+      case "turn.input":
+      case "turn.steer": {
+        // The M0 prompt surface is text-only (promptContentSchema) — every
+        // part carries text.
+        for (const part of event.data.content) count(part.text);
+        break;
+      }
+      case "model.call_completed": {
+        count(event.data.text);
+        break;
+      }
+      case "tool.call": {
+        count(JSON.stringify(event.data.arguments));
+        break;
+      }
+      case "tool.result": {
+        // Blob-detoured results carry their real byte size in the ref —
+        // count that instead of stringifying the stub.
+        const { output } = event.data;
+        if (typeof output === "string") count(output);
+        else bytes += output.__blob__.size;
+        break;
+      }
+      // State rows and non-text families contribute no model-visible bytes.
+      case "experimental_context_notes":
+      case "interaction.interrupted":
+      case "interaction.registered":
+      case "interaction.resolved":
+      case "job.delivered":
+      case "job.registered":
+      case "job.settled":
+      case "model.call_failed":
+      case "model.call_retry":
+      case "model.call_sealed":
+      case "model.call_started":
+      case "model.delta":
+      case "model.thinking":
+      case "model.usage_receipt":
+      case "peer.message":
+      case "peer.message_consumed":
+      case "task.async_result":
+      case "task.budget_notice":
+      case "task.spawn_planned":
+      case "task.spawn_settled":
+      case "task.subagent_aborted":
+      case "task.subagent_event":
+      case "task.subagent_flush":
+      case "task.subagent_identity":
+      case "task.subagent_parked":
+      case "task.subagent_revived":
+      case "task.yield_completed":
+      case "task.yield_reminder":
+      case "task.yield_warning":
+      case "thread.created":
+      case "thread.rebound":
+      case "thread/compacted":
+      case "todo_phases":
+      case "tool.dispatch":
+      case "tool.exec_started":
+      case "tool.output":
+      case "turn.cancel_requested":
+      case "turn.cancelled":
+      case "turn.completed":
+      case "turn.failed":
+      case "turn.phase":
+      default:
+        break;
+    }
+  }
+  return Math.ceil(bytes / 4);
+}
+
+export interface CompactTurnSlice {
+  /** The turn's `turn.input` row — the cut point candidate. */
+  inputSeq: number;
+  events: AnyAgentEvent[];
+  estimatedTokens: number;
+}
+
+/**
+ * Group the journal into turn slices (omp session-entry stream reduced to our
+ * turn grouping): everything from a `turn.input` row up to (exclusive) the
+ * next `turn.input` row. Rows before the first `turn.input` (thread.created,
+ * rebinds) attach to no slice — they are context-invisible state rows.
+ */
+export function turnSlices(events: readonly AnyAgentEvent[]): CompactTurnSlice[] {
+  const slices: CompactTurnSlice[] = [];
+  let current: CompactTurnSlice | null = null;
+  for (const event of events) {
+    if (event.type === "turn.input") {
+      current = { inputSeq: event.seq, events: [event], estimatedTokens: 0 };
+      slices.push(current);
+      continue;
+    }
+    if (current !== null) current.events.push(event);
+  }
+  for (const slice of slices) slice.estimatedTokens = estimateTurnTokens(slice.events);
+  return slices;
+}
+
+export interface CompactCutPlan {
+  /** First turn that stays visible (pi firstKeptEntryIndex, seq-keyed). */
+  firstKeptTurnInputSeq: number;
+  /** Journal rows ≤ this leave the active context (firstKeptTurn.inputSeq − 1). */
+  hideThroughSeq: number;
+  /** Estimated tokens of the visible tail the cut retains. */
+  keptTurns: CompactTurnSlice[];
+}
+
+/**
+ * Plan the cut (pi compaction.ts:351-501 findProjectedCutPoint +
+ * :772-936 prepareCompaction, turn-granular): walk turns newest → oldest
+ * accumulating estimates; the turn where the accumulation crosses
+ * `keepRecentTokens` is the first kept turn (pi cuts at the closest valid cut
+ * point at/after the crossing). Undefined when the whole journal fits the
+ * retention budget — nothing to summarize (pi prepareCompaction → undefined).
+ */
+export function planCompactCut(
+  events: readonly AnyAgentEvent[],
+  keepRecentTokens: number = DEFAULT_KEEP_RECENT_TOKENS,
+): CompactCutPlan | undefined {
+  const slices = turnSlices(events);
+  if (slices.length === 0) return undefined;
+  let accumulated = 0;
+  let firstKeptIndex = slices.length;
+  for (let index = slices.length - 1; index >= 0; index--) {
+    const slice = slices[index];
+    if (slice === undefined) continue;
+    accumulated += slice.estimatedTokens;
+    if (accumulated >= keepRecentTokens) {
+      firstKeptIndex = index;
+      break;
+    }
+  }
+  if (firstKeptIndex === slices.length) return undefined;
+  // Crossing at the oldest turn = even the full journal barely clears the
+  // budget: the post-cut kept tail would be the whole conversation, so there
+  // is no span worth summarizing (pi prepareCompaction's kept-still-fits
+  // → undefined, compaction.ts:872-936).
+  if (firstKeptIndex === 0) return undefined;
+  const kept = slices.slice(firstKeptIndex);
+  const firstKept = kept[0];
+  if (firstKept === undefined) return undefined;
+  return {
+    firstKeptTurnInputSeq: firstKept.inputSeq,
+    hideThroughSeq: firstKept.inputSeq - 1,
+    keptTurns: kept,
+  };
+}
+
+/**
+ * bytes/4 over the post-cut visible tail (the estimated `tokensAfter` the
+ * checkpoint row records): kept tail turns plus the compact turn's directive
+ * + summary. Shares the estimator with the planner so the indicator's drop is
+ * measured in the same units the cut was planned in.
+ */
+export function estimateVisibleTailTokens(options: {
+  keptTurns: readonly CompactTurnSlice[];
+  directiveText: string;
+  summaryText: string;
+}): number {
+  const kept = options.keptTurns.reduce((sum, slice) => sum + slice.estimatedTokens, 0);
+  const encoder = new TextEncoder();
+  const compactTurn =
+    encoder.encode(options.directiveText).byteLength +
+    encoder.encode(options.summaryText).byteLength;
+  return Math.ceil((kept + compactTurn) / 4);
+}
+
+/** The latest usage-receipt total (usedTokens fold, ux-projection semantics). */
+export function lastUsageTotal(events: readonly AnyAgentEvent[]): {
+  usedTokens: number;
+  contextWindow: number | null;
+} | null {
+  let latest: { seq: number; usedTokens: number; contextWindow: number | null } | null = null;
+  for (const event of events) {
+    if (event.type !== "model.usage_receipt") continue;
+    const { usage } = event.data;
+    const usedTokens =
+      usage.inputTokens +
+      usage.outputTokens +
+      usage.cacheReadInputTokens +
+      usage.cacheCreationInputTokens;
+    if (latest === null || event.seq > latest.seq) {
+      latest = { seq: event.seq, usedTokens, contextWindow: usage.contextWindow };
+    }
+  }
+  if (latest === null) return null;
+  return { usedTokens: latest.usedTokens, contextWindow: latest.contextWindow };
+}

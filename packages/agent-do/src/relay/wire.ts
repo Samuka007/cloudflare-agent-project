@@ -1,8 +1,4 @@
-import type {
-  ModelRequest,
-  PriorModelCall,
-  SteerContribution,
-} from "../provider.js";
+import type { ModelRequest, PriorModelCall, SteerContribution } from "../provider.js";
 import {
   enabledToolNames,
   MAIN_WIRE_TOOLS,
@@ -54,7 +50,8 @@ export interface AnthropicRequestBody {
   stream: true;
   thinking: ThinkingConfig;
   system: AnthropicTextBlock[];
-  tools: AnthropicToolDefinition[];
+  /** Omitted on the #309 `compaction` surface — a summary call offers no tools. */
+  tools?: AnthropicToolDefinition[];
   /** Present only on the T17 forced-yield attempt (reminder ladder, 3/3). */
   tool_choice?: AnthropicToolChoiceTool;
   messages: AnthropicMessage[];
@@ -287,7 +284,9 @@ export function anthropicRequestBody(
   const surface =
     request.toolSurface === "subagent"
       ? subagentWireTools(request.spawnPolicyBlocked === true)
-      : MAIN_WIRE_TOOLS;
+      : request.toolSurface === "compaction"
+        ? []
+        : MAIN_WIRE_TOOLS;
   const gated =
     request.experimentalGates === undefined
       ? surface
@@ -312,7 +311,9 @@ export function anthropicRequestBody(
     stream: true,
     thinking,
     system: SYSTEM_PROMPT_BLOCKS.map((block) => ({ type: "text", text: block })),
-    tools: wireToolSet(M0_RENDER_FLAGS, finalNames),
+    // Empty compaction surface: omit `tools` entirely — a tool-free request
+    // never offers the model a tool_use escape hatch from summarization.
+    ...(finalNames.length === 0 ? {} : { tools: wireToolSet(M0_RENDER_FLAGS, finalNames) }),
     // M1.5 T17: the ladder's forced attempt pins `yield` as the tool choice
     // (translate derives it from the reminder marker bound to this turn).
     ...(request.toolChoice === undefined

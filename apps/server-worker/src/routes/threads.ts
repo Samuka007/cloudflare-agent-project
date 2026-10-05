@@ -68,7 +68,10 @@ import { getHostRow } from "../db/hosts.js";
 import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs.js";
 import { mirrorPendingInteraction } from "../db/pending-interactions.js";
 import { getAppSettingsRow, toAppSettings } from "../db/settings.js";
-import { toThreadListEntries, toThreadResponseWithSpawnCheck } from "../services/runtime-display.js";
+import {
+  toThreadListEntries,
+  toThreadResponseWithSpawnCheck,
+} from "../services/runtime-display.js";
 import { toHostRecord } from "../services/host-records.js";
 import {
   THREAD_SEARCH_LIMIT_PER_GROUP_DEFAULT,
@@ -94,7 +97,7 @@ import {
   timelineLatestRowsCache,
 } from "../services/timeline.js";
 import { computeTimelineRowDelta } from "../contract/thread-timeline.js";
-import { agentDoCancelTurn, agentDoFor } from "../seam/agent-do.js";
+import { agentDoCancelTurn, agentDoCompactThread, agentDoFor } from "../seam/agent-do.js";
 import { resolveThreadBinding } from "../services/thread-binding.js";
 import type { Env, HonoBindings } from "../app-types.js";
 
@@ -219,8 +222,14 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     const response = buildTitleSearchResponse({ rows, query: searchQuery, limitPerGroup });
     // The two groups are disjoint (archived split), so one face pass each.
     const [activeEntries, archivedEntries] = await Promise.all([
-      toThreadListEntries(ctx.env, response.active.results.map((result) => result.thread)),
-      toThreadListEntries(ctx.env, response.archived.results.map((result) => result.thread)),
+      toThreadListEntries(
+        ctx.env,
+        response.active.results.map((result) => result.thread),
+      ),
+      toThreadListEntries(
+        ctx.env,
+        response.archived.results.map((result) => result.thread),
+      ),
     ]);
     const entryById = new Map(
       [...activeEntries, ...archivedEntries].map((entry) => [entry.id, entry]),
@@ -396,7 +405,9 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     const host =
       includes.has("host") && environment !== null
         ? await getHostRow(ctx.env, environment.hostId).then((hostRow) =>
-            hostRow !== null && hostRow.destroyedAt === null ? toHostRecord(ctx.env, hostRow) : null,
+            hostRow !== null && hostRow.destroyedAt === null
+              ? toHostRecord(ctx.env, hostRow)
+              : null,
           )
         : null;
     const response = (await toThreadResponseWithSpawnCheck(ctx.env, row)) as ThreadResponse & {
@@ -559,6 +570,52 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     if (turnId !== null) {
       await agentDoCancelTurn(ctx.env, row.id, turnId);
     }
+    return ctx.json({ ok: true });
+  });
+
+  // --- compact (#309, bb /threads/:id/compact wire: noRequest → {ok:true}) ----------
+
+  routes.post("/threads/:id/compact", async (ctx) => {
+    // bb compactThreadContext (routes/threads/actions.ts:131-161) gates the
+    // manual compact on a writable/idle thread; the turn-cancel face is
+    // journal state on the per-thread agent DO (the stop route's direct-read
+    // pattern), so derive activeness from the raw journal and reject before
+    // the DO RPC. The compact turn itself (summarization call + the
+    // `thread/compacted` checkpoint row) appends on the DO; the boundary is a
+    // replay-derived journal cut, never a deletion (#116).
+    const row = await requirePublicThread(ctx);
+    const { events } = await agentDoFor(ctx.env, row.id).getEvents({
+      sinceSeq: 0,
+      project: "raw",
+    });
+    if (activeTurnIdFromEvents(events) !== null) {
+      throw new ApiError({
+        status: 409,
+        code: "thread_not_writable",
+        message: "Thread has an active turn; stop it before compacting",
+        details: { reason: "already_active" },
+      });
+    }
+    try {
+      await agentDoCompactThread(ctx.env, row.id);
+    } catch (error) {
+      // The RPC seam rethrows remote errors without their class; the DO's
+      // retention-budget gate (pi prepareCompaction kept-still-fits →
+      // undefined) is a user-facing refusal, not a server fault — bb maps its
+      // compact gates to 409 invalid_request the same way.
+      if (error instanceof Error && error.message.includes("nothing to compact")) {
+        throw new ApiError({
+          status: 409,
+          code: "thread_not_writable",
+          message: error.message,
+          details: { reason: "nothing_to_compact" },
+        });
+      }
+      throw error;
+    }
+    await hub(ctx).notifyThread(row.id, ["events-appended"], {
+      projectId: row.projectId,
+    });
     return ctx.json({ ok: true });
   });
 

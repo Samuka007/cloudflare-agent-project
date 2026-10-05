@@ -9,7 +9,7 @@ import type {
   ToolResultContribution,
 } from "./provider.js";
 import { boundaryOwnerSeqs, renderAsyncResultText } from "./tools/task/plan.js";
-import { rewindContextCut } from "./tools/session-tree.js";
+import { rewindContextCut, threadCompactedCut } from "./tools/session-tree.js";
 
 /**
  * Event log → model request projection (#28 ruling ③ translation layer).
@@ -73,14 +73,28 @@ export function modelRequestFromEvents(
   // longer final log must arm the pair that was completed then, not the
   // latest pair the log ends with (the cut is a temporal fold like every
   // other slice below).
-  const cut = rewindContextCut(events, firstRow.threadId, turnId, modelCallId);
+  const rewindCut = rewindContextCut(events, firstRow.threadId, turnId, modelCallId);
+  // #309: the compact checkpoint arms alongside the rewind pair; the newest
+  // boundary wins (compaction-stress supersedence precedent — a later compact
+  // replaces the whole pre-boundary span, including an earlier cut's summary,
+  // whose text the summarizer already folded in). The compact cut needs no
+  // branchCut overlay: the summary rides as the compact turn's own visible
+  // history (first kept row = omp session-context 339-343 "summary first").
+  const compactCut = threadCompactedCut(events, turnId);
+  const compactBoundary = compactCut === undefined ? -1 : compactCut.hideThroughSeq;
+  const rewindBoundary = rewindCut === undefined ? -1 : rewindCut.hideThroughSeq;
+  const compactWins = compactBoundary >= rewindBoundary;
+  const boundarySeq = Math.max(compactBoundary, rewindBoundary);
   const activeEvents =
-    cut === undefined
+    boundarySeq < 0
       ? events
       : events.filter(
           (event) =>
-            event.seq > cut.hideThroughSeq ||
-            (cut.checkpointResultSeq !== null && event.seq <= cut.checkpointResultSeq),
+            event.seq > boundarySeq ||
+            (!compactWins &&
+              rewindCut !== undefined &&
+              rewindCut.checkpointResultSeq !== null &&
+              event.seq <= rewindCut.checkpointResultSeq),
         );
 
   // M1.5 T16 async-result attribution runs over the whole active branch
@@ -132,6 +146,9 @@ export function modelRequestFromEvents(
       case "experimental_context_notes":
       // #288: binding rows are thread-scoped state, not turn content.
       case "thread.rebound":
+      // #309: the compact checkpoint is consumed by the cut fold above, not
+      // as turn content.
+      case "thread/compacted":
       case "interaction.interrupted":
       case "turn.phase":
       case "interaction.registered":
@@ -341,7 +358,7 @@ export function modelRequestFromEvents(
   const priorTurns: PriorTurnHistory[] = [];
   for (const turn of turnInputs) {
     if (turn.turnId === turnId || turn.seq >= inputTurn.seq) continue;
-    if (cut !== undefined && turn.seq <= cut.hideThroughSeq) continue;
+    if (turn.seq <= boundarySeq) continue;
     if (turn.text === "") {
       throw new ProjectionError(`turn ${turn.turnId}: turn.input has empty text`);
     }
@@ -409,14 +426,16 @@ export function modelRequestFromEvents(
       ? { toolChoice: { name: "yield" } }
       : {}),
     // The armed rewind cut rides every post-cut request of the turn (omp:
-    // the report is the branch summary the next provider turn sees).
-    ...(cut === undefined
+    // the report is the branch summary the next provider turn sees). A
+    // winning compact cut rides nothing — its summary is the compact turn's
+    // own visible history row (#309).
+    ...(rewindCut === undefined || compactWins
       ? {}
       : {
           branchCut: {
-            checkpointResultSeq: cut.checkpointResultSeq,
-            rewindResultSeq: cut.rewindResultSeq,
-            summary: cut.summary,
+            checkpointResultSeq: rewindCut.checkpointResultSeq,
+            rewindResultSeq: rewindCut.rewindResultSeq,
+            summary: rewindCut.summary,
           },
         }),
   };

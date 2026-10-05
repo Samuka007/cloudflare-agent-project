@@ -114,6 +114,27 @@ export function agentDoCancelTurn(
   return stub.cancelTurn({ turnId });
 }
 
+/**
+ * Direct per-thread DO compact (#309). Same direct-stub posture as
+ * {@link agentDoCancelTurn}: the compact turn (summarization call + the
+ * `thread/compacted` checkpoint) is journal state on the DO that owns the
+ * transcript, so the control plane compacts where the context lives — the
+ * composed orchestrator face has no compact command and must not grow one
+ * for a pure journal operation.
+ */
+export function agentDoCompactThread(
+  env: Env,
+  threadId: string,
+): Promise<{ turnId: string; duplicated: boolean }> {
+  const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId)) as unknown as {
+    compactThread(args: { clientRequestId?: string }): Promise<{
+      turnId: string;
+      duplicated: boolean;
+    }>;
+  };
+  return stub.compactThread({});
+}
+
 // ---------------------------------------------------------------------------
 // Orchestrator-backed composition (#31): writes route
 // server → daemon-worker (command journal, provider route) → provider-app

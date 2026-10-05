@@ -100,7 +100,7 @@ describe("translation: event log → model request", () => {
     // The Main surface (M1.5 T16): every registered row minus the hidden
     // `yield` tail — the body renders MAIN_WIRE_TOOLS, not the raw registry.
     expect(body.tools).toEqual(wireToolSet(M0_RENDER_FLAGS, MAIN_WIRE_TOOLS));
-    const bash = body.tools.find((tool) => tool.name === "bash");
+    const bash = (body.tools ?? []).find((tool) => tool.name === "bash");
     if (bash === undefined) throw new Error("bash missing from registry-rendered tool set");
     expect(bash.input_schema.required).toEqual(["command", "i"]);
     expect(body.system.map((block) => block.type)).toEqual(["text", "text"]);

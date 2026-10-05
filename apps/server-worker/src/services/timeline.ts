@@ -610,6 +610,32 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
         });
         break;
       }
+      case "thread/compacted": {
+        // #309: bb parse-operation-message.ts:573-576 maps the compaction
+        // marker to a `'compaction'` op row — the SPA renders it as the
+        // "Context compacted" system row (System.stories fixture thr_iqcz6et4rd:
+        // the row carries only a title and status, never expandable). Our
+        // marker is terminal on arrival (the checkpoint appends after the
+        // summarization call completed), so the row is born completed.
+        rows.set(`compact:${event.id}`, {
+          kind: "system",
+          systemKind: "operation",
+          operationKind: "compaction",
+          id: `compact:${event.id}`,
+          threadId: event.threadId,
+          turnId,
+          sourceSeqStart: event.seq,
+          sourceSeqEnd: event.seq,
+          startedAt: event.createdAt,
+          createdAt: event.createdAt,
+          title: "Context compacted",
+          detail: null,
+          status: "completed",
+          completedAt: event.createdAt,
+          __order: event.seq,
+        });
+        break;
+      }
       default:
         // turn/started and other UX types produce no standalone M0 row.
         break;

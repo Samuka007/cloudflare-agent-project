@@ -282,6 +282,28 @@ export const threadEventDataSchemas = {
       estimated: z.boolean(),
     }),
   }),
+  /**
+   * #309 journal checkpoint-style compaction (bb same-name event, repurposed
+   * for a stack that owns its transcript — compaction-two-source-map §3.2):
+   * the marker row a user-triggered compact appends after its summarization
+   * turn. `hideThroughSeq` is the seq boundary (`firstKeptEntryId` as a seq,
+   * checkpointResultSeq precedent): journal rows ≤ it left the active context,
+   * everything after (the compact turn itself, later turns) stays. The
+   * journal is never truncated — the boundary is a replay-derived cut, never
+   * a deletion (#116). `tokensBefore` is the last known usage total (null =
+   * never measured); `tokensAfter` the bytes/4 estimate over the post-cut
+   * visible tail; `contextWindow` rides so the projection can emit the
+   * estimated usage row that drops the SPA indicator without a new model
+   * call (null = the deployment cannot name a window, no row).
+   */
+  "thread/compacted": z.object({
+    turnId: z.string().min(1),
+    hideThroughSeq: z.number().int().nonnegative(),
+    tokensBefore: z.number().int().nonnegative().nullable(),
+    tokensAfter: z.number().int().nonnegative(),
+    contextWindow: z.number().int().positive().nullable(),
+    method: z.enum(["manual"]),
+  }),
   "system/error": z.object({
     message: z.string(),
     category: systemErrorCategorySchema,
