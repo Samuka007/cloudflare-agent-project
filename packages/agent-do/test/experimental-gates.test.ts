@@ -28,6 +28,7 @@ function requestWith(overrides: Partial<ModelRequest> = {}): ModelRequest {
     turnId: "t1",
     modelCallId: 2,
     input: "go",
+    inputImages: [],
     steers: [],
     priorCalls: [],
     asyncResults: [],

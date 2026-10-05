@@ -180,7 +180,9 @@ export const DEFAULT_EXPERIMENTAL_TOOL_CONFIG: ExperimentalToolConfig = {
   checkpoint: false,
 };
 
-function envFlag(raw: string | undefined): boolean {
+/** The repo env-flag convention (1/true/on); exported for the relay harness
+ * consumers (provider-app) so the vocabulary has one owner. */
+export function envFlag(raw: string | undefined): boolean {
   if (raw === undefined) return false;
   const normalized = raw.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "on";

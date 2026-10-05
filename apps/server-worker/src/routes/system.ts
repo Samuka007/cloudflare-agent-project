@@ -4,6 +4,7 @@ import {
   BROWSER_BACKED_ENGINES,
   DEFAULT_WEB_SEARCH_CONFIG,
   decodeWebSearchConfig,
+  envFlag,
   projectWebSearchConfig,
 } from "@cap/agent-do";
 import type { WebSearchEngineProjection } from "@cap/agent-do";
@@ -92,8 +93,14 @@ export function buildSystemConfig(env: Env, requestUrl: URL) {
  * so the SPA picker consumes it unmodified (shape fixture:
  * apps/app/src/hooks/useThreadCreationOptions.test.tsx:44-114).
  */
-export function buildExecutionOptions(env: Pick<Env, "MODEL_RELAY_MODEL">) {
+export function buildExecutionOptions(
+  env: Pick<Env, "MODEL_RELAY_MODEL" | "MODEL_RELAY_IMAGE_INPUT">,
+) {
   const model = env.MODEL_RELAY_MODEL ?? "glm-5.3-anth";
+  // A4 (#319): the projected capability is the SAME deployment declaration
+  // the provider-app harness reads (same 1/true/on convention, one owner:
+  // @cap/agent-do config.envFlag) — both faces of the relay verdict.
+  const supportsImageInput = envFlag(env.MODEL_RELAY_IMAGE_INPUT);
   return {
     providers: [
       {
@@ -106,6 +113,7 @@ export function buildExecutionOptions(env: Pick<Env, "MODEL_RELAY_MODEL">) {
           supportsServiceTier: false,
           supportsUserQuestion: false,
           supportsFork: false,
+          supportsImageInput,
           // min(1) required (domain/provider-types.ts:72); the harness turns
           // run at the "full" default (env.ts HARNESS_PERMISSION_MODE).
           supportedPermissionModes: ["full"],

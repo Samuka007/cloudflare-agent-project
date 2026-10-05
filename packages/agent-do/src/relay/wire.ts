@@ -1,4 +1,9 @@
-import type { ModelRequest, PriorModelCall, SteerContribution } from "../provider.js";
+import type {
+  ImageContribution,
+  ModelRequest,
+  PriorModelCall,
+  SteerContribution,
+} from "../provider.js";
 import {
   enabledToolNames,
   MAIN_WIRE_TOOLS,
@@ -20,6 +25,16 @@ export interface AnthropicTextBlock {
   text: string;
 }
 
+/**
+ * Anthropic image block (relay vision source, A4): `url` for http(s)
+ * references, `base64` for inline images (media type limited to the
+ * API-accepted set at classification time — translate.ts).
+ */
+export interface AnthropicImageBlock {
+  type: "image";
+  source: { type: "base64"; media_type: string; data: string } | { type: "url"; url: string };
+}
+
 export interface AnthropicToolUseBlock {
   type: "tool_use";
   id: string;
@@ -34,7 +49,8 @@ export interface AnthropicToolResultBlock {
   is_error: boolean;
 }
 
-export type AnthropicUserBlock = AnthropicTextBlock | AnthropicToolResultBlock;
+export type AnthropicUserBlock =
+  AnthropicTextBlock | AnthropicImageBlock | AnthropicToolResultBlock;
 export type AnthropicAssistantBlock = AnthropicTextBlock | AnthropicToolUseBlock;
 
 export interface AnthropicMessage {
@@ -127,10 +143,30 @@ export function supportsExternalThinking(model: string | undefined): boolean {
 /** Anthropic rejects empty tool_result content — omp fills a sentinel. */
 const EMPTY_OUTPUT_SENTINEL = "(empty output)";
 
+/** acp degradation anchor (bridge/bridge.ts:1131-1153) for on-disk images. */
+function degradedImageText(image: ImageContribution): string {
+  switch (image.kind) {
+    case "path":
+      return `[image attachment on disk: ${image.path}]`;
+    case "url":
+      return `[image attachment: ${image.url}]`;
+    case "data":
+      return `[image attachment: inline ${image.mediaType}]`;
+  }
+}
+
 export interface WireCallOptions {
   model: string;
   maxTokens: number;
   thinking?: ThinkingConfig;
+  /**
+   * A4 consumption dispatch: does the deployment's relay model accept image
+   * input? Absent/false → every image part renders as the acp degradation
+   * text. Even a `true` verdict cannot conjure bytes for path-kind
+   * contributions (no DO→staging-host channel) — those degrade regardless
+   * (acp bridge/bridge.ts:1131-1153 anchor semantics).
+   */
+  supportsImageInput?: boolean;
 }
 
 export function anthropicRequestBody(
@@ -149,9 +185,35 @@ export function anthropicRequestBody(
 
   const appendSteers = (steers: readonly SteerContribution[]): void => {
     for (const steer of steers) {
-      pendingUserBlocks.push({ type: "text", text: steer.text });
+      // An image-only steer carries no text — an empty text block would be
+      // rejected upstream, so the images render alone.
+      if (steer.text !== "") pendingUserBlocks.push({ type: "text", text: steer.text });
+      appendImages(steer.images);
     }
   };
+
+  /**
+   * A4 consumption dispatch (supportsImageInput): a capable relay receives
+   * real Anthropic image blocks for every contribution it can express
+   * (url/data kinds); path-kind contributions and every image of a
+   * non-capable relay render as the acp degradation text instead.
+   */
+  function appendImages(images: readonly ImageContribution[]): void {
+    for (const image of images) {
+      if (options.supportsImageInput !== true || image.kind === "path") {
+        pendingUserBlocks.push({ type: "text", text: degradedImageText(image) });
+        continue;
+      }
+      pendingUserBlocks.push(
+        image.kind === "url"
+          ? { type: "image", source: { type: "url", url: image.url } }
+          : {
+              type: "image",
+              source: { type: "base64", media_type: image.mediaType, data: image.base64 },
+            },
+      );
+    }
+  }
 
   /**
    * M1.5 T16 async-result follow-ups ride the same boundary position as
@@ -206,7 +268,8 @@ export function anthropicRequestBody(
   // input is the user-side material before its first call slice; trailing
   // tool results merge with whatever follows (roles strictly alternate).
   for (const turn of request.priorTurns ?? []) {
-    pendingUserBlocks.push({ type: "text", text: turn.input });
+    if (turn.input !== "") pendingUserBlocks.push({ type: "text", text: turn.input });
+    appendImages(turn.images);
     for (const call of turn.calls) {
       appendAsyncResults(call.asyncResults);
       // This call's boundary steers merge into the user message that the API
@@ -228,7 +291,10 @@ export function anthropicRequestBody(
   }
   // The current turn's input follows the session history (merging into the
   // trailing user-side material when the last prior call ended with results).
-  pendingUserBlocks.push({ type: "text", text: request.input });
+  // Image-only turns render image blocks (or their degradations) alone — an
+  // empty text block is an upstream 400.
+  if (request.input !== "") pendingUserBlocks.push({ type: "text", text: request.input });
+  appendImages(request.inputImages);
 
   for (const call of request.priorCalls) {
     appendAsyncResults(call.asyncResults);
