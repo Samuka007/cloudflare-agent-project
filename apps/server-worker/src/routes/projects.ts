@@ -18,12 +18,21 @@ import {
   takeVisiblePromptHistoryEntries,
 } from "../contract/domain/index.js";
 import { threadListEntrySchema } from "../contract/domain/thread.js";
+import {
+  copyProjectAttachments,
+  readAttachment,
+  storeAttachment,
+} from "../services/attachments.js";
 import { ApiError } from "../shared/api-error.js";
 import {
   parseBoundedPositiveOptionalInteger,
   parseOr422,
   requireJsonBody,
 } from "../shared/route-utils.js";
+import {
+  copyProjectAttachmentsRequestSchema,
+  projectAttachmentContentQuerySchema,
+} from "../contract/api/projects.js";
 import { createProjectId, createThreadSectionId } from "../shared/ids.js";
 import {
   createProject,
@@ -199,6 +208,60 @@ export function registerProjectRoutes(app: Hono<{ Bindings: HonoBindings }>): vo
     return ctx.json(
       promptHistoryResponseSchema.parse(takeVisiblePromptHistoryEntries({ entries: [], limit })),
     );
+  });
+
+  // bb routes/projects.ts:855-884 (commit d2ab40f0): multipart single-field
+  // "file" upload; the storage face moved from dataDir to the R2 attachment
+  // family (#316) with the bb 201 UploadedPromptAttachment shape unchanged.
+  routes.post("/projects/:id/attachments", async (ctx) => {
+    const projectId = ctx.req.param("id");
+    await requirePublicProject(ctx.env, projectId);
+    const formData = await ctx.req.formData();
+    const fields = [...formData.keys()];
+    if (fields.length === 0) {
+      throw new ApiError({ status: 400, code: "invalid_request", message: "Attachment file is required" });
+    }
+    if (fields.length !== 1 || fields[0] !== "file") {
+      throw new ApiError({
+        status: 400,
+        code: "invalid_request",
+        message: 'Attachment upload accepts exactly one multipart field named "file"',
+      });
+    }
+    const file = formData.get("file");
+    if (!(file instanceof File)) {
+      throw new ApiError({ status: 400, code: "invalid_request", message: "Attachment file is required" });
+    }
+    if (file.name.trim().length === 0) {
+      throw new ApiError({ status: 400, code: "invalid_request", message: "Attachment filename is required" });
+    }
+    return ctx.json(await storeAttachment(ctx.env.BLOBS, projectId, file), 201);
+  });
+
+  // bb routes/projects.ts:886-900: draft attachments follow their project on
+  // thread move; source and target are both resolved public projects.
+  routes.post("/projects/:id/attachments/copy", async (ctx) => {
+    const targetProjectId = ctx.req.param("id");
+    await requirePublicProject(ctx.env, targetProjectId);
+    const payload = await requireJsonBody(ctx, copyProjectAttachmentsRequestSchema);
+    await requirePublicProject(ctx.env, payload.sourceProjectId);
+    await copyProjectAttachments(ctx.env.BLOBS, payload.sourceProjectId, targetProjectId, payload.paths);
+    return ctx.json({ ok: true as const });
+  });
+
+  // bb routes/projects.ts:902-913: raw bytes back with the stored mime type
+  // (R2 httpMetadata replaces the bb extension lookup). The A3 daemon pickup
+  // face verifies the sha256 embedded in every path against these bytes.
+  routes.get("/projects/:id/attachments/content", async (ctx) => {
+    await requirePublicProject(ctx.env, ctx.req.param("id"));
+    const query = parseOr422(projectAttachmentContentQuerySchema, ctx.req.query());
+    const attachment = await readAttachment(ctx.env.BLOBS, ctx.req.param("id"), query.path);
+    return new Response(attachment.object.body, {
+      status: 200,
+      headers: {
+        "content-type": attachment.mimeType ?? "application/octet-stream",
+      },
+    });
   });
 
   app.route("/api/v1", routes);

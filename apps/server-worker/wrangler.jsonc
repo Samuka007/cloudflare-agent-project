@@ -43,6 +43,15 @@
       { "name": "DAEMON_SERVICE", "class_name": "DaemonServiceDO" },
     ],
   },
+  "r2_buckets": [
+    {
+      // #316 project attachment objects (key family
+      // attachment/<projectId>/<sha256><ext>). Provision with
+      // `wrangler r2 bucket create cap-server-attachments` before deploy.
+      "binding": "BLOBS",
+      "bucket_name": "cap-server-attachments",
+    },
+  ],
   "migrations": [
     {
       "tag": "v1",
