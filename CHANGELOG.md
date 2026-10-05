@@ -7,6 +7,34 @@
 
 ### Added
 
+- **#290 (P1) daemon 多工作区——`tool.exec`/`exec.spawn` 帧携带 workspace 绑定 +
+  per-workspace ToolHost 键控表 + path 漂移显式失败（盘点 #282 §2.C C1–C4）**：
+  daemon 此前一进程一工作区（`--sandbox` 单例 ToolRuntime）。① C1 帧语义：
+  `workspaceRefSchema{id,path}` 可选字段进 `tool.exec`/`exec.spawn` 帧与
+  `ToolDispatchRequest` seam（生产者是绑定喂值链 keystone #282 §2.A，未落地前恒
+  缺省＝回退 sandbox，向后兼容独立可落）；service DO journal `dispatch` 行增
+  `workspaceJson`（replay-is-truth：spawn watchdog 重发从 journal 重建同一帧，
+  旧 journal 行缺字段 fold 时 `?? null` 钳制）。② C2 键控表：`ToolRuntime`
+  内 `workspaces: Map<id, {path, hostPromise}>`——每 workspace 一个完整
+  `createToolHost`（各自 `Settings.loadIsolated({cwd})`，per-project settings，
+  不同于 T20 viewFor 同项目 worktree 共享 base settings 的粒度）；隔离管理器仍
+  sandbox 作用域（isolationOp 无 workspace 腿），workspace 帧绕行。③ C3 漂移：
+  已注册 id 携不同 path → 结构化错误结果 `workspace_type_mismatch`（bb
+  `ensureEnvironment` 锚形，双 path 具名），永不静默改道；未注册 id 仅在 path
+  存在且为目录时注册（unmanaged 语义：只验证不 provision），失败不粘连 id。
+  错误走 tool.exited error-result（同 mis-route 守卫形状）——service waiter 只在
+  tool.exited 上 resolve，rejected dispatch 会把 run 挂到超时。④ C4 单例审计：
+  host 构建进程级串行链（base + 各 workspace 共用——`installAgentAuth` 写共享
+  models.yml、`setAgentDir` 全局重钉均值幂等但并发会交错写文件）；omp resolver
+  冻结无碍（每 host 构建先重钉同一 daemon-private agentDir）；eval kernel 模块级
+  注册表按 (cwd, sessionId, interpreter) 键控——workspace 各自 cwd 天然隔离，
+  `EvalKernelRuntime` 仍每进程一个、确定性从 sandbox root 播种（`Settings.init`
+  全局单例 first-wins）。Executor spawn 增可选 root 参数（cwd 钳制按帧根）。
+  测试：Bun `l1-workspace-semantics.test.ts` 8 例（同相对路径三根各归其位/
+  缺省回退/写落位/bash per-workspace cwd/漂移显式失败且原绑定存活/ghost path
+  失败不粘连/Executor root 覆写+逃逸拒绝）；Workers `l1-workspace-relay.test.ts`
+  4 例（forward 带 ref/journal 记录/缺省 null/watchdog 重发重建+journal 逐字节
+  过驱逐重放）。
 - **#276 J5 子代活动/CoT 回父——`task.subagent_event` 包装行（journal-first）+ CoT
   终局行档 1**：#256 G4 的 journal-first 臂。① journal 化：`task.subagent_event`
   包装行（omp `subagent_event` 帧同构：child 事件摘要 unit + 外层 spawn 锚），由子 DO

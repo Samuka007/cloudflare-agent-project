@@ -32,9 +32,12 @@ export class Executor {
     mkdirSync(sandboxRoot, { recursive: true });
   }
 
-  /** Resolves cwd inside the sandbox or throws on escape attempts. */
-  resolveCwd(cwd: string): string {
-    const root = resolve(this.sandboxRoot);
+  /**
+   * Resolves cwd inside the sandbox — or the frame's registered workspace
+   * root (#290 C1) — and throws on escape attempts.
+   */
+  resolveCwd(cwd: string, rootOverride: string = this.sandboxRoot): string {
+    const root = resolve(rootOverride);
     const target = resolve(root, cwd === "" ? "." : cwd);
     if (target !== root && !target.startsWith(root + sep)) {
       throw new Error(`sandbox escape refused: ${cwd}`);
@@ -47,8 +50,9 @@ export class Executor {
     command: string,
     cwd: string,
     onOutput: (text: string) => void,
+    rootOverride: string = this.sandboxRoot,
   ): ExecutedProcess {
-    const resolved = this.resolveCwd(cwd);
+    const resolved = this.resolveCwd(cwd, rootOverride);
     mkdirSync(resolved, { recursive: true });
     const child = spawn("bash", ["-c", command], {
       cwd: resolved,
