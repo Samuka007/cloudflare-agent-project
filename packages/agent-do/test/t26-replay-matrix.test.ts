@@ -114,6 +114,10 @@ const MATRIX: Record<string, MatrixRow> = {
     status: "ok",
   },
   yield: { args: { data: { answer: 42 } }, status: "ok" },
+  // B2 #322: the rig carries no deployment image source — the fail-closed
+  // AGENT_DO_IMAGE_SOURCE config error is the terminal row the matrix pins
+  // (the wired-source paths are generate-image.test.ts's MSW lane).
+  generate_image: { args: { subject: "matrix image" }, status: "error" },
 };
 
 const HOST_ROWS = TOOL_REGISTRY.filter((row) => row.class === "host").map((row) => row.name);

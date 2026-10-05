@@ -803,7 +803,8 @@ describe("M1.5 T3 — registry rows (control-plane §1.1, classification §2.2)"
     // eval, manage_skill, yield (T15 adds security_scan between
     // new_context and task; T16 adds task between security_scan and wait;
     // T6 manage_skill is the last builtin #30, the T10' eval row rides
-    // after the T5' write row, and the T16 hidden yield closes the wire).
+    // after the T5' write row, B2 #322 appends the omp custom tool after
+    // the last builtin, and the T16 hidden yield closes the wire).
     expect(TOOL_REGISTRY.map((row) => row.name)).toEqual([
       "bash",
       "read",
@@ -825,6 +826,7 @@ describe("M1.5 T3 — registry rows (control-plane §1.1, classification §2.2)"
       "write",
       "eval",
       "manage_skill",
+      "generate_image",
       "yield",
     ]);
     for (const name of ["checkpoint", "rewind", "todo"]) {

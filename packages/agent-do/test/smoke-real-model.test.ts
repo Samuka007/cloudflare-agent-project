@@ -116,10 +116,15 @@ test.skipIf(relayKey === undefined || relayKey === "" || relayBase === undefined
       thinking: { type: "disabled" } as const,
     };
     // The live DO stamps its deployment gates (#150 — defaults all off, the
-    // five experimental tools stripped) before the wire filters the surface;
-    // the replay must carry the same gate set or the tool arrays diverge
+    // experimental tools stripped) before the wire filters the surface; the
+    // replay must carry the same gate set or the tool arrays diverge
     // (surfaced 2026-10-05 by the first secrets-present run, #228 lane).
-    const gates = { externalThinking: false, contextNotes: false, checkpoint: false } as const;
+    const gates = {
+      externalThinking: false,
+      contextNotes: false,
+      checkpoint: false,
+      generateImage: false,
+    } as const;
     const replay1 = JSON.stringify(
       anthropicRequestBody(
         { ...modelRequestFromEvents(events, sent.turnId, call1Id), experimentalGates: gates },

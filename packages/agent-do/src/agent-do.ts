@@ -142,6 +142,12 @@ import {
   type WebSearchToolContext,
 } from "./tools/web-search.js";
 import {
+  HOST_FILE_RPC_TIMEOUT_MS,
+  decodeGenerateImageConfig,
+  type GenerateImageConfig,
+  type GenerateImageToolContext,
+} from "./tools/generate-image.js";
+import {
   decodeMcpServersConfig,
   limitMcpOutput,
   projectMcpToolOutput,
@@ -187,6 +193,19 @@ export interface AgentDoBindings {
   AGENT_DO_EXTERNAL_THINKING?: string;
   AGENT_DO_CONTEXT_NOTES?: string;
   AGENT_DO_CHECKPOINT?: string;
+  /**
+   * B2 #322: the omp `generate_image.enabled` gate twin (1/true/on).
+   * Gates the `generate_image` wire row (EXPERIMENTAL_TOOL_GATE); the
+   * image source credentials ride AGENT_DO_IMAGE_SOURCE below.
+   */
+  AGENT_DO_GENERATE_IMAGE?: string;
+  /**
+   * B2 #322: JSON patch configuring the OpenAI-compatible image source
+   * (`{baseUrl, apiKey, model, timeoutSeconds?}`). Decoded once at
+   * construction — shape violations fail the DO loudly (the web_search
+   * posture); the model-facing wire schema carries no endpoint field.
+   */
+  AGENT_DO_IMAGE_SOURCE?: string;
   /**
    * Optional JSON patch over the default web_search provider config (env
    * var, M1.5 T12). Decoded once at construction; a patch naming a
@@ -409,6 +428,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   /** Decoded once from `AGENT_DO_WEB_SEARCH` (M1.5 T12); deployment-time
    * input — the model-facing wire schema carries no engine field. */
   private readonly webSearchConfig: WebSearchConfig;
+  /** Decoded once from `AGENT_DO_IMAGE_SOURCE` (B2 #322); deployment-time
+   * input — the model-facing wire schema carries no endpoint field. */
+  private readonly generateImageConfig: GenerateImageConfig;
   /** Decoded once from the #150 experimental-gate envs; deployment-time
    * input, all default OFF (omp tools/index.ts:766-772 posture). */
   private readonly experimentalGates: ExperimentalToolConfig;
@@ -456,6 +478,11 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * owning call's signal so an in-flight MCP request surfaces as a cancelled
    * tool result, not an Error text. */
   private readonly mcpAborts = new Map<string, AbortController>();
+  /** In-flight generate_image transports (executionId → cancel), B2 #322.
+   * Same vocabulary as webSearchAborts: killNonTerminalExecutions aborts the
+   * owning call's signal so an in-flight image request surfaces as a
+   * cancelled tool result, not an Error text. */
+  private readonly generateImageAborts = new Map<string, AbortController>();
   /**
    * The DO's MCP face (tools/mcp.ts): discovery cache + connection pool +
    * wire-name routes. Empty server config = inert (no fetch, no surface).
@@ -470,6 +497,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       env.AGENT_DO_WEB_SEARCH,
       DEFAULT_WEB_SEARCH_CONFIG,
     );
+    // B2 #322: decoded once; a malformed source fails the DO loudly (the
+    // web_search posture — deployment-time input, never silent fallback).
+    this.generateImageConfig = decodeGenerateImageConfig(env.AGENT_DO_IMAGE_SOURCE);
     this.mcpSurface = new McpToolSurface(decodeMcpServersConfig(env.AGENT_DO_MCP_SERVERS));
     this.log = new EventLog(ctx.storage, env.BLOBS, this.cfg.r2BypassBytes);
     this.state = this.loadState();
@@ -3256,6 +3286,16 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     }
     const webSearchAbort =
       row.name === "web_search" ? this.webSearchAborts.get(execution.executionId) : undefined;
+    if (row.name === "generate_image") {
+      // B2 #322: register the cancel controller BEFORE the executor runs
+      // (the web_search posture): killNonTerminalExecutions aborts an
+      // in-flight image transport; the executor journals `cancelled`.
+      this.generateImageAborts.set(execution.executionId, new AbortController());
+    }
+    const generateImageAbort =
+      row.name === "generate_image"
+        ? this.generateImageAborts.get(execution.executionId)
+        : undefined;
     const baseContext: Omit<EdgeToolContext, "wait" | "task"> = {
       executionId: execution.executionId,
       threadId,
@@ -3311,15 +3351,24 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       ...(row.name === "wait" ? { wait: this.waitToolContext(execution) } : {}),
       ...(row.name === "ask" ? { ask: this.askToolContext(execution) } : {}),
       ...(webSearchAbort ? { webSearch: this.webSearchToolContext(webSearchAbort.signal) } : {}),
+      ...(generateImageAbort
+        ? { generateImage: this.generateImageToolContext(threadId, generateImageAbort.signal) }
+        : {}),
     }).finally(() => {
       this.edgeWaiters.delete(execution.executionId);
       this.askWaiters.delete(execution.executionId);
       this.waitWindows.delete(execution.executionId);
       this.webSearchAborts.delete(execution.executionId);
+      this.generateImageAborts.delete(execution.executionId);
     });
     await this.ingestResult(
       execution,
-      { status: result.status, exitCode: null, output: result.output },
+      {
+        status: result.status,
+        exitCode: null,
+        output: result.output,
+        ...(result.images ? { images: result.images } : {}),
+      },
       { ack: false },
     );
   }
@@ -3610,6 +3659,8 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         // web_search rides the same vocabulary: abort the in-flight
         // transport; the executor journals the cancelled tool.result row.
         this.webSearchAborts.get(executionId)?.abort();
+        // generate_image too (B2 #322): same abort-as-cancelled vocabulary.
+        this.generateImageAborts.get(executionId)?.abort();
         continue;
       }
       if (execution.tool.startsWith("mcp__")) {
@@ -3896,6 +3947,41 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       config: this.webSearchConfig,
       signal,
       fetchImpl: (input, init) => fetch(input, init),
+    };
+  }
+
+  /**
+   * DO-bound `generate_image` context (B2 #322, tools/generate-image.ts):
+   * the decoded image source, the owning call's cancel signal, global
+   * fetch, and the two daemon-service thread-file seams (the write is the
+   * product's host-disk landing; the read resolves `input[].path` legs).
+   * Both ride the per-machine service DO stub synchronously — the B2 twins
+   * of the B1 host-file read face. The unwrapped outcome kinds map 1:1.
+   */
+  private generateImageToolContext(threadId: string, signal: AbortSignal): GenerateImageToolContext {
+    const machineId = this.state.machineId ?? "local";
+    return {
+      config: this.generateImageConfig,
+      signal,
+      fetchImpl: (input, init) => fetch(input, init),
+      writeThreadFile: async ({ filename, contentBase64 }) => {
+        const outcome = await this.daemon().hostThreadFileWrite({
+          machineId,
+          threadId,
+          filename,
+          contentBase64,
+          timeoutMs: HOST_FILE_RPC_TIMEOUT_MS,
+        });
+        return outcome;
+      },
+      readThreadFile: async ({ path }) => {
+        const outcome = await this.daemon().hostThreadFileRead({
+          machineId,
+          path,
+          timeoutMs: HOST_FILE_RPC_TIMEOUT_MS,
+        });
+        return outcome;
+      },
     };
   }
 

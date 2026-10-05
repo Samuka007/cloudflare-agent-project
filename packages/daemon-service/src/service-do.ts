@@ -39,6 +39,8 @@ import {
   type ExecStartedFrame,
   type HostRpcCommand,
   type HostRpcResponseFrame,
+  hostFileReadResultSchema,
+  hostFileWriteResultSchema,
   type KillListServiceFrame,
   observedFingerprint,
   type ServiceFrame,
@@ -137,6 +139,27 @@ export type IsolationOpOutcome =
  * 502 host_unavailable (online-rpc.ts:162-163). */
 export type HostRpcOutcome =
   { kind: "ok"; response: HostRpcResponseFrame } | { kind: "host_offline" } | { kind: "timeout" };
+
+/**
+ * B2 (#322): the thread-file write outcome — the structural mirror the
+ * agent DO's DaemonServiceClient seam declares (packages/agent-do
+ * src/daemon.ts). `error` carries the daemon dispatch code verbatim
+ * (invalid_path / file_too_large / ENOENT-family), `command_result_invalid`
+ * covers a schema-violating daemon response.
+ */
+export type HostThreadFileWriteOutcome =
+  | { kind: "ok"; path: string }
+  | { kind: "error"; errorCode: string; errorMessage: string }
+  | { kind: "host_offline" }
+  | { kind: "timeout" };
+
+/** B2 (#322): the read twin's outcome — a narrowed hostFileReadResultSchema
+ * (the agent DO's mirror lives in packages/agent-do src/daemon.ts). */
+export type HostThreadFileReadOutcome =
+  | { kind: "ok"; content: string; contentEncoding: "base64" | "utf8"; mimeType?: string }
+  | { kind: "error"; errorCode: string; errorMessage: string }
+  | { kind: "host_offline" }
+  | { kind: "timeout" };
 
 interface HostKeyMirrorEntry {
   keyHash: string;
@@ -455,6 +478,88 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
       clearTimeout(timer);
       this.hostRpcWaiters.delete(requestId);
     }
+  }
+
+  /**
+   * B2 (#322): the agent-DO-facing write twin of the B1 read face. The
+   * thread's AgentDO calls this over its daemon-service binding to land a
+   * generated image on the host disk (`host.write_file` host-rpc command
+   * over the live socket); the absolute path in the ok outcome feeds the
+   * imageView journal row and, through it, the host-file content face.
+   * Like isolationOp/hostOnlineRpc there is NO execution state — one DO
+   * request per call, the timeout is this RPC's own timer, nothing is
+   * journaled (the bytes land as a host-disk file, not a journal op; a
+   * lost response leaves the file in place and the caller re-asks the
+   * deduped edge execution, whose write re-runs into the -N dedup).
+   */
+  async hostThreadFileWrite(request: {
+    machineId: string;
+    threadId: string;
+    filename: string;
+    contentBase64: string;
+    timeoutMs: number;
+  }): Promise<HostThreadFileWriteOutcome> {
+    const outcome = await this.hostOnlineRpc({
+      hostId: request.machineId,
+      command: {
+        type: "host.write_file",
+        threadId: request.threadId,
+        filename: request.filename,
+        contentBase64: request.contentBase64,
+      },
+      timeoutMs: request.timeoutMs,
+    });
+    if (outcome.kind !== "ok") return outcome;
+    const response = outcome.response;
+    if (!response.ok) {
+      return { kind: "error", errorCode: response.errorCode, errorMessage: response.errorMessage };
+    }
+    const parsed = hostFileWriteResultSchema.safeParse(response.result);
+    if (!parsed.success) {
+      return {
+        kind: "error",
+        errorCode: "command_result_invalid",
+        errorMessage: `Host RPC ${response.requestId} returned a malformed file write`,
+      };
+    }
+    return { kind: "ok", path: parsed.data.path };
+  }
+
+  /**
+   * B2 (#322): the read twin — `input[].path` legs of generate_image
+   * resolve through the B1 host-file face (the face's 10 MB image cap and
+   * absolute-path rule apply verbatim; the executor maps ENOENT to omp's
+   * "Image file not found" text).
+   */
+  async hostThreadFileRead(request: {
+    machineId: string;
+    path: string;
+    timeoutMs: number;
+  }): Promise<HostThreadFileReadOutcome> {
+    const outcome = await this.hostOnlineRpc({
+      hostId: request.machineId,
+      command: { type: "host.read_file", path: request.path },
+      timeoutMs: request.timeoutMs,
+    });
+    if (outcome.kind !== "ok") return outcome;
+    const response = outcome.response;
+    if (!response.ok) {
+      return { kind: "error", errorCode: response.errorCode, errorMessage: response.errorMessage };
+    }
+    const parsed = hostFileReadResultSchema.safeParse(response.result);
+    if (!parsed.success) {
+      return {
+        kind: "error",
+        errorCode: "command_result_invalid",
+        errorMessage: `Host RPC ${response.requestId} returned a malformed file read`,
+      };
+    }
+    return {
+      kind: "ok",
+      content: parsed.data.content,
+      contentEncoding: parsed.data.contentEncoding,
+      ...(parsed.data.mimeType !== undefined ? { mimeType: parsed.data.mimeType } : {}),
+    };
   }
 
   async queryUnacked(

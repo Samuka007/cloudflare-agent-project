@@ -96,6 +96,25 @@ export interface DaemonServiceClient {
     arguments: Record<string, unknown>;
     timeoutMs: number;
   }): Promise<IsolationOpOutcome>;
+  /**
+   * B2 (#322): synchronous thread-file write RPC — land one edge-produced
+   * image on the host disk under the thread's storage root. Unlike
+   * `dispatch` the result resolves THIS call (one DO request, no agent-side
+   * execution state); the ok path feeds the imageView journal fold.
+   */
+  hostThreadFileWrite(request: {
+    machineId: string;
+    threadId: string;
+    filename: string;
+    contentBase64: string;
+    timeoutMs: number;
+  }): Promise<HostThreadFileWriteOutcome>;
+  /** B1 read face over the same stub — B2's `input[].path` resolution. */
+  hostThreadFileRead(request: {
+    machineId: string;
+    path: string;
+    timeoutMs: number;
+  }): Promise<HostThreadFileReadOutcome>;
 }
 
 /** Mirror of DaemonServiceDO's IsolationOpOutcome (structural seam). */
@@ -103,3 +122,22 @@ export type IsolationOpOutcome =
   | { kind: "ok"; result: ToolResultPayload }
   | { kind: "error"; error: string }
   | { kind: "host_offline" };
+
+/** Mirror of DaemonServiceDO's HostThreadFileWriteOutcome (structural seam):
+ * the B2 (#322) thread-file write — the write twin of the B1 host-file read
+ * face. `error` carries the daemon dispatch code verbatim
+ * (invalid_path/file_too_large/…). */
+export type HostThreadFileWriteOutcome =
+  | { kind: "ok"; path: string }
+  | { kind: "error"; errorCode: string; errorMessage: string }
+  | { kind: "host_offline" }
+  | { kind: "timeout" };
+
+/** Mirror of DaemonServiceDO's HostThreadFileReadOutcome (structural seam):
+ * the B1 host-file read face, consumed B2-side to resolve generate_image
+ * `input[].path` legs. Only the base64 encoding is meaningful for images. */
+export type HostThreadFileReadOutcome =
+  | { kind: "ok"; content: string; contentEncoding: "base64" | "utf8"; mimeType?: string }
+  | { kind: "error"; errorCode: string; errorMessage: string }
+  | { kind: "host_offline" }
+  | { kind: "timeout" };

@@ -7,6 +7,29 @@
 
 ### Added
 
+- **#322 (W5) 图片 B2——generate_image edge 工具（依赖 B1；图像源 env 与 #305 交汇）**：
+  agent-do 注册 `generate_image`（omp imageGenTool 18.6.0 verbatim 移植——schema
+  /prompt/assemblePrompt/尺寸映射逐锚点；omp custom tool 位次：最后 builtin 之后、
+  隐藏 yield 之前）并归类 edge do-local（分类表 §2 先例：图像 API 出站）。① 门：
+  omp `generate_image.enabled`（默认 false）→ `AGENT_DO_GENERATE_IMAGE` env 闸
+  （#150 第六闸）；图像源 `AGENT_DO_IMAGE_SOURCE` JSON {baseUrl, apiKey, model,
+  timeoutSeconds?}——openai-images 传输族（/images/generations 与
+  /images/edits `input_references` + 404 回落，omp openai-images.ts JSON 分支；
+  OpenAI multipart 分支不移植——配置源面向 relay 型 JSON 端点），响应 b64_json/
+  url 下载、media_type→魔数嗅探→png 兜底（pi-utils parseImageMetadata 的
+  workerd 端口）。② 落盘：omp edge 即本机（写 OS tmpdir），本栈 DO≠宿主——
+  新 host-rpc 命令 `host.write_file`（B1 `host.read_file` 的写孪生）：
+  daemon 侧解析 `<sandboxRoot>/<threadId>/Generated/`（bb staging 纪律端口——
+  文件名 sanitize、`-N` 去重、0600、threadId 单段断言、10MB 图上限、
+  base64 完整性门），应答绝对路径。③ 事件链：EdgeToolResult.images →
+  executeEdgeLocal 载入 ToolResultPayload → ingestResult 逐图落 imageView
+  （parentToolCallId=call executionId，B1 链复用；timeline image-view 行 +
+  host-files/content lightbox 即刻点亮）。`input[].path` 经 B1 读面解析
+  （绝对路径/10MB/ENOENT→omp 同文）；`data` inline 与 data: URL 同 omp。
+  取消走 web_search abort-as-cancelled 词汇；重放幂等由 edge 执行铁律承担。
+  测试：agent-do `generate-image.test.ts` 16 例（verbatim 面、配置解码、传输
+  分支、保存腿、imageView 折叠、重放零二fetch）、T26 矩阵行、daemon-service
+  `host-files.test.ts` 写面 7 例 + socket glue。
 - **#321 (W5) 图片 B1——imageView 事件链 + host-file content face（依赖 A3 通道，独立于 A4）**：
   ① journal additive `imageView` 事件（`fsm-events.ts`，G9 载体补齐）：`ingestResult`
   在 tool.result 落行前按结果载荷的 `images`（`ToolResultPayload.images` additive，
