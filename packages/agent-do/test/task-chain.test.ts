@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { env } from "cloudflare:workers";
-import { newThreadId } from "@cap/protocol";
+import { newThreadId, parseThreadEvent } from "@cap/protocol";
 import { createRig, resetRuntime, type Rig } from "./helpers.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";
 import { replayEvents } from "../src/turn-state.js";
@@ -8,6 +8,7 @@ import { setAgentRuntime } from "../src/injection.js";
 import { MockModelProvider } from "../src/testing/mock-provider.js";
 import { anthropicRequestBody } from "../src/relay/wire.js";
 import type { AgentDO } from "../src/agent-do.js";
+import { projectToUxEvents } from "../src/ux-projection.js";
 import {
   BUNDLED_AGENT_DEFINITIONS,
   settlementForSpawn,
@@ -351,9 +352,7 @@ describe("M1.5 T16 — L1 chain over real child AgentDOs", () => {
 
     // L2 literal assertion: the child's FIRST turn context carries the
     // dispatched task 原文 (assignment prompt = opener + task, no context).
-    expect(firstRequest?.input).toBe(
-      `Complete assignment thoroughly:\n\n${PARENT_TASK_ARGS.task}`,
-    );
+    expect(firstRequest?.input).toBe(`Complete assignment thoroughly:\n\n${PARENT_TASK_ARGS.task}`);
 
     // The defect this pins (#228): the reminder turn's request must NOT be a
     // context reset — the assignment turn rides priorTurns (input + recorded
@@ -385,5 +384,101 @@ describe("M1.5 T16 — L1 chain over real child AgentDOs", () => {
     if (plan?.type !== "task.spawn_planned") throw new Error("no spawn plan");
     const childThreadId = plan.data.childThreadId;
     expect(settlementForSpawn(parentEvents, childThreadId)?.status).toBe("ok");
+  });
+
+  test("#276 J5: child activity/CoT flush lands wrapper rows before the settle (journal-first)", async () => {
+    const parentThreadId = newThreadId();
+    const parentMock = new MockModelProvider([
+      { toolCalls: [{ name: "task", arguments: PARENT_TASK_ARGS }] },
+      { deltas: ["spawned"] },
+    ]);
+    // The child thinks, answers, then yields — one turn of attributable
+    // activity (thinking rows + answer text + the yield transport call).
+    const childMock = new MockModelProvider([
+      {
+        thinkingDeltas: ["Considering the question. ", "The answer is 42."],
+        deltas: ["Computing..."],
+        toolCalls: [{ name: "yield", arguments: { data: { answer: 42 } } }],
+      },
+      { deltas: ["done"] },
+    ]);
+    setAgentRuntime(parentThreadId, { provider: parentMock });
+    setAgentRuntime("*", { provider: childMock });
+    const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
+
+    const turnId = await driveParentTurn(rig, "in-1");
+    await rig.waitFor((all) => all.some((event) => event.type === "task.spawn_settled"));
+    await rig.waitTurnComplete(turnId);
+
+    const parentEvents = await rig.events();
+    const plan = parentEvents.find((event) => event.type === "task.spawn_planned");
+    if (plan?.type !== "task.spawn_planned") throw new Error("no spawn plan");
+    const anchor = plan.data.parentToolCallId;
+    expect(anchor).toBeDefined();
+
+    // Wrapper rows: one per activity unit, all attributed to the delegation
+    // anchor, all journaled BEFORE the settlement row (activity precedes the
+    // settle in the flush path).
+    const wrappers = parentEvents.filter(
+      (event): event is Extract<AnyAgentEvent, { type: "task.subagent_event" }> =>
+        event.type === "task.subagent_event",
+    );
+    expect(wrappers.length).toBeGreaterThanOrEqual(2);
+    const kinds = wrappers.map((event) => event.data.unit.kind);
+    expect(kinds).toContain("thinking");
+    expect(kinds).toContain("message");
+    for (const wrapper of wrappers) {
+      expect(wrapper.data.spawnId).toBe(plan.data.spawnId);
+      expect(wrapper.data.childThreadId).toBe(plan.data.childThreadId);
+      expect(wrapper.data.parentToolCallId).toBe(anchor);
+    }
+    const firstWrapper = wrappers[0];
+    if (firstWrapper === undefined) throw new Error("no wrapper rows");
+    expect(parentEvents.indexOf(firstWrapper)).toBeLessThan(
+      parentEvents.findIndex((event) => event.type === "task.spawn_settled"),
+    );
+    // The CoT summary carries the child's concatenated thinking text.
+    const thinking = wrappers.find((event) => event.data.unit.kind === "thinking");
+    if (thinking?.data.unit.kind !== "thinking") throw new Error("no thinking unit");
+    expect(thinking.data.unit.text).toBe("Considering the question. The answer is 42.");
+
+    // Child journal: the flush cursor advanced past the flushed rows.
+    const childEvents = await childEventsOf(plan.data.childThreadId);
+    expect(() => replayEvents(childEvents)).not.toThrow();
+    const flushCursor = childEvents.find((event) => event.type === "task.subagent_flush");
+    if (flushCursor?.type !== "task.subagent_flush") throw new Error("no flush cursor");
+    const lastChildSeq = childEvents.reduce((max, event) => Math.max(max, event.seq), 0);
+    expect(flushCursor.data.throughSeq).toBeGreaterThan(0);
+    expect(flushCursor.data.throughSeq).toBeLessThanOrEqual(lastChildSeq);
+
+    // Parent dedup: a re-sent batch (crash between RPC and cursor) appends
+    // nothing (same (kind, sourceSeq) keys).
+    const units = wrappers.map((event) => event.data.unit);
+    const resend = await rig.stub.reportSubagentActivity({
+      spawnId: plan.data.spawnId,
+      agentId: plan.data.agentId,
+      units,
+    });
+    expect(resend.appended).toBe(0);
+    expect(resend.duplicated).toBe(units.length);
+
+    // The ux face: wrapper rows unfold into delegation-attributed child
+    // rows (the server's J4 aggregation nests these into childRows).
+    const ux = projectToUxEvents(parentEvents).map(parseThreadEvent);
+    const childAnswer = ux.find(
+      (event): event is Extract<typeof event, { type: "item/completed" }> =>
+        event.type === "item/completed" &&
+        event.data.item.type === "agentMessage" &&
+        event.data.item.parentToolCallId === anchor,
+    );
+    expect(childAnswer).toBeDefined();
+    const childCoT = ux.find(
+      (event): event is Extract<typeof event, { type: "item/completed" }> =>
+        event.type === "item/completed" &&
+        event.data.item.type === "reasoning" &&
+        event.data.item.parentToolCallId === anchor,
+    );
+    expect(childCoT).toBeDefined();
+    expect(() => replayEvents(parentEvents)).not.toThrow();
   });
 });

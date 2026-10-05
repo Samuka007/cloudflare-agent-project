@@ -24,7 +24,12 @@ import {
   type ReplayState,
 } from "./turn-state.js";
 import type { AgentEventDataByType, AgentEventRecord, AgentEventType } from "./fsm-events.js";
-import { parseAgentEvent, type AnyAgentEvent } from "./fsm-events.js";
+import {
+  parseAgentEvent,
+  subagentActivityUnitSchema,
+  type AnyAgentEvent,
+  type SubagentActivityUnit,
+} from "./fsm-events.js";
 import { executionIdFor, threadIdFromExecutionId } from "./ids.js";
 import {
   DEFAULT_WATCHDOG_CONFIG,
@@ -77,6 +82,7 @@ import {
   parseAgentUri,
   truncateDeliveryOutput,
 } from "./tools/task/plan.js";
+import { lastActivityFlushThroughSeq, projectActivityFlush } from "./tools/task/activity-flush.js";
 import {
   interactionForExecution,
   projectInteractionRows,
@@ -254,6 +260,12 @@ interface SubagentDoStub {
     status: "ok" | "error";
     output: string;
   }): Promise<{ duplicated: boolean }>;
+  /** #276 J5 activity backflow: journal the child's summary units (dedup). */
+  reportSubagentActivity(request: {
+    spawnId: string;
+    agentId: string;
+    units: SubagentActivityUnit[];
+  }): Promise<{ appended: number; duplicated: number }>;
   /** T17 agent:// hop: serve this DO's own artifacts or forward deeper. */
   readAgentArtifact(request: AgentArtifactRequest): Promise<AgentArtifactResult>;
   /** T17 agent:// write face: land a peer message on this DO's thread. T19:
@@ -899,6 +911,62 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       await this.advanceChildRun();
     }
     return { duplicated: false };
+  }
+
+  /**
+   * #276 J5 activity backflow (the omp `subagent_event` frame journal face):
+   * the child DO's turn-boundary flush lands its activity/CoT summary units
+   * here as `task.subagent_event` wrapper rows. Journal-only — no registry,
+   * no waits, no FSM state; the ux projection unfolds the delegation row's
+   * childRows from these rows at read time. Dedup by (spawnId, unit kind,
+   * unit sourceSeq) makes the flush retry after a cursor-append crash a
+   * no-op (completeSubagent's spawnId dedup precedent).
+   */
+  async reportSubagentActivity(request: {
+    spawnId: string;
+    agentId: string;
+    units: SubagentActivityUnit[];
+  }): Promise<{ appended: number; duplicated: number }> {
+    await this.ready();
+    this.requireThread();
+    const { events } = await this.readAllEvents();
+    const plan = projectSpawnPlans(events).find((record) => record.spawnId === request.spawnId);
+    if (plan === undefined) {
+      throw new AgentRpcError("not_found", `no spawn plan for ${request.spawnId}`);
+    }
+    const seen = new Set<string>();
+    for (const event of events) {
+      if (event.type !== "task.subagent_event" || event.data.spawnId !== request.spawnId) {
+        continue;
+      }
+      seen.add(`${event.data.unit.kind}:${event.data.unit.sourceSeq}`);
+    }
+    let appended = 0;
+    let duplicated = 0;
+    for (const raw of request.units) {
+      const parsed = subagentActivityUnitSchema.safeParse(raw);
+      if (!parsed.success) {
+        throw new AgentRpcError("invalid", "malformed subagent activity unit");
+      }
+      const unit = parsed.data;
+      const key = `${unit.kind}:${unit.sourceSeq}`;
+      if (seen.has(key)) {
+        duplicated += 1;
+        continue;
+      }
+      seen.add(key);
+      await this.appendEvent("task.subagent_event", {
+        spawnId: plan.spawnId,
+        agentId: plan.agentId,
+        childThreadId: plan.childThreadId,
+        ...(plan.parentToolCallId === undefined
+          ? {}
+          : { parentToolCallId: plan.parentToolCallId }),
+        unit,
+      });
+      appended += 1;
+    }
+    return { appended, duplicated };
   }
 
   /**
@@ -3416,6 +3484,11 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
 
   private async advanceChildRunOnce(): Promise<void> {
     if (this.state.subagentIdentity === null) return;
+    // #276 J5 activity backflow runs on every gate pass (turn end, reminder,
+    // settle, grandchild cascade) BEFORE any delivery — the parent journal
+    // sees the child's activity before the settlement row. Cursor-folded and
+    // parent-deduped, so repeated passes append nothing.
+    await this.flushSubagentActivity();
     const active = this.activeTurn();
     if (active !== undefined && !turnTerminal(active)) return;
     const { events } = await this.readAllEvents();
@@ -3473,6 +3546,46 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         output: verdict.output,
       });
     }
+  }
+
+  /**
+   * #276 J5 child-side flush: derive this run's unreported activity/CoT
+   * summaries from the journal (fold since the `task.subagent_flush`
+   * cursor), land them on the parent as `task.subagent_event` rows, then
+   * advance the cursor. Every failure mode degrades to "retry next pass":
+   * an RPC failure leaves the cursor put (the fold re-derives), and a
+   * pre-J1 identity (no anchor) flushes nothing — the parent would drop
+   * unattributable rows anyway. Best-effort: the settlement channel
+   * (deliverChildOutcome) stays authoritative and must never wait behind a
+   * broken activity face.
+   */
+  private async flushSubagentActivity(): Promise<void> {
+    const identity = this.state.subagentIdentity;
+    if (identity?.parentToolCallId === undefined) return;
+    const namespace = this.env.AGENT_DO;
+    if (namespace === undefined) return;
+    const { events } = await this.readAllEvents();
+    const cursor = lastActivityFlushThroughSeq(events);
+    const { units, throughSeq } = projectActivityFlush(
+      events,
+      cursor,
+      this.taskConfig().inlineSummaryCapChars,
+    );
+    if (units.length === 0) return;
+    const parent = namespace.get(
+      namespace.idFromName(identity.parentThreadId),
+    ) as unknown as SubagentDoStub;
+    try {
+      await parent.reportSubagentActivity({
+        spawnId: identity.spawnId,
+        agentId: identity.agentId,
+        units,
+      });
+    } catch (error) {
+      console.error(`subagent ${identity.agentId}: activity flush failed`, error);
+      return;
+    }
+    await this.appendEvent("task.subagent_flush", { throughSeq });
   }
 
   /**

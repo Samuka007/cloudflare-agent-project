@@ -208,6 +208,9 @@ export function projectLifecycle(events: readonly AnyAgentEvent[]): LifecycleVie
       case "job.settled":
       case "task.async_result":
       case "task.budget_notice":
+      // #276 J5 activity backflow: not registry state.
+      case "task.subagent_event":
+      case "task.subagent_flush":
       case "task.yield_reminder":
       case "task.yield_warning":
       case "model.call_completed":

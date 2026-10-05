@@ -69,6 +69,58 @@ export const todoPhaseSchema = z.object({
   tasks: z.array(todoItemSchema),
 });
 
+/**
+ * #276 J5 subagent activity summary unit — one wrapped child event of a
+ * `task.subagent_event` row (omp `subagent_event` frame isomorph: child
+ * event + outer task ids). The child DO's flush fold derives these units
+ * from its own journal at turn boundaries; every field is journal-derived so
+ * a re-flush after a crash re-derives identical units (parent dedups by
+ * `kind`+`sourceSeq`). Text/output ride summary-capped (never journal
+ * oversize — settleSpawn doctrine).
+ */
+export const subagentActivityUnitSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("tool_started"),
+    /** Child journal seq of the source row — dedup + ordering key. */
+    sourceSeq: z.number().int().positive(),
+    /** Child turn scope the row belongs to (ux placement). */
+    turnId: z.string().min(1),
+    /** Child-side ux item id (executionIdFor over the child journal). */
+    executionId: z.string().min(1),
+    tool: z.string().min(1),
+    arguments: z.record(z.string(), z.unknown()),
+  }),
+  z.object({
+    kind: z.literal("tool_completed"),
+    sourceSeq: z.number().int().positive(),
+    turnId: z.string().min(1),
+    executionId: z.string().min(1),
+    tool: z.string().min(1),
+    status: toolResultStatusSchema,
+    /** Summary-capped inline output (blob rows resolved before capping). */
+    output: z.string(),
+    /** Source tool.result row timestamp (deterministic across re-flush). */
+    completedAt: z.number().int().nonnegative(),
+  }),
+  z.object({
+    kind: z.literal("thinking"),
+    sourceSeq: z.number().int().positive(),
+    turnId: z.string().min(1),
+    modelCallId: z.number().int().positive(),
+    /** The model call's accumulated CoT text, summary-capped. */
+    text: z.string(),
+  }),
+  z.object({
+    kind: z.literal("message"),
+    sourceSeq: z.number().int().positive(),
+    turnId: z.string().min(1),
+    modelCallId: z.number().int().positive(),
+    /** The model call's completed answer text, summary-capped. */
+    text: z.string(),
+  }),
+]);
+export type SubagentActivityUnit = z.infer<typeof subagentActivityUnitSchema>;
+
 export const agentEventDataSchemas = {
   "thread.created": z.object({
     title: z.string(),
@@ -533,6 +585,41 @@ export const agentEventDataSchemas = {
     spawnId: z.string().min(1),
     agentId: z.string().min(1),
     reason: z.enum(["budget", "call_signal", "wall_clock", "kill", "internal"]),
+  }),
+
+  /**
+   * #276 J5 journal-first backflow (omp `subagent_event` wrapper frame
+   * isomorph): one child activity/CoT summary unit, journaled on the PARENT
+   * by `reportSubagentActivity` so the parent's ux view unfolds the
+   * delegation row's childRows from a single log (no cross-DO read-through,
+   * replay-stable — G4's journal-first arm). Appended by the child DO's
+   * turn-boundary flush (tools/task/activity-flush fold + the
+   * completeSubagent RPC family); deduped by (`spawnId`, unit kind,
+   * unit sourceSeq). Rows carry no turnId: child activity outlives and
+   * interleaves across parent turns (thread-scoped task-family rule).
+   */
+  "task.subagent_event": z.object({
+    spawnId: z.string().min(1),
+    agentId: z.string().min(1),
+    childThreadId: z.string().min(1),
+    /**
+     * #274 J1 attribution anchor from the spawn plan — the ux projection
+     * unfolds the wrapped unit into rows pointing at the delegation row.
+     * Optional: pre-J1 journals omit it.
+     */
+    parentToolCallId: z.string().min(1).optional(),
+    unit: subagentActivityUnitSchema,
+  }),
+
+  /**
+   * #276 J5 flush cursor on the CHILD journal: every row ≤ `throughSeq` has
+   * been reported to the parent (idempotency marker, yield_reminder
+   * precedent). Appended only after the parent accepted the batch, so a
+   * crash between RPC and cursor re-derives the same units and the parent's
+   * dedup absorbs the re-send.
+   */
+  "task.subagent_flush": z.object({
+    throughSeq: z.number().int().positive(),
   }),
 
   /**
