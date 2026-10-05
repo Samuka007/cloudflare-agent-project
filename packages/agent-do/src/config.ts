@@ -80,6 +80,16 @@ export interface WatchdogConfig {
    * value arms the alarm-carried auto-select expiry.
    */
   askTimeoutMs: number;
+  /**
+   * Auto compaction (#326; pi compaction settings compaction.ts:126-130):
+   * the overflow faces — a post-turn `shouldCompact` check (usage anchor +
+   * tail estimate vs window − reserve) and the reactive provider
+   * context-overflow verdict (compact-and-retry instead of the raw failure).
+   * `keepRecentTokens` is the cut planner's retention budget.
+   */
+  autoCompactionEnabled: boolean;
+  autoCompactionReserveTokens: number;
+  autoCompactionKeepRecentTokens: number;
 }
 
 export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
@@ -106,6 +116,10 @@ export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
   taskMaxRuntimeMs: 0,
   taskAgentIdleTtlMs: 420_000,
   askTimeoutMs: 0,
+  // pi kernel defaults (compaction.ts:126-130 via DEFAULT_COMPACTION_SETTINGS).
+  autoCompactionEnabled: true,
+  autoCompactionReserveTokens: 16_384,
+  autoCompactionKeepRecentTokens: 20_000,
 };
 
 const configPatchSchema = z.object({
@@ -132,6 +146,9 @@ const configPatchSchema = z.object({
   taskMaxRuntimeMs: z.number().int().nonnegative().optional(),
   taskAgentIdleTtlMs: z.number().int().nonnegative().optional(),
   askTimeoutMs: z.number().int().nonnegative().optional(),
+  autoCompactionEnabled: z.boolean().optional(),
+  autoCompactionReserveTokens: z.number().int().positive().optional(),
+  autoCompactionKeepRecentTokens: z.number().int().nonnegative().optional(),
 });
 
 export type WatchdogConfigPatch = z.infer<typeof configPatchSchema>;

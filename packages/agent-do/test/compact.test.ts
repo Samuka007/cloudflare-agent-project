@@ -509,7 +509,11 @@ describe("#309 compact cut planner (pi kernel, seq-keyed)", () => {
         },
       }),
     ];
-    expect(lastUsageTotal(events)).toEqual({ usedTokens: 130, contextWindow: 200_000 });
+    expect(lastUsageTotal(events)).toEqual({
+      seq: events[1]?.seq,
+      usedTokens: 130,
+      contextWindow: 200_000,
+    });
   });
 });
 
