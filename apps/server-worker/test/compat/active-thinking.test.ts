@@ -10,7 +10,9 @@ import type { UxThreadEvent } from "../../src/seam/agent-do.js";
  * #257 CoT surface (timeline half): the ux stream folds into the response's
  * `activeThinking` tail field — bb reasoning-lifecycle semantics ported to
  * the M0 fold (seq-latest open lifecycle, answer delta closes, thread-status
- * gate). The pinned SPA renders it through the expandable Thinking indicator.
+ * gate). Since #303 (upstream #3250 port, J6 档 2) the SPA renders it through
+ * the reasoning-styled working indicator — same live face, canonical id shared
+ * with the persistent Thought rows (test/compat/reasoning-rows.test.ts).
  */
 
 function uxEvent(
