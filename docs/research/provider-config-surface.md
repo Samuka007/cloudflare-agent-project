@@ -115,6 +115,7 @@ omp 原生 provider 配置=用户可编辑的 `~/.omp/agent/models.yml`（provid
 3. **SPA 只读节**：设置面复用 `providers` 节位（路由已在，bb-spa-ux-surface.md:24）渲染只读投影+「编辑走部署 env」指针文案（对照 ops/staging-relay.md 先例）；不提供 PUT。
 4. **非秘密偏好（M3 后可选）**：per-project 默认引擎序/默认模型偏好可用插件 settings 非 secret 分支或 app 单行——过 §3.2 判据表再立票。
 5. **文档**：本文 §3.1 表即 provider 配置点的唯一索引，随 slice 1 一起挂 docs/ops。
+   已挂：`docs/ops/provider-config-points.md`（#266，随实现更新锚点与读路径行）。
 
 ## 7. 未决 / JOINT-UNKNOWN
 
