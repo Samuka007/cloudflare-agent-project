@@ -424,6 +424,35 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
         });
         break;
       }
+      case "model.usage_receipt": {
+        // #308: the receipt is its own journal row, so its ux row carries its
+        // own seq (the events view's strict unique-seq contract). Emitted
+        // only when the receipt carries a window — a null window means the
+        // deployment cannot name a percentage, and guessing is worse than
+        // absence (bb extract treats a null-window chain as unknown the same
+        // way).
+        const { usage } = event.data;
+        if (usage.contextWindow === null) break;
+        ux = buildThreadEvent({
+          id: event.id,
+          threadId: event.threadId,
+          seq: event.seq,
+          type: "thread/contextWindowUsage/updated",
+          data: {
+            contextWindowUsage: {
+              usedTokens:
+                usage.inputTokens +
+                usage.outputTokens +
+                usage.cacheReadInputTokens +
+                usage.cacheCreationInputTokens,
+              modelContextWindow: usage.contextWindow,
+              estimated: usage.estimated,
+            },
+          },
+          createdAt: event.createdAt,
+        });
+        break;
+      }
       case "tool.call": {
         const executionId = executionIdFor(event.threadId, event.seq);
         toolByExecution.set(executionId, event.data.tool);

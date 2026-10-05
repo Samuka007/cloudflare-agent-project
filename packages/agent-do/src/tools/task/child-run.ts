@@ -303,6 +303,7 @@ export function projectChildRun(events: readonly AnyAgentEvent[]): ChildRunState
       case "model.call_sealed":
       case "model.delta":
       case "model.thinking":
+      case "model.usage_receipt":
       case "interaction.interrupted":
       case "interaction.registered":
       case "interaction.resolved":
@@ -795,6 +796,7 @@ export function renderAgentHistory(events: readonly AnyAgentEvent[], agentId: st
       case "model.call_sealed":
       case "model.call_started":
       case "model.delta":
+      case "model.usage_receipt":
       case "interaction.interrupted":
       case "interaction.registered":
       case "interaction.resolved":

@@ -570,6 +570,11 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       // (tools/session-tree.ts todoJournalState) folds it from the log.
       return;
     }
+    case "model.usage_receipt": {
+      // #308: the completed call's token accounting — the ux projection
+      // folds it 1:1 into thread/contextWindowUsage/updated; never FSM state.
+      return;
+    }
     case "interaction.registered": {
       // Thread-scoped interaction journal (proposal §3 T4); the ask
       // projection and the watchdog expiry family fold it from the log.

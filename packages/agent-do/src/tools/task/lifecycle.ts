@@ -222,6 +222,7 @@ export function projectLifecycle(events: readonly AnyAgentEvent[]): LifecycleVie
       case "model.call_started":
       case "model.delta":
       case "model.thinking":
+      case "model.usage_receipt":
       case "peer.message":
       case "peer.message_consumed":
       case "thread.created":
