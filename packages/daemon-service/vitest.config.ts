@@ -22,6 +22,8 @@ export default defineConfig({
       "test/l1-task-isolation.test.ts",
       "test/l1-security-scan.test.ts",
       "test/l1-workspace-semantics.test.ts",
+      // #318 staging lane: node:fs + the omp runtime — Bun-only.
+      "test/l1-prompt-attachments.test.ts",
     ],
     maxWorkers: 1,
     minWorkers: 1,

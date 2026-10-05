@@ -16,10 +16,20 @@ import { Executor, scanMarkerProcesses } from "./executor.js";
 import { HostRpcCommandError, browseHostDirectory } from "./host-directory.js";
 import { ExecutionBuffer } from "./buffers.js";
 import {
+  stagePromptAttachments,
+  cleanupAfterPostStagingFailure,
+  type StagedPromptAttachments,
+} from "./prompt-attachments.js";
+import {
+  createProjectAttachmentFetcher,
+  type FetchProjectAttachment,
+} from "./project-attachments.js";
+import {
   assertNativeAddonCurrent,
   readNativeAddonStatus,
   ToolRuntime,
   type ToolDispatchFrame,
+  type ToolExecutionResult,
 } from "./tool-runtime.js";
 import { watchSocketClose, WSSession } from "./ws-session.js";
 
@@ -36,7 +46,7 @@ import { watchSocketClose, WSSession } from "./ws-session.js";
 const CLIENT_COMMAND_QUEUE_LIMIT = 256;
 const WS_ATTACH_TIMEOUT_MS = 10_000;
 
-interface ClientRuntime {
+export interface ClientRuntime {
   bootId: string;
   executor: Executor;
   /** machineId this boot serves (the hostId; set with the identity). */
@@ -52,6 +62,10 @@ interface ClientRuntime {
   /** Coalesced uplink flush; a per-session timer like the heartbeat (#38). */
   flushTimer: NodeJS.Timeout | null;
   connectedAt: number;
+  /** Live session id (#318): the pickup query's session binding leg. */
+  sessionId: string | null;
+  /** Session-scoped attachment pickup (#318); null while disconnected. */
+  attachmentFetcher: FetchProjectAttachment | null;
   /** Command queue bound (§8.3): serial per-client processing. */
   readonly queue: (() => void)[];
   queueBusy: boolean;
@@ -69,6 +83,8 @@ export async function runClient(config: ClientConfig): Promise<void> {
     heartbeatTimer: null,
     flushTimer: null,
     connectedAt: 0,
+    sessionId: null,
+    attachmentFetcher: null,
     queue: [],
     queueBusy: false,
   };
@@ -88,6 +104,9 @@ export async function runClient(config: ClientConfig): Promise<void> {
     sessionLifetime: () => sessionLifetime(runtime),
     teardownSession: () => {
       clearSessionTimers(runtime);
+      // #318: the session-scoped pickup dies with the session.
+      runtime.sessionId = null;
+      runtime.attachmentFetcher = null;
     },
   });
 }
@@ -132,6 +151,13 @@ async function establishSession(
   };
   log(`session ${open.sessionId} opened (heartbeat ${open.heartbeatIntervalMs}ms)`);
   runtime.machineId ??= identity.hostId;
+  runtime.sessionId = open.sessionId;
+  runtime.attachmentFetcher = createProjectAttachmentFetcher({
+    baseUrl: config.baseUrl,
+    hostId: identity.hostId,
+    hostKey: identity.hostKey,
+    getSessionId: () => runtime.sessionId,
+  });
 
   const wsUrl = `${config.baseUrl.replace(/^http/, "ws")}/ws?hostId=${encodeURIComponent(identity.hostId)}&sessionId=${encodeURIComponent(open.sessionId)}`;
   // Bun extends the WHATWG constructor with per-socket headers (bb Bearer
@@ -502,12 +528,68 @@ function toolRuntimeOf(runtime: ClientRuntime, config: ClientConfig): ToolRuntim
 }
 
 /**
+ * #318: the dispatch's attachment leg stages before the tool runs (bb
+ * stageThreadCommandInput, thread.ts:132-166). A staging failure is a
+ * business error result (upstream CommandDispatchError
+ * attachment_unavailable — the host is online, the input is unavailable),
+ * never a refuse-spawn; a crash AFTER staging cleans the staged files first
+ * (bb cleanupAfterPostStagingFailure) and keeps its throw. Success
+ * intentionally leaves the files in place — thread storage outlives the
+ * dispatch (upstream cleans only the failure paths).
+ */
+async function executeStagedDispatch(
+  args: {
+    runtime: ClientRuntime;
+    toolRuntime: ToolRuntime;
+    dispatchFrame: ToolDispatchFrame;
+    attachments: NonNullable<Extract<ServiceFrame, { type: "tool.exec" }>["attachments"]>;
+    /** The frame's thread leg — the staging directory name (bb threadId). */
+    threadId: string;
+    /** The sandbox root IS the thread storage root (bb threadStorageRootPath). */
+    sandboxRoot: string;
+  },
+  onOutput: (chunk: string) => void,
+): Promise<ToolExecutionResult> {
+  const { runtime, toolRuntime, dispatchFrame, attachments, threadId, sandboxRoot } = args;
+  const fetcher = runtime.attachmentFetcher;
+  if (fetcher === null) {
+    return {
+      status: "error",
+      exitCode: null,
+      output: "attachment pickup requires an open session",
+    };
+  }
+  let staged: StagedPromptAttachments;
+  try {
+    staged = await stagePromptAttachments({
+      fetchProjectAttachment: fetcher,
+      input: attachments.items,
+      projectId: attachments.projectId,
+      threadStorageRootPath: sandboxRoot,
+      threadId,
+    });
+  } catch (error) {
+    return {
+      status: "error",
+      exitCode: null,
+      output: error instanceof Error ? error.message : String(error),
+    };
+  }
+  try {
+    return await toolRuntime.execute(dispatchFrame, onOutput);
+  } catch (error) {
+    await cleanupAfterPostStagingFailure(staged.cleanup);
+    throw error;
+  }
+}
+
+/**
  * Host-tool dispatch (T5'): relay the tool-agnostic frame into the embedded
  * omp runtime. The execution is kicked off, never awaited inline (the §8.3
  * serial queue stays synchronous); output streams through the same offset
  * buffer as bash, and the structured projection closes with tool.exited.
  */
-function dispatchToolExec(
+export function dispatchToolExec(
   runtime: ClientRuntime,
   config: ClientConfig,
   socket: WebSocket,
@@ -527,9 +609,24 @@ function dispatchToolExec(
     ...(frame.workspace !== undefined ? { workspace: frame.workspace } : {}),
   };
   if (!toolRuntime.running.has(frame.executionId)) {
-    const execution = toolRuntime.execute(dispatchFrame_, (chunk) => {
-      existing.append(chunk);
-    });
+    const execution =
+      frame.attachments === undefined
+        ? toolRuntime.execute(dispatchFrame_, (chunk) => {
+            existing.append(chunk);
+          })
+        : executeStagedDispatch(
+            {
+              runtime,
+              toolRuntime,
+              dispatchFrame: dispatchFrame_,
+              attachments: frame.attachments,
+              threadId: frame.threadId,
+              sandboxRoot: config.sandboxRoot,
+            },
+            (chunk) => {
+              existing.append(chunk);
+            },
+          );
     void execution
       .then((result) => {
         existing.exited = { exitCode: null, signal: null, finalOffset: existing.end };
