@@ -146,6 +146,70 @@ export const toolExitedFrameSchema = z.object({
   result: toolResultPayloadSchema,
 });
 
+// ---------------------------------------------------------------------------
+// Host online RPC (#302) — bb's host-rpc transport (host-daemon-contract
+// session.ts:359-492, commands.ts:623-692), command face subset: the control
+// plane asks the connected daemon one-shot questions (directory browsing
+// today). Wire names follow bb verbatim: `host-rpc.request` /
+// `host-rpc.response`, failure carrying errorCode/errorMessage.
+// ---------------------------------------------------------------------------
+
+export const hostBrowseDirectoryCommandSchema = z.object({
+  type: z.literal("host.browse_directory"),
+  // Absolute directory to list. Omitted means the host's home directory,
+  // which the daemon resolves — a remote caller has no way to know the
+  // host's home (bb host-daemon-contract commands.ts:623-628).
+  path: z.string().min(1).optional(),
+});
+export type HostBrowseDirectoryCommand = z.infer<typeof hostBrowseDirectoryCommandSchema>;
+
+export const hostRpcCommandSchema = z.discriminatedUnion("type", [
+  hostBrowseDirectoryCommandSchema,
+]);
+export type HostRpcCommand = z.infer<typeof hostRpcCommandSchema>;
+
+export const hostDirectoryEntrySchema = z.object({
+  kind: z.enum(["file", "directory"]),
+  name: z.string(),
+  path: z.string(),
+});
+export type HostDirectoryEntry = z.infer<typeof hostDirectoryEntrySchema>;
+
+export const hostDirectoryListingSchema = z.object({
+  // Resolved absolute directory that was listed (symlinks already followed).
+  directory: z.string(),
+  // Absolute parent directory, or null at the filesystem root.
+  parent: z.string().nullable(),
+  entries: z.array(hostDirectoryEntrySchema),
+});
+export type HostDirectoryListing = z.infer<typeof hostDirectoryListingSchema>;
+
+export const hostRpcRequestFrameSchema = z.object({
+  type: z.literal("host-rpc.request"),
+  requestId: z.string().min(1),
+  command: hostRpcCommandSchema,
+});
+export type HostRpcRequestFrame = z.infer<typeof hostRpcRequestFrameSchema>;
+
+export const hostRpcResponseFrameSchema = z.discriminatedUnion("ok", [
+  z.object({
+    type: z.literal("host-rpc.response"),
+    requestId: z.string().min(1),
+    commandType: z.string().min(1),
+    ok: z.literal(true),
+    result: z.unknown(),
+  }),
+  z.object({
+    type: z.literal("host-rpc.response"),
+    requestId: z.string().min(1),
+    commandType: z.string().min(1),
+    ok: z.literal(false),
+    errorCode: z.string().min(1),
+    errorMessage: z.string().min(1),
+  }),
+]);
+export type HostRpcResponseFrame = z.infer<typeof hostRpcResponseFrameSchema>;
+
 export const clientFrameSchema = z.discriminatedUnion("type", [
   bootAnnounceFrameSchema,
   heartbeatFrameSchema,
@@ -156,6 +220,7 @@ export const clientFrameSchema = z.discriminatedUnion("type", [
   execExitedFrameSchema,
   execKilledAckFrameSchema,
   toolExitedFrameSchema,
+  hostRpcResponseFrameSchema,
 ]);
 export type ClientFrame = z.infer<typeof clientFrameSchema>;
 export type ExecStartedFrame = Extract<ClientFrame, { type: "exec.started" }>;
@@ -166,6 +231,7 @@ export type ExecExitedFrame = Extract<ClientFrame, { type: "exec.exited" }>;
 export type ExecKilledAckFrame = Extract<ClientFrame, { type: "exec.killed_ack" }>;
 export type BootAnnounceReceived = Extract<ClientFrame, { type: "boot.announce" }>;
 export type ToolExitedFrame = Extract<ClientFrame, { type: "tool.exited" }>;
+export type HostRpcResponseReceived = Extract<ClientFrame, { type: "host-rpc.response" }>;
 
 // ---------------------------------------------------------------------------
 // Service → client frames.
@@ -298,6 +364,7 @@ export const serviceFrameSchema = z.discriminatedUnion("type", [
   execForgetFrameSchema,
   syncCompleteFrameSchema,
   errorFrameSchema,
+  hostRpcRequestFrameSchema,
 ]);
 export type ServiceFrame = z.infer<typeof serviceFrameSchema>;
 export type ExecSpawnServiceFrame = Extract<ServiceFrame, { type: "exec.spawn" }>;
