@@ -87,6 +87,7 @@ import {
   buildConversationOutline,
   buildActiveThinking,
   buildTimelinePage,
+  buildContextWindowUsage,
   mergeTimelineRows,
   projectTimelineRows,
   projectUnhandledProviderRows,
@@ -655,6 +656,9 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     if (kind === "latest" && !summaryOnly) {
       timelineLatestRowsCache.put(paramsKey, { maxSeq: latestSeq, rows: page.rows });
     }
+    // #308: context-window fill is latest-row-wins tail state; omitted when
+    // the thread has no usage row (the SPA renders no indicator then).
+    const contextWindowUsage = buildContextWindowUsage(events);
     return ctx.json({
       rows: summaryOnly ? [] : page.rows,
       activePromptMode: null,
@@ -664,6 +668,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       pendingTodos: null,
       goal: null,
       modelFallback: null,
+      ...(contextWindowUsage !== null ? { contextWindowUsage } : {}),
       timelinePage: page.page,
       maxSeq: latestSeq,
       ...(delta !== undefined ? { delta } : {}),
