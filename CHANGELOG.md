@@ -7,6 +7,25 @@
 
 ### Added
 
+- **#275 J2+J3+J4 委派行投影——task.* 折 spawnAgent 合成行 + backgroundTask 事件族 +
+  childRows 聚合**：ux 投影把 task journal 家族折成委派呈现。① ux-projection：`task.spawn_planned`
+  → 合成 `toolCall{spawnAgent}` 委派行（`arguments{senderThreadId, receiverThreadIds,
+  description, subagent_type}`——徽章数据进合成参数，#229 S1+S3）；`task.spawn_settled`
+  blocking（jobId null）走 turn 作用域 `item/completed`，background 走线程作用域终局；
+  `task.subagent_aborted` kill/call_signal/wall_clock/internal → interrupted 终局
+  （budget 是唯一可复活 abort，行保持 pending），首终局胜出（墓碑抗性）；transport 折叠
+  ——native task 工具行不再上 ux 面（#229 §2.3-1，双行即噪音；非 ok tool.result 保留为
+  取消防线）；pre-J1 journal（无归父锚）维持旧面。② protocol 增 `backgroundTask` item 与
+  线程作用域 `item/backgroundTask/progress|completed`（bb 同名同形：payload 带全量 item
+  状态、无 turnId；scope 裁定 thread-event-scope.ts:102-111 既有）；item id 沿 bb 代际
+  scheme `task:<spawnId>#<gen>`；parked/revived → progress（paused/running），按 bb
+  `CLAUDE_TASK_PROGRESS_THROTTLE_MS` 500ms 节流（journal 时间戳保证重放确定）。③ server
+  `projectTimelineRows` 增 delegation 分支：合成行物化为契约 `TimelineDelegationWorkRow`
+  （subagentType/description 抽自合成参数），family 终局按 `parentToolCallId` 折入
+  output/status（batch 共享裸锚时按 plan 序封首个 pending 行）；#274 J1 归父行
+  （toolCall/agentMessage）聚入 `childRows` 不再上顶层；委派行不注册 turn-pending——
+  background 行跨 turn 存活，turn/completed 清扫不误封。回放一致：投影为 journal 的纯
+  函数，全量重投逐字节相等。
 - **#274 J1 子代理呈现地基——delegation 归父字段 `parentToolCallId`**：protocol 事件面五处
   增补可选 `parentToolCallId`（toolCall/agentMessage/reasoning item 与 `item/agentMessage/
   delta`、`item/reasoning/textDelta`）——bb 三家先例的 item 级挂链字段，子代理活动/CoT
