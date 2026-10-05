@@ -1422,7 +1422,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           )
           .bind(nextStatus, Date.now(), threadId)
           .run();
-        if ((result.meta?.changes ?? 0) === 0) return;
+        if (result.meta.changes === 0) return;
         const hub = this.hubStub();
         if (hub === undefined) return;
         await hub.notifyThread(threadId, ["status-changed"]);

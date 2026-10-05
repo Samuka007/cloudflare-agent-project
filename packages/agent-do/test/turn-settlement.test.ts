@@ -26,18 +26,18 @@ interface SettlementRow {
 
 /** Narrowed once at the boundary: the binding is absent in non-rig suites. */
 function rigDb(): D1Database {
-  if (env === null || typeof env !== "object" || !("DB" in env)) {
+  if (typeof env !== "object" || !("DB" in env)) {
     throw new Error("DB binding missing from the vitest rig");
   }
   const candidate = env.DB;
-  if (candidate === undefined || candidate === null || typeof candidate !== "object") {
+  if (candidate === undefined || typeof candidate !== "object") {
     throw new Error("DB binding missing from the vitest rig");
   }
   return candidate as D1Database;
 }
 
 function rigHubNamespace(): DurableObjectNamespace {
-  if (env === null || typeof env !== "object" || !("HUB" in env)) {
+  if (typeof env !== "object" || !("HUB" in env)) {
     throw new Error("HUB binding missing from the vitest rig");
   }
   return env.HUB as DurableObjectNamespace;
