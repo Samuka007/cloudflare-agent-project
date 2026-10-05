@@ -61,9 +61,12 @@ export function estimateTurnTokens(events: readonly AnyAgentEvent[]): number {
     switch (event.type) {
       case "turn.input":
       case "turn.steer": {
-        // The M0 prompt surface is text-only (promptContentSchema) — every
-        // part carries text.
-        for (const part of event.data.content) count(part.text);
+        // #317 opened the prompt surface to image parts; only text parts
+        // carry estimable text (image byte sizes ride their attachment
+        // refs, counted where the result detours).
+        for (const part of event.data.content) {
+          if (part.type === "text") count(part.text);
+        }
         break;
       }
       case "model.call_completed": {
