@@ -64,6 +64,12 @@ export const agentMessageItemSchema = z.object({
   type: z.literal("agentMessage"),
   id: z.string().min(1),
   text: z.string(),
+  /**
+   * #274 J1 delegation attribution: the toolCall item (the delegation row)
+   * this message belongs to. Absent on root-turn rows; additive so pre-J1
+   * journals parse unchanged.
+   */
+  parentToolCallId: z.string().min(1).optional(),
 });
 
 export const commandExecutionItemSchema = z.object({
@@ -85,6 +91,11 @@ export const toolCallItemSchema = z.object({
   status: threadEventItemStatusSchema,
   output: z.string(),
   completedAt: z.number().nullable(),
+  /**
+   * #274 J1: parent delegation row for nested work (a subagent's own tool
+   * calls) — bb `parentToolCallId` semantics (#256 G2).
+   */
+  parentToolCallId: z.string().min(1).optional(),
 });
 
 /**
@@ -99,6 +110,11 @@ export const reasoningItemSchema = z.object({
   id: z.string().min(1),
   summary: z.array(z.string()),
   content: z.array(z.string()),
+  /**
+   * #274 J1: delegation attribution — subagent CoT attaches to the
+   * delegation row instead of the root turn's activeThinking.
+   */
+  parentToolCallId: z.string().min(1).optional(),
 });
 
 export const threadEventItemSchema = z.discriminatedUnion("type", [
@@ -165,6 +181,8 @@ export const threadEventDataSchemas = {
     turnId: turnIdField,
     itemId: z.string().min(1),
     delta: z.string(),
+    /** #274 J1: delegation attribution (see agentMessageItemSchema). */
+    parentToolCallId: z.string().min(1).optional(),
   }),
   /**
    * #257 CoT stream: the reasoning half of a model call, projected 1:1 from
@@ -177,6 +195,8 @@ export const threadEventDataSchemas = {
     turnId: turnIdField,
     itemId: z.string().min(1),
     delta: z.string(),
+    /** #274 J1: delegation attribution (see reasoningItemSchema). */
+    parentToolCallId: z.string().min(1).optional(),
   }),
   "item/completed": z.object({
     turnId: turnIdField,

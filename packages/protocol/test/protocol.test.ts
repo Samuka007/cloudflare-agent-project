@@ -208,3 +208,142 @@ describe("errors", () => {
     expect(err.retryable).toBe(false);
   });
 });
+
+describe("delegation attribution (#274 J1 parentToolCallId)", () => {
+  const envelope = (type: string, data: Record<string, unknown>, seq: number) => ({
+    threadId: "thr_d",
+    id: eventRowId("thr_d", seq),
+    seq,
+    type,
+    data,
+    createdAt: 2_000,
+  });
+
+  it("parses items and deltas carrying parentToolCallId", () => {
+    const delegation = "thr_parent:5";
+    const rows = [
+      envelope(
+        "item/started",
+        {
+          turnId: "turn_1",
+          item: {
+            type: "toolCall",
+            id: "thr_child:3",
+            tool: "read",
+            arguments: { path: "a.ts" },
+            status: "pending",
+            output: "",
+            completedAt: null,
+            parentToolCallId: delegation,
+          },
+        },
+        1,
+      ),
+      envelope(
+        "item/agentMessage/delta",
+        { turnId: "turn_1", itemId: "itm_a", delta: "hi", parentToolCallId: delegation },
+        2,
+      ),
+      envelope(
+        "item/reasoning/textDelta",
+        { turnId: "turn_1", itemId: "itm_r", delta: "th", parentToolCallId: delegation },
+        3,
+      ),
+      envelope(
+        "item/completed",
+        {
+          turnId: "turn_1",
+          item: {
+            type: "agentMessage",
+            id: "itm_a",
+            text: "hi",
+            parentToolCallId: delegation,
+          },
+        },
+        4,
+      ),
+      envelope(
+        "item/completed",
+        {
+          turnId: "turn_1",
+          item: {
+            type: "reasoning",
+            id: "itm_r",
+            summary: [],
+            content: ["thought"],
+            parentToolCallId: delegation,
+          },
+        },
+        5,
+      ),
+    ].map(parseThreadEvent);
+    expect(rows).toHaveLength(5);
+    for (const row of rows) {
+      // Deltas carry the field on the data payload; item events on the item.
+      if (row.type === "item/agentMessage/delta" || row.type === "item/reasoning/textDelta") {
+        expect(row.data.parentToolCallId).toBe(delegation);
+      }
+      if (row.type === "item/started" || row.type === "item/completed") {
+        const { item } = row.data;
+        if (item.type === "toolCall" || item.type === "agentMessage" || item.type === "reasoning") {
+          expect(item.parentToolCallId).toBe(delegation);
+        }
+      }
+    }
+  });
+
+  it("buildThreadEvent round-trips the field and rejects an empty id", () => {
+    const built = buildThreadEvent({
+      id: eventRowId("thr_d", 6),
+      threadId: "thr_d",
+      seq: 6,
+      type: "item/started",
+      data: {
+        turnId: "turn_1",
+        item: {
+          type: "toolCall",
+          id: "thr_child:3",
+          tool: "task",
+          arguments: {},
+          status: "pending",
+          output: "",
+          completedAt: null,
+          parentToolCallId: "thr_root:5",
+        },
+      },
+      createdAt: 2_000,
+    });
+    expect(parseThreadEvent(built)).toEqual(built);
+    const started = parseThreadEvent(built);
+    if (started.type !== "item/started") throw new Error("unreachable");
+    const empty = {
+      ...built,
+      data: {
+        ...started.data,
+        item: { ...started.data.item, parentToolCallId: "" },
+      },
+    };
+    expect(() => parseThreadEvent(empty)).toThrow();
+  });
+
+  it("legacy rows without the field still parse (additive, scheme A)", () => {
+    const legacy = envelope(
+      "item/started",
+      {
+        turnId: "turn_1",
+        item: {
+          type: "toolCall",
+          id: "thr_x:1",
+          tool: "bash",
+          arguments: {},
+          status: "completed",
+          output: "ok",
+          completedAt: 3,
+        },
+      },
+      7,
+    );
+    const parsed = parseThreadEvent(legacy);
+    expect(parsed.data.parentToolCallId).toBeUndefined();
+  });
+});
