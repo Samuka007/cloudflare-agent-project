@@ -15,7 +15,11 @@ import {
   intake,
   INTAKE_QUESTIONS,
   activeLeases,
+  acceptedNumbers,
   browserInvolved,
+  closeout,
+  closeoutGated,
+  closeoutLedger,
   ledger,
   lease,
   release,
@@ -29,6 +33,7 @@ import {
   resolveJeapiKey,
   slugify,
   snapshot,
+  type CloseoutEvent,
   type GqlFn,
   type JudgeAnswer,
   type JudgeReply,
@@ -2387,5 +2392,199 @@ describe("AP.audit rule 6 — browser lease drift (#240)", () => {
     );
     expect(rep.drift).toEqual([]);
     expect(rep.clean).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Closeout evidence ledger (#277) — the acceptance-lane gate's written
+// record; AP.closeout writes it, AP.audit rule 7 reads it.
+// ---------------------------------------------------------------------------
+
+const CLOSEOUT_PATH = "test-closeouts.jsonl";
+
+const acceptedEvent = (
+  over: Partial<CloseoutEvent> & Pick<CloseoutEvent, "number">,
+): CloseoutEvent => ({
+  event: "accepted",
+  source: "acceptance-lane",
+  evidence: `https://issue/${over.number}#comment`,
+  date: "2026-10-05T06:00:00Z",
+  deploymentVersion: "ece470f",
+  recordedAt: "2026-10-05T06:00:00Z",
+  ...over,
+});
+
+describe("closeout evidence ledger (#277)", () => {
+  const NOW = new Date("2026-10-05T12:00:00Z");
+
+  beforeEach(() => {
+    fsProbe.files.clear();
+    delete process.env.PM_CLOSEOUTS_PATH;
+  });
+
+  it("closeout records the evidence trio; closeoutLedger replays the accepted set", () => {
+    const rec = closeout(
+      266,
+      "acceptance-lane",
+      { evidence: "https://issue/266#comment", deploymentVersion: "ece470f" },
+      { path: CLOSEOUT_PATH, now: NOW },
+    );
+    expect(rec).toMatchObject({
+      event: "accepted",
+      number: 266,
+      source: "acceptance-lane",
+      evidence: "https://issue/266#comment",
+      deploymentVersion: "ece470f",
+      date: NOW.toISOString(),
+      recordedAt: NOW.toISOString(),
+    });
+    const view = closeoutLedger({ path: CLOSEOUT_PATH });
+    expect(view.events).toHaveLength(1);
+    expect([...view.accepted]).toEqual([266]);
+    // dedup by number: two accepted entries for one ticket = one member
+    expect([
+      ...acceptedNumbers([acceptedEvent({ number: 266 }), acceptedEvent({ number: 266 })]),
+    ]).toEqual([266]);
+  });
+
+  it("refuses an incomplete trio with zero writes — 无证据不关票", () => {
+    expect(() =>
+      closeout(
+        266,
+        "acceptance-lane",
+        { evidence: "   ", deploymentVersion: "ece470f" },
+        { path: CLOSEOUT_PATH },
+      ),
+    ).toThrow(/evidence anchor is required/);
+    expect(() =>
+      closeout(
+        266,
+        "ci",
+        { evidence: "run link", deploymentVersion: "  " },
+        { path: CLOSEOUT_PATH },
+      ),
+    ).toThrow(/deploymentVersion is required/);
+    expect(() =>
+      closeout(
+        0,
+        "ci",
+        { evidence: "run link", deploymentVersion: "run-1" },
+        { path: CLOSEOUT_PATH },
+      ),
+    ).toThrow(/ticket number is required/);
+    expect(closeoutLedger({ path: CLOSEOUT_PATH }).events).toHaveLength(0);
+  });
+
+  it("re-accepting a reopened ticket appends; source records who verified", () => {
+    closeout(
+      266,
+      "acceptance-lane",
+      { evidence: "e1", deploymentVersion: "v1" },
+      { path: CLOSEOUT_PATH, now: NOW },
+    );
+    closeout(
+      266,
+      "ci",
+      { evidence: "e2", deploymentVersion: "run-9" },
+      { path: CLOSEOUT_PATH, now: new Date(NOW.getTime() + 1_000) },
+    );
+    const view = closeoutLedger({ path: CLOSEOUT_PATH });
+    expect(view.events).toHaveLength(2);
+    expect(view.events[1]).toMatchObject({ source: "ci", evidence: "e2" });
+    expect(view.accepted.has(266)).toBe(true);
+  });
+
+  it("PM_CLOSEOUTS_PATH redirects the default store; a missing file reads as an empty ledger", () => {
+    process.env.PM_CLOSEOUTS_PATH = "env-closeouts.jsonl";
+    closeout(266, "ci", { evidence: "run-1", deploymentVersion: "run-1" });
+    expect(closeoutLedger().accepted.has(266)).toBe(true);
+    expect(closeoutLedger({ path: CLOSEOUT_PATH }).events).toHaveLength(0);
+    expect(closeoutLedger({ path: "nope.jsonl" }).events).toHaveLength(0);
+  });
+
+  it("a corrupt jsonl line names the file and line", () => {
+    fsProbe.files.set(
+      CLOSEOUT_PATH,
+      `${JSON.stringify(acceptedEvent({ number: 266 }))}\nnot-json\n`,
+    );
+    expect(() => closeoutLedger({ path: CLOSEOUT_PATH })).toThrow(
+      /corrupt jsonl .*test-closeouts\.jsonl:2/,
+    );
+  });
+
+  it("closeoutGated scopes the gate to code-delivering labels", () => {
+    expect(closeoutGated(["type:implementation"])).toBe(true);
+    expect(closeoutGated(["type:bug"])).toBe(true);
+    expect(closeoutGated(["type:docs", "track:acceptance"])).toBe(false);
+    expect(closeoutGated([])).toBe(false);
+  });
+});
+
+describe("AP.audit rule 7 — closeout evidence drift (#277)", () => {
+  const NOW = new Date("2026-10-04T00:00:00Z");
+  const mk = (over: Partial<Ticket> & Pick<Ticket, "number">): Ticket => ({
+    id: `I${over.number}`,
+    title: `t${over.number}`,
+    body: "",
+    state: "CLOSED",
+    milestone: "M1",
+    labels: [],
+    blockedBy: [],
+    itemId: `PVTItem_${over.number}`,
+    status: "Done",
+    priority: null,
+    updatedAt: "2026-10-03T00:00:00Z",
+    ...over,
+  });
+  const implMk = (over: Partial<Ticket> & Pick<Ticket, "number">): Ticket =>
+    mk({ labels: ["type:implementation", "block:agent-harness"], ...over });
+
+  it("a delivered code ticket with no accepted entry is flagged mutation-free", () => {
+    const rep = audit({ tickets: [implMk({ number: 257 })] }, { closeouts: [], now: NOW });
+    expect(rep.drift.map((d) => [d.rule, d.number, d.mutation])).toEqual([
+      ["closeoutNoEvidence", 257, null],
+    ]);
+    expect(rep.mutations).toEqual([]);
+    expect(rep.drift[0]?.detail).toContain("AP.closeout(257");
+  });
+
+  it("an accepted closeout entry silences the rule; another ticket's entry does not", () => {
+    const silenced = audit(
+      { tickets: [implMk({ number: 266 })] },
+      { closeouts: [acceptedEvent({ number: 266 })], now: NOW },
+    );
+    expect(silenced.clean).toBe(true);
+    const otherTicket = audit(
+      { tickets: [implMk({ number: 266 })] },
+      { closeouts: [acceptedEvent({ number: 999 })], now: NOW },
+    );
+    expect(otherTicket.drift.map((d) => d.rule)).toEqual(["closeoutNoEvidence"]);
+  });
+
+  it("the gate fires on delivery only: open tickets and non-code tickets stay silent", () => {
+    const rep = audit(
+      {
+        tickets: [
+          implMk({ number: 280, state: "OPEN", status: "In Progress" }),
+          mk({ number: 239, labels: ["type:docs", "track:acceptance"] }),
+          mk({ number: 244, labels: ["wayfinder:research"] }),
+        ],
+      },
+      { closeouts: [], now: NOW },
+    );
+    expect(rep.drift).toHaveLength(0);
+  });
+
+  it("Status Done/Canceled without a CLOSED state is still delivered", () => {
+    const rep = audit(
+      { tickets: [implMk({ number: 254, state: "OPEN", status: "Canceled" })] },
+      { closeouts: [], now: NOW },
+    );
+    expect(rep.drift.map((d) => d.rule)).toEqual(["closeoutNoEvidence"]);
+  });
+
+  it("rule 7 is silent without the ledger — a missing store fabricates nothing", () => {
+    const rep = audit({ tickets: [implMk({ number: 257 })] }, { now: NOW });
+    expect(rep.drift).toHaveLength(0);
   });
 });

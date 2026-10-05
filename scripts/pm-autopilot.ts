@@ -30,6 +30,18 @@
  *     await AP.cascade(92);            // dry-run: prints unlocks + Backlog→Todo callbacks
  *     await AP.cascade(92, { confirm: true });
  *
+ * Closeout gate (#277 — 实现票交付→验收 lane 出证据→才可 merge/close):
+ *
+ *     AP.closeout(266, "acceptance-lane",
+ *                 { evidence: "comment-url", deploymentVersion: "ece470f" });
+ *                                      // records the evidence trio on the
+ *                                      // .pm-closeouts.jsonl ledger; refuses an
+ *                                      // incomplete trio (无证据不关票).
+ *     AP.audit(snap, { closeouts: AP.closeoutLedger().events });
+ *                                      // rule 7 closeoutNoEvidence: a delivered
+ *                                      // type:implementation/type:bug ticket with
+ *                                      // no accepted entry — backfill or reopen.
+ *
  * Ticket filing (#151) — intake-classified creation, the inverse of cascade:
  *
  *     await AP.file({ title, body, blockedBy: [150] });
@@ -1740,15 +1752,170 @@ function renderLeaseSection(plan: LaneLeasePlan): string {
 }
 
 // ---------------------------------------------------------------------------
+// Closeout evidence ledger (#277) — the acceptance-lane gate's written
+// record. The #243 assembly: a code-delivering ticket closes ONLY after
+// acceptance evidence exists — staging surfaces are box-checked by an
+// acceptance lane, pure-code surfaces by CI (pm.md 验收关账 item 3; PM
+// spot-checking is the wave-final sampling #246, never a close-out input).
+// The store is an append-only jsonl — one CloseoutEvent per line.
+// AP.closeout writes on acceptance; audit rule 7 reads (delivered without an
+// entry = the gate was skipped at closeout).
+// ---------------------------------------------------------------------------
+
+/** Who produced the accepted evidence. An acceptance lane verifies the
+ *  staging surface (真机操作+截图), CI verifies a pure-code surface; a PM
+ *  spot-check is neither — it is the #246 wave-final sampling. */
+export type AcceptanceSource = "acceptance-lane" | "ci";
+
+/** One jsonl line: the acceptance verdict that lets a ticket close. The
+ *  trio is mandatory (#239 paradigm): where the verdict lives, when it ran,
+ *  which deployment it ran against — 空框 (unchecked box) is not evidence. */
+export interface CloseoutEvent {
+  event: "accepted";
+  number: number;
+  source: AcceptanceSource;
+  /** Evidence anchor: acceptance comment / PR / CI run / report URL or
+   *  file:line — the thing a reviewer opens to re-check the verdict. */
+  evidence: string;
+  /** ISO 8601 — when the acceptance actually ran. */
+  date: string;
+  /** Deployment the evidence was taken against: SERVER_VERSION short sha
+   *  (`/api/v1/system/version`) for staging surfaces, the run id/ref for
+   *  CI surfaces. */
+  deploymentVersion: string;
+  /** When the gate recorded it (tests inject; default now). */
+  recordedAt: string;
+}
+
+export interface CloseoutOptions {
+  /** Ledger file override (default: `.pm-closeouts.jsonl` at the repo
+   *  root, or the `PM_CLOSEOUTS_PATH` env). */
+  path?: string;
+  /** Reference clock (tests inject; default now). */
+  now?: Date;
+}
+
+const DEFAULT_CLOSEOUTS_PATH = join(
+  dirname(dirname(fileURLToPath(import.meta.url))),
+  ".pm-closeouts.jsonl",
+);
+
+function readCloseoutEvents(path: string): CloseoutEvent[] {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return []; // missing store = nothing accepted yet — the honest empty
+  }
+  const events: CloseoutEvent[] = [];
+  for (const [i, line] of raw.split("\n").entries()) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    try {
+      events.push(JSON.parse(trimmed) as CloseoutEvent);
+    } catch {
+      throw new Error(
+        `AP.closeout ledger: corrupt jsonl at ${path}:${i + 1} — repair or delete the file`,
+      );
+    }
+  }
+  return events;
+}
+
+/** Numbers with a closeout on the ledger — audit rule 7's read view. The
+ *  ledger is accepted-only today ("accepted" is the sole event kind; it
+ *  names the record kind on disk the way LeaseEvent's does) — re-filter per
+ *  kind here when a second kind (revocation, exemption) joins the union. */
+export function acceptedNumbers(events: readonly CloseoutEvent[]): Set<number> {
+  return new Set(events.map((e) => e.number));
+}
+
+/** Code-delivering tickets the gate covers (#277: 实现票交付→验收 lane 出证据
+ *  →才可 merge/close). The W4 regression the gate answers (#254/#257/#266)
+ *  carried exactly these labels; docs/research/decision tickets ship no
+ *  runtime surface and stay outside the gate. */
+const CLOSEOUT_GATE_LABELS: Record<string, true> = {
+  "type:implementation": true,
+  "type:bug": true,
+};
+
+export function closeoutGated(labels: readonly string[]): boolean {
+  return labels.some((l) => CLOSEOUT_GATE_LABELS[l] === true);
+}
+
+/**
+ * Record acceptance evidence for a ticket (#277). REFUSES — zero writes —
+ * on an incomplete evidence trio: an acceptance without an evidence anchor
+ * or a deployment version is the 空框 gate pretending to have passed and
+ * cannot be re-checked later. Re-accepting a reopened ticket is legal
+ * (append-only; the newest accepted entry carries).
+ */
+export function closeout(
+  number: number,
+  source: AcceptanceSource,
+  evidence: { evidence: string; date?: string; deploymentVersion: string },
+  opts: CloseoutOptions = {},
+): CloseoutEvent {
+  if (!Number.isInteger(number) || number <= 0) {
+    throw new Error(
+      "AP.closeout: a ticket number is required — anonymous acceptance closes nothing",
+    );
+  }
+  const anchor = evidence.evidence.trim();
+  if (anchor.length === 0) {
+    throw new Error(
+      "AP.closeout: evidence anchor is required (acceptance comment / PR / CI run / " +
+        "report URL or file:line) — 无证据不关票",
+    );
+  }
+  const version = evidence.deploymentVersion.trim();
+  if (version.length === 0) {
+    throw new Error(
+      "AP.closeout: deploymentVersion is required (SERVER_VERSION sha for staging, " +
+        "run id/ref for CI) — evidence without a deployment cannot be re-checked",
+    );
+  }
+  const now = (opts.now ?? new Date()).toISOString();
+  const record: CloseoutEvent = {
+    event: "accepted",
+    number,
+    source,
+    evidence: anchor,
+    date: evidence.date ?? now,
+    deploymentVersion: version,
+    recordedAt: now,
+  };
+  appendFileSync(
+    opts.path ?? process.env.PM_CLOSEOUTS_PATH ?? DEFAULT_CLOSEOUTS_PATH,
+    `${JSON.stringify(record)}\n`,
+    "utf8",
+  );
+  return record;
+}
+
+/** Ledger view: every event plus the accepted set — the audit's rule-7
+ *  input (`closeouts: AP.closeoutLedger().events`). */
+export function closeoutLedger(opts: CloseoutOptions = {}): {
+  events: CloseoutEvent[];
+  accepted: Set<number>;
+} {
+  const events = readCloseoutEvents(
+    opts.path ?? process.env.PM_CLOSEOUTS_PATH ?? DEFAULT_CLOSEOUTS_PATH,
+  );
+  return { events, accepted: acceptedNumbers(events) };
+}
+
+// ---------------------------------------------------------------------------
 // AP.audit (#181) — per-beat drift rules. Pure: reads a snapshot, reports
 // board-vs-reality drift as findings + AP.apply-ready mutations, so the PM
 // beat reconciles in one guarded apply BEFORE dispatching.
 // ---------------------------------------------------------------------------
 
-/** Drift rule ids (#181, #240), disjoint — one finding per (ticket, rule):
+/** Drift rule ids (#181, #240, #277), disjoint — one finding per (ticket, rule):
  *  1 staleClosedStatus · 2 inProgressOnClosed · 3 laneStatusMismatch ·
  *  4 frontierAging · 6 browserLeaseMissing / browserLeaseCollision /
- *  browserLeaseUnreleased (armed only when `opts.leases` carries the ledger). */
+ *  browserLeaseUnreleased (armed only when `opts.leases` carries the ledger) ·
+ *  7 closeoutNoEvidence (armed only when `opts.closeouts` carries the ledger). */
 export type DriftRule =
   | "staleClosedStatus"
   | "inProgressOnClosed"
@@ -1756,7 +1923,8 @@ export type DriftRule =
   | "frontierAging"
   | "browserLeaseMissing"
   | "browserLeaseCollision"
-  | "browserLeaseUnreleased";
+  | "browserLeaseUnreleased"
+  | "closeoutNoEvidence";
 
 /** Rule-4 threshold: a dispatchable Todo untouched this many days is aged
  *  (reminder class — the repair is a dispatch, not a board write). */
@@ -1780,7 +1948,7 @@ export interface DriftFinding {
 export interface AuditReport {
   /** Findings in rule order (rules 1-3 in ticket order, then rule 4, then
    *  roster contradictions, then rule 6: missing in ticket order, unreleased
-   *  in ledger order, collisions last). */
+   *  in ledger order, collisions last, then rule 7 in ticket order). */
   drift: DriftFinding[];
   /** The apply-ready flat list — `AP.apply(rep.mutations, { confirm: true })`
    *  is the one-shot reconcile. */
@@ -1801,6 +1969,10 @@ export interface AuditOptions {
    *  Omitted → rule 6 is silent: audit stays pure, and a missing ledger must
    *  never fabricate browser-lease findings. */
   leases?: readonly LeaseEvent[];
+  /** Rule-7 input (#277): the closeout ledger — pass
+   *  `AP.closeoutLedger().events`. Omitted → rule 7 is silent: a missing
+   *  ledger must never fabricate closeout findings. */
+  closeouts?: readonly CloseoutEvent[];
 }
 
 /**
@@ -1834,6 +2006,13 @@ export interface AuditOptions {
  *     6c browserLeaseUnreleased — an active lease whose ticket is delivered
  *        (CLOSED, or Status Done/Canceled): the release obligation was
  *        skipped at closeout.
+ *  7. closeoutNoEvidence (#277, armed by `opts.closeouts`) — a delivered
+ *     code ticket (type:implementation / type:bug) with no accepted entry on
+ *     the closeout ledger: the 实现→验收→关账 gate was skipped — the ticket
+ *     merged/closed on self-report alone. Repair is an action, not a board
+ *     write: `AP.closeout(...)` backfills the evidence trio (回填, #266 the
+ *     first case) or the ticket reopens. Docs/research/decision tickets ship
+ *     no runtime surface and are outside the gate.
  */
 export function audit(snap: Pick<Snapshot, "tickets">, opts: AuditOptions = {}): AuditReport {
   const drift: DriftFinding[] = [];
@@ -1979,6 +2158,26 @@ export function audit(snap: Pick<Snapshot, "tickets">, opts: AuditOptions = {}):
           mutation: null,
         });
       }
+    }
+  }
+
+  // Rule 7 (#277): a delivered code ticket with nothing on the closeout
+  // ledger — the acceptance-lane gate did not run before merge/close.
+  if (opts.closeouts !== undefined) {
+    const accepted = acceptedNumbers(opts.closeouts);
+    for (const t of snap.tickets) {
+      const delivered = t.state === "CLOSED" || t.status === "Done" || t.status === "Canceled";
+      if (!delivered || !closeoutGated(t.labels) || accepted.has(t.number)) continue;
+      drift.push({
+        rule: "closeoutNoEvidence",
+        number: t.number,
+        title: t.title,
+        detail:
+          "delivered with no acceptance evidence on the closeout ledger — " +
+          `backfill via AP.closeout(${t.number}, "acceptance-lane"|"ci", ` +
+          "{ evidence, deploymentVersion }) or reopen; close-out stays REFUSED without it",
+        mutation: null,
+      });
     }
   }
 
@@ -3208,6 +3407,8 @@ export const AP = {
   snapshot,
   dispatchable,
   audit,
+  closeout,
+  closeoutLedger,
   intake,
   classifyIntake,
   gateOf,
@@ -3234,6 +3435,8 @@ export const AP = {
     FRONTIER_AGE_DAYS,
     browserInvolved,
     activeLeases,
+    acceptedNumbers,
+    closeoutGated,
   },
   /** Judge layer: question oracle + real transport (tests mock via fetch). */
   judge: { INTAKE_QUESTIONS, JEV_URL, JEV_MODEL, defaultJudge },

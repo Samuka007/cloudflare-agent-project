@@ -7,6 +7,15 @@
 
 ### Added
 
+- **#277 验收 lane 接入关账门（#243 图收账）**：PM 循环固化「实现票交付→验收 lane 出证据→才可
+  merge/close」序列。`AP.closeout(number, "acceptance-lane"|"ci", { evidence, date?, deploymentVersion })`／
+  `AP.closeoutLedger`：仓内 append-only `.pm-closeouts.jsonl`（gitignored，`PM_CLOSEOUTS_PATH` 可改），
+  证据三件套（证据锚/日期/部署版本）不全硬拒（零写入，无证据不关票）；勾选权分面——staging 面=验收 lane
+  勾票面验收框，纯代码面=CI 勾，PM 抽验降为 wave 终检抽样（#246）不再作为关账输入。`AP.audit` 新增规则 7
+  （传 `closeouts: AP.closeoutLedger().events` 才武装）：closeoutNoEvidence——type:implementation/type:bug
+  票已交付而无 accepted 台账项=关账门被跳过，修复动作是 `AP.closeout` 回填（#266 首例）或重开票，无 mutation。
+  #239 首用范式模板化 `docs/agents/acceptance-lane.md`（grill 三靶 #245＋ephemeral 事实引用 #244＋租约登记
+  #240＋证据三件套）。L1：scripts/test/pm-autopilot.test.ts 关账台账／audit 规则 7 两组 11 例。
 - **#266 provider 只读投影面**（#255 方案 C：正本留部署 env，UI 只投影）。
   `GET /api/v1/system/provider-projections`：聚合 `projectHarness`（relay
   模式/baseUrl host/模型/key 存在性/thinking/权限模式/machine，复用既有无秘
