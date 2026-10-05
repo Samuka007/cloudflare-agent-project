@@ -4,6 +4,7 @@ import { DAEMON_PROTOCOL_VERSION } from "@cap/daemon-service";
 import { ensureMigrations } from "../migrate.js";
 import { projectAttachmentReader } from "../../src/services/attachment-pickup.js";
 import { env } from "../helpers.js";
+import type { Env } from "../../src/env.js";
 
 /**
  * #318 A3: the attachment pickup bridge — the deployment half of the daemon
@@ -22,6 +23,13 @@ const BOUND_HOST_ID = "local";
 function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   return exports.default.fetch(`https://example.com${path}`, init);
 }
+
+/**
+ * The helpers' env carries the wrangler-generated namespace types; the
+ * bridge is typed against the app's structural Env — the rig object IS the
+ * deployment env, so the seam is a named one-line cast, not a re-wrap.
+ */
+const reader = projectAttachmentReader(env as unknown as Env);
 
 async function seedProject(hostId: string): Promise<string> {
   const response = await apiFetch("/api/v1/projects", {
@@ -108,7 +116,7 @@ describe("#318 attachment pickup bridge (composed deployment)", () => {
   it("serves the R2 bytes for the bound thread's project with mime metadata", async () => {
     const { projectId, threadId, storedPath, bytes } = await seedFixture();
 
-    const result = await projectAttachmentReader(env)({
+    const result = await reader({
       hostId: BOUND_HOST_ID,
       query: {
         hostId: BOUND_HOST_ID,
@@ -128,7 +136,7 @@ describe("#318 attachment pickup bridge (composed deployment)", () => {
     const { threadId } = await seedFixture();
     const otherProject = await seedProject(BOUND_HOST_ID);
 
-    const result = await projectAttachmentReader(env)({
+    const result = await reader({
       hostId: BOUND_HOST_ID,
       query: {
         hostId: BOUND_HOST_ID,
@@ -149,7 +157,7 @@ describe("#318 attachment pickup bridge (composed deployment)", () => {
   it("rejects a host the thread is not bound to (upstream verdict verbatim)", async () => {
     const { projectId, threadId } = await seedFixture();
 
-    const result = await projectAttachmentReader(env)({
+    const result = await reader({
       hostId: `${BOUND_HOST_ID}_stranger`,
       query: {
         hostId: `${BOUND_HOST_ID}_stranger`,
@@ -170,7 +178,7 @@ describe("#318 attachment pickup bridge (composed deployment)", () => {
   it("surfaces the A1 404 for an absent attachment path", async () => {
     const { projectId, threadId } = await seedFixture();
 
-    const result = await projectAttachmentReader(env)({
+    const result = await reader({
       hostId: BOUND_HOST_ID,
       query: {
         hostId: BOUND_HOST_ID,

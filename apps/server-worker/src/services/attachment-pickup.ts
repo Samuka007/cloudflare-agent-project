@@ -1,7 +1,4 @@
-import type {
-  ProjectAttachmentContentResult,
-  WorkerEnv as DaemonServiceWorkerEnv,
-} from "@cap/daemon-service";
+import type { ProjectAttachmentContentResult, ProjectAttachmentReader } from "@cap/daemon-service";
 import { getThreadRow } from "../db/control-plane.js";
 import { getEnvironmentRow } from "../db/environments.js";
 import { deploymentHostId } from "./thread-binding.js";
@@ -25,7 +22,7 @@ import type { Env } from "../env.js";
  * - the byte read is A1's R2 attachment face (#316) — escape/missing/binding
  *   ApiErrors surface verbatim.
  */
-export function projectAttachmentReader(env: Env): DaemonServiceWorkerEnv["readProjectAttachment"] {
+export function projectAttachmentReader(env: Env): ProjectAttachmentReader {
   return async ({ hostId, query }): Promise<ProjectAttachmentContentResult> => {
     const thread = await getThreadRow(env, query.threadId);
     if (thread === null) {
