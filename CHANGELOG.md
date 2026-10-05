@@ -230,6 +230,15 @@ projection`）渲染只读投影 + 「编辑走部署 env」指针（对照 ops/
   `priorTurns` 进请求（#147 rewind 截断的 pre-boundary turn 仍由 branch summary
   替代、不回流）；L2 断言钉 child reminder turn 上下文含派发 task 原文
   （task-chain.test.ts）+ 纯投影四格（translate.test.ts）。
+- **#295 (P1) staging 部署链缺 D1 迁移步骤——0002 从未应用（#288 走查发现，
+  `/api/v1/environments` 500）**：`deploy-staging.sh` 在 `wrangler deploy` 前按
+  字典序幂等重放 `apps/server-worker/migrations/*.sql`（`wrangler d1 execute
+  --remote --file`，任一失败即中止部署；无账本表，幂等 DDL 重放天然吸收 0001
+  手工应用基线）；0001/0002 全语句 `IF NOT EXISTS` / 种子 `INSERT OR IGNORE`
+  化（幂等契约注记入迁移文件头）；CD 冒烟增 `GET /api/v1/environments` 200
+  防回归；迁移 runbook `docs/ops/staging-d1-migrations.md`；测试侧
+  `ensureMigrations` 改为与部署相同的全量重放语义，新增
+  `migrations-replay.test.ts` 钉幂等契约（已迁移库上重放零错、重复种子/丢行即红）。
 
 ## [m1.5] — 2026-10-04 · 工具集完备（omp 33 工具面边缘化）
 

@@ -56,8 +56,12 @@ jobs:
       # runners are acceptable while staging sits on workers.dev with Access
       # off, but must move to local/self-hosted once the Access front lands
       # (docs/research/cf-access-agent-compat.md:130-131).
+      # /environments is the migration regression guard (#295): 0002 reached
+      # main without ever being applied to staging and this endpoint 500'd —
+      # a failed/missing deploy-chain migration resurfaces here as non-200.
       - name: Post-deploy version smoke (informative)
         continue-on-error: true
         run: |
           sleep 5
           curl -fsS https://cap-server-staging.dai-samuel.workers.dev/api/v1/system/version
+          curl -fsS https://cap-server-staging.dai-samuel.workers.dev/api/v1/environments
