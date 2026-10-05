@@ -27,7 +27,7 @@
 - **staging 滞后事实**：handoff 记录当前 staging=76a00b9（docs/ops/handoff-2026-10-04.md:26）；main 此后已前进（本分支 base=6e08936）。
 
 **U1 缺口**：
-1. **D1 schema 不在任何流水线**：`apps/server-worker/migrations/0001_control_plane.sql` 全仓唯一 schema 源（bb schema 8473d8c33 手工移植，:3-4）；测试侧经 test/migrate.ts 应用（test/migrate.ts:4-8），部署侧 staging-deploy **无任何 `wrangler d1` 步骤**（全仓无 `wrangler d1` 引用，仅 bb 子模块内部自有 CI 有）。远端库 schema 现状=手工一次性应用 `[INFERENCE: 由上两事实归因]`。
+1. **D1 schema 不在任何流水线**：`apps/server-worker/migrations/0001_control_plane.sql` 全仓唯一 schema 源（bb schema 8473d8c33 手工移植，:3-4）；测试侧经 test/migrate.ts 应用（test/migrate.ts:4-8），部署侧 staging-deploy **无任何 `wrangler d1` 步骤**（全仓无 `wrangler d1` 引用，仅 bb 子模块内部自有 CI 有）。远端库 schema 现状=手工一次性应用 `[INFERENCE: 由上两事实归因]`。**（#295 已闭环：deploy-staging.sh 在 deploy 前幂等重放 `migrations/*.sql`，runbook docs/ops/staging-d1-migrations.md。）**
 2. **手动部署**：无 CD workflow（.github/ 仅 ci.yml + project-board-sync.yml），merge→deploy 无钩子。
 3. **SERVER_VERSION 机制 quirk**：经 `versions secret put`（version-scoped）先于 `wrangler deploy` 盖章（flake.nix:71,73）；version-scoped secret 与后续普通 deploy 的交互**未验证**（JOINT-UNKNOWN，§5）。
 4. **staging relay mock 模式**：MODEL_RELAY_* secret 缺席，live glm-5.3 挂起问题 #34 未决（wrangler.staging.jsonc:5-8 注释记录）。
@@ -85,7 +85,7 @@
 
 1. **发布产物不存在**：所有单元的"构建入口"终点都是 `wrangler deploy`（CF 侧拉源码自打包）或 Bun 直跑源码；仓内无任何版本化 artifact 可被远端机器消费——与 #162 "本机构建 nix 打包+远端薄消费" 的目标面之间目前是**零产物**状态。
 2. **唯一部署入口是手工命令** `nix run .#staging-deploy`（engineering.md:42），且要求构建机有 node_modules + bb submodule + .dev.vars（flake.nix:29-44）——即隐含"repo checkout 全量环境"，非闭包消费形态。
-3. **D1 schema 无流水线位**（U1 缺口 1）。
+3. **D1 schema 无流水线位**（U1 缺口 1；#295 已闭环——部署链幂等重放）。
 4. **daemon 客户端零打包零版本**（U3）——远端 NixOS（cap-verify）若要跑 daemon，现有入口形态不可直接消费。
 5. **6/7 wrangler 配置无部署路径**：2 个降级库的配置残留 + 3 个 dev rig + 1 个 M0 占位；只有 staging 一条活路。清理与否则是打包选型时的输入事实。
 6. **版本溯源三点分离**：worker 版本=runtime secret（SERVER_VERSION）、SPA 版本=submodule pin（部署时 echo）、daemon=无。无统一 release 号。

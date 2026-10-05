@@ -4,8 +4,17 @@
 -- drizzle-era definitions port directly). OUT-of-M0-family tables that later
 -- milestones need for joins (host_daemon_sessions, pending_interactions) are
 -- created here so the ported queries stay single-dialect.
+-- milestones need for joins (host_daemon_sessions, pending_interactions) are
+-- created here so the ported queries stay single-dialect.
+--
+-- #295: the staging deploy chain replays every migrations/*.sql on EVERY
+-- deploy (scripts/deploy-staging.sh), against any DB state from bare to
+-- fully-migrated. Every statement in this file MUST therefore stay
+-- idempotent: CREATE ... IF NOT EXISTS, and seeds guarded by a uniqueness
+-- constraint via INSERT OR IGNORE. A migration that needs a non-idempotent
+-- step (ALTER, data backfill) must gate itself on sqlite_master/row probes.
 
-CREATE TABLE projects (
+CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY NOT NULL,
   kind TEXT NOT NULL DEFAULT 'standard',
   name TEXT NOT NULL,
@@ -15,17 +24,18 @@ CREATE TABLE projects (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
-CREATE INDEX projects_updated_idx ON projects (updated_at);
-CREATE INDEX projects_deleted_idx ON projects (deleted_at);
-CREATE INDEX projects_sort_idx ON projects (sort_key, id);
-CREATE UNIQUE INDEX projects_personal_singleton_idx ON projects (kind) WHERE kind = 'personal';
+CREATE INDEX IF NOT EXISTS projects_updated_idx ON projects (updated_at);
+CREATE INDEX IF NOT EXISTS projects_deleted_idx ON projects (deleted_at);
+CREATE INDEX IF NOT EXISTS projects_sort_idx ON projects (sort_key, id);
+CREATE UNIQUE INDEX IF NOT EXISTS projects_personal_singleton_idx ON projects (kind) WHERE kind = 'personal';
 
 -- bb requires the personal singleton to exist (sidebar bootstrap 500s
 -- otherwise); seed it like bb's provisioning does.
-INSERT INTO projects (id, kind, name, git_remote_url, sort_key, deleted_at, created_at, updated_at)
+-- OR IGNORE rides the partial unique index above: first run seeds, replays no-op.
+INSERT OR IGNORE INTO projects (id, kind, name, git_remote_url, sort_key, deleted_at, created_at, updated_at)
 VALUES ('proj_personal', 'personal', 'Personal', NULL, 'V', NULL, strftime('%s','now') * 1000, strftime('%s','now') * 1000);
 
-CREATE TABLE hosts (
+CREATE TABLE IF NOT EXISTS hosts (
   id TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
   type TEXT NOT NULL,
@@ -37,9 +47,9 @@ CREATE TABLE hosts (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
-CREATE INDEX hosts_last_seen_idx ON hosts (last_seen_at);
+CREATE INDEX IF NOT EXISTS hosts_last_seen_idx ON hosts (last_seen_at);
 
-CREATE TABLE host_daemon_sessions (
+CREATE TABLE IF NOT EXISTS host_daemon_sessions (
   id TEXT PRIMARY KEY NOT NULL,
   host_id TEXT NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
   instance_id TEXT NOT NULL,
@@ -56,19 +66,19 @@ CREATE TABLE host_daemon_sessions (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
-CREATE INDEX host_daemon_sessions_host_status_idx ON host_daemon_sessions (host_id, status);
-CREATE INDEX host_daemon_sessions_host_latest_idx ON host_daemon_sessions (host_id, updated_at, created_at, id);
-CREATE INDEX host_daemon_sessions_closed_prune_idx ON host_daemon_sessions (status, closed_at, id);
+CREATE INDEX IF NOT EXISTS host_daemon_sessions_host_status_idx ON host_daemon_sessions (host_id, status);
+CREATE INDEX IF NOT EXISTS host_daemon_sessions_host_latest_idx ON host_daemon_sessions (host_id, updated_at, created_at, id);
+CREATE INDEX IF NOT EXISTS host_daemon_sessions_closed_prune_idx ON host_daemon_sessions (status, closed_at, id);
 
-CREATE TABLE thread_sections (
+CREATE TABLE IF NOT EXISTS thread_sections (
   id TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX thread_sections_name_idx ON thread_sections (name);
+CREATE UNIQUE INDEX IF NOT EXISTS thread_sections_name_idx ON thread_sections (name);
 
-CREATE TABLE threads (
+CREATE TABLE IF NOT EXISTS threads (
   id TEXT PRIMARY KEY NOT NULL,
   project_id TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
   environment_id TEXT,
@@ -93,22 +103,22 @@ CREATE TABLE threads (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
-CREATE INDEX threads_project_updated_idx ON threads (project_id, updated_at);
-CREATE INDEX threads_project_archived_deleted_idx ON threads (project_id, archived_at, deleted_at, id);
-CREATE INDEX threads_pin_sort_idx ON threads (archived_at, deleted_at, pin_sort_key, id) WHERE pinned_at IS NOT NULL;
-CREATE INDEX threads_parent_idx ON threads (parent_thread_id);
-CREATE INDEX threads_source_origin_idx ON threads (source_thread_id, origin_kind);
-CREATE INDEX threads_section_archived_deleted_idx ON threads (section_id, archived_at, deleted_at, id);
-CREATE INDEX threads_archived_status_idx ON threads (archived_at, status);
+CREATE INDEX IF NOT EXISTS threads_project_updated_idx ON threads (project_id, updated_at);
+CREATE INDEX IF NOT EXISTS threads_project_archived_deleted_idx ON threads (project_id, archived_at, deleted_at, id);
+CREATE INDEX IF NOT EXISTS threads_pin_sort_idx ON threads (archived_at, deleted_at, pin_sort_key, id) WHERE pinned_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS threads_parent_idx ON threads (parent_thread_id);
+CREATE INDEX IF NOT EXISTS threads_source_origin_idx ON threads (source_thread_id, origin_kind);
+CREATE INDEX IF NOT EXISTS threads_section_archived_deleted_idx ON threads (section_id, archived_at, deleted_at, id);
+CREATE INDEX IF NOT EXISTS threads_archived_status_idx ON threads (archived_at, status);
 
-CREATE TABLE thread_tabs (
+CREATE TABLE IF NOT EXISTS thread_tabs (
   thread_id TEXT PRIMARY KEY NOT NULL REFERENCES threads (id) ON DELETE CASCADE,
   tabs_json TEXT NOT NULL,
   revision INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
 
-CREATE TABLE pending_interactions (
+CREATE TABLE IF NOT EXISTS pending_interactions (
   id TEXT PRIMARY KEY NOT NULL,
   thread_id TEXT NOT NULL REFERENCES threads (id) ON DELETE CASCADE,
   origin_kind TEXT NOT NULL DEFAULT 'provider',
@@ -127,12 +137,12 @@ CREATE TABLE pending_interactions (
   resolved_at INTEGER,
   updated_at INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX pending_interactions_provider_request_idx ON pending_interactions (provider_id, provider_thread_id, provider_request_id);
-CREATE INDEX pending_interactions_thread_created_idx ON pending_interactions (thread_id, created_at);
-CREATE INDEX pending_interactions_thread_status_created_idx ON pending_interactions (thread_id, status, created_at);
-CREATE INDEX pending_interactions_status_created_idx ON pending_interactions (status, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS pending_interactions_provider_request_idx ON pending_interactions (provider_id, provider_thread_id, provider_request_id);
+CREATE INDEX IF NOT EXISTS pending_interactions_thread_created_idx ON pending_interactions (thread_id, created_at);
+CREATE INDEX IF NOT EXISTS pending_interactions_thread_status_created_idx ON pending_interactions (thread_id, status, created_at);
+CREATE INDEX IF NOT EXISTS pending_interactions_status_created_idx ON pending_interactions (status, created_at);
 
-CREATE TABLE app_settings (
+CREATE TABLE IF NOT EXISTS app_settings (
   id TEXT PRIMARY KEY NOT NULL,
   caffeinate INTEGER NOT NULL DEFAULT 0,
   show_keyboard_hints INTEGER NOT NULL DEFAULT 1,
@@ -148,19 +158,19 @@ CREATE TABLE app_settings (
   updated_at INTEGER NOT NULL
 );
 
-CREATE TABLE system_experiments (
+CREATE TABLE IF NOT EXISTS system_experiments (
   key TEXT PRIMARY KEY NOT NULL,
   value INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
 
-CREATE TABLE app_theme (
+CREATE TABLE IF NOT EXISTS app_theme (
   id TEXT PRIMARY KEY NOT NULL,
   theme_id TEXT NOT NULL,
   favicon_color TEXT
 );
 
-CREATE TABLE project_sources (
+CREATE TABLE IF NOT EXISTS project_sources (
   id TEXT PRIMARY KEY NOT NULL,
   project_id TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
   is_default INTEGER NOT NULL DEFAULT 0,
