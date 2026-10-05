@@ -53,6 +53,7 @@ import { projectToUxEvents } from "./ux-projection.js";
 import { getAgentRuntime } from "./injection.js";
 import { modelRequestFromEvents } from "./translate.js";
 import { toolRegistryRow, type ToolRegistryRow } from "./tools/registry.js";
+import { resolveHostPathOverride, type HostPathResolution } from "./tools/host-path.js";
 import { latestContextNotes, runEdgeTool, type EdgeToolContext } from "./tools/edge.js";
 import {
   projectJobs,
@@ -1562,6 +1563,11 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       return;
     }
     if (event.type === "tool.dispatch" && event.data.outcome === "host_offline") {
+      // #289: an override-target offline is a tool-level explicit failure —
+      // the BOUND host may be perfectly alive and the turn continues on it.
+      // `host_lost` stays the bound-machine marker; the override error
+      // result already tells the model what happened.
+      if (event.data.overriddenMachineId !== undefined) return;
       const turn = this.state.turns.get(event.data.turnId);
       if (turn !== undefined && !turn.phases.includes("host_lost")) {
         await this.appendEvent("turn.phase", {
@@ -2254,15 +2260,23 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   // -------------------------------------------------------------------------
 
   private daemon(): DaemonServiceClient {
+    return this.daemonFor(this.state.machineId ?? "local");
+  }
+
+  /**
+   * #289 host:path override: the per-dispatch resolution. A parameter-level
+   * override rides the TARGET machine's service DO (§2.2 — the frame's
+   * machineId leg already exists, zero protocol change); every other leg
+   * (ack/kill/ack-query/isolation) stays on the bound machine.
+   */
+  private daemonFor(machineId: string): DaemonServiceClient {
     const namespace = this.env.DAEMON_SERVICE;
     if (namespace !== undefined && this.threadId !== null) {
       // Binding-shaped stub; the interface is the seam contract (#30). The
       // service DO is per-machine (§1.2, model two): named by the thread's
       // machineId — the same name the daemon client opens its session under.
       // (#30 wrangler: "env.DAEMON_SERVICE.idFromName(machineId)").
-      return namespace.get(
-        namespace.idFromName(this.state.machineId ?? "local"),
-      ) as unknown as DaemonServiceClient;
+      return namespace.get(namespace.idFromName(machineId)) as unknown as DaemonServiceClient;
     }
     const registered = getAgentRuntime(this.requireThread()).daemon;
     if (registered === undefined) {
@@ -2272,6 +2286,55 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       );
     }
     return registered;
+  }
+
+  /**
+   * #289 B4 exec-tier gate: a host:path override is an exec-class operation
+   * (远端强制 exec 档). The TARGET host's permission ceiling is the grant —
+   * hosts.max_permission_mode must be "full"; anything narrower rejects
+   * BEFORE the remote DO stub resolves (连接前硬拒 — the rejection never
+   * reaches the target). An absent or destroyed registry row is
+   * `unknown_host`: the explicit failure, never a fallback to the bound
+   * machine (§2.2 last clause; the deployment-default machine gets its row
+   * from the attach bridge, so a live daemon always has one). Registry-
+   * unbound deployments (rig/standalone DO) cannot consult ceilings: the
+   * dispatch goes out and the target service DO's own session/machineId
+   * check remains the gate (`host_offline`). A bound registry that FAILS
+   * the read rejects (`registry_unavailable`) — a permission gate never
+   * silently fails open while blind. Point-in-time check: a ceiling change
+   * between re-asks re-evaluates, the same honesty a mid-run disconnect
+   * already gets.
+   */
+  private async checkOverrideTarget(hostId: string): Promise<string | null> {
+    const db = this.env.DB;
+    if (db === undefined) return null;
+    let row: { max_permission_mode: string; destroyed_at: number | null } | null;
+    try {
+      row = await db
+        .prepare("SELECT max_permission_mode, destroyed_at FROM hosts WHERE id = ?")
+        .bind(hostId)
+        .first<{ max_permission_mode: string; destroyed_at: number | null }>();
+    } catch (error) {
+      console.error(`hosts registry read failed for override target ${hostId}`, error);
+      return (
+        `registry_unavailable: the hosts registry read for "${hostId}" failed — ` +
+        `the ssh:// override is refused until the registry answers`
+      );
+    }
+    if (row === null) {
+      return `unknown_host: no registered host "${hostId}" for the ssh:// override`;
+    }
+    if (row.destroyed_at !== null) {
+      return `unknown_host: host "${hostId}" is destroyed (deletion is explicit and never resurrects)`;
+    }
+    if (row.max_permission_mode !== "full") {
+      return (
+        `exec_tier_required: a host:path override is an exec-class operation and host ` +
+        `"${hostId}" ceiling is "${row.max_permission_mode}" — raise the host ceiling or ` +
+        `run the call on the bound machine`
+      );
+    }
+    return null;
   }
 
   /** I4: the `tool.call` row is already durable before this can run. */
@@ -2319,15 +2382,57 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       }
       return;
     }
+    // #289 B1: parameter-level host:path override — resolved BEFORE the
+    // dispatch leaves the DO, deterministically from the journaled call
+    // arguments (a watchdog re-ask lands on the same target + rewrite; the
+    // service journal dedups by executionId). Parse failures and gate
+    // rejections ingest a structured error result directly — no
+    // `tool.dispatch` row, the same shape as the in-DO URI-read resolutions
+    // above; a routed override rides the TARGET machine's service DO with
+    // the deviation journaled on the row (B2).
+    const boundMachineId = this.state.machineId ?? "local";
+    const override: HostPathResolution =
+      callData?.type === "tool.call"
+        ? resolveHostPathOverride(toolName, callData.data.arguments)
+        : null;
+    if (override !== null && "error" in override) {
+      await this.ingestResult(
+        execution,
+        { status: "error", exitCode: null, output: override.error },
+        { ack: false },
+      );
+      return;
+    }
+    // A rewrite back to the bound machine (ssh://<bound>/…) is not a
+    // deviation: no gate, no journal field — the call stays where it was
+    // bound, only the prefix is stripped.
+    const overriddenMachineId =
+      override !== null && override.machineId !== boundMachineId ? override.machineId : null;
+    if (overriddenMachineId !== null) {
+      const rejected = await this.checkOverrideTarget(overriddenMachineId);
+      if (rejected !== null) {
+        await this.ingestResult(
+          execution,
+          { status: "error", exitCode: null, output: rejected },
+          { ack: false },
+        );
+        return;
+      }
+    }
     let outcome: DispatchOutcome;
     try {
-      outcome = await this.daemon().dispatch({
+      outcome = await this.daemonFor(overriddenMachineId ?? boundMachineId).dispatch({
         threadId,
         turnId,
         executionId,
-        machineId: this.state.machineId ?? "local",
+        machineId: overriddenMachineId ?? boundMachineId,
         tool: toolName,
-        arguments: callData?.type === "tool.call" ? callData.data.arguments : {},
+        arguments:
+          override !== null
+            ? override.arguments
+            : callData?.type === "tool.call"
+              ? callData.data.arguments
+              : {},
         timeoutMs: execution.timeoutMs,
       });
     } catch (error) {
@@ -2342,6 +2447,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       attempt: execution.attempts + 1,
       requestId: crypto.randomUUID(),
       outcome: outcome.kind,
+      ...(overriddenMachineId !== null ? { overriddenMachineId } : {}),
     });
     if (outcome.kind === "completed_cached") {
       await this.ingestResult(execution, outcome.result);
@@ -2351,7 +2457,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       await this.ingestResult(execution, {
         status: "error",
         exitCode: null,
-        output: "host_offline",
+        // Bound-machine offline keeps the M0 exact payload (ux placeholder
+        // matches on it); an override target names itself so the model can
+        // retry locally or against another host.
+        output:
+          overriddenMachineId === null
+            ? "host_offline"
+            : `host_offline: override target "${overriddenMachineId}" has no live daemon session`,
       });
     }
   }

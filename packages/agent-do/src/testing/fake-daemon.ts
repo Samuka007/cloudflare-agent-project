@@ -24,7 +24,20 @@ interface AgentUpdateSink {
 }
 
 export type FakeJournalOp =
-  | { op: "dispatch"; executionId: string; bootId: string; at: number }
+  | {
+      op: "dispatch";
+      executionId: string;
+      bootId: string;
+      at: number;
+      /**
+       * #289 frame identity — which machine + what call this dispatch
+       * carried (mirrors the real service DO's journal row so override
+       * routing tests can assert the target + rewritten arguments).
+       */
+      machineId?: string;
+      tool?: string;
+      argumentsJson?: string;
+    }
   | { op: "spawn_ack"; executionId: string; pid: number; pidStartedAt: number }
   | { op: "output"; executionId: string; offset: number; bytes: number }
   | { op: "output_dup_dropped"; executionId: string; offset: number }
@@ -312,6 +325,9 @@ export class FakeDaemonService implements DaemonServiceClient {
       executionId: request.executionId,
       bootId: this.client?.bootId ?? "?",
       at: Date.now(),
+      machineId: request.machineId,
+      tool: request.tool,
+      argumentsJson: JSON.stringify(request.arguments),
     });
     if (record.state === "RUNNING" && record.bootId !== (this.client?.bootId ?? "?")) {
       // stale RUNNING from a previous incarnation is re-owned by this boot

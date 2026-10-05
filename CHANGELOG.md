@@ -7,6 +7,32 @@
 
 ### Added
 
+- **#289 (P2) host:path 参数级覆盖 + 偏差记录（盘点 #282 §2.B B1–B5，依赖票 1 #288）**：
+  ① B1 覆盖语法与解析：`tools/host-path.ts` 纯解析器——host 类工具的 path 参数
+  可写 `ssh://<machineId>/<path>`（read/write/find `path`、glob/grep `;` 分隔多段、
+  bash `cwd`、edit `input` 内嵌扫描），一次调用整机换乘；`user@`/`:port` 显式拒绝
+  （本系统目标是注册表机器身份，无 OpenSSH transport）；混合 host 显式报错不拆分。
+  ② B2 单次派发换乘 + 偏差行：`dispatchExecution` 解析出覆盖时该次派发的
+  `machineId` 换乘目标机（`daemonFor(machineId)`，帧 machineId 腿已有字段零协议
+  变更），`tool.dispatch` 增 additive 可选 `overriddenMachineId` 偏差字段（绑定
+  永不重写，下一次派发回到 `state.machineId`；重放 fold 忽略、旧 journal 兼容）；
+  同机改写（`ssh://<bound>/…`）不算偏差。③ B3 显式失败不降级：目标 host 无行/
+  已注销 → `unknown_host`，目标离线 → `host_offline`（结果文本具名目标机），
+  永不静默回退绑定机；override 目标离线不再点亮 turn 级 `host_lost`（绑定机
+  在线时诚实继续）。④ B4 权限档（远端强制 exec 档）：覆盖是 exec 类操作，门在
+  TARGET host 的 `max_permission_mode` ceiling——非 `full` 在解析远端 DO stub
+  之前 `exec_tier_required` 硬拒（连接前硬拒，永不触达目标）；registry 读失败
+  `registry_unavailable` fail-closed；registry 未绑定的部署（rig/standalone）由
+  目标 service DO 的 session/machineId 校验兜底。omp 按审批 UI 分工具（ungated
+  tools 连接前硬拒）的差异点：本系统无 per-tool 审批 UI，ceiling 门在派发路径上
+  统一生效，安全契约「read/write 档无 exec 授权永不连接远端」对全部工具按构造
+  成立。⑤ B5 bash per-call `cwd` 逃生舱纳入统一语义：`cwd: "ssh://host/sub"` 整
+  调用换乘，daemon 客户端零改动（统一语义住路由层共享解析器；目标机 sandbox
+  钳制照旧生效，绝对 cwd 逃逸照旧拒绝）。测试：`host-path-override.test.ts`
+  17 例（语法/逐工具字段映射/edit 扫描/换乘路由+偏差行+绑定存活/同机改写无偏差/
+  混合 host 直错无 dispatch 行/unknown_host/exec_tier_required 不触达目标/
+  registry fail-closed/override 离线偏差行且无 host_lost）；fake journal dispatch
+  行增 machineId/tool/argumentsJson（镜像真 service DO 行，路由可断言）。
 - **#288 workspace 绑定喂值链 + environments 数据模型（盘点 #282 §2.A 票 1）**：
   ① 数据模型：`0002_environments.sql` 落 bb 锚形 environments 表（`(project_id,
   host_id NOT NULL, path)` 唯一 + workspace_provision_type + status，两源地图
