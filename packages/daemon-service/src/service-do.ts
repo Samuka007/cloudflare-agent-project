@@ -37,6 +37,8 @@ import {
   type ExecOutputGapFrame,
   type ExecSpawnAckFrame,
   type ExecStartedFrame,
+  type HostRpcCommand,
+  type HostRpcResponseFrame,
   type KillListServiceFrame,
   observedFingerprint,
   type ServiceFrame,
@@ -129,10 +131,22 @@ export type IsolationOpOutcome =
   | { kind: "error"; error: string }
   | { kind: "host_offline" };
 
+/** #302: hostOnlineRpc outcome — the control plane's one-shot daemon
+ * question (directory browsing). `host_offline` covers no-session,
+ * no-socket, session-replaced and session-closed; the route maps it to bb's
+ * 502 host_unavailable (online-rpc.ts:162-163). */
+export type HostRpcOutcome =
+  { kind: "ok"; response: HostRpcResponseFrame } | { kind: "host_offline" } | { kind: "timeout" };
+
 interface HostKeyMirrorEntry {
   keyHash: string;
   hostId: string;
   expiresAt: number;
+}
+
+interface HostRpcWaiter {
+  resolve: (outcome: HostRpcOutcome) => void;
+  timer: TimerHandle;
 }
 
 export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
@@ -142,6 +156,8 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
   private readonly spawnWaiters = new Map<string, SpawnAckWaiter>();
   /** T20 isolation-op waiters by executionId; voided on session replace. */
   private readonly isolationWaiters = new Map<string, IsolationOpWaiter>();
+  /** #302 host-rpc waiters by requestId; voided on session replace/close. */
+  private readonly hostRpcWaiters = new Map<string, HostRpcWaiter>();
   /** requestId → executionId; in-flight only, voided on session replace. */
   private readonly inflightRequests = new Map<string, string>();
   /** Dispatches parked by the syncing gate (I30). */
@@ -400,6 +416,47 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
     }
   }
 
+  /**
+   * #302: host online RPC (bb hub.requestHostOnlineRpc, ws/hub.ts:634-668 +
+   * services/hosts/online-rpc.ts): one control-plane question over the live
+   * daemon socket, resolved by the daemon's `host-rpc.response` frame. Like
+   * isolationOp there is NO execution state — one DO request per call, the
+   * timeout is this RPC's own timer — and, like bb, nothing is journaled
+   * (the hub waiter is memory-only). A request that dies with its session
+   * (replace/close) resolves host_offline, never hangs.
+   */
+  async hostOnlineRpc(args: {
+    hostId: string;
+    command: HostRpcCommand;
+    timeoutMs: number;
+  }): Promise<HostRpcOutcome> {
+    await this.ready();
+    const session = this.state.session;
+    const socket = this.liveSocket();
+    if (session === null || socket === null || args.hostId !== session.hostId) {
+      return { kind: "host_offline" };
+    }
+    const requestId = crypto.randomUUID();
+    const { promise, resolve } = Promise.withResolvers<HostRpcOutcome>();
+    const timer = setTimeout(() => {
+      if (this.hostRpcWaiters.delete(requestId)) {
+        resolve({ kind: "timeout" });
+      }
+    }, args.timeoutMs);
+    this.hostRpcWaiters.set(requestId, { resolve, timer });
+    this.send(socket, {
+      type: "host-rpc.request",
+      requestId,
+      command: args.command,
+    });
+    try {
+      return await promise;
+    } finally {
+      clearTimeout(timer);
+      this.hostRpcWaiters.delete(requestId);
+    }
+  }
+
   async queryUnacked(
     threadId: string,
   ): Promise<{ executionId: string; result: ToolResultPayload }[]> {
@@ -442,6 +499,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
         oldSessionId: previous.sessionId,
       });
       this.inflightRequests.clear();
+      this.voidHostRpcWaiters();
       for (const waiter of this.isolationWaiters.values()) {
         clearTimeout(waiter.timer);
         waiter.resolve({
@@ -646,6 +704,9 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
       case "tool.exited":
         await this.handleToolExited(frame.data);
         return;
+      case "host-rpc.response":
+        this.handleHostRpcResponse(frame.data);
+        return;
     }
   }
 
@@ -759,6 +820,7 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
       reason: args.reason,
     });
     this.inflightRequests.clear();
+    this.voidHostRpcWaiters();
     for (const waiter of this.isolationWaiters.values()) {
       clearTimeout(waiter.timer);
       waiter.resolve({
@@ -1358,6 +1420,30 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
 
   private send(socket: WebSocket, frame: ServiceFrame): void {
     socket.send(JSON.stringify(frame));
+  }
+
+  /**
+   * #302: a `host-rpc.response` resolves its waiter; unknown/stale
+   * requestIds drop silently (bb recordHostOnlineRpcResponse's
+   * `{handled:false, reason:"stale"}`, ws/hub.ts:670-687 — same practical
+   * causes: timed-out waiter, session that died mid-request).
+   */
+  private handleHostRpcResponse(frame: HostRpcResponseFrame): void {
+    const waiter = this.hostRpcWaiters.get(frame.requestId);
+    if (waiter === undefined) return;
+    this.hostRpcWaiters.delete(frame.requestId);
+    clearTimeout(waiter.timer);
+    waiter.resolve({ kind: "ok", response: frame });
+  }
+
+  /** Replace/close paths: a request that died with its session answers
+   * host_offline (the route renders bb's "Host is not connected"). */
+  private voidHostRpcWaiters(): void {
+    for (const waiter of this.hostRpcWaiters.values()) {
+      clearTimeout(waiter.timer);
+      waiter.resolve({ kind: "host_offline" });
+    }
+    this.hostRpcWaiters.clear();
   }
 
   /**

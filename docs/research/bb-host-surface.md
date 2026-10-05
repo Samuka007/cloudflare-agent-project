@@ -207,3 +207,14 @@ bb 合同唯一来源 `bb/packages/server-contract/src/public-api.ts:599-692`（
 | G10 owner/machine 鉴权 | ⏸ 维持原裁定（多机凭据体系时一并） |
 
 > AGENT GENERATED: by zhipu-coding-plan/glm-5.3-flash (research lane #187)
+
+## 9. #30 seam 落地与 E7 移植（#302，实现 lane）
+
+S7 的 crop 裁定部分解禁：Add project 流的 "Route not found"（GET /hosts/:id/directory 404 + provider-clis/status 502 噪声）强制开出 daemon online-RPC seam。bb 行号对 ba42654，本节引用均经 GitHub 远读核验（本仓子模块未初始化）。
+
+- **传输**：`host-rpc.request` / `host-rpc.response` 帧对（bb `host-daemon-contract/src/session.ts:359-492` 原形状，failure 带 `errorCode`/`errorMessage`），今日仅 `host.browse_directory` 一命令（bb `commands.ts:623-628`）。DO 侧 `hostOnlineRpc` RPC（`service-do.ts`）按 isolationOp waiter 模式：requestId 挂起、自有超时、session 顶替/关闭时 void 成 `host_offline`、stale 响应静默弃（bb `hub.ts:670-687` 语义）。daemon 侧 browse 实现是 bb `browseHostDirectory`（`apps/host-daemon/src/command-handlers/host-files.ts:130-184`）逐行移植（homedir 缺省、隐藏文件/node_modules 过滤、symlink 按目标分类、目录优先 locale 序、invalid_path 拒绝）；版本偏斜 daemon 对未知命令答 `unknown_command` 而非静默（bb `server-connection.ts:609-613` 同旨）。
+- **路由**：`GET /hosts/:id/directory` 按 bb `routes/hosts.ts:219-233` 开通；错误映射逐条对齐 bb `online-rpc.ts:153-167`——离线 502 `host_unavailable` "Host is not connected"、超时 504 `command_timeout`、daemon 失败 502 带 daemon 原码、结果形状不符 500。bb 的 retryable-transport 等待未移植（单次询问，SPA react-query 重试覆盖刚连上竞态）——记为偏离。
+- **E11 provider-clis/status 改判（推翻 S5 的 502 常量应答）**：compose 页每次开 Add project 都轮询该端点（RootComposeView.tsx:902），机器设置页对 502 恒渲染 "Status unavailable" 错误行（MachineSettingsView.tsx:337）——crop 面答"宿主未连接"语义为假（宿主明明在线）。#302 裁决：已知宿主答 **200 空记录**（ProviderCliStatusResponse 为 record，空集合法），SPA 走 "None installed" 空态；E8 crop 本体（无 CLI 管理面）不变。
+- **G9 余量**：E8 clone-default-path / E9 paths-exist / E10 pick-folder / E12 provider-cli install 仍 crop，但 seam 已在——后续移植只需加命令成员与 handler，不再依赖新传输。收账表 G9 行应读作"E7 已关，余四项待票"。
+
+> AGENT GENERATED: by zhipu-coding-plan/glm-5.3-flash (lane #302)
