@@ -17,5 +17,10 @@
     { "tag": "v1", "new_sqlite_classes": ["AgentDO", "TestDaemonServiceDO"] },
     { "tag": "v2", "new_sqlite_classes": ["RecordingHubDO"] },
   ],
+  // #238 L2: control-plane face for the terminal-turn settlement — the same
+  // binding shape the composed worker gives the agent DO (worker `DB`).
+  "d1_databases": [
+    { "binding": "DB", "database_name": "agent-do-rig", "database_id": "local" },
+  ],
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "agent-do-blobs" }],
 }

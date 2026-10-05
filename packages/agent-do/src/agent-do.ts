@@ -182,6 +182,14 @@ export interface AgentDoBindings {
    * the only truth either way: frames are accelerators, never authority.
    */
   HUB?: DurableObjectNamespace;
+  /**
+   * #238: control-plane D1 (the composed deployment binds the worker's
+   * `DB`). Optional — unbound deployments (rig/unit tests, the standalone
+   * agent-DO worker) skip control-plane settlement; the journal stays the
+   * execution authority and GET /threads/:id/timeline keeps its lazy
+   * settlement backstop.
+   */
+  DB?: D1Database;
 }
 
 /**
@@ -1365,7 +1373,63 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     // #197 D2: the live line to the hub. Fire-and-forget; a notify NEVER
     // fails an append (spec §5.2).
     this.notifyHub(validated);
+    // #238: settle the coarse control-plane execution row at the source of
+    // truth. Fire-and-forget like the notify; a settlement NEVER fails an
+    // append (the timeline route keeps its lazy backstop either way).
+    if (
+      validated.type === "turn.completed" ||
+      validated.type === "turn.failed" ||
+      validated.type === "turn.cancelled"
+    ) {
+      this.settleControlPlaneRowAfterTerminalTurn(validated.type);
+    }
     return record;
+  }
+
+  /**
+   * #238 root cause: the send/create routes flip the thread row `active` on
+   * dispatch, and the ONLY consumer of the DO's terminal turn rows was the
+   * lazy `settleThreadTurnStatus` inside GET /threads/:id/timeline. A client
+   * that never refetches the timeline after completion (WS gap, background
+   * tab) leaves the row `active` indefinitely, and every thread GET —
+   * including the reload path's first render — derives "working" from it.
+   *
+   * The DO is the only actor alive when a turn settles, so it writes the
+   * control-plane transition itself: the same cells the worker's FSM
+   * (apps/server-worker contract/domain/thread-lifecycle.ts, `active`/`starting`
+   * rows) and the lazy backstop map terminal turns to — completed/cancelled →
+   * idle, failed → error. The guarded UPDATE encodes the FSM's
+   * supersession predicates (notDeleted/notArchived) and the source cells, so
+   * a terminal row can never clobber `stopping`/`error` or resurrect a
+   * deleted/archived thread. `changes = 0` (already settled, or row absent)
+   * pushes nothing — the frame must announce a real transition.
+   */
+  private settleControlPlaneRowAfterTerminalTurn(
+    eventType: "turn.completed" | "turn.failed" | "turn.cancelled",
+  ): void {
+    if (this.threadId === null) return;
+    const db = this.env.DB;
+    if (db === undefined) return;
+    const nextStatus = eventType === "turn.failed" ? "error" : "idle";
+    const threadId = this.threadId;
+    this.ctx.waitUntil(
+      (async () => {
+        const result = await db
+          .prepare(
+            "UPDATE threads SET status = ?, updated_at = ? " +
+              "WHERE id = ? AND deleted_at IS NULL AND archived_at IS NULL " +
+              "AND status IN ('active', 'starting')",
+          )
+          .bind(nextStatus, Date.now(), threadId)
+          .run();
+        if (result.meta.changes === 0) return;
+        const hub = this.hubStub();
+        if (hub === undefined) return;
+        await hub.notifyThread(threadId, ["status-changed"]);
+      })().catch((error: unknown) => {
+        console.error("control-plane turn settlement failed", error);
+      }),
+    );
   }
 
   /**
