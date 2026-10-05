@@ -7,10 +7,25 @@
 
 ### Added
 
-- **#275 J2+J3+J4 委派行投影——task.* 折 spawnAgent 合成行 + backgroundTask 事件族 +
-  childRows 聚合**：ux 投影把 task journal 家族折成委派呈现。① ux-projection：`task.spawn_planned`
+- **#276 J5 子代活动/CoT 回父——`task.subagent_event` 包装行（journal-first）+ CoT
+  终局行档 1**：#256 G4 的 journal-first 臂。① journal 化：`task.subagent_event`
+  包装行（omp `subagent_event` 帧同构：child 事件摘要 unit + 外层 spawn 锚），由子 DO
+  的 turn 边界 flush（`advanceChildRunOnce` 门处，`tools/task/activity-flush.ts`
+  journal 纯折：thinking 按模型调用累积、message 按 call_completed、tool 派发/结果成对，
+  统一 INLINE_SUMMARY_CAP_CHARS 截断）经 `reportSubagentActivity` RPC 落到父 journal，
+  携带 #274 J1 `parentToolCallId`；幂等三重——子侧 `task.subagent_flush` 游标行
+  （RPC 成功后才落，崩溃重派生）、父侧 (spawnId, kind, sourceSeq) 去重、pre-J1 无锚
+  不 flush。单一读面、重放稳定、无跨 DO 读穿。② ux 投影：包装行就地展开成归父 ux 行
+  （toolCall 派发/完成、per-call CoT 终局、per-call 回答文本，全部 `parentToolCallId`
+  挂锚），server J4 `childRows` 聚合即得委派行展开子代活动流——零 server/SPA 改动。
+  ③ J6 档 1：`model.call_completed` 落 `item/completed` + `reasoning{summary:[],
+content:[累积 thinking]}`（`itm-rs-<turnId>:<modelCallId>` 跨完成身份；blob 行不产），
+  pin SPA 忽略（零 SPA 改动），上游 #3250 行渲染移植=档 2 另票另裁。回放一致：投影为
+  journal 纯函数，全量重投逐字节相等。
+- _*#275 J2+J3+J4 委派行投影——task.* 折 spawnAgent 合成行 + backgroundTask 事件族 +
+  childRows 聚合_*：ux 投影把 task journal 家族折成委派呈现。① ux-projection：`task.spawn_planned`
   → 合成 `toolCall{spawnAgent}` 委派行（`arguments{senderThreadId, receiverThreadIds,
-  description, subagent_type}`——徽章数据进合成参数，#229 S1+S3）；`task.spawn_settled`
+description, subagent_type}`——徽章数据进合成参数，#229 S1+S3）；`task.spawn_settled`
   blocking（jobId null）走 turn 作用域 `item/completed`，background 走线程作用域终局；
   `task.subagent_aborted` kill/call_signal/wall_clock/internal → interrupted 终局
   （budget 是唯一可复活 abort，行保持 pending），首终局胜出（墓碑抗性）；transport 折叠
@@ -37,7 +52,7 @@
   #240＋证据三件套）。L1：scripts/test/pm-autopilot.test.ts 关账台账／audit 规则 7 两组 11 例。
 - **#274 J1 子代理呈现地基——delegation 归父字段 `parentToolCallId`**：protocol 事件面五处
   增补可选 `parentToolCallId`（toolCall/agentMessage/reasoning item 与 `item/agentMessage/
-  delta`、`item/reasoning/textDelta`）——bb 三家先例的 item 级挂链字段，子代理活动/CoT
+delta`、`item/reasoning/textDelta`）——bb 三家先例的 item 级挂链字段，子代理活动/CoT
   未来挂进委派行的锚点；additive，旧 journal 原样可解析，scheme A 版本常量不动。agent-do
   侧 task 族 journal 同步携带：`task.spawn_planned` 派发处填充（值=task 工具调用的 UX
   item id，即裸 call executionId——batch 逐项 dedup key 带 `#index` 后缀，本字段不带）；
@@ -58,11 +73,11 @@
   `DAEMON_JOIN_CODE` 与 `--server` 别名。③ `docs/ops/host-onboarding.md` 用户
   视角全步骤。M1 key registry 维持 crop（#195 S7）：兑码交付部署级 hostKey，偏
   差记档于 onboarding 文档安全节。真机走查（wrangler dev + 真实 cap-daemon ×2
-  + 钉版 SPA 真浏览器）：铸码→装命令渲染→倒计时→daemon 以铸码 hostId enroll→
-  `session.ready`→对话框原地翻绿 "nixos connected"（截图录据），spent code/伪码
-  均 401。L1/L2：daemon-service `l1-join-code-enroll.test.ts`（6）+ server-worker
-  `join-codes-onboarding.test.ts`（6，契约形状/无幽灵行/enroll 落表/一次性/静态
-  路不受扰/install.sh 旗标契约）。
+  - 钉版 SPA 真浏览器）：铸码→装命令渲染→倒计时→daemon 以铸码 hostId enroll→
+    `session.ready`→对话框原地翻绿 "nixos connected"（截图录据），spent code/伪码
+    均 401。L1/L2：daemon-service `l1-join-code-enroll.test.ts`（6）+ server-worker
+    `join-codes-onboarding.test.ts`（6，契约形状/无幽灵行/enroll 落表/一次性/静态
+    路不受扰/install.sh 旗标契约）。
 - **#266 provider 只读投影面**（#255 方案 C：正本留部署 env，UI 只投影）。
   `GET /api/v1/system/provider-projections`：聚合 `projectHarness`（relay
   模式/baseUrl host/模型/key 存在性/thinking/权限模式/machine，复用既有无秘

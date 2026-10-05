@@ -123,6 +123,12 @@ export interface ReplayState {
     sourceThreadId: string | null;
     originKind: string | null;
     depth: number;
+    /**
+     * #274 J1 attribution anchor mirrored from the identity row — the child
+     * DO's self-attribution for the J5 activity flush. Optional: pre-J1
+     * journals omit it.
+     */
+    parentToolCallId?: string;
     /** T17 structured contract mirrored from the spawn plan (optional). */
     outputSchema?: unknown;
     schemaMode?: "permissive" | "strict";
@@ -520,6 +526,13 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
       // registry), never FSM state (same rule as the task family above).
       return;
     }
+    case "task.subagent_event":
+    case "task.subagent_flush": {
+      // #276 J5 activity-backflow family — folded by tools/task/
+      // activity-flush.ts (the child-side cursor + parent ux unfold), never
+      // FSM state (same rule as the task family above).
+      return;
+    }
     case "task.subagent_identity": {
       // Exactly one identity row per child DO: runSubagent dedups by the
       // identity projection before appending, so a second row is a spawn bug.
@@ -533,6 +546,9 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
         sourceThreadId: event.data.sourceThreadId,
         originKind: event.data.originKind,
         depth: event.data.depth,
+        ...(event.data.parentToolCallId === undefined
+          ? {}
+          : { parentToolCallId: event.data.parentToolCallId }),
         ...(event.data.outputSchemaJson === undefined
           ? {}
           : { outputSchema: JSON.parse(event.data.outputSchemaJson) as unknown }),

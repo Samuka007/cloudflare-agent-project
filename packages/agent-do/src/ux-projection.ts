@@ -4,7 +4,7 @@ import {
   type BackgroundTaskItem,
   type ThreadEventEnvelope,
 } from "@cap/protocol";
-import type { AnyAgentEvent } from "./fsm-events.js";
+import type { AnyAgentEvent, SubagentActivityUnit } from "./fsm-events.js";
 import { executionIdFor } from "./ids.js";
 
 /**
@@ -46,6 +46,13 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
   /** bb task_progress 500ms throttle (CLAUDE_TASK_PROGRESS_THROTTLE_MS). */
   const BACKGROUND_TASK_PROGRESS_THROTTLE_MS = 500;
   const lastBackgroundProgressAt = new Map<string, number>();
+  /**
+   * #276 J6 tier-1 accumulation: per-model-call CoT text folded from the
+   * journal's inline `model.thinking` rows (blob rows are skipped upstream —
+   * an unresolvable call simply gets no terminal row), consumed by the
+   * `model.call_completed` case.
+   */
+  const thinkingByCall = new Map<string, string>();
 
   /**
    * bb generational item id (task-translation.ts:119-121): `task:<taskId>
@@ -99,9 +106,112 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       data: { item },
       createdAt: event.createdAt,
     });
+
+  /**
+   * #276 J5: one `task.subagent_event` wrapper row → the attributed ux row
+   * the wrapped child activity/CoT summary unfolds into (omp `subagent_event`
+   * frame → provider-neutral row). Shapes mirror what the child's own ux
+   * face produced for the same source rows: tool dispatch/completion as
+   * turn-scoped toolCall items, per-call CoT as the J6 reasoning terminal,
+   * per-call answer text as the agentMessage completion — every row pinned
+   * to the delegation row through `parentToolCallId`, so the server's J4
+   * aggregation nests them into childRows.
+   */
+  const subagentActivityEnvelope = (
+    event: AnyAgentEvent,
+    unit: SubagentActivityUnit,
+    parentToolCallId: string,
+  ): ThreadEventEnvelope => {
+    const base = {
+      id: event.id,
+      threadId: event.threadId,
+      seq: event.seq,
+      createdAt: event.createdAt,
+    };
+    if (unit.kind === "tool_started") {
+      return buildThreadEvent({
+        ...base,
+        type: "item/started",
+        data: {
+          turnId: unit.turnId,
+          item: {
+            type: "toolCall",
+            id: unit.executionId,
+            tool: unit.tool,
+            arguments: unit.arguments,
+            status: "pending",
+            output: "",
+            completedAt: null,
+            parentToolCallId,
+          },
+        },
+      });
+    }
+    if (unit.kind === "tool_completed") {
+      // Same status mapping as the root tool.result projection above.
+      return buildThreadEvent({
+        ...base,
+        type: "item/completed",
+        data: {
+          turnId: unit.turnId,
+          item: {
+            type: "toolCall",
+            id: unit.executionId,
+            tool: unit.tool,
+            arguments: {},
+            status:
+              unit.status === "ok"
+                ? "completed"
+                : unit.status === "outcome_unknown"
+                  ? "interrupted"
+                  : "failed",
+            output: unit.output,
+            completedAt: unit.completedAt,
+            parentToolCallId,
+          },
+        },
+      });
+    }
+    if (unit.kind === "thinking") {
+      // J6 CoT terminal shape (attributed): the call's accumulated thinking
+      // as one reasoning item. The pinned SPA ignores reasoning rows (reasoning
+      // never becomes a timeline row — #3250 port is tier 2, another ticket);
+      // the rows ride the ux face so tier 2 needs no further journal work.
+      return buildThreadEvent({
+        ...base,
+        type: "item/completed",
+        data: {
+          turnId: unit.turnId,
+          item: {
+            type: "reasoning",
+            id: `itm-rs-${unit.turnId}:${unit.modelCallId}`,
+            summary: [],
+            content: [unit.text],
+            parentToolCallId,
+          },
+        },
+      });
+    }
+    return buildThreadEvent({
+      ...base,
+      type: "item/completed",
+      data: {
+        turnId: unit.turnId,
+        item: {
+          type: "agentMessage",
+          id: `itm-am-${unit.turnId}:${unit.modelCallId}`,
+          text: unit.text,
+          parentToolCallId,
+        },
+      },
+    });
+  };
   for (const event of events) {
     const turnId: string | undefined = "turnId" in event.data ? event.data.turnId : undefined;
     let ux: ThreadEventEnvelope | null = null;
+    // #276 J6 tier-1: the reasoning terminal rows ride alongside the main
+    // 1:1 row (thinking precedes the answer it produced).
+    const extraUx: ThreadEventEnvelope[] = [];
     switch (event.type) {
       // No UX rendering: the SPA rebuilds these from item lifecycle events.
       case "thread.created":
@@ -144,6 +254,9 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       case "task.yield_warning":
       case "task.yield_completed":
       case "task.budget_notice":
+      // #276 J5: the flush cursor is fold bookkeeping with no ux row (the
+      // wrapper rows themselves unfold in their own case below).
+      case "task.subagent_flush":
       // M1.5 T19 lifecycle rows (parked/revived/aborted) carry the
       // background-delegation lifecycle on the ux face now — #275 J2/J3
       // cases below (tools/task/lifecycle still folds the registry state).
@@ -240,6 +353,10 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
         // nothing to the UX face (the raw log view carries the blob).
         const { text, modelCallId } = event.data;
         if (typeof text !== "string" || text === "" || turnId === undefined) break;
+        thinkingByCall.set(
+          `${turnId}:${modelCallId}`,
+          (thinkingByCall.get(`${turnId}:${modelCallId}`) ?? "") + text,
+        );
         ux = buildThreadEvent({
           id: event.id,
           threadId: event.threadId,
@@ -256,7 +373,37 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       }
       case "model.call_completed": {
         const text = event.data.text;
-        if (text === "" || turnId === undefined) break;
+        if (turnId === undefined) break;
+        // #276 J6 tier 1 (zero SPA change): the call's CoT terminal row —
+        // `item/completed` + reasoning item, the journal's accumulated
+        // `model.thinking` text finally materialized on the ux face. The
+        // pinned SPA ignores reasoning rows today (reasoning never becomes a
+        // timeline row; the upstream #3250 row rendering is tier 2, another
+        // ticket) — landing the row now is the tier-2-ready journal face.
+        const thinkingKey = `${turnId}:${event.data.modelCallId}`;
+        const thinking = thinkingByCall.get(thinkingKey);
+        thinkingByCall.delete(thinkingKey);
+        if (thinking !== undefined && thinking !== "") {
+          extraUx.push(
+            buildThreadEvent({
+              id: event.id,
+              threadId: event.threadId,
+              seq: event.seq,
+              type: "item/completed",
+              data: {
+                turnId,
+                item: {
+                  type: "reasoning",
+                  id: `itm-rs-${turnId}:${event.data.modelCallId}`,
+                  summary: [],
+                  content: [thinking],
+                },
+              },
+              createdAt: event.createdAt,
+            }),
+          );
+        }
+        if (text === "") break;
         ux = buildThreadEvent({
           id: event.id,
           threadId: event.threadId,
@@ -525,6 +672,19 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
         ux = threadScoped(event, "item/backgroundTask/progress", item);
         break;
       }
+      case "task.subagent_event": {
+        // #276 J5: the journal-first backflow unfolds in place — each
+        // wrapper row becomes the attributed ux row its unit describes
+        // (tool dispatch/completion, per-call CoT terminal, per-call
+        // answer text), all pinned to the delegation row through the J1
+        // anchor. Anchorless rows (pre-J1 plans, unknown spawns) keep the
+        // old face: nothing on the ux view.
+        const data = event.data;
+        const anchor = spawnAnchors.get(data.spawnId);
+        if (anchor?.parentToolCallId === undefined) break;
+        ux = subagentActivityEnvelope(event, data.unit, anchor.parentToolCallId);
+        break;
+      }
       case "model.call_sealed": {
         ux = buildThreadEvent({
           id: event.id,
@@ -615,9 +775,12 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
         break;
       }
     }
-    if (ux !== null) {
-      parseThreadEvent(ux);
-      out.push(ux);
+    // Extras (the J6 reasoning terminals) precede the main row — a call's
+    // thinking precedes the answer it produced.
+    const emitted = ux === null ? extraUx : [...extraUx, ux];
+    for (const row of emitted) {
+      parseThreadEvent(row);
+      out.push(row);
     }
   }
   return out;
