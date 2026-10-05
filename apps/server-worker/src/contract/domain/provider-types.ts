@@ -35,6 +35,7 @@ export const providerCapabilitiesSchema = z.object({
   supportsServiceTier: z.boolean(),
   supportsUserQuestion: z.boolean(),
   supportsFork: z.boolean(),
+  supportsImageInput: z.boolean(),
   supportedPermissionModes: z.array(permissionModeSchema).min(1),
 });
 export type ProviderCapabilities = z.infer<typeof providerCapabilitiesSchema>;

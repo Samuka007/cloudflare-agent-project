@@ -1,7 +1,9 @@
 import type { AnyAgentEvent } from "./fsm-events.js";
 import { executionIdFor } from "./ids.js";
+import type { PromptContent } from "@cap/protocol";
 import type {
   AsyncResultContribution,
+  ImageContribution,
   ModelRequest,
   PriorModelCall,
   PriorTurnHistory,
@@ -39,6 +41,54 @@ export class ProjectionError extends Error {
     super(message);
     this.name = "ProjectionError";
   }
+}
+
+/**
+ * The Anthropic-expressible inline image vocabulary (relay vision source,
+ * A4): the four accepted media types, base64 payload only. Anything else
+ * classifies as a path-kind reference and degrades to text.
+ */
+const INLINE_IMAGE_PATTERN = /^data:(image\/(?:jpeg|png|gif|webp));base64,([A-Za-z0-9+/=]+)$/;
+
+/**
+ * Journal content → model-facing image projection (A4). http(s) references
+ * and well-formed inline `data:` images are relay-expressible; every other
+ * image-shaped value (staged attachment paths, `file:` URIs, malformed data
+ * URIs) is a path reference — the DO has no byte channel to the staging
+ * host, so the wire renders the acp degradation text for it.
+ */
+function imageContributionOf(part: PromptContent): ImageContribution | null {
+  if (part.type === "text" || part.type === "localFile") return null;
+  if (part.type === "image") {
+    if (/^https?:\/\//i.test(part.url)) return { kind: "url", url: part.url };
+  }
+  const raw = part.type === "image" ? part.url : part.path;
+  const inline = INLINE_IMAGE_PATTERN.exec(raw);
+  const mediaType = inline?.[1];
+  const payload = inline?.[2];
+  if (mediaType !== undefined && payload !== undefined) {
+    return { kind: "data", mediaType, base64: payload };
+  }
+  return { kind: "path", path: raw };
+}
+
+/** The image parts of one prompt-content list, in journal order. */
+function imageContributionsOf(content: readonly PromptContent[]): ImageContribution[] {
+  const images: ImageContribution[] = [];
+  for (const part of content) {
+    const image = imageContributionOf(part);
+    if (image !== null) images.push(image);
+  }
+  return images;
+}
+
+/** The text parts of one prompt-content list, joined (A4: image parts carry
+ * no text placeholders — they ride {@link imageContributionsOf}). */
+function textOfContent(content: readonly PromptContent[]): string {
+  return content
+    .filter((part): part is Extract<PromptContent, { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
 }
 
 interface CallSlice {
@@ -133,7 +183,15 @@ export function modelRequestFromEvents(
   const slices = new Map<number, CallSlice>();
   const callOrder: number[] = [];
   /** Session-wide turn registry (#228): every turn.input row, in seq order. */
-  const turnInputs: { turnId: string; seq: number; inputId: string; text: string }[] = [];
+  const turnInputs: {
+    turnId: string;
+    seq: number;
+    inputId: string;
+    text: string;
+    images: ImageContribution[];
+  }[] = [];
+  /** Steer images by steer seq — the text twin of steerTexts (A4). */
+  const steerImages = new Map<number, ImageContribution[]>();
   /** Session-wide call grouping: turnId → its model.call_started seqs. */
   const callsByTurn = new Map<string, number[]>();
   const executionToCall = new Map<string, number>();
@@ -177,12 +235,9 @@ export function modelRequestFromEvents(
         // Consumed above from the full log; the turn filter skips it here.
         break;
       case "turn.steer": {
-        // Non-text parts (#317 image union) contribute nothing to the
-        // model-visible request text, exactly like the timeline projection.
-        steerTexts.set(
-          event.seq,
-          event.data.content.map((part) => (part.type === "text" ? part.text : "")).join("\n"),
-        );
+        // Image parts ride the steer as ImageContributions (A4), not as text.
+        steerTexts.set(event.seq, textOfContent(event.data.content));
+        steerImages.set(event.seq, imageContributionsOf(event.data.content));
         break;
       }
       case "turn.input": {
@@ -193,7 +248,8 @@ export function modelRequestFromEvents(
           turnId: event.data.turnId,
           seq: event.seq,
           inputId: event.data.inputId,
-          text: event.data.content.map((part) => (part.type === "text" ? part.text : "")).join("\n"),
+          text: textOfContent(event.data.content),
+          images: imageContributionsOf(event.data.content),
         });
         break;
       }
@@ -289,7 +345,7 @@ export function modelRequestFromEvents(
       if (text === undefined) {
         throw new ProjectionError(`call ${slice.modelCallId} consumes unknown steer seq ${seq}`);
       }
-      slice.steers.push({ seq, text });
+      slice.steers.push({ seq, text, images: steerImages.get(seq) ?? [] });
     }
   }
 
@@ -297,8 +353,8 @@ export function modelRequestFromEvents(
   if (inputTurn === undefined) {
     throw new ProjectionError(`turn ${turnId}: no turn.input in the log`);
   }
-  if (inputTurn.text === "") {
-    throw new ProjectionError(`turn ${turnId}: turn.input has empty text`);
+  if (inputTurn.text === "" && inputTurn.images.length === 0) {
+    throw new ProjectionError(`turn ${turnId}: turn.input is empty`);
   }
   const input = inputTurn.text;
 
@@ -364,8 +420,8 @@ export function modelRequestFromEvents(
   for (const turn of turnInputs) {
     if (turn.turnId === turnId || turn.seq >= inputTurn.seq) continue;
     if (turn.seq <= boundarySeq) continue;
-    if (turn.text === "") {
-      throw new ProjectionError(`turn ${turn.turnId}: turn.input has empty text`);
+    if (turn.text === "" && turn.images.length === 0) {
+      throw new ProjectionError(`turn ${turn.turnId}: turn.input is empty`);
     }
     const calls: PriorModelCall[] = [];
     for (const callId of callsByTurn.get(turn.turnId) ?? []) {
@@ -402,7 +458,7 @@ export function modelRequestFromEvents(
         asyncResults: priorAsync,
       });
     }
-    priorTurns.push({ input: turn.text, calls });
+    priorTurns.push({ input: turn.text, images: turn.images, calls });
   }
 
   return {
@@ -410,6 +466,7 @@ export function modelRequestFromEvents(
     turnId,
     modelCallId,
     input,
+    inputImages: inputTurn.images,
     steers: current.steers,
     priorCalls,
     // Session history (#228): prior turns ride every post-turn request.

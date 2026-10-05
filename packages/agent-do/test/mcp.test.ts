@@ -270,6 +270,7 @@ describe("matrix C2 — wire assembly appends the MCP surface", () => {
       turnId: "u",
       modelCallId: 1,
       input: "hi",
+      inputImages: [],
       steers: [],
       priorCalls: [],
       asyncResults: [],

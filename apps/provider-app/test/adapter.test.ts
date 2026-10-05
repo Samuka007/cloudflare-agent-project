@@ -32,6 +32,21 @@ afterEach(() => {
   resetRuntime();
 });
 
+test("A4: the adapter's image-input capability mirrors the harness verdict", () => {
+  // The declaration lives on the harness relay (MODEL_RELAY_IMAGE_INPUT);
+  // the bb-facing capabilities bit can never disagree with the wire dispatch.
+  const declared = new EdgeAgentProviderAdapter(
+    { handleAdapterCommand: () => Promise.resolve({ ok: true, result: null }) },
+    resolveHarness({ MODEL_RELAY_IMAGE_INPUT: "1" }),
+  );
+  expect(declared.capabilities.supportsImageInput).toBe(true);
+  const undeclared = new EdgeAgentProviderAdapter(
+    { handleAdapterCommand: () => Promise.resolve({ ok: true, result: null }) },
+    resolveHarness({}),
+  );
+  expect(undeclared.capabilities.supportsImageInput).toBe(false);
+});
+
 function startCommand(threadId: string): Extract<AdapterCommand, { type: "thread/start" }> {
   return {
     type: "thread/start",

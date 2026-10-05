@@ -49,6 +49,7 @@ export class FakeProviderAdapter implements ProviderAdapter {
     supportsServiceTier: true,
     supportsUserQuestion: true,
     supportsFork: true,
+    supportsImageInput: true,
     supportedPermissionModes: ["accept-edits", "auto", "full"],
   };
 

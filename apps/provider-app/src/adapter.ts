@@ -37,19 +37,24 @@ export class EdgeAgentProviderAdapter implements ProviderAdapter {
   readonly id = "edge-agent";
   readonly displayName = "CAP edge agent (agent-do loop)";
   readonly approvalRequestPolicy = "runtime" as const;
-  readonly capabilities: ProviderCapabilities = {
-    supportsArchive: true,
-    supportsRename: true,
-    supportsServiceTier: false,
-    supportsUserQuestion: false,
-    supportsFork: false,
-    supportedPermissionModes: ["accept-edits", "auto", "full"],
-  };
+  readonly capabilities: ProviderCapabilities;
 
   constructor(
     private readonly manager: ManagerFacade,
     private readonly harness: ResolvedHarness,
-  ) {}
+  ) {
+    // A4: the image-input bit mirrors the harness relay verdict — the
+    // adapter's capabilities and the relay's wire dispatch can never disagree.
+    this.capabilities = {
+      supportsArchive: true,
+      supportsRename: true,
+      supportsServiceTier: false,
+      supportsUserQuestion: false,
+      supportsFork: false,
+      supportsImageInput: harness.relay.supportsImageInput,
+      supportedPermissionModes: ["accept-edits", "auto", "full"],
+    };
+  }
 
   /**
    * Collapses accepted no-op values onto their effective setting: the M0

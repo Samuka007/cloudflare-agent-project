@@ -7,6 +7,29 @@
 
 ### Added
 
+- **#319 (W5) 图片 A4——模型消费 image block + 能力位 + 降级（依赖 #318 A3）**：
+  ① relay 图块：`AnthropicImageBlock`（Anthropic vision source——`url` http(s) 直通 /
+  `base64`（data: URI 解码，media type 限 jpeg/png/gif/webp））入 `AnthropicUserBlock`。
+  ② 模型 seam：`ImageContribution{url|data|path}`——translate 按 journal content 分类
+  （http(s)→url、合法 data:→data、其余（staged 路径/`file:` URI/非法 data:）→path；
+  text/localFile 不产图），`ModelRequest.inputImages` / `PriorTurnHistory.images` /
+  `SteerContribution.images` 三位随请求走；**image-only turn 合法化**——A2 时代
+  `turn.input has empty text` 投影崩溃修复（text 投影跳过非 text 部件不再留空行占位，
+  wire 不渲染空文本块——上游 400 面）。③ 消费分派：`WireCallOptions.supportsImageInput`
+  （`RelayConfig` 透传）——支持视觉的 relay 收 url/data 真 image block；不支持的收降级
+  文本（acp bridge.ts:1131-1153 锚形：`[image attachment on disk: path]` /
+  `[image attachment: url]` / `[image attachment: inline <mime>]`）；path 类无论能力位
+  一律降级（DO 无到 staging 宿主的字节通道）。④ 能力位 `supportsImageInput`：
+  daemon-worker `ProviderCapabilities` 接口 + server contract zod schema + fake provider
+  （true）；部署声明 env `MODEL_RELAY_IMAGE_INPUT`（1/true/on，默认关——误开会在首个
+  图片 turn 吃上游 400，opt-in）；provider-app harness 解析、入 fingerprint/HarnessProjection
+  （翻转→live drift）、`EdgeAgentProviderAdapter.capabilities` 镜像同一裁决；server
+  `/system/execution-options` 同源投影。⑤ 历史图片管理（strip/clamp）评估：rewind/compact
+  cut 折叠已让隐藏 span 的图片（随 turn.input）整体离开请求——M0 无需额外 per-image
+  strip/clamp，观察真实用量后再议。测试：agent-do `image-consumption.test.ts` 12 例
+  （fold 分类/image-only 合法/prior+steer 携图/wire 能力分派两侧/降级锚形精确/
+  relay 透传/DO 端到端 image-only turn）+ provider-app harness/adapter 3 例 +
+  server execution-options 1 例。
 - **#318 (W5) 图片 A3——daemon 取件通道 + staging 落盘 + 失败清理（依赖 #316 A1、#317 A2）**：
   daemon-service 三件（bb `prompt-attachments.ts`/`server-client.ts`/`internal/session` 语义照搬，
   适配 #316 R2 存储面）。① 取件通道：daemon face 新路由

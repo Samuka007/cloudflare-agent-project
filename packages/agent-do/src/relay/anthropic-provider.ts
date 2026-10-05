@@ -6,11 +6,7 @@ import {
   type ModelToolCall,
   type ModelUsageReceipt,
 } from "../provider.js";
-import {
-  anthropicRequestBody,
-  estimateWireRequestTokens,
-  type ThinkingConfig,
-} from "./wire.js";
+import { anthropicRequestBody, estimateWireRequestTokens, type ThinkingConfig } from "./wire.js";
 import { parseSseStream } from "./sse.js";
 
 /**
@@ -44,6 +40,12 @@ export interface RelayConfig {
    */
   contextWindow?: number;
   thinking?: ThinkingConfig;
+  /**
+   * A4: the deployment's verdict on whether the relay model accepts image
+   * input — rides every call as the wire's consumption dispatch gate.
+   * Absent = not declared → image parts degrade to text (safe default).
+   */
+  supportsImageInput?: boolean;
   /** Test seam; production uses global fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -79,6 +81,7 @@ export class AnthropicRelayProvider implements ModelProvider {
       model: this.config.model,
       maxTokens: this.config.maxTokens,
       thinking: this.config.thinking,
+      supportsImageInput: this.config.supportsImageInput,
     });
     const serialized = JSON.stringify(body);
     this.bodies.push(serialized);

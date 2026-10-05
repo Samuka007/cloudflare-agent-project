@@ -55,6 +55,17 @@ describe("GET /api/v1/system/execution-options", () => {
     expect(fallback.models.map((model) => model.model)).toEqual(["glm-5.3-anth"]);
   });
 
+  it("projects the image-input capability from MODEL_RELAY_IMAGE_INPUT (#319)", () => {
+    // The same deployment declaration the provider-app harness reads — the
+    // picker face and the relay wire dispatch can never disagree.
+    const declared = systemExecutionOptionsResponseSchema.parse(
+      buildExecutionOptions({ MODEL_RELAY_IMAGE_INPUT: "1" }),
+    );
+    expect(declared.providers[0]?.capabilities.supportsImageInput).toBe(true);
+    const undeclared = systemExecutionOptionsResponseSchema.parse(buildExecutionOptions({}));
+    expect(undeclared.providers[0]?.capabilities.supportsImageInput).toBe(false);
+  });
+
   it("422s the mutually exclusive host/environment routing like bb", async () => {
     const response = await exports.default.fetch(
       "https://example.com/api/v1/system/execution-options?hostId=h1&environmentId=e1",
