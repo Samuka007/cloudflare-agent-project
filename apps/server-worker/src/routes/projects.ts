@@ -39,7 +39,7 @@ import {
   updateProject,
 } from "../db/control-plane.js";
 import { listProjectSources } from "../db/project-sources.js";
-import { toThreadListEntry } from "../services/runtime-display.js";
+import { toThreadListEntries } from "../services/runtime-display.js";
 import type { Env, HonoBindings } from "../app-types.js";
 import type { ProjectRow } from "../db/rows.js";
 
@@ -275,7 +275,9 @@ async function toProjectWithThreads(env: Env, row: ProjectRow) {
   return {
     ...toPublicProject(row),
     sources: await listProjectSources(env, row.id),
-    threads: threads.map((thread) => threadListEntrySchema.parse(toThreadListEntry(thread))),
+    threads: (await toThreadListEntries(env, threads)).map((entry) =>
+      threadListEntrySchema.parse(entry),
+    ),
     defaultExecutionOptions: null,
   };
 }
