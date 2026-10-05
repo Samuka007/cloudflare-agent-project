@@ -81,6 +81,12 @@ export interface RunSubagentRequest {
    */
   outputSchema?: unknown;
   schemaMode?: "permissive" | "strict";
+  /**
+   * #274 J1 delegation attribution — the parent `task` tool call's UX item
+   * id, mirrored onto the child identity row so the child journal is
+   * self-attributing (bb child-side parentToolCallId semantics).
+   */
+  parentToolCallId?: string;
 }
 
 export interface TaskToolConfig {
@@ -275,6 +281,8 @@ export interface TaskToolContext {
     status: "ok" | "error";
     output: string;
     outputTruncated?: boolean;
+    /** #274 J1: attribution from the dispatch (see SpawnPlanRecord). */
+    parentToolCallId?: string;
   }): Promise<void>;
   /** T2 frozen JobRegistry mutators — background registration/settlement. */
   registry: Pick<JobRegistry, "register" | "settle">;
@@ -513,6 +521,9 @@ async function spawnOne(request: {
     ...(item.outputSchema === undefined ? {} : { outputSchema: item.outputSchema }),
     ...(item.schemaMode === undefined ? {} : { schemaMode: item.schemaMode }),
     ...(isolation === null ? {} : { isolation }),
+    // #274 J1: the delegation anchor is the BARE call executionId — the ux
+    // toolCall item id; per-item batch dedup keys keep their `#index` suffix.
+    parentToolCallId: ctx.executionId,
     depth: ctx.depth + 1,
   });
 
@@ -533,6 +544,7 @@ async function spawnOne(request: {
       ...(item.model === undefined ? {} : { model: item.model }),
       ...(item.outputSchema === undefined ? {} : { outputSchema: item.outputSchema }),
       ...(item.schemaMode === undefined ? {} : { schemaMode: item.schemaMode }),
+      parentToolCallId: ctx.executionId,
     });
   } catch (error) {
     // Child bring-up failed before any turn ran: settle the spawn as failed so
@@ -559,6 +571,7 @@ async function spawnOne(request: {
       childThreadId: spawnId,
       status: "error",
       output,
+      parentToolCallId: ctx.executionId,
     });
     return { status: "error", output };
   }
@@ -646,6 +659,8 @@ export async function settleSpawn(
     childThreadId: string;
     status: "ok" | "error";
     output: string;
+    /** #274 J1: attribution from the dispatch/plan (see SpawnPlanRecord). */
+    parentToolCallId?: string;
   },
 ): Promise<void> {
   const { text, truncated } = truncateDeliveryOutput(settlement.output, {
