@@ -1,4 +1,9 @@
-import { timelineRowSchema, type TimelineRow } from "../contract/thread-timeline.js";
+import {
+  timelineRowSchema,
+  type TimelineDelegationWorkRow,
+  type TimelineRow,
+} from "../contract/thread-timeline.js";
+import { backgroundTaskItemStatus } from "../contract/domain/background-task.js";
 import { threadEventDataSchemas } from "@cap/protocol";
 import { activeThinkingSchema, type ActiveThinking } from "../contract/domain/active-thinking.js";
 import type { JsonValue } from "../contract/domain/json-value.js";
@@ -74,7 +79,13 @@ function providerUnhandledDetail(event: UxThreadEvent): string {
   ].join("\n");
 }
 
-type RowDraft = TimelineRow & { __order: number };
+/**
+ * `__parentCallId` carries #274 J1 delegation attribution: ux items with a
+ * `parentToolCallId` fold into that delegation row's `childRows` at assembly
+ * instead of the top-level timeline (#275 J4) — bb thread-view aggregates the
+ * child projection the same way.
+ */
+type RowDraft = TimelineRow & { __order: number; __parentCallId?: string };
 
 type EventData = Record<string, unknown>;
 
@@ -98,6 +109,48 @@ function textOfContent(content: readonly unknown[]): string {
         : "",
     )
     .join("");
+}
+
+// --- delegation rows (#275 J4) --------------------------------------------------------
+
+type DelegationRowDraft = TimelineDelegationWorkRow & {
+  __order: number;
+  __parentCallId?: string;
+};
+
+function isDelegationDraft(row: RowDraft): row is DelegationRowDraft {
+  return row.kind === "work" && row.workKind === "delegation";
+}
+
+/**
+ * Resolve the delegation row a thread-scoped backgroundTask event folds into:
+ * the #274 J1 attribution anchor (the bare task-call executionId) for flat
+ * spawns. Batch plans suffix per-item `#<i>` dedup keys onto the shared bare
+ * anchor, so an unmatched anchor falls back to the first still-pending
+ * per-item row in plan order — deterministic, and each settle seals exactly
+ * one row.
+ */
+function delegationTargetFor(
+  rows: ReadonlyMap<string, RowDraft>,
+  anchor: string | undefined,
+): DelegationRowDraft | undefined {
+  if (anchor === undefined) {
+    return undefined;
+  }
+  const direct = rows.get(anchor);
+  if (direct !== undefined && isDelegationDraft(direct) && direct.status === "pending") {
+    return direct;
+  }
+  const prefix = `${anchor}#`;
+  const pending = [...rows.values()]
+    .filter(
+      (row): row is DelegationRowDraft =>
+        isDelegationDraft(row) && row.status === "pending" && row.callId.startsWith(prefix),
+    )
+    .sort((a, b) =>
+      a.__order === b.__order ? a.callId.localeCompare(b.callId) : a.__order - b.__order,
+    );
+  return pending[0];
 }
 
 // --- activeThinking (#257 CoT surface) ------------------------------------------------
@@ -207,6 +260,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
     threadId: string,
     seq: number,
     createdAt: number,
+    parentCallId?: string,
   ): string | undefined => {
     const existing = assistantByItemId.get(rawItemId);
     if (existing !== undefined) {
@@ -227,6 +281,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
       attachments: null,
       turnRequest: null,
       __order: seq,
+      ...(parentCallId !== undefined ? { __parentCallId: parentCallId } : {}),
     });
     assistantByItemId.set(rawItemId, rowId);
     if (turnId) {
@@ -287,12 +342,52 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
             attachments: null,
             turnRequest: null,
             __order: event.seq,
+            ...(item.parentToolCallId !== undefined
+              ? { __parentCallId: item.parentToolCallId }
+              : {}),
           });
           assistantByItemId.set(item.id, rowId);
           if (turnId) {
             registerTurnRow(turnId, rowId);
           }
         } else if (item.type === "toolCall") {
+          if (item.tool === "spawnAgent") {
+            // #275 J4 delegation branch: the synthetic toolCall{spawnAgent}
+            // item (from task.spawn_planned) materializes the contract's
+            // TimelineDelegationWorkRow; subagentType/description ride the
+            // synthetic arguments (#229 S1+S3 badge data). Never registered
+            // as turn-pending — a background delegation outlives its
+            // spawning turn, so the turn/completed sweep must not seal it.
+            rows.set(item.id, {
+              kind: "work",
+              workKind: "delegation",
+              id: item.id,
+              threadId: event.threadId,
+              turnId,
+              sourceSeqStart: event.seq,
+              sourceSeqEnd: event.seq,
+              startedAt: event.createdAt,
+              createdAt: event.createdAt,
+              status: "pending",
+              callId: item.id,
+              toolName: item.tool,
+              subagentType:
+                typeof item.arguments.subagent_type === "string" &&
+                item.arguments.subagent_type.length > 0
+                  ? item.arguments.subagent_type
+                  : null,
+              description:
+                typeof item.arguments.description === "string" &&
+                item.arguments.description.length > 0
+                  ? item.arguments.description
+                  : null,
+              output: item.output,
+              completedAt: item.completedAt,
+              childRows: [],
+              __order: event.seq,
+            });
+            break;
+          }
           rows.set(item.id, {
             kind: "work",
             workKind: "tool",
@@ -314,6 +409,9 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
             approvalStatus: null,
             activityIntents: [],
             __order: event.seq,
+            ...(item.parentToolCallId !== undefined
+              ? { __parentCallId: item.parentToolCallId }
+              : {}),
           });
           if (turnId) {
             registerTurnRow(turnId, item.id);
@@ -332,6 +430,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
           event.threadId,
           event.seq,
           event.createdAt,
+          parsed.data.parentToolCallId,
         );
         const row = rowId ? rows.get(rowId) : undefined;
         if (row?.kind === "conversation" && row.role === "assistant") {
@@ -354,6 +453,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
                 event.threadId,
                 event.seq,
                 event.createdAt,
+                item.parentToolCallId,
               )
             : assistantByItemId.get(item.id);
         const assistantRow = assistantRowId ? rows.get(assistantRowId) : undefined;
@@ -365,7 +465,10 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
           break;
         }
         const workRow = rows.get(item.id);
-        if (workRow?.kind === "work" && workRow.workKind === "tool") {
+        if (
+          workRow?.kind === "work" &&
+          (workRow.workKind === "tool" || workRow.workKind === "delegation")
+        ) {
           if (item.type === "toolCall") {
             workRow.output = item.output;
             workRow.completedAt = item.completedAt ?? event.createdAt;
@@ -404,6 +507,41 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
             row.completedAt = event.createdAt;
           }
         }
+        break;
+      }
+      case "item/backgroundTask/progress":
+      case "item/backgroundTask/completed": {
+        // #275 J3/J4: thread-scoped superseding state for a background
+        // delegation (task.spawn_settled terminal / parked-revived progress).
+        // The ux projection guarantees first-terminal-wins, so a completed
+        // event only ever seals a still-pending row. Progress is non-terminal
+        // by contract (paused/running) and leaves the M0 row untouched — it
+        // exists so replayed journals keep the family in the ux face.
+        const parsed = threadEventDataSchemas[event.type].safeParse(raw);
+        if (!parsed.success) {
+          break;
+        }
+        if (event.type === "item/backgroundTask/progress") {
+          break;
+        }
+        const item = parsed.data.item;
+        const target = delegationTargetFor(rows, item.parentToolCallId);
+        if (target === undefined) {
+          break;
+        }
+        const itemStatus = backgroundTaskItemStatus(item.taskStatus);
+        if (itemStatus === "pending") {
+          break;
+        }
+        target.status =
+          itemStatus === "failed"
+            ? "error"
+            : itemStatus === "interrupted"
+              ? "interrupted"
+              : "completed";
+        target.output = item.summary ?? "";
+        target.completedAt = event.createdAt;
+        target.sourceSeqEnd = event.seq;
         break;
       }
       case "system/error": {
@@ -445,10 +583,30 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
     }
   }
 
-  const ordered = [...rows.values()].sort((a, b) =>
-    a.__order === b.__order ? a.id.localeCompare(b.id) : a.__order - b.__order,
-  );
-  return ordered.map(({ __order: _, ...row }) => timelineRowSchema.parse(row));
+  // #275 J4 childRows aggregation: ux rows carrying #274 J1 attribution fold
+  // into their delegation row's childRows instead of the top-level timeline
+  // (bb thread-view aggregates the child projection by parentToolCallId).
+  // Walked NEWEST-first so nested children parse and attach before their
+  // parent's recursive schema parse clones them in; `unshift` keeps both the
+  // top-level list and each childRows array in ascending __order.
+  const newestFirst = [...rows.values()]
+    .sort((a, b) => (a.__order === b.__order ? a.id.localeCompare(b.id) : a.__order - b.__order))
+    .reverse();
+  const topRows: TimelineRow[] = [];
+  for (const draft of newestFirst) {
+    const { __order: _, __parentCallId, ...row } = draft;
+    const parent =
+      __parentCallId !== undefined && __parentCallId !== row.id
+        ? rows.get(__parentCallId)
+        : undefined;
+    const parsed = timelineRowSchema.parse(row);
+    if (parent !== undefined && isDelegationDraft(parent)) {
+      parent.childRows.unshift(parsed);
+      continue;
+    }
+    topRows.unshift(parsed);
+  }
+  return topRows;
 }
 
 // --- debug toggle (bb showUnhandledProviderEvents, data.ts:331-334) --------------

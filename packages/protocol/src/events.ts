@@ -117,12 +117,60 @@ export const reasoningItemSchema = z.object({
   parentToolCallId: z.string().min(1).optional(),
 });
 
+/**
+ * bb `backgroundTaskStatus` (#256 J3; contract port
+ * apps/server-worker/src/contract/domain/background-task.ts:37-45): the union
+ * of the provider task lifecycle statuses. `paused` stays pending on the item
+ * machinery (resumable); `stopped` maps to interrupted (user/system stop, not
+ * a failure).
+ */
+export const backgroundTaskStatusValues = [
+  "pending",
+  "running",
+  "paused",
+  "completed",
+  "failed",
+  "killed",
+  "stopped",
+] as const;
+export const backgroundTaskStatusSchema = z.enum(backgroundTaskStatusValues);
+export type BackgroundTaskStatus = z.infer<typeof backgroundTaskStatusSchema>;
+
+/**
+ * bb `backgroundTask` item (#256 J3; bb verbatim shape is
+ * provider-event.ts threadEventBackgroundTaskItemSchema): a materialized
+ * background task whose lifecycle outlives its spawning turn. M0 carries the
+ * subagent slice (`taskType "local_subagent"`); the workflow-progress fields
+ * (workflowName/workflow/usage/outputFile) stay unported until the workflow
+ * face has a source — additive scheme A admits them later without a version
+ * bump. Placed by a turn-scoped `item/started`; late state arrives through
+ * the thread-scoped `item/backgroundTask/progress|completed` family.
+ */
+export const backgroundTaskItemSchema = z.object({
+  type: z.literal("backgroundTask"),
+  id: z.string().min(1),
+  /** Raw task discriminant ("local_subagent" for background subagent spawns). */
+  taskType: z.string().min(1),
+  description: z.string(),
+  status: threadEventItemStatusSchema,
+  taskStatus: backgroundTaskStatusSchema,
+  /** Ambient/housekeeping task; consumers hide it from the inline transcript. */
+  skipTranscript: z.boolean(),
+  /** Terminal summary; absent while the task runs. */
+  summary: z.string().optional(),
+  error: z.string().optional(),
+  /** #274 J1: the delegation toolCall item this task belongs to. */
+  parentToolCallId: z.string().min(1).optional(),
+});
+export type BackgroundTaskItem = z.infer<typeof backgroundTaskItemSchema>;
+
 export const threadEventItemSchema = z.discriminatedUnion("type", [
   userMessageItemSchema,
   agentMessageItemSchema,
   commandExecutionItemSchema,
   toolCallItemSchema,
   reasoningItemSchema,
+  backgroundTaskItemSchema,
 ]);
 export type ThreadEventItem = z.infer<typeof threadEventItemSchema>;
 
@@ -201,6 +249,19 @@ export const threadEventDataSchemas = {
   "item/completed": z.object({
     turnId: turnIdField,
     item: threadEventItemSchema,
+  }),
+  /**
+   * #275 J3 thread-scoped background-task family (bb same-name-same-shape;
+   * scope ruling thread-event-scope.ts:102-111 — tasks outlive their spawning
+   * turn, so late events must not interleave into later turns' ranges). Each
+   * event carries the full current item state; consumers replace, not merge.
+   * No `turnId`: the row body was placed by the spawning turn's item/started.
+   */
+  "item/backgroundTask/progress": z.object({
+    item: backgroundTaskItemSchema,
+  }),
+  "item/backgroundTask/completed": z.object({
+    item: backgroundTaskItemSchema,
   }),
   "system/error": z.object({
     message: z.string(),
