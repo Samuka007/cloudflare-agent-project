@@ -4,10 +4,7 @@ import type { z } from "zod";
 import { decryptProviderSecret, resolveRelayCatalogWithOverlay } from "@cap/provider-app";
 import type { AnyAgentEvent, RelayCatalogProvider } from "@cap/agent-do";
 import { ensureMigrations } from "../migrate.js";
-import {
-  insertProviderConfig,
-  type ProviderConfigEnv,
-} from "../../src/db/provider-configs.js";
+import { insertProviderConfig, type ProviderConfigEnv } from "../../src/db/provider-configs.js";
 import {
   providerConfigDiscoverResponseSchema,
   providerConfigRowSchema,
@@ -48,11 +45,7 @@ const PANEL_KEY_ROTATED = "sk-panel-secret-362-rotated";
 
 type ProviderRow = z.infer<typeof providerConfigRowSchema>;
 
-async function request(
-  method: string,
-  path: string,
-  body?: unknown,
-): Promise<Response> {
+async function request(method: string, path: string, body?: unknown): Promise<Response> {
   return exports.default.fetch(`${BASE}${path}`, {
     method,
     ...(body === undefined
@@ -82,9 +75,7 @@ async function listProviders(): Promise<ProviderRow[]> {
 async function rawD1Row(
   id: string,
 ): Promise<{ id: string; api_key_enc: string | null; models: string | null } | null> {
-  return env.DB.prepare(
-    "SELECT id, api_key_enc, models FROM provider_configs WHERE id = ?",
-  )
+  return env.DB.prepare("SELECT id, api_key_enc, models FROM provider_configs WHERE id = ?")
     .bind(id)
     .first<{ id: string; api_key_enc: string | null; models: string | null }>();
 }
@@ -124,10 +115,132 @@ async function expect422(response: Response, code: string): Promise<void> {
   expect(body.code).toBe(code);
 }
 
+/**
+ * #388 the seed-face tests inject deployment vars onto the shared worker
+ * env (isolate:false — restored in afterEach). The bindings type has no
+ * index signature; the seam pins exactly the two seats the faces read.
+ */
+function setEnvVar(key: "MODEL_RELAY_CATALOG" | "MODEL_RELAY_MODEL", value: string): void {
+  (env as unknown as Record<string, string>)[key] = value;
+}
+
 afterEach(async () => {
   // The suite shares one worker (isolate:false): a leftover D1 row would
   // leak onto later files' execution-options faces.
   await env.DB.prepare("DELETE FROM provider_configs").run();
+  // #388: the display-face describe injects a seed catalog onto the worker
+  // env — restore the deployment-shaped (unset) state for later files.
+  delete (env as unknown as Record<string, string>).MODEL_RELAY_CATALOG;
+  delete (env as unknown as Record<string, string>).MODEL_RELAY_MODEL;
+});
+
+describe("#388 merged display face: the panel list = execution-options truth", () => {
+  // The staging #388 incident: the env seed (omp/glm-5.3-flash) served the
+  // picker while GET /system/providers read D1 only and listed nothing.
+  const SEED = JSON.stringify({
+    defaultProvider: "omp",
+    providers: {
+      omp: {
+        displayName: "newapi",
+        baseUrl: "https://newapi.example.com/v1",
+        api: "openai-responses",
+        models: [{ id: "glm-5.3-flash", name: "GLM 5.3 Flash" }],
+      },
+    },
+  });
+
+  function injectSeed(): void {
+    setEnvVar("MODEL_RELAY_CATALOG", SEED);
+  }
+
+  it("an empty D1 still lists the env seed row (source deployment-seed)", async () => {
+    injectSeed();
+    const providers = await listProviders();
+    expect(providers.map((row) => [row.id, row.source])).toEqual([["omp", "deployment-seed"]]);
+    expect(providers[0]).toMatchObject({
+      displayName: "newapi",
+      baseUrl: "https://newapi.example.com/v1",
+      api: "openai-responses",
+      dispatchable: true,
+      status: "ok",
+      hasApiKey: false,
+    });
+    expect(providers[0]?.models).toEqual([{ id: "glm-5.3-flash", name: "GLM 5.3 Flash" }]);
+    // The same resolution the picker serves — the provider set matches
+    // execution-options exactly (the acceptance).
+    expect((await executionOptions()).providers.map((provider) => provider.id)).toEqual(["omp"]);
+  });
+
+  it("a seed id resolves read-only on :id and refuses every write verb", async () => {
+    injectSeed();
+    const single = await request("GET", "/api/v1/system/providers/omp");
+    expect(single.status).toBe(200);
+    expect(providerConfigRowSchema.parse(await single.json()).source).toBe("deployment-seed");
+    const reserved = await request("POST", "/api/v1/system/providers", {
+      id: "omp",
+      models: [{ id: "m" }],
+    });
+    expect(reserved.status).toBe(409);
+    expect((await reserved.json<{ code: string }>()).code).toBe("provider_config_reserved");
+    expect(
+      (
+        await request("PUT", "/api/v1/system/providers/omp", {
+          displayName: "x",
+          models: [{ id: "m" }],
+        })
+      ).status,
+    ).toBe(404);
+    expect((await request("DELETE", "/api/v1/system/providers/omp")).status).toBe(404);
+  });
+
+  it("a same-id D1 row replaces the seed row; new D1 rows join; ordering stays seed-then-user", async () => {
+    injectSeed();
+    await postProvider({
+      id: "panelp",
+      api: "anthropic-messages",
+      models: [{ id: "panel-only" }],
+    });
+    let providers = await listProviders();
+    expect(providers.map((row) => [row.id, row.source])).toEqual([
+      ["omp", "deployment-seed"],
+      ["panelp", "user"],
+    ]);
+    // The override: id omp is reserved, so the wholesale-replacement half is
+    // proven with a second seed provider the panel CAN shadow.
+    setEnvVar(
+      "MODEL_RELAY_CATALOG",
+      JSON.stringify({
+        defaultProvider: "panelp",
+        providers: {
+          panelp: { displayName: "Seed Panel", models: [{ id: "seed-panel-model" }] },
+        },
+      }),
+    );
+    providers = await listProviders();
+    expect(providers.map((row) => [row.id, row.source])).toEqual([["panelp", "user"]]);
+    expect(providers[0]?.models).toEqual([{ id: "panel-only" }]);
+  });
+
+  it("a broken D1 row (warning, not in the overlay) leaves the seed row serving", async () => {
+    injectSeed();
+    // models column is not valid JSON → skip-with-warning, never in the
+    // effective overlay — the seed row keeps serving and stays visible.
+    await insertRawRow("omp", '{"id": "half');
+    const providers = await listProviders();
+    expect(providers.map((row) => [row.id, row.source, row.status])).toEqual([
+      ["omp", "deployment-seed", "ok"],
+      ["omp", "user", "warning"],
+    ]);
+    expect((await executionOptions()).providers.map((provider) => provider.id)).toEqual(["omp"]);
+  });
+
+  it("no catalog anywhere: the omp synthesis row rides the display face too", async () => {
+    setEnvVar("MODEL_RELAY_MODEL", "glm-5.3-flash");
+    const providers = await listProviders();
+    expect(providers.map((row) => [row.id, row.source])).toEqual([["omp", "deployment-seed"]]);
+    expect(providers[0]?.models).toEqual([{ id: "glm-5.3-flash", name: "glm-5.3-flash" }]);
+    expect((await executionOptions()).providers.map((provider) => provider.id)).toEqual(["omp"]);
+  });
 });
 
 describe("#362 CRUD face", () => {
@@ -243,9 +356,9 @@ describe("#362 CRUD face", () => {
     expect(kept.api).toBe("openai-responses");
     const beforeKeep = await rawD1Row("putty");
     expect(beforeKeep?.api_key_enc).not.toBeNull();
-    expect(
-      await decryptProviderSecret(RIG_MASTER_KEY, beforeKeep?.api_key_enc ?? ""),
-    ).toBe(PANEL_KEY);
+    expect(await decryptProviderSecret(RIG_MASTER_KEY, beforeKeep?.api_key_enc ?? "")).toBe(
+      PANEL_KEY,
+    );
 
     // apiKey: string → ROTATE; the fresh IV makes the rotation observable.
     await request("PUT", "/api/v1/system/providers/putty", {
@@ -254,9 +367,9 @@ describe("#362 CRUD face", () => {
       apiKey: PANEL_KEY_ROTATED,
     });
     const rotated = await rawD1Row("putty");
-    expect(
-      await decryptProviderSecret(RIG_MASTER_KEY, rotated?.api_key_enc ?? ""),
-    ).toBe(PANEL_KEY_ROTATED);
+    expect(await decryptProviderSecret(RIG_MASTER_KEY, rotated?.api_key_enc ?? "")).toBe(
+      PANEL_KEY_ROTATED,
+    );
     expect(rotated?.api_key_enc).not.toBe(beforeKeep?.api_key_enc);
 
     // apiKey: null → CLEAR.
@@ -427,7 +540,11 @@ describe("#362 merged directory: env seed ⊕ D1 rows (D1 wins)", () => {
     },
   };
   const OVERLAY: Record<string, RelayCatalogProvider> = {
-    envp: { displayName: "Panel Override", api: "openai-responses", models: [{ id: "panel-model" }] },
+    envp: {
+      displayName: "Panel Override",
+      api: "openai-responses",
+      models: [{ id: "panel-model" }],
+    },
     panelp: { api: "anthropic-messages", models: [{ id: "panel-only" }] },
   };
 
@@ -461,13 +578,11 @@ describe("#362 merged directory: env seed ⊕ D1 rows (D1 wins)", () => {
       api: "anthropic-messages",
       models: [{ id: "panel-only" }],
     });
-    expect(
-      (await executionOptions()).providers.map((provider) => provider.id),
-    ).toContain("panelp");
+    expect((await executionOptions()).providers.map((provider) => provider.id)).toContain("panelp");
     await deleteRow("panelp");
-    expect(
-      (await executionOptions()).providers.map((provider) => provider.id),
-    ).not.toContain("panelp");
+    expect((await executionOptions()).providers.map((provider) => provider.id)).not.toContain(
+      "panelp",
+    );
   });
 
   it("keeps every projection face zero-secret (#266 extension)", async () => {
@@ -649,9 +764,7 @@ describe("#362 scope absorption: per-model thinking budget + openai-images rows"
         },
       ],
     });
-    const ladder = (await executionOptions()).models.find(
-      (model) => model.id === "budget-model",
-    );
+    const ladder = (await executionOptions()).models.find((model) => model.id === "budget-model");
     expect(ladder?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)).toContain(
       "high",
     );
@@ -679,9 +792,9 @@ describe("#362 scope absorption: per-model thinking budget + openai-images rows"
       apiKey: PANEL_KEY,
     });
     // Off the selectable LLM directory…
-    expect(
-      (await executionOptions()).providers.map((provider) => provider.id),
-    ).not.toContain("imagey");
+    expect((await executionOptions()).providers.map((provider) => provider.id)).not.toContain(
+      "imagey",
+    );
     // …on the CRUD face…
     expect((await listProviders()).map((entry) => entry.id)).toContain("imagey");
     // …and gating the projections presence bit (hot; zero-secret).
