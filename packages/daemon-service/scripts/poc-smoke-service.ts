@@ -13,7 +13,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, rmSync, readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, rmSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 // Journal op rows as the smoke reads them (structural — the script must not
@@ -32,8 +32,13 @@ const PORT = 8790;
 const BASE = `http://127.0.0.1:${PORT}`;
 const SANDBOX = "/tmp/poc-sandbox";
 const DATA_DIR = "/tmp/poc-daemon-smoke-data";
+// #398/SEC-W5-002: wrangler.jsonc carries no plaintext credential vars —
+// the local rig keys ride the gitignored .dev.vars this smoke writes before
+// starting wrangler dev (and removes on teardown so the vitest rig's own
+// bindings cannot be shadowed).
 const HOST_KEY = "poc-dev-host-key";
 const ENROLL_KEY = "poc-dev-enroll-key";
+const DEV_VARS_PATH = join(PACKAGE, ".dev.vars");
 const THREAD_ID = "thr_smoke";
 
 /**
@@ -209,6 +214,7 @@ async function main(): Promise<void> {
   // Fresh DO storage each run: the journal is durable across wrangler dev
   // restarts by design, so a rerun must not trip completed_cached dedup.
   rmSync(join(PACKAGE, ".wrangler", "state"), { recursive: true, force: true });
+  writeFileSync(DEV_VARS_PATH, `ENROLL_KEY=${ENROLL_KEY}\nDAEMON_HOST_KEY=${HOST_KEY}\n`);
 
   // 1. wrangler dev up.
   log("starting wrangler dev …");
@@ -341,6 +347,7 @@ async function main(): Promise<void> {
 function teardown(): void {
   client?.kill("SIGKILL");
   wrangler?.kill("SIGTERM");
+  rmSync(DEV_VARS_PATH, { force: true });
 }
 
 main()

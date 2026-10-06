@@ -2,6 +2,7 @@ import { AgentDO, setAgentRuntime, type AgentDoBindings } from "@cap/agent-do";
 import {
   DaemonServiceDO,
   daemonServiceWorker,
+  requireDaemonCredentials,
   type WorkerEnv as DaemonServiceWorkerEnv,
 } from "@cap/daemon-service";
 import { HostOrchestratorDO, setProviderAdapter } from "@cap/daemon-worker";
@@ -125,14 +126,18 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const path = new URL(request.url).pathname;
     if (isDaemonFace(request, path)) {
+      // #398/SEC-W5-002: no repo-public fallback — a deployment without its
+      // daemon secrets fails closed on the daemon face (client/index.ts:32-36
+      // mirrored server-side).
+      const { enrollKey, hostKey } = requireDaemonCredentials(env);
       const serviceEnv: DaemonServiceWorkerEnv = {
         DAEMON_SERVICE: requireDaemonService(env),
         AGENT_DO: env.AGENT_DO,
         // #195 S3: the rejection path consumes the retry-update flag and
         // broadcasts host-disconnected through the hub (bb internal/session.ts:56-57).
         HUB: env.HUB,
-        ENROLL_KEY: env.ENROLL_KEY ?? "poc-dev-enroll-key",
-        DAEMON_HOST_KEY: env.DAEMON_HOST_KEY ?? "poc-dev-host-key",
+        ENROLL_KEY: enrollKey,
+        DAEMON_HOST_KEY: hostKey,
         DAEMON_EDGE_KV: env.DAEMON_EDGE_KV,
         DAEMON_NEGATIVE_CACHE_MS: env.DAEMON_NEGATIVE_CACHE_MS,
         DAEMON_RATE_LIMIT_CAPACITY: env.DAEMON_RATE_LIMIT_CAPACITY,

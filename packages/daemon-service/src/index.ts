@@ -59,6 +59,7 @@ export {
 } from "./service-do.js";
 export {
   default as daemonServiceWorker,
+  requireDaemonCredentials,
   type ProjectAttachmentContentResult,
   type ProjectAttachmentReader,
   type WorkerEnv,

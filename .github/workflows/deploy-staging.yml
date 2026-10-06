@@ -51,6 +51,11 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # #398/SEC-W5-002: daemon-face credential pass-through (the worker
+          # has no in-repo fallback). Empty until the repo secrets exist; an
+          # omitted key preserves the previous deployment's secret.
+          ENROLL_KEY: ${{ secrets.ENROLL_KEY }}
+          DAEMON_HOST_KEY: ${{ secrets.DAEMON_HOST_KEY }}
         run: ./scripts/deploy-staging.sh
       # Informative post-deploy smoke, not a gate: app-plane requests from GH
       # runners are acceptable while staging sits on workers.dev with Access

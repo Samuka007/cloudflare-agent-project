@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate.js";
-import { send, type CreatedThread } from "../helpers.js";
+import { send, type CreatedThread, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers.js";
 import { threadResponseSchema } from "../../src/contract/api/threads.js";
 import { threadListEntrySchema } from "../../src/contract/domain/thread.js";
 import { getEnvironmentRow } from "../../src/db/environments.js";
@@ -169,12 +169,12 @@ describe("#291 wiring: the suspension face rides detail and list reads", () => {
     const enroll = await exports.default.fetch("https://example.com/enroll", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enrollKey: "poc-dev-enroll-key", hostId: host.id }),
+      body: JSON.stringify({ enrollKey: TEST_ENROLL_KEY, hostId: host.id }),
     });
     expect(enroll.status).toBe(201);
     const session = await exports.default.fetch("https://example.com/session/open", {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: "Bearer poc-dev-host-key" },
+      headers: { "content-type": "application/json", authorization: `Bearer ${TEST_HOST_KEY}` },
       body: JSON.stringify({ hostId: host.id, bootId: `boot_${host.id}`, protocolVersion: 1 }),
     });
     expect(session.status).toBe(201);

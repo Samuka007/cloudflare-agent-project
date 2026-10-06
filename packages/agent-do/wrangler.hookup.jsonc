@@ -20,8 +20,8 @@
       "id": "5b39e87d559b424a8f6432e6a2bc9ff7",
     },
   ],
-  "vars": {
-    "ENROLL_KEY": "poc-dev-enroll-key",
-    "DAEMON_HOST_KEY": "poc-dev-host-key",
-  },
+  // #398/SEC-W5-002: no plaintext credential vars — the daemon-face secrets
+  // come from .dev.vars (gitignored, written by scripts/poc-full-chain.ts for
+  // wrangler dev) or `wrangler secret put` for a deployed hookup worker.
+  // The hookup vitest rig (vitest.hookup.config.ts) injects rig bindings.
 }

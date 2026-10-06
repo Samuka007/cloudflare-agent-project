@@ -16,7 +16,12 @@ import { TestDaemonServiceDO } from "./testing/test-daemon-do.js";
 import { RecordingHubDO } from "./testing/recording-hub.js";
 import { envFlag } from "./config.js";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
-import { DaemonServiceDO, daemonServiceWorker, type WorkerEnv } from "@cap/daemon-service";
+import {
+  DaemonServiceDO,
+  daemonServiceWorker,
+  requireDaemonCredentials,
+  type WorkerEnv,
+} from "@cap/daemon-service";
 
 /**
  * Wrangler mains. `AgentDO` must be exported from the deployed entry; the
@@ -165,7 +170,9 @@ async function handleDriveRoute(
   request: Request,
   env: AgentDoBindings & Partial<WorkerEnv> & PocDriveEnv,
 ): Promise<Response> {
-  const hostKey = env.DAEMON_HOST_KEY ?? "poc-dev-host-key";
+  // #398/SEC-W5-002: no repo-public fallback — an unconfigured rig fails the
+  // request instead of authenticating against a publicly known key.
+  const hostKey = requireDaemonCredentials(env).hostKey;
   if (request.headers.get("authorization") !== `Bearer ${hostKey}`) {
     return Response.json(
       { code: "unauthorized", message: "bearer hostKey required" },
@@ -296,11 +303,14 @@ export default {
             { status: 500 },
           );
         }
+        // #398/SEC-W5-002: no repo-public fallback — the composition fails
+        // closed when the deployment has no daemon secrets.
+        const credentials = requireDaemonCredentials(env);
         const serviceEnv: WorkerEnv = {
           DAEMON_SERVICE: daemonService,
           AGENT_DO: agentDo,
-          ENROLL_KEY: env.ENROLL_KEY ?? "poc-dev-enroll-key",
-          DAEMON_HOST_KEY: env.DAEMON_HOST_KEY ?? "poc-dev-host-key",
+          ENROLL_KEY: credentials.enrollKey,
+          DAEMON_HOST_KEY: credentials.hostKey,
           DAEMON_EDGE_KV: env.DAEMON_EDGE_KV,
           DAEMON_NEGATIVE_CACHE_MS: env.DAEMON_NEGATIVE_CACHE_MS,
           DAEMON_RATE_LIMIT_CAPACITY: env.DAEMON_RATE_LIMIT_CAPACITY,

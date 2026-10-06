@@ -3,7 +3,7 @@ import { env, exports } from "cloudflare:workers";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import { ensureMigrations } from "../migrate.js";
 import { hostSchema, type Host } from "../../src/contract/domain/host.js";
-import { BASE, apiGet, createThread } from "../helpers.js";
+import { BASE, apiGet, createThread, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers.js";
 
 /**
  * #386: the cloud placeholder is a REAL hosts row (migration 0004) — bb's
@@ -21,14 +21,14 @@ async function enroll(hostId: string): Promise<Response> {
   return exports.default.fetch(`${BASE}/enroll`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ enrollKey: "poc-dev-enroll-key", hostId }),
+    body: JSON.stringify({ enrollKey: TEST_ENROLL_KEY, hostId }),
   });
 }
 
 function openSessionRaw(hostId: string): Promise<Response> {
   return exports.default.fetch(`${BASE}/session/open`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: "Bearer poc-dev-host-key" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${TEST_HOST_KEY}` },
     body: JSON.stringify({ hostId, bootId: `boot_${hostId}`, protocolVersion: 1 }),
   });
 }

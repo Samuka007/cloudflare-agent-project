@@ -5,7 +5,18 @@ import { defineConfig } from "vitest/config";
 // with no per-file isolation (docs/research/testing-strategy-cloudflare-do.md
 // §4.4 pit 1) — same shape as packages/agent-do.
 export default defineConfig({
-  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } })],
+  plugins: [
+    cloudflareTest({
+      wrangler: { configPath: "./wrangler.jsonc" },
+      // #398/SEC-W5-002: the L1 rig's daemon-face credentials. wrangler.jsonc
+      // carries no plaintext credential vars (they are deployment secrets);
+      // these merged bindings ride OVER the wrangler-derived options, so the
+      // suites exercise the real auth paths against rig-only values.
+      miniflare: {
+        bindings: { ENROLL_KEY: "l1-rig-enroll-key", DAEMON_HOST_KEY: "l1-rig-host-key" },
+      },
+    }),
+  ],
   test: {
     // tool-runtime.test.ts + eval-kernel.test.ts + the per-tool semantic
     // suites run under `bun test` (the omp runtime + eval kernel library

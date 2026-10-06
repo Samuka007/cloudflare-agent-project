@@ -60,6 +60,18 @@ SECRETS_FILE="$(mktemp "${TMPDIR:-/tmp}/staging-secrets.XXXXXX.env")"
 trap 'rm -f "$SECRETS_FILE"' EXIT
 printf 'SERVER_VERSION=%s\n' "$SHA" > "$SECRETS_FILE"
 
+# #398/SEC-W5-002: the daemon-face credentials have no in-repo fallback (the
+# composed worker fails closed without them), so pass real secrets through
+# when provided — CI repo secrets or local .dev.vars (via `nix run
+# .#staging-deploy`). Absent keys are omitted: wrangler preserves the
+# previous deployment's secret, and a first-ever deployment without them
+# fails closed on the daemon face by design.
+for secret in ENROLL_KEY DAEMON_HOST_KEY; do
+  if [[ -n "${!secret:-}" ]]; then
+    printf '%s=%s\n' "$secret" "${!secret}" >> "$SECRETS_FILE"
+  fi
+done
+
 (
   cd apps/server-worker
   pnpm exec wrangler deploy -c wrangler.staging.jsonc --secrets-file "$SECRETS_FILE"

@@ -28,7 +28,16 @@ export default defineConfig({
         // `bindings` ride OVER the wrangler-derived options, so tests
         // exercise the real encrypt/decrypt path without a plaintext default
         // in wrangler.jsonc.
-        bindings: { PROVIDER_CONFIG_MASTER_KEY: "l1-rig-master-key" },
+        bindings: {
+          PROVIDER_CONFIG_MASTER_KEY: "l1-rig-master-key",
+          // #398/SEC-W5-002: the composed daemon face has no in-repo
+          // credential fallback — the rig injects explicit test-only
+          // bindings (mirrored in test/helpers.ts TEST_ENROLL_KEY /
+          // TEST_HOST_KEY) so the compat suites exercise the real
+          // enroll/auth paths.
+          ENROLL_KEY: "l1-rig-enroll-key",
+          DAEMON_HOST_KEY: "l1-rig-host-key",
+        },
       },
     }),
   ],

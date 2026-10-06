@@ -34,8 +34,11 @@ const CLIENT_PACKAGE = join(ROOT, "packages", "daemon-service");
 const PORT = 8791;
 const SANDBOX = "/tmp/poc-sandbox";
 const DATA_DIR = "/tmp/poc-full-chain-data";
-const HOST_KEY = "poc-dev-host-key";
-const ENROLL_KEY = "poc-dev-enroll-key";
+// #398/SEC-W5-002: the repo-public POC literals are retired. The rig
+// generates a fresh credential pair per run — injected into wrangler dev via
+// the regenerated .dev.vars (local leg) and --var (ephemeral staging leg).
+const HOST_KEY = `poc-run-host-${crypto.randomUUID()}`;
+const ENROLL_KEY = `poc-run-enroll-${crypto.randomUUID()}`;
 const TRANSCRIPT_PATH = "/tmp/poc-full-chain-transcript.txt";
 const STAGING_NAME = "agent-do-poc-staging";
 const STAGING_DATA_DIR = "/tmp/poc-full-chain-staging-data";
@@ -364,6 +367,8 @@ async function main(): Promise<void> {
       `MODEL_RELAY_BASE_URL_ANTHROPIC=${relayBase}`,
       `MODEL_RELAY_API_KEY=${relayKey}`,
       `MODEL_RELAY_MODEL=${relayModel}`,
+      `ENROLL_KEY=${ENROLL_KEY}`,
+      `DAEMON_HOST_KEY=${HOST_KEY}`,
       `AGENT_DO_WATCHDOG=${JSON.stringify(WATCHDOG)}`,
       "",
     ].join("\n"),
@@ -652,6 +657,10 @@ async function deployStaging(
     `MODEL_RELAY_API_KEY:${vars.MODEL_RELAY_API_KEY}`,
     "--var",
     `MODEL_RELAY_MODEL:${vars.MODEL_RELAY_MODEL ?? "glm-5.3"}`,
+    "--var",
+    `ENROLL_KEY:${ENROLL_KEY}`,
+    "--var",
+    `DAEMON_HOST_KEY:${HOST_KEY}`,
     "--var",
     `AGENT_DO_WATCHDOG:${JSON.stringify(WATCHDOG)}`,
   ];
