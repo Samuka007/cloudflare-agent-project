@@ -304,6 +304,14 @@ export const relayCatalogModelSchema = relayModelEntrySchema
     /** bb AvailableModel.description (picker subtitle). */
     description: z.string().optional(),
     /**
+     * Per-model thinking budget (#362 scope absorption ①): the reasoning
+     * budget rides the model row, replacing the deployment-wide
+     * MODEL_RELAY_THINKING_BUDGET_TOKENS scalar for THIS row (the env
+     * scalar is the fallback for rows that do not declare one — deprecated,
+     * not removed). A panel edit hot-applies through the catalog overlay.
+     */
+    thinkingBudgetTokens: z.number().int().positive().optional(),
+    /**
      * Explicit ladder override. Unset → budget-derived (deriveRelayReasoning).
      * Dormant while thinking is disabled: the wire cannot run any budget rung,
      * so the projection stays `["none"]` regardless of the declaration.
@@ -321,6 +329,14 @@ export const relayCatalogModelSchema = relayModelEntrySchema
   );
 export type RelayCatalogModel = z.infer<typeof relayCatalogModelSchema>;
 
+/**
+ * #362 scope absorption ②: the api family that marks a provider row as an
+ * IMAGE source (the generate_image tool's OpenAI-images endpoint). Such rows
+ * carry their own source config + switch (row presence is the opt-in); they
+ * are excluded from the LLM selection directory and ride the panel CRUD face.
+ */
+export const IMAGE_SOURCE_API_FAMILY = "openai-images";
+
 export const relayCatalogProviderSchema = z.strictObject({
   /** Picker display name; defaults to the provider key. */
   displayName: z.string().min(1).optional(),
@@ -331,8 +347,13 @@ export const relayCatalogProviderSchema = z.strictObject({
    * bought channel and never carries a credential.
    */
   baseUrl: z.string().min(1).optional(),
-  /** #361: the provider-level protocol face (model rows may override). */
-  api: relayApiSchema.optional(),
+  /**
+   * #361: the provider-level protocol face (model rows may override).
+   * #362 scope absorption ② additionally admits `openai-images` — an
+   * IMAGE-source row (the generate_image tool's switch + source), which the
+   * catalog projection filters out of the LLM selection directory.
+   */
+  api: z.union([relayApiSchema, z.literal(IMAGE_SOURCE_API_FAMILY)]).optional(),
   /** bb ProviderCapabilities.supportsServiceTier projection. */
   serviceTier: z.boolean().optional(),
   models: z.array(relayCatalogModelSchema).min(1),
@@ -452,6 +473,13 @@ export interface RelaySelectionDirectoryRow {
   api?: RelayApi;
   /** The row's per-model effort map (RelayCatalogModel.reasoningEffortMap). */
   reasoningEffortMap?: Partial<Record<RelayReasoningLevel, ResponsesEffort>>;
+  /**
+   * The row's EFFECTIVE thinking budget (#362): model-declared budget
+   * winning over the deployment scalar. `undefined` = legacy row that
+   * predates the seat (falls back to `directory.thinkingEnabled`);
+   * `null` = explicitly budget-off; a number = enabled with that budget.
+   */
+  thinkingBudgetTokens?: number | null;
 }
 
 export interface RelaySelectionDirectory {
@@ -518,8 +546,15 @@ export function resolveRelaySelection(
             `declared models: ${JSON.stringify(declared)}`,
     );
   }
+  // #362: the ladder collapses per ROW budget, not the deployment scalar —
+  // a model row carrying thinkingBudgetTokens runs its declared rungs even
+  // when the env budget is unset (and stays ["none"] when it declares none).
+  const thinkingEnabled =
+    row.thinkingBudgetTokens === undefined
+      ? directory.thinkingEnabled
+      : row.thinkingBudgetTokens !== null;
   const ladder = deriveRelayReasoning({
-    thinkingEnabled: directory.thinkingEnabled,
+    thinkingEnabled,
     declaredLevels: row.reasoningLevels,
     declaredDefault: row.defaultReasoningLevel,
   });

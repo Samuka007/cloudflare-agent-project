@@ -2,8 +2,11 @@ import {
   decodeRelayCatalog,
   deriveRelayReasoning,
   DEFAULT_RELAY_API,
+  IMAGE_SOURCE_API_FAMILY,
   type RelayApi,
   type RelayCatalog,
+  type RelayCatalogModel,
+  type RelayCatalogProvider,
   type ResponsesEffort,
   type RelayReasoningLevel,
 } from "@cap/agent-do";
@@ -40,6 +43,13 @@ export interface RelayCatalogModelRow {
    */
   contextWindow: number | null;
   maxTokens: number | null;
+  /**
+   * The row's effective thinking budget (#362): the model-declared
+   * thinkingBudgetTokens winning over the deployment scalar; null when the
+   * row runs budget-off. The dispatch half (relay-registry) reads this so a
+   * panel budget edit rides the overlay without a redeploy.
+   */
+  thinkingBudgetTokens: number | null;
   imageInput: boolean;
   /** #361: the row's protocol face (model api ?? provider api ?? default). */
   api: RelayApi;
@@ -89,9 +99,9 @@ function synthesisFromHarness(
   decodeError: boolean,
 ): RelayCatalogResolution {
   const model = harness.relay.model;
-  const derived = deriveRelayReasoning({
-    thinkingEnabled: harness.relay.thinking.type === "enabled",
-  });
+  const globalBudget =
+    harness.relay.thinking.type === "enabled" ? harness.relay.thinking.budget_tokens : null;
+  const derived = deriveRelayReasoning({ thinkingEnabled: globalBudget !== null });
   return {
     configured,
     decodeError,
@@ -115,6 +125,7 @@ function synthesisFromHarness(
         defaultReasoningLevel: derived.defaultLevel,
         contextWindow: harness.relay.contextWindow,
         maxTokens: harness.relay.maxTokens,
+        thinkingBudgetTokens: globalBudget,
         imageInput: harness.relay.supportsImageInput,
         api: harness.relay.api,
         reasoningEffortMap: undefined,
@@ -145,14 +156,88 @@ export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
     return synthesisFromHarness(harness, false, false);
   }
 
-  const thinkingEnabled = harness.relay.thinking.type === "enabled";
-  const providers: RelayCatalogProviderRow[] = [];
+  return projectCatalogDirectory(harness, catalog.providers, {
+    configured: true,
+    decodeError: false,
+    defaultProviderId:
+      catalog.defaultProvider ?? Object.keys(catalog.providers)[0] ?? SYNTHETIC_PROVIDER_ID,
+  });
+}
+
+/**
+ * #362 merged resolution: the D1 provider overlay (user-configured rows)
+ * rides over the env catalog. Same provider id → the overlay row replaces
+ * the env declaration wholesale (the ticket's "同 id D1 覆盖"); new ids are
+ * added. A broken env declaration keeps its loud `decodeError: true` flag
+ * while the overlay rows still serve (a misconfigured deployment seed must
+ * not take user-configured providers down). Zero overlay rows (or no D1 at
+ * all — the loader returns null) falls through to the plain env resolution,
+ * byte-identical to resolveRelayCatalog.
+ */
+export function resolveRelayCatalogWithOverlay(
+  env: HarnessEnv,
+  overlayProviders: Record<string, RelayCatalogProvider>,
+): RelayCatalogResolution {
+  const harness = resolveHarness(env);
+  const raw = env.MODEL_RELAY_CATALOG;
+  const configured = raw !== undefined && raw.trim() !== "";
+  let base: RelayCatalog | null;
+  let decodeError = false;
+  try {
+    base = decodeRelayCatalog(raw);
+  } catch {
+    base = null;
+    decodeError = true;
+  }
+  const merged: Record<string, RelayCatalogProvider> = { ...(base?.providers ?? {}) };
+  for (const [providerId, provider] of Object.entries(overlayProviders)) {
+    merged[providerId] = provider;
+  }
+  if (Object.keys(merged).length === 0) {
+    // Every declared row failed decode and nothing overlays: the synthesis
+    // path keeps the loud decodeError semantics of the plain resolution.
+    if (decodeError) return synthesisFromHarness(harness, configured, true);
+    return synthesisFromHarness(harness, false, false);
+  }
+  const envDefault = base?.defaultProvider;
+  return projectCatalogDirectory(harness, merged, {
+    configured: true,
+    decodeError,
+    defaultProviderId: envDefault ?? Object.keys(merged)[0] ?? SYNTHETIC_PROVIDER_ID,
+  });
+}
+
+/**
+ * The shared projection body: declared provider entries → directory rows.
+ * The model turns actually run stays visible regardless of declaration
+ * (wire truth beats the declaration) — synthesized under the default
+ * provider when no row carries it.
+ */
+function projectCatalogDirectory(
+  harness: ResolvedHarness,
+  providers: Record<string, RelayCatalogProvider>,
+  flags: { configured: boolean; decodeError: boolean; defaultProviderId: string },
+): RelayCatalogResolution {
+  const globalBudget =
+    harness.relay.thinking.type === "enabled" ? harness.relay.thinking.budget_tokens : null;
+  const thinkingEnabled = globalBudget !== null;
+  const providerRows: RelayCatalogProviderRow[] = [];
   const models: RelayCatalogModelRow[] = [];
   let runningRow: RelayCatalogModelRow | undefined;
-  for (const [providerId, provider] of Object.entries(catalog.providers)) {
+  for (const [providerId, provider] of Object.entries(providers)) {
+    // #362 scope absorption ②: `api: "openai-images"` rows are IMAGE
+    // sources (the generate_image tool reads them through the registry),
+    // not LLM chat providers — they never enter the selectable LLM
+    // directory (fail-closed selection vocabulary stays honest) and ride
+    // the Configured panel CRUD face instead.
+    const providerApi = provider.api;
+    if (providerApi === IMAGE_SOURCE_API_FAMILY) continue;
+    const rowBudgetOf = (entry: RelayCatalogModel): number | null =>
+      entry.thinkingBudgetTokens ?? globalBudget;
     const rows = provider.models.map((entry): RelayCatalogModelRow => {
+      const rowBudget = rowBudgetOf(entry);
       const derived = deriveRelayReasoning({
-        thinkingEnabled,
+        thinkingEnabled: rowBudget !== null,
         declaredLevels: entry.reasoningLevels,
         declaredDefault: entry.defaultReasoningLevel,
       });
@@ -170,29 +255,29 @@ export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
         // turns actually run, not two parallel answers.
         contextWindow: isRunning ? harness.relay.contextWindow : (entry.contextWindow ?? null),
         maxTokens: isRunning ? harness.relay.maxTokens : (entry.maxTokens ?? null),
+        thinkingBudgetTokens: rowBudget,
         imageInput: isRunning
           ? harness.relay.supportsImageInput
           : (entry.input?.includes("image") ?? false),
         // #361: the face this row dispatches under — model declaration,
         // then the provider's, then the incumbent anthropic face.
-        api: entry.api ?? (provider.api ?? DEFAULT_RELAY_API),
+        api: entry.api ?? (providerApi ?? DEFAULT_RELAY_API),
         reasoningEffortMap: entry.reasoningEffortMap,
         isDefault: isRunning,
       };
     });
     runningRow ??= rows.find((row) => row.isDefault);
     models.push(...rows);
-    providers.push({
+    providerRows.push({
       id: providerId,
       displayName: provider.displayName ?? providerId,
+      api: providerApi,
       serviceTier: provider.serviceTier ?? false,
-      api: provider.api,
       imageInput: rows.some((row) => row.imageInput),
     });
   }
 
-  const defaultProviderId =
-    catalog.defaultProvider ?? Object.keys(catalog.providers)[0] ?? SYNTHETIC_PROVIDER_ID;
+  const defaultProviderId = flags.defaultProviderId;
   if (runningRow === undefined) {
     // The model turns actually run must always be visible on the directory
     // face (wire truth beats the declaration): synthesize its row under the
@@ -208,6 +293,7 @@ export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
       defaultReasoningLevel: derived.defaultLevel,
       contextWindow: harness.relay.contextWindow,
       maxTokens: harness.relay.maxTokens,
+      thinkingBudgetTokens: globalBudget,
       imageInput: harness.relay.supportsImageInput,
       api: harness.relay.api,
       reasoningEffortMap: undefined,
@@ -215,5 +301,12 @@ export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
     };
     models.unshift(runningRow);
   }
-  return { configured: true, decodeError: false, defaultProviderId, providers, models, harness };
+  return {
+    configured: flags.configured,
+    decodeError: flags.decodeError,
+    defaultProviderId,
+    providers: providerRows,
+    models,
+    harness,
+  };
 }

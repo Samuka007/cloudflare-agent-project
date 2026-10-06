@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { RelayCatalogProvider } from "@cap/agent-do";
 import {
   createProjectRequestSchema,
   createThreadSectionRequestSchema,
@@ -49,7 +50,11 @@ import {
 } from "../db/control-plane.js";
 import { listProjectSources } from "../db/project-sources.js";
 import { toThreadListEntries } from "../services/runtime-display.js";
-import { resolveRelayCatalog } from "@cap/provider-app";
+import {
+  loadProviderConfigCatalogOverlay,
+  resolveRelayCatalog,
+  resolveRelayCatalogWithOverlay,
+} from "@cap/provider-app";
 import type { Env, HonoBindings } from "../app-types.js";
 import type { ProjectRow } from "../db/rows.js";
 
@@ -189,7 +194,8 @@ export function registerProjectRoutes(app: Hono<{ Bindings: HonoBindings }>): vo
   // public-api.ts:381-388). No composer 404: the resolved runtime default.
   routes.get("/projects/:id/default-execution-options", async (ctx) => {
     await requirePublicProject(ctx.env, ctx.req.param("id"));
-    return ctx.json(resolveProjectDefaultExecutionOptions(ctx.env));
+    const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+    return ctx.json(resolveProjectDefaultExecutionOptions(ctx.env, overlay?.providers));
   });
 
   // bb routes/projects.ts:402-418: public project required, limit clamped to
@@ -358,8 +364,14 @@ async function toProjectWithThreads(env: Env, row: ProjectRow) {
  * directory "none" vs the harness "none" split collapses onto one source:
  * budget off → "none" everywhere, budget on → the declared default rung.
  */
-function resolveProjectDefaultExecutionOptions(env: Env) {
-  const catalog = resolveRelayCatalog(env);
+function resolveProjectDefaultExecutionOptions(
+  env: Env,
+  overlayProviders?: Record<string, RelayCatalogProvider>,
+) {
+  const catalog =
+    overlayProviders === undefined
+      ? resolveRelayCatalog(env)
+      : resolveRelayCatalogWithOverlay(env, overlayProviders);
   const harness = catalog.harness;
   return projectExecutionDefaultsSchema.parse({
     providerId: catalog.defaultProviderId,

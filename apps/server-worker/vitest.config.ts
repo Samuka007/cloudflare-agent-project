@@ -23,6 +23,12 @@ export default defineConfig({
         // manifest is snapshotted when miniflare boots, which is also why
         // fixtures cannot be written from inside a running test.
         assets: { directory: "./test/fixtures/spa-root" },
+        // #362: the provider-config master key for the L1 rig. Deployment
+        // injects it as a Worker secret (`wrangler secret put`); the merged
+        // `bindings` ride OVER the wrangler-derived options, so tests
+        // exercise the real encrypt/decrypt path without a plaintext default
+        // in wrangler.jsonc.
+        bindings: { PROVIDER_CONFIG_MASTER_KEY: "l1-rig-master-key" },
       },
     }),
   ],
