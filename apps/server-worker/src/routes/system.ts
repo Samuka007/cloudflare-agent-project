@@ -74,6 +74,7 @@ import {
   discoverProviderModels,
   probeProviderConnection,
 } from "../services/provider-config-test.js";
+import { consumeProbeSlot } from "../services/probe-rate-limit.js";
 import {
   getAppSettingsRow,
   getExperiments,
@@ -85,7 +86,7 @@ import {
   applyAppKeybindingOverrides,
   toAppSettings,
 } from "../db/settings.js";
-import type { Env, HonoBindings } from "../app-types.js";
+import type { AppEnv, Env } from "../app-types.js";
 
 /**
  * System + settings face (bb apps/server/src/routes/system.ts, commit
@@ -312,8 +313,8 @@ function decodeGenerateImageConfigSafely(
   }
 }
 
-export function registerSystemRoutes(app: Hono<{ Bindings: HonoBindings }>): void {
-  const routes = new Hono<{ Bindings: HonoBindings }>();
+export function registerSystemRoutes(app: Hono<AppEnv>): void {
+  const routes = new Hono<AppEnv>();
 
   routes.get("/system/config", async (ctx) => {
     const url = new URL(ctx.req.url);
@@ -468,7 +469,7 @@ function hub(env: Env) {
  * All of it rides the standard /api/v1 auth ladder (origin guard + Access
  * gate, app.ts:37-42).
  */
-function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>): void {
+function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   const requireValidId = (raw: string): string => {
     if (!providerConfigIdSchema.safeParse(raw).success || !isValidProviderConfigId(raw)) {
       throw new ApiError({
@@ -550,6 +551,26 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
       message:
         "changing baseUrl would send the stored credential to a new endpoint — " +
         "re-enter apiKey for the new baseUrl in the same request, or clear the credential (apiKey: null)",
+    });
+  };
+
+  /**
+   * Shared probe-face budget (SEC-W5-003): both endpoints consume ONE fixed
+   * window keyed by the verified Access principal (gate-on deployments) or
+   * the client IP, so neither face is an unlimited outbound-request oracle
+   * even before any credential exists.
+   */
+  const assertProbeSlotAvailable = (ctx: Context<AppEnv>): void => {
+    const slot = consumeProbeSlot(
+      ctx.get("accessPrincipalId") ?? ctx.req.header("cf-connecting-ip") ?? "anonymous",
+    );
+    if (slot.allowed) return;
+    throw new ApiError({
+      status: 429,
+      code: "probe_rate_limited",
+      message: `probe rate limit exceeded — retry in ${slot.retryAfterSeconds}s`,
+      retryable: true,
+      details: { retryAfterSeconds: slot.retryAfterSeconds },
     });
   };
 
@@ -692,6 +713,7 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
   });
 
   routes.post("/system/providers/:id/test", async (ctx) => {
+    assertProbeSlotAvailable(ctx);
     const id = requireValidId(ctx.req.param("id"));
     const target = await getProviderConfigTarget(ctx.env, id);
     if (target === null) {
@@ -743,6 +765,7 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
   // row ({baseUrl, apiKey?}) or a saved one ({providerId} — the row's
   // baseUrl plus its DECRYPTED stored secret, which the panel never sees).
   routes.post("/system/providers/discover-models", async (ctx) => {
+    assertProbeSlotAvailable(ctx);
     const payload = await requireJsonBody(ctx, providerConfigDiscoverRequestSchema);
     const verdict =
       "providerId" in payload
@@ -873,7 +896,7 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
 /** The {providerId}-anchored discovery branch: resolves the row's baseUrl
  * and its stored secret (unless the panel re-typed a key for this probe). */
 async function discoverForSavedRow(
-  ctx: Context<{ Bindings: HonoBindings }>,
+  ctx: Context<AppEnv>,
   id: string,
   typedKey: string | undefined,
 ) {

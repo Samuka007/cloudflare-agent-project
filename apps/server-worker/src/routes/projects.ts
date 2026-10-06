@@ -55,7 +55,7 @@ import {
   resolveRelayCatalog,
   resolveRelayCatalogWithOverlay,
 } from "@cap/provider-app";
-import type { Env, HonoBindings } from "../app-types.js";
+import type { AppEnv, Env } from "../app-types.js";
 import type { ProjectRow } from "../db/rows.js";
 
 /**
@@ -64,8 +64,8 @@ import type { ProjectRow } from "../db/rows.js";
  * 8473d8c33). M0 minimal: CRUD + reorder-free listing; sources are
  * host-binding rows only (no file/skill/branch faces).
  */
-export function registerProjectRoutes(app: Hono<{ Bindings: HonoBindings }>): void {
-  const routes = new Hono<{ Bindings: HonoBindings }>();
+export function registerProjectRoutes(app: Hono<AppEnv>): void {
+  const routes = new Hono<AppEnv>();
 
   routes.get("/projects", async (ctx) => {
     const query = parseOr422(projectListQuerySchema, ctx.req.query());
@@ -275,8 +275,8 @@ export function registerProjectRoutes(app: Hono<{ Bindings: HonoBindings }>): vo
 }
 
 /** bb routes/thread-sections.ts (create/update/delete with mutation counts). */
-export function registerThreadSectionRoutes(app: Hono<{ Bindings: HonoBindings }>): void {
-  const routes = new Hono<{ Bindings: HonoBindings }>();
+export function registerThreadSectionRoutes(app: Hono<AppEnv>): void {
+  const routes = new Hono<AppEnv>();
 
   routes.post("/thread-sections", async (ctx) => {
     const payload = await requireJsonBody(ctx, createThreadSectionRequestSchema);

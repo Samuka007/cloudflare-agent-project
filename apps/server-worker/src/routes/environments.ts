@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { ApiError } from "../shared/api-error.js";
 import { environmentSchema } from "../contract/domain/environment.js";
 import { getEnvironmentRow, listEnvironmentRows } from "../db/environments.js";
-import type { HonoBindings } from "../app-types.js";
+import type { AppEnv } from "../app-types.js";
 
 /**
  * #288 environments minimal set (inventory §2.A2 read face): project-scoped
@@ -10,8 +10,8 @@ import type { HonoBindings } from "../app-types.js";
  * domain Environment row — the provisioning/status sub-resources (bb's other
  * 10 routes) stay deferred until their daemon faces exist.
  */
-export function registerEnvironmentRoutes(app: Hono<{ Bindings: HonoBindings }>): void {
-  const routes = new Hono<{ Bindings: HonoBindings }>();
+export function registerEnvironmentRoutes(app: Hono<AppEnv>): void {
+  const routes = new Hono<AppEnv>();
 
   routes.get("/environments", async (ctx) => {
     const projectId = ctx.req.query("projectId");

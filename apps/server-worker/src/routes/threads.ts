@@ -119,7 +119,7 @@ import { agentDoCancelTurn, agentDoCompactThread, agentDoFor } from "../seam/age
 import { resolveThreadBinding } from "../services/thread-binding.js";
 import type { PromptInput } from "../contract/domain/shared-types.js";
 import type { PromptContent } from "@cap/protocol";
-import type { Env, HonoBindings } from "../app-types.js";
+import type { AppEnv, Env } from "../app-types.js";
 
 /** bb timeline.ts:163-165. */
 const THREAD_TIMELINE_DEFAULT_SEGMENT_LIMIT = 20;
@@ -134,8 +134,8 @@ const SEND_EVENT_TYPES = ["client/turn/requested"] as const;
  * rate-limit-recovery, storage face are additive families (#27+). The
  * host-file face opened its minimal subset — content read only (#321).
  */
-export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): void {
-  const routes = new Hono<{ Bindings: HonoBindings }>();
+export function registerThreadRoutes(app: Hono<AppEnv>): void {
+  const routes = new Hono<AppEnv>();
 
   // --- list -------------------------------------------------------------------
 

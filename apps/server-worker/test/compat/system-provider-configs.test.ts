@@ -6,6 +6,10 @@ import type { AnyAgentEvent, RelayCatalogProvider } from "@cap/agent-do";
 import { ensureMigrations } from "../migrate.js";
 import { insertProviderConfig, type ProviderConfigEnv } from "../../src/db/provider-configs.js";
 import {
+  PROBE_RATE_LIMIT_MAX,
+  resetProbeRateLimiter,
+} from "../../src/services/probe-rate-limit.js";
+import {
   providerConfigDiscoverResponseSchema,
   providerConfigRowSchema,
   providerConfigsListResponseSchema,
@@ -917,6 +921,42 @@ describe("SEC-W5-003: stored-credential probe binding", () => {
     expect(cleared.baseUrl).toBe("https://third.example.com");
     expect(cleared.hasApiKey).toBe(false);
     expect((await rawD1Row("exfil-rebind"))?.api_key_enc).toBeNull();
+  });
+});
+
+describe("SEC-W5-003: probe-face rate limit", () => {
+  afterEach(() => {
+    resetProbeRateLimiter();
+    vi.unstubAllGlobals();
+  });
+
+  it("429s past the per-principal window with a shared budget across both faces", async () => {
+    resetProbeRateLimiter();
+    await postProvider({
+      id: "throttled",
+      api: "anthropic-messages",
+      baseUrl: "https://throttle.example.com",
+      models: [{ id: "m" }],
+    });
+    stubProbeFetch([]);
+    for (let i = 0; i < PROBE_RATE_LIMIT_MAX; i++) {
+      expect((await request("POST", "/api/v1/system/providers/throttled/test")).status).toBe(200);
+    }
+    const overLimit = await request("POST", "/api/v1/system/providers/throttled/test");
+    expect(overLimit.status).toBe(429);
+    const body = await overLimit.json<{
+      code: string;
+      retryable: boolean;
+      details: { retryAfterSeconds: number };
+    }>();
+    expect(body.code).toBe("probe_rate_limited");
+    expect(body.retryable).toBe(true);
+    expect(body.details.retryAfterSeconds).toBeGreaterThan(0);
+    // The bucket is shared across BOTH probe faces.
+    const discoverBlocked = await request("POST", "/api/v1/system/providers/discover-models", {
+      baseUrl: "https://throttle.example.com",
+    });
+    expect(discoverBlocked.status).toBe(429);
   });
 });
 
