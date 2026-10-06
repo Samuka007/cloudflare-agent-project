@@ -17,7 +17,8 @@ import {
   snapshotHarness,
 } from "./harness.js";
 import type { HarnessEnv } from "./harness.js";
-import { relayAgentRuntime } from "./relay-registry.js";
+import { RelayProviderRegistry, relayAgentRuntime } from "./relay-registry.js";
+import { loadProviderConfigOverlay, type ProviderConfigEnv } from "./provider-configs.js";
 import { flattenPromptInputGroups } from "./flatten-input.js";
 
 /**
@@ -48,7 +49,7 @@ import { flattenPromptInputGroups } from "./flatten-input.js";
  * SQLite); an evicted agent DO replays from its own log.
  */
 
-export interface ManagerDoBindings extends HarnessEnv {
+export interface ManagerDoBindings extends HarnessEnv, ProviderConfigEnv {
   AGENT_DO: DurableObjectNamespace;
 }
 
@@ -204,7 +205,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
   // -------------------------------------------------------------------------
 
   async handleAdapterCommand(command: AdapterCommand): Promise<AdapterCommandOutcome> {
-    this.ensureAgentRuntime();
+    await this.ensureAgentRuntime();
     switch (command.type) {
       case "initialize":
         return this.initialize();
@@ -603,10 +604,16 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
   /**
    * Idempotent registration of the resolved relay into the agent DO injection
    * registry (fallback key `*`; tests register exact thread keys above it).
-   * Re-registers only when the non-secret relay fingerprint changes.
+   * Re-registers only when the non-secret relay fingerprint changes. #362:
+   * the D1 provider overlay is loaded per registration attempt and its
+   * content fingerprint gates the re-registration — a panel-side provider
+   * edit hot-applies without a redeploy (co-hosted-isolate topology;
+   * composed deployments' agent DO isolates additionally refresh
+   * themselves at the turn boundary).
    */
-  private ensureAgentRuntime(): void {
+  private async ensureAgentRuntime(): Promise<void> {
     const harness = resolveHarness(this.env);
+    const overlay = await loadProviderConfigOverlay(this.env);
     const fingerprint = [
       harness.relay.mode,
       harness.relay.baseUrl,
@@ -619,9 +626,12 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       // a declaration change re-registers the providerId-keyed rows.
       this.env.MODEL_RELAY_CATALOG ?? "",
       this.env.MODEL_RELAY_PROVIDER_CREDENTIALS === undefined ? "unset" : "set",
+      overlay?.fingerprint ?? "",
     ].join("|");
     if (this.registeredRelayFingerprint === fingerprint) return;
-    setAgentRuntime("*", relayAgentRuntime(this.env));
+    const registry = RelayProviderRegistry.fromEnv(this.env);
+    if (overlay !== null) registry.applyOverlay(overlay);
+    setAgentRuntime("*", relayAgentRuntime(this.env, registry));
     this.registeredRelayFingerprint = fingerprint;
   }
 

@@ -101,6 +101,14 @@ export interface Env {
    * have no field in this schema (keys stay in their own env/secret slots).
    */
   readonly MODEL_RELAY_CATALOG?: string;
+  /**
+   * #362 AES-GCM master key for the provider_configs.api_key_enc column
+   * (the user-configurable provider panel). Worker SECRET in deployment
+   * (`wrangler secret put PROVIDER_CONFIG_MASTER_KEY`); unset = rows with
+   * stored keys cannot decrypt (mock-first degradation, loader warning) and
+   * key-bearing writes are refused (422 master_key_missing).
+   */
+  readonly PROVIDER_CONFIG_MASTER_KEY?: string;
   /** `accept-edits` | `auto` | `full` (default `full`). */
   readonly HARNESS_PERMISSION_MODE?: string;
   /**

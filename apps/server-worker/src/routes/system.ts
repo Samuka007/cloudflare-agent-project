@@ -5,15 +5,33 @@ import {
   DEFAULT_WEB_SEARCH_CONFIG,
   decodeWebSearchConfig,
   projectWebSearchConfig,
+  SYNTHETIC_RELAY_PROVIDER_ID,
+  type RelayCatalogProvider,
 } from "@cap/agent-do";
 import type { WebSearchEngineProjection } from "@cap/agent-do";
-import { projectHarness, resolveRelayCatalog, type HarnessEnv } from "@cap/provider-app";
+import {
+  isValidProviderConfigId,
+  loadProviderConfigCatalogOverlay,
+  loadProviderConfigOverlay,
+  projectHarness,
+  resolveRelayCatalog,
+  resolveRelayCatalogWithOverlay,
+  type HarnessEnv,
+} from "@cap/provider-app";
 import {
   systemProviderProjectionsResponseSchema,
   systemConfigResponseSchema,
   systemExecutionOptionsQuerySchema,
   systemExecutionOptionsResponseSchema,
   systemVersionResponseSchema,
+  providerConfigCreateRequestSchema,
+  providerConfigIdSchema,
+  providerConfigPatchRequestSchema,
+  providerConfigReplaceRequestSchema,
+  providerConfigRowSchema,
+  providerConfigTestResponseSchema,
+  providerConfigsListResponseSchema,
+  type ProviderConfigRow,
   type SystemExecutionOptionsResponse,
 } from "../contract/api/system.js";
 import { appSettingsSchema } from "../contract/domain/app-settings.js";
@@ -28,6 +46,17 @@ import {
 import { DEFAULT_APP_KEYBINDINGS } from "../services/system/app-keybindings.js";
 import { defaultFeatureFlags } from "../contract/domain/feature-flags.js";
 import { ApiError, parseOr422, requireJsonBody } from "../shared/route-utils.js";
+import {
+  deleteProviderConfig,
+  getProviderConfigTarget,
+  insertProviderConfig,
+  patchProviderConfig,
+  readProviderConfigSecret,
+  replaceProviderConfig,
+  type CredentialUpdate,
+  type ProviderConfigWriteFields,
+} from "../db/provider-configs.js";
+import { probeProviderConnection } from "../services/provider-config-test.js";
 import {
   getAppSettingsRow,
   getExperiments,
@@ -99,8 +128,14 @@ export function buildSystemConfig(env: Env, requestUrl: URL) {
  * return is the compile-time parity guard pinning the catalog ladder
  * vocabulary to bb's ReasoningLevel enum (shared-types.ts:18-27).
  */
-export function buildExecutionOptions(env: HarnessEnv): SystemExecutionOptionsResponse {
-  const catalog = resolveRelayCatalog(env);
+export function buildExecutionOptions(
+  env: HarnessEnv,
+  overlayProviders?: Record<string, RelayCatalogProvider>,
+): SystemExecutionOptionsResponse {
+  const catalog =
+    overlayProviders === undefined
+      ? resolveRelayCatalog(env)
+      : resolveRelayCatalogWithOverlay(env, overlayProviders);
   return {
     providers: catalog.providers.map((provider) => ({
       id: provider.id,
@@ -158,10 +193,16 @@ export function buildExecutionOptions(env: HarnessEnv): SystemExecutionOptionsRe
  * Daemon-side provider pins (judge/security) are NOT visible here — they live
  * in daemon env, a different trust domain (#255 §6.2, ticket #56).
  */
-export function buildProviderProjections(env: Pick<Env, "AGENT_DO_WEB_SEARCH"> & HarnessEnv) {
+export function buildProviderProjections(
+  env: Pick<Env, "AGENT_DO_WEB_SEARCH"> & HarnessEnv,
+  overlayProviders?: Record<string, RelayCatalogProvider>,
+) {
   // One resolution for both rows: the harness projection and the catalog
   // status project the same evaluation (same-source, #350).
-  const resolution = resolveRelayCatalog(env);
+  const resolution =
+    overlayProviders === undefined
+      ? resolveRelayCatalog(env)
+      : resolveRelayCatalogWithOverlay(env, overlayProviders);
   const harness = projectHarness(resolution.harness);
   // Total over env content: a malformed relay URL degrades to a null host
   // instead of failing the whole read-only face.
@@ -328,23 +369,34 @@ export function registerSystemRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     );
   });
 
-  routes.get("/system/execution-options", (ctx) => {
+  routes.get("/system/execution-options", async (ctx) => {
     // bb validates the query against systemExecutionOptionsQuerySchema
     // (public-api.ts:1408-1409); hostId and environmentId are mutually
     // exclusive. The Worker has no host routing, so the parsed value is
     // discarded and the primary catalog is served regardless.
     parseOr422(systemExecutionOptionsQuerySchema, ctx.req.query());
-    return ctx.json(systemExecutionOptionsResponseSchema.parse(buildExecutionOptions(ctx.env)));
-  });
-
-  // Read-only projection face (#266): no PUT exists anywhere on this path —
-  // provider edits ride the deployment env (control-plane-layer §3.2), and
-  // POST /system/config/reload is a deliberate no-op for the same reason.
-  routes.get("/system/provider-projections", (ctx) => {
+    // #362: the D1 provider overlay rides over the env seed — a panel-side
+    // provider appears here on the next request (no redeploy, no reload).
+    const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
     return ctx.json(
-      systemProviderProjectionsResponseSchema.parse(buildProviderProjections(ctx.env)),
+      systemExecutionOptionsResponseSchema.parse(buildExecutionOptions(ctx.env, overlay?.providers)),
     );
   });
+
+  // Read-only projection face (#266). Since #362 the user-face write path is
+  // /system/providers (the D1 正本); this face still has no PUT anywhere —
+  // the env-declared deployment seed stays redeploy-only (control-plane-layer
+  // §3.2), and POST /system/config/reload remains a deliberate no-op for it.
+  routes.get("/system/provider-projections", async (ctx) => {
+    const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+    return ctx.json(
+      systemProviderProjectionsResponseSchema.parse(
+        buildProviderProjections(ctx.env, overlay?.providers),
+      ),
+    );
+  });
+
+  registerProviderConfigRoutes(routes);
 
   app.route("/api/v1", routes);
 }
@@ -354,4 +406,227 @@ function hub(env: Env) {
   return stub as DurableObjectStub & {
     notifySystem(changes: string[]): Promise<{ delivered: number }>;
   };
+}
+
+/**
+ * #362 the provider configurable panel's CRUD face (the user 正本). Writes
+ * go straight to D1; every response row is re-read through the loader so the
+ * panel sees exactly the stored truth (including skip-with-warning status).
+ * All of it rides the standard /api/v1 auth ladder (origin guard + Access
+ * gate, app.ts:37-42).
+ */
+function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>): void {
+  const requireValidId = (raw: string): string => {
+    if (!providerConfigIdSchema.safeParse(raw).success || !isValidProviderConfigId(raw)) {
+      throw new ApiError({
+        status: 422,
+        code: "validation_failed",
+        message: `invalid provider id "${raw}" (expected ^[A-Za-z0-9][A-Za-z0-9._-]*$)`,
+      });
+    }
+    return raw;
+  };
+
+  const credentialOf = (apiKey: string | null | undefined): CredentialUpdate => {
+    if (apiKey === undefined) return { kind: "keep" };
+    if (apiKey === null) return { kind: "clear" };
+    return { kind: "set", plaintext: apiKey };
+  };
+
+  const writeFieldsOf = (
+    payload: {
+      displayName?: string;
+      baseUrl?: string;
+      api?: string;
+      serviceTier?: boolean;
+      models?: unknown[];
+    },
+  ): ProviderConfigWriteFields => ({
+    displayName: payload.displayName ?? null,
+    baseUrl: payload.baseUrl ?? null,
+    api: payload.api ?? null,
+    serviceTier: payload.serviceTier ?? false,
+    models: payload.models ?? [],
+  });
+
+  /** The stored truth after a write (loader shape — status included). */
+  const rowAfterWrite = async (env: Env, id: string): Promise<ProviderConfigRow> => {
+    const load = await loadProviderConfigOverlay(env);
+    const row = load?.rows.find((candidate) => candidate.id === id);
+    if (row === undefined) {
+      throw new ApiError({
+        status: 500,
+        code: "internal",
+        message: `provider config ${id} vanished immediately after write`,
+      });
+    }
+    return providerConfigRowSchema.parse(row);
+  };
+
+  const refuseKeyWithoutMasterKey = (env: Env, credential: CredentialUpdate): void => {
+    if (
+      credential.kind === "set" &&
+      (env.PROVIDER_CONFIG_MASTER_KEY === undefined || env.PROVIDER_CONFIG_MASTER_KEY === "")
+    ) {
+      throw new ApiError({
+        status: 422,
+        code: "master_key_missing",
+        message:
+          "PROVIDER_CONFIG_MASTER_KEY is not configured — refusing to store a plaintext API key " +
+          "(set the Worker secret first; rows without keys still work in mock mode)",
+      });
+    }
+  };
+
+  routes.get("/system/providers", async (ctx) => {
+    const load = await loadProviderConfigOverlay(ctx.env);
+    return ctx.json(providerConfigsListResponseSchema.parse({ providers: load?.rows ?? [] }));
+  });
+
+  routes.get("/system/providers/:id", async (ctx) => {
+    const id = requireValidId(ctx.req.param("id"));
+    const load = await loadProviderConfigOverlay(ctx.env);
+    const row = load?.rows.find((candidate) => candidate.id === id);
+    if (row === undefined) {
+      throw new ApiError({
+        status: 404,
+        code: "provider_config_not_found",
+        message: `provider config "${id}" not found`,
+      });
+    }
+    return ctx.json(providerConfigRowSchema.parse(row));
+  });
+
+  routes.post("/system/providers", async (ctx) => {
+    const payload = await requireJsonBody(ctx, providerConfigCreateRequestSchema);
+    if (!isValidProviderConfigId(payload.id)) {
+      throw new ApiError({
+        status: 422,
+        code: "validation_failed",
+        message: `invalid provider id "${payload.id}"`,
+      });
+    }
+    if (payload.id === SYNTHETIC_RELAY_PROVIDER_ID) {
+      throw new ApiError({
+        status: 409,
+        code: "provider_config_reserved",
+        message: `"${SYNTHETIC_RELAY_PROVIDER_ID}" is the deployment-default seam id and cannot be configured`,
+      });
+    }
+    if ((await getProviderConfigTarget(ctx.env, payload.id)) !== null) {
+      throw new ApiError({
+        status: 409,
+        code: "provider_config_exists",
+        message: `provider config "${payload.id}" already exists (PUT/PATCH to edit)`,
+      });
+    }
+    const credential = credentialOf(payload.apiKey);
+    refuseKeyWithoutMasterKey(ctx.env, credential);
+    await insertProviderConfig(ctx.env, payload.id, writeFieldsOf(payload), credential);
+    return ctx.json(await rowAfterWrite(ctx.env, payload.id), 201);
+  });
+
+  routes.put("/system/providers/:id", async (ctx) => {
+    const id = requireValidId(ctx.req.param("id"));
+    const payload = await requireJsonBody(ctx, providerConfigReplaceRequestSchema);
+    if ((await getProviderConfigTarget(ctx.env, id)) === null) {
+      throw new ApiError({
+        status: 404,
+        code: "provider_config_not_found",
+        message: `provider config "${id}" not found (POST /system/providers to create)`,
+      });
+    }
+    const credential = credentialOf(payload.apiKey);
+    refuseKeyWithoutMasterKey(ctx.env, credential);
+    await replaceProviderConfig(ctx.env, id, writeFieldsOf(payload), credential);
+    return ctx.json(await rowAfterWrite(ctx.env, id));
+  });
+
+  routes.patch("/system/providers/:id", async (ctx) => {
+    const id = requireValidId(ctx.req.param("id"));
+    const payload = await requireJsonBody(ctx, providerConfigPatchRequestSchema);
+    if ((await getProviderConfigTarget(ctx.env, id)) === null) {
+      throw new ApiError({
+        status: 404,
+        code: "provider_config_not_found",
+        message: `provider config "${id}" not found`,
+      });
+    }
+    const credential = credentialOf(payload.apiKey);
+    refuseKeyWithoutMasterKey(ctx.env, credential);
+    await patchProviderConfig(
+      ctx.env,
+      id,
+      {
+        ...(payload.displayName !== undefined ? { displayName: payload.displayName } : {}),
+        ...(payload.baseUrl !== undefined ? { baseUrl: payload.baseUrl } : {}),
+        ...(payload.api !== undefined ? { api: payload.api } : {}),
+        ...(payload.serviceTier !== undefined ? { serviceTier: payload.serviceTier } : {}),
+        ...(payload.models !== undefined ? { models: payload.models } : {}),
+      },
+      credential,
+    );
+    return ctx.json(await rowAfterWrite(ctx.env, id));
+  });
+
+  routes.delete("/system/providers/:id", async (ctx) => {
+    const id = requireValidId(ctx.req.param("id"));
+    if ((await getProviderConfigTarget(ctx.env, id)) === null) {
+      throw new ApiError({
+        status: 404,
+        code: "provider_config_not_found",
+        message: `provider config "${id}" not found`,
+      });
+    }
+    await deleteProviderConfig(ctx.env, id);
+    return ctx.json({ ok: true });
+  });
+
+  routes.post("/system/providers/:id/test", async (ctx) => {
+    const id = requireValidId(ctx.req.param("id"));
+    const target = await getProviderConfigTarget(ctx.env, id);
+    if (target === null) {
+      throw new ApiError({
+        status: 404,
+        code: "provider_config_not_found",
+        message: `provider config "${id}" not found`,
+      });
+    }
+    if (target.baseUrl === null || target.baseUrl === "") {
+      return ctx.json(
+        providerConfigTestResponseSchema.parse({
+          ok: false,
+          status: null,
+          latencyMs: null,
+          error: "row declares no baseUrl — set one before testing",
+        }),
+      );
+    }
+    const modelEntry = target.models.find(
+      (entry): entry is { id: string } =>
+        typeof entry === "object" &&
+        entry !== null &&
+        "id" in entry &&
+        typeof entry.id === "string",
+    );
+    if (modelEntry === undefined) {
+      return ctx.json(
+        providerConfigTestResponseSchema.parse({
+          ok: false,
+          status: null,
+          latencyMs: null,
+          error: "row declares no usable model id — add a model before testing",
+        }),
+      );
+    }
+    // A missing/undecryptable key probes WITHOUT credentials: the upstream
+    // verdict (e.g. 401) is the honest answer, and the panel shows it as-is.
+    const verdict = await probeProviderConnection({
+      api: target.api,
+      baseUrl: target.baseUrl,
+      model: modelEntry.id,
+      apiKey: await readProviderConfigSecret(ctx.env, id),
+    });
+    return ctx.json(providerConfigTestResponseSchema.parse(verdict));
+  });
 }

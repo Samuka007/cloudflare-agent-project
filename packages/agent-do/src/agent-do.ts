@@ -260,6 +260,14 @@ export interface AgentDoBindings {
    * settlement backstop.
    */
   DB?: D1Database;
+  /**
+   * #362: master key for the D1 provider-config credential column
+   * (provider_configs.api_key_enc, AES-GCM). The composed worker's runtime
+   * refresh reads it when decrypting the overlay; unset = rows with stored
+   * keys stay mock (the loader warns). Pure pass-through — the agent DO
+   * never logs or projects the value.
+   */
+  PROVIDER_CONFIG_MASTER_KEY?: string;
 }
 
 /**
@@ -2207,6 +2215,15 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     const abort = new AbortController();
     this.activeDrivers.set(turnId, abort);
     try {
+      // #362: the deploying worker's runtime may re-read mutable provider
+      // config (D1 overlay) at the turn boundary — hot-reload without a
+      // redeploy. Best-effort: a failed refresh dispatches the last-known
+      // registration instead of killing the turn.
+      try {
+        await getAgentRuntime(this.requireThread()).refreshRuntime?.();
+      } catch (error) {
+        console.warn("agent runtime refresh failed; dispatching last-known registry", error);
+      }
       const exit = await Effect.runPromiseExit(this.turnProgram(turnId, abort.signal));
       if (Exit.isFailure(exit)) {
         const rendered = Cause.pretty(exit.cause);

@@ -24,12 +24,13 @@ import {
   resolveRelaySelection,
   type AgentRuntime,
   type ModelProvider,
+  type RelayCatalogProvider,
   type RelayConfig,
   type RelayReasoningLevel,
   type RelaySelection,
 } from "@cap/agent-do";
 import type { RelayCatalogResolution } from "./catalog.js";
-import { resolveRelayCatalog } from "./catalog.js";
+import { resolveRelayCatalog, resolveRelayCatalogWithOverlay } from "./catalog.js";
 import {
   FixedReplyProvider,
   relayProviderFrom,
@@ -52,6 +53,21 @@ export interface RelayProviderRegistryResolution {
   reasoningLevel: RelayReasoningLevel;
   /** The wire config the selection dispatches under. */
   config: RelayConfig;
+}
+
+/**
+ * #362 the D1 provider overlay: user-configured rows (provider_configs)
+ * decoded by the server's config loader. `providers` carries the validated
+ * catalog declarations (they override env same-id entries at projection);
+ * `credentials` the DECRYPTED per-row wire slots; `standaloneProviders` the
+ * ids whose wire identity is row-owned — they never fall back to the
+ * deployment relay slots, because a user-authored baseUrl must never be
+ * hit with the deployment's shared key (credential-leak vector).
+ */
+export interface RelayProviderOverlay {
+  providers: Record<string, RelayCatalogProvider>;
+  credentials: RelayProviderCredentialMap;
+  standaloneProviders: ReadonlySet<string>;
 }
 
 /**
@@ -113,23 +129,41 @@ function instanceKey(resolution: RelayProviderRegistryResolution): string {
 
 export class RelayProviderRegistry {
   private readonly instances = new Map<string, ModelProvider>();
-  private readonly catalogResolution: RelayCatalogResolution;
+  private catalogResolution: RelayCatalogResolution;
   private readonly credentials: RelayProviderCredentialMap;
+  private readonly env: HarnessEnv;
+  private overlay: RelayProviderOverlay | null;
 
   private constructor(
+    env: HarnessEnv,
     catalogResolution: RelayCatalogResolution,
     credentials: RelayProviderCredentialMap,
+    overlay: RelayProviderOverlay | null = null,
   ) {
+    this.env = env;
     this.catalogResolution = catalogResolution;
     this.credentials = credentials;
+    this.overlay = overlay;
   }
 
   /** Resolve over the deployment env (catalog + harness + credential slots). */
   static fromEnv(env: HarnessEnv): RelayProviderRegistry {
     return new RelayProviderRegistry(
+      env,
       resolveRelayCatalog(env),
       decodeRelayProviderCredentials(env.MODEL_RELAY_PROVIDER_CREDENTIALS),
     );
+  }
+
+  /**
+   * #362 hot-reload: swap the D1 overlay in place (the registration closure
+   * holds the instance). The instance cache is cleared — stale wire clients
+   * must not survive a key rotation or a baseUrl edit.
+   */
+  applyOverlay(overlay: RelayProviderOverlay): void {
+    this.overlay = overlay;
+    this.catalogResolution = resolveRelayCatalogWithOverlay(this.env, overlay.providers);
+    this.instances.clear();
   }
 
   /**
@@ -157,7 +191,21 @@ export class RelayProviderRegistry {
       (candidate) =>
         candidate.providerId === resolved.providerId && candidate.id === resolved.modelId,
     );
-    const slot = this.credentials[resolved.providerId] ?? {};
+    // #362: a D1-declared (overlay) provider is credential-standalone — its
+    // wire identity is the user's row (baseUrl + decrypted apiKeyEnc), NEVER
+    // the deployment's shared relay slots (a user-authored baseUrl hit with
+    // the deployment key would exfiltrate it). Missing standalone pieces
+    // degrade to the mock-first row, not to deployment credentials.
+    const standalone = this.overlay?.providers[resolved.providerId] !== undefined;
+    const slot: RelayProviderCredential = standalone
+      ? {
+          apiKey: this.overlay?.credentials[resolved.providerId]?.apiKey ?? "",
+          baseUrl:
+            this.overlay?.credentials[resolved.providerId]?.baseUrl ??
+            this.overlay?.providers[resolved.providerId]?.baseUrl ??
+            "",
+        }
+      : (this.credentials[resolved.providerId] ?? {});
     const thinking: ThinkingConfig =
       resolved.reasoningLevel === "none"
         ? { type: "disabled" }
@@ -169,8 +217,10 @@ export class RelayProviderRegistry {
       modelId: resolved.modelId,
       reasoningLevel: resolved.reasoningLevel,
       config: {
-        baseUrl: slot.baseUrl ?? harness.relay.baseUrl,
-        apiKey: slot.apiKey ?? harness.relay.apiKey,
+        baseUrl: standalone
+          ? (slot.baseUrl ?? "")
+          : (slot.baseUrl ?? harness.relay.baseUrl),
+        apiKey: standalone ? (slot.apiKey ?? "") : (slot.apiKey ?? harness.relay.apiKey),
         model: resolved.modelId,
         maxTokens: isRunning
           ? harness.relay.maxTokens
@@ -198,12 +248,21 @@ export class RelayProviderRegistry {
     const key = instanceKey(resolution);
     const existing = this.instances.get(key);
     if (existing !== undefined) return existing;
+    // Standalone rows additionally need a wire base: a D1 provider without
+    // (decryptable) key OR baseUrl has no honest wire target and rides the
+    // mock — deployment credentials are not a fallback (see resolve()).
+    const standaloneIncomplete =
+      this.overlay?.providers[resolution.providerId] !== undefined &&
+      (resolution.config.apiKey === "" || resolution.config.baseUrl === "");
     const created: ModelProvider =
-      resolution.config.apiKey === ""
+      resolution.config.apiKey === "" || standaloneIncomplete
         ? new FixedReplyProvider(
             `model relay not configured for provider "${resolution.providerId}" ` +
-              "(no MODEL_RELAY_PROVIDER_CREDENTIALS slot and no deployment key) — " +
-              "fixed-reply mock in service (ticket #28 M0)",
+              (standaloneIncomplete
+                ? "(provider-config row without a usable key/baseUrl — deployment " +
+                  "credentials are never a fallback for user-configured rows)"
+                : "(no MODEL_RELAY_PROVIDER_CREDENTIALS slot and no deployment key)") +
+              " — fixed-reply mock in service (ticket #28 M0, #362 rows)",
             {
               model: resolution.config.model,
               maxTokens: resolution.config.maxTokens,
@@ -230,8 +289,10 @@ export class RelayProviderRegistry {
  * goes through. This is the one registration shape the composed worker, the
  * manager, and dev rigs install.
  */
-export function relayAgentRuntime(env: HarnessEnv): AgentRuntime {
-  const registry = RelayProviderRegistry.fromEnv(env);
+export function relayAgentRuntime(
+  env: HarnessEnv,
+  registry: RelayProviderRegistry = RelayProviderRegistry.fromEnv(env),
+): AgentRuntime {
   return {
     provider: relayProviderFrom(resolveHarness(env)),
     resolveExecutionProvider: (selection: RelaySelection): ModelProvider =>

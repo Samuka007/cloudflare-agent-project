@@ -3,6 +3,7 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
+import { relayCatalogModelSchema } from "@cap/agent-do";
 import {
   appSettingsSchema,
   appDefaultKeybindingsSchema,
@@ -336,6 +337,86 @@ export const systemProviderProjectionsResponseSchema = z.object({
 export type SystemProviderProjectionsResponse = z.infer<
   typeof systemProviderProjectionsResponseSchema
 >;
+
+// --- #362 provider configurable panel (port-only CRUD face) ------------------
+// GET/POST/PUT/PATCH/DELETE /system/providers(+ /:id, /:id/test): the
+// user-face provider configuration 正本 (D1 provider_configs). The env
+// MODEL_RELAY_CATALOG pair degrades to the deployment seed; these rows ride
+// OVER it (same id → D1 wins). Secret discipline: `apiKey` is WRITE-ONLY —
+// it is AES-GCM encrypted into api_key_enc and never read back; responses
+// carry `hasApiKey` presence only. PUT replaces the row's visible face
+// wholesale (absent visible fields reset), while BOTH write verbs treat the
+// credential column as omission-preserving (absent → keep, null → clear,
+// string → set) — secrets are never round-tripped through the client, so an
+// edit that omits the key cannot silently wipe it.
+
+export const providerConfigIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "id must match ^[A-Za-z0-9][A-Za-z0-9._-]*$");
+
+export const providerConfigWriteSchema = z.strictObject({
+  displayName: z.string().min(1).max(200).optional(),
+  baseUrl: z.string().min(1).max(2000).optional(),
+  api: z.string().min(1).max(64).optional(),
+  serviceTier: z.boolean().optional(),
+  models: z.array(relayCatalogModelSchema).optional(),
+  apiKey: z.string().min(1).optional(),
+});
+export type ProviderConfigWrite = z.infer<typeof providerConfigWriteSchema>;
+
+export const providerConfigCreateRequestSchema = providerConfigWriteSchema.extend({
+  id: providerConfigIdSchema,
+});
+export type ProviderConfigCreateRequest = z.infer<typeof providerConfigCreateRequestSchema>;
+
+/** PUT: visible-face replace; the credential column follows the null protocol. */
+export const providerConfigReplaceRequestSchema = providerConfigWriteSchema.extend({
+  apiKey: z.string().min(1).nullish(),
+});
+export type ProviderConfigReplaceRequest = z.infer<typeof providerConfigReplaceRequestSchema>;
+
+export const providerConfigPatchRequestSchema = z.strictObject({
+  displayName: z.string().min(1).max(200).nullish(),
+  baseUrl: z.string().min(1).max(2000).nullish(),
+  api: z.string().min(1).max(64).nullish(),
+  serviceTier: z.boolean().optional(),
+  models: z.array(relayCatalogModelSchema).optional(),
+  apiKey: z.string().min(1).nullish(),
+});
+export type ProviderConfigPatchRequest = z.infer<typeof providerConfigPatchRequestSchema>;
+
+export const providerConfigRowSchema = z.object({
+  id: z.string().min(1),
+  displayName: z.string().nullable(),
+  baseUrl: z.string().nullable(),
+  api: z.string().nullable(),
+  serviceTier: z.boolean(),
+  /** The RAW stored models value — an invalid row stays visible for repair. */
+  models: z.array(z.unknown()),
+  hasApiKey: z.boolean(),
+  status: z.enum(["ok", "warning"]),
+  warnings: z.array(z.string()),
+  dispatchable: z.boolean(),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+});
+export type ProviderConfigRow = z.infer<typeof providerConfigRowSchema>;
+
+export const providerConfigsListResponseSchema = z.object({
+  providers: z.array(providerConfigRowSchema),
+});
+export type ProviderConfigsListResponse = z.infer<typeof providerConfigsListResponseSchema>;
+
+/** POST /system/providers/:id/test — one minimal probe, true/false verdict. */
+export const providerConfigTestResponseSchema = z.object({
+  ok: z.boolean(),
+  status: z.number().int().nullable(),
+  latencyMs: z.number().int().nullable(),
+  error: z.string().nullable(),
+});
+export type ProviderConfigTestResponse = z.infer<typeof providerConfigTestResponseSchema>;
 
 export const systemConfigReloadResponseSchema = z.object({
   ok: z.literal(true),

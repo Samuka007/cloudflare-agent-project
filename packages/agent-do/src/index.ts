@@ -138,6 +138,7 @@ export {
   findRelayCatalogModel,
   relayReasoningLevelSchema,
   relayCatalogSchema,
+  relayCatalogModelSchema,
   relayReasoningLevelValues,
   relayModelEntrySchema,
   resolveRelaySelection,

@@ -2,6 +2,7 @@ import {
   decodeRelayCatalog,
   deriveRelayReasoning,
   type RelayCatalog,
+  type RelayCatalogProvider,
   type RelayReasoningLevel,
 } from "@cap/agent-do";
 import { resolveHarness, type HarnessEnv, type ResolvedHarness } from "./harness.js";
@@ -134,11 +135,73 @@ export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
     return synthesisFromHarness(harness, false, false);
   }
 
+  return projectCatalogDirectory(harness, catalog.providers, {
+    configured: true,
+    decodeError: false,
+    defaultProviderId:
+      catalog.defaultProvider ?? Object.keys(catalog.providers)[0] ?? SYNTHETIC_PROVIDER_ID,
+  });
+}
+
+/**
+ * #362 merged resolution: the D1 provider overlay (user-configured rows)
+ * rides over the env catalog. Same provider id → the overlay row replaces
+ * the env declaration wholesale (the ticket's "同 id D1 覆盖"); new ids are
+ * added. A broken env declaration keeps its loud `decodeError: true` flag
+ * while the overlay rows still serve (a misconfigured deployment seed must
+ * not take user-configured providers down). Zero overlay rows (or no D1 at
+ * all — the loader returns null) falls through to the plain env resolution,
+ * byte-identical to resolveRelayCatalog.
+ */
+export function resolveRelayCatalogWithOverlay(
+  env: HarnessEnv,
+  overlayProviders: Record<string, RelayCatalogProvider>,
+): RelayCatalogResolution {
+  const harness = resolveHarness(env);
+  const raw = env.MODEL_RELAY_CATALOG;
+  const configured = raw !== undefined && raw.trim() !== "";
+  let base: RelayCatalog | null;
+  let decodeError = false;
+  try {
+    base = decodeRelayCatalog(raw);
+  } catch {
+    base = null;
+    decodeError = true;
+  }
+  const merged: Record<string, RelayCatalogProvider> = { ...(base?.providers ?? {}) };
+  for (const [providerId, provider] of Object.entries(overlayProviders)) {
+    merged[providerId] = provider;
+  }
+  if (Object.keys(merged).length === 0) {
+    // Every declared row failed decode and nothing overlays: the synthesis
+    // path keeps the loud decodeError semantics of the plain resolution.
+    if (decodeError) return synthesisFromHarness(harness, configured, true);
+    return synthesisFromHarness(harness, false, false);
+  }
+  const envDefault = base?.defaultProvider;
+  return projectCatalogDirectory(harness, merged, {
+    configured: true,
+    decodeError,
+    defaultProviderId: envDefault ?? Object.keys(merged)[0] ?? SYNTHETIC_PROVIDER_ID,
+  });
+}
+
+/**
+ * The shared projection body: declared provider entries → directory rows.
+ * The model turns actually run stays visible regardless of declaration
+ * (wire truth beats the declaration) — synthesized under the default
+ * provider when no row carries it.
+ */
+function projectCatalogDirectory(
+  harness: ResolvedHarness,
+  providers: Record<string, RelayCatalogProvider>,
+  flags: { configured: boolean; decodeError: boolean; defaultProviderId: string },
+): RelayCatalogResolution {
   const thinkingEnabled = harness.relay.thinking.type === "enabled";
-  const providers: RelayCatalogProviderRow[] = [];
+  const providerRows: RelayCatalogProviderRow[] = [];
   const models: RelayCatalogModelRow[] = [];
   let runningRow: RelayCatalogModelRow | undefined;
-  for (const [providerId, provider] of Object.entries(catalog.providers)) {
+  for (const [providerId, provider] of Object.entries(providers)) {
     const rows = provider.models.map((entry): RelayCatalogModelRow => {
       const derived = deriveRelayReasoning({
         thinkingEnabled,
@@ -167,7 +230,7 @@ export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
     });
     runningRow ??= rows.find((row) => row.isDefault);
     models.push(...rows);
-    providers.push({
+    providerRows.push({
       id: providerId,
       displayName: provider.displayName ?? providerId,
       serviceTier: provider.serviceTier ?? false,
@@ -175,8 +238,7 @@ export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
     });
   }
 
-  const defaultProviderId =
-    catalog.defaultProvider ?? Object.keys(catalog.providers)[0] ?? SYNTHETIC_PROVIDER_ID;
+  const defaultProviderId = flags.defaultProviderId;
   if (runningRow === undefined) {
     // The model turns actually run must always be visible on the directory
     // face (wire truth beats the declaration): synthesize its row under the
@@ -197,5 +259,12 @@ export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
     };
     models.unshift(runningRow);
   }
-  return { configured: true, decodeError: false, defaultProviderId, providers, models, harness };
+  return {
+    configured: flags.configured,
+    decodeError: flags.decodeError,
+    defaultProviderId,
+    providers: providerRows,
+    models,
+    harness,
+  };
 }

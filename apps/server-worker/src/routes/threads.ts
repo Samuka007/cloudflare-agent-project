@@ -75,6 +75,7 @@ import { getHostRow } from "../db/hosts.js";
 import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs.js";
 import { mirrorPendingInteraction } from "../db/pending-interactions.js";
 import { getAppSettingsRow, toAppSettings } from "../db/settings.js";
+import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
 import {
   toThreadListEntries,
   toThreadResponseWithSpawnCheck,
@@ -312,7 +313,11 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // write lands (ROADMAP red line: never silently relax). No selection
     // fields → the legacy M0 path: provider "omp" (the synthetic default),
     // null overrides.
-    const selection = validateThreadExecutionSelection(ctx.env, payload);
+    // #362: the selection validates against the MERGED directory (env seed ⊕
+    // D1 provider rows) — a panel-side provider is selectable the moment it
+    // exists.
+    const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+    const selection = validateThreadExecutionSelection(ctx.env, payload, overlay?.providers);
     const providerId = selection?.resolved.providerId ?? "omp";
     // #288: the binding source chain resolves once, here — explicit choice >
     // project default source > deployment single machine — and feeds BOTH
@@ -541,13 +546,20 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // the turn (and any replay) pins the new row.
     let executionRide: RelaySelection | undefined;
     if (payload.model !== undefined || payload.reasoningLevel !== undefined) {
-      const next = validateThreadExecutionSelection(ctx.env, {
-        providerId: row.providerId,
-        ...(payload.model !== undefined ? { model: payload.model } : {}),
-        ...(payload.reasoningLevel !== undefined ? { reasoningLevel: payload.reasoningLevel } : {}),
-      });
+      const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+      const next = validateThreadExecutionSelection(
+        ctx.env,
+        {
+          providerId: row.providerId,
+          ...(payload.model !== undefined ? { model: payload.model } : {}),
+          ...(payload.reasoningLevel !== undefined
+            ? { reasoningLevel: payload.reasoningLevel }
+            : {}),
+        },
+        overlay?.providers,
+      );
       if (next !== null) {
-        const current = resolveStoredThreadExecution(ctx.env, row);
+        const current = resolveStoredThreadExecution(ctx.env, row, overlay?.providers);
         if (classifyThreadSelectionChange(current, next.resolved) === "live") {
           await updateThreadRecord(ctx.env, row.id, {
             ...(payload.model !== undefined ? { modelOverride: payload.model } : {}),

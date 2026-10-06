@@ -23,6 +23,7 @@ export {
 export type { HarnessEnv, HarnessProjection, ResolvedHarness, ThinkingConfig } from "./harness.js";
 export {
   resolveRelayCatalog,
+  resolveRelayCatalogWithOverlay,
   type RelayCatalogModelRow,
   type RelayCatalogProviderRow,
   type RelayCatalogResolution,
@@ -31,10 +32,25 @@ export {
   RelayProviderRegistry,
   decodeRelayProviderCredentials,
   relayAgentRuntime,
+  type RelayProviderOverlay,
   type RelayProviderCredential,
   type RelayProviderCredentialMap,
   type RelayProviderRegistryResolution,
 } from "./relay-registry.js";
+export {
+  isValidProviderConfigId,
+  loadProviderConfigCatalogOverlay,
+  loadProviderConfigOverlay,
+  type ProviderConfigCatalogOverlay,
+  type ProviderConfigEnv,
+  type ProviderConfigFullOverlay,
+  type ProviderConfigLoad,
+  type ProviderConfigRecord,
+} from "./provider-configs.js";
+export {
+  decryptProviderSecret,
+  encryptProviderSecret,
+} from "./provider-config-crypto.js";
 export { flattenPromptInputGroups } from "./flatten-input.js";
 
 import type { ManagerDoBindings } from "./manager-do.js";
