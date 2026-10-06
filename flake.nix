@@ -190,6 +190,14 @@
           # through the reference scanner. The runtime (bun) never reads it;
           # reinstalls go through the flake source, not the shipped tree.
           rm -f "$out/share/cap-daemon/node_modules/.modules.yaml"
+          # Workspace-package node_modules trees (e.g.
+          # packages/agent-do/node_modules) sit OUTSIDE the root find above.
+          # A workspace dep whose package is not in daemonSrc (observed:
+          # @cap/mcp — added to agent-do by #350/#355, never in the client
+          # import graph) dangles from birth and fails the noBrokenSymlinks
+          # gate. Same posture as the prune list: absent-if-imported fails
+          # loudly, and the staging smoke gates every closure.
+          find "$out/share/cap-daemon/packages" -type l -xtype l -delete
 
           printf '%s' "${self.shortRev or "dirty"}" > $out/share/cap-daemon/VERSION
 
