@@ -169,15 +169,24 @@ export async function verifyAccessToken(
   try {
     valid = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, data);
   } catch {
+    console.log("verifyAccessToken stage: verify-threw");
     throw unauthorized();
   }
   if (!valid) {
+    console.log(
+      "verifyAccessToken stage: sig-invalid",
+      "tokenLen=" + token.length,
+      "first=" + JSON.stringify(token[0]),
+      "last=" + JSON.stringify(token[token.length - 1]),
+      "sigLen=" + signature.length,
+    );
     throw unauthorized();
   }
   let claims: AccessClaims;
   try {
     claims = accessClaimsSchema.parse(decodeSegment(payloadPart));
   } catch {
+    console.log("verifyAccessToken stage: claims-parse");
     throw unauthorized();
   }
   if (typeof claims.exp !== "number" || claims.exp * 1000 < nowMs) {
