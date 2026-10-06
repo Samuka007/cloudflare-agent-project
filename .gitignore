@@ -10,6 +10,8 @@ dist/
 .pm-closeouts.jsonl
 .pm-walks.jsonl
 .pm-walk/
+# cap-daemon Access service token (#412) — never commit
+.staging-access.env
 .c2-verify-logs/
 apps/server-worker/public/
 result
