@@ -215,10 +215,25 @@ export async function listThreads(env: Env, filters: ThreadListFilters): Promise
     binds.push(filters.originPluginId);
   }
 
+  // #337 root cause: the unpinned block must order by recency (bb
+  // buildActiveProjectThreadOrderBy: pinned block, then createdAt desc,
+  // id desc — data/threads.ts:735-750). The original port flattened bb's
+  // CASE-scoped pinned keys (buildPinnedThreadOrderBy) into global keys, so
+  // `pin_sort_key ASC, id ASC` escaped the pinned block: pin_sort_key is NULL
+  // for every unpinned row, the recency keys never got a say, and ALL
+  // unpinned threads sorted by their random id suffix — a fresh thread landed
+  // at a uniformly random rank and could fall outside any LIMIT window
+  // (observed: 73 threads, rank 59, window 50 → intermittent CI red that no
+  // read retry could fix). The CASE scoping below restores bb verbatim: NULL
+  // for unpinned rows on the pinned keys, so recency decides the unpinned
+  // order. Root cause dossier: docs/research/thread-list-ordering-window.md.
   const orderBy =
     filters.archived === true
       ? "t.archived_at DESC, t.id DESC"
-      : "CASE WHEN t.pinned_at IS NOT NULL THEN 0 ELSE 1 END ASC, t.pin_sort_key ASC, t.id ASC, t.created_at DESC, t.id DESC";
+      : `CASE WHEN t.pinned_at IS NOT NULL THEN 0 ELSE 1 END ASC,
+         CASE WHEN t.pinned_at IS NOT NULL THEN t.pin_sort_key END ASC,
+         CASE WHEN t.pinned_at IS NOT NULL THEN t.id END ASC,
+         t.created_at DESC, t.id DESC`;
 
   // #288: bb threadWithPendingInteractionBaseQuery (data/threads.ts:533-552)
   // — LEFT JOIN environments so the list face can inline the binding fields

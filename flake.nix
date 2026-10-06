@@ -89,6 +89,30 @@
           type = "app";
           program = "${self.packages.${system}.daemon}/bin/cap-daemon";
         };
+
+        # #337 repro hardening: loop the CI-equivalent apps/server-worker
+        # vitest run until the round budget is met or the first red. The real
+        # loop lives in scripts/verify-c2-list-window.sh (same thin-adapter
+        # pattern as staging-deploy above).
+        # Usage: nix run .#verify-c2-list-window [-- --rounds 50]
+        verify-c2-list-window = {
+          type = "app";
+          program = "${pkgs.writeShellApplication {
+            name = "verify-c2-list-window";
+            runtimeInputs = with pkgs; [
+              bash
+              git
+              gnugrep
+              coreutils
+              nodejs_22
+              pnpm_10
+            ];
+            text = ''
+              REPO_ROOT="$(git rev-parse --show-toplevel)"
+              exec bash "$REPO_ROOT/scripts/verify-c2-list-window.sh" "$@"
+            '';
+          }}/bin/verify-c2-list-window";
+        };
       };
 
       # U3 daemon client as a runnable closure (ticket #176). Wrapper form:
