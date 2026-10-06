@@ -31,6 +31,7 @@ import {
   systemExecutionOptionsQuerySchema,
   systemExecutionOptionsResponseSchema,
   systemVersionResponseSchema,
+  isPublicHttpsBaseUrl,
   providerConfigCreateRequestSchema,
   providerConfigDiscoverRequestSchema,
   providerConfigDiscoverResponseSchema,
@@ -60,6 +61,7 @@ import { defaultFeatureFlags } from "../contract/domain/feature-flags.js";
 import { ApiError, parseOr422, requireJsonBody } from "../shared/route-utils.js";
 import {
   deleteProviderConfig,
+  getProviderConfigMutationContext,
   getProviderConfigTarget,
   insertProviderConfig,
   patchProviderConfig,
@@ -72,6 +74,7 @@ import {
   discoverProviderModels,
   probeProviderConnection,
 } from "../services/provider-config-test.js";
+import { consumeProbeSlot } from "../services/probe-rate-limit.js";
 import {
   getAppSettingsRow,
   getExperiments,
@@ -83,7 +86,7 @@ import {
   applyAppKeybindingOverrides,
   toAppSettings,
 } from "../db/settings.js";
-import type { Env, HonoBindings } from "../app-types.js";
+import type { AppEnv, Env } from "../app-types.js";
 
 /**
  * System + settings face (bb apps/server/src/routes/system.ts, commit
@@ -310,8 +313,8 @@ function decodeGenerateImageConfigSafely(
   }
 }
 
-export function registerSystemRoutes(app: Hono<{ Bindings: HonoBindings }>): void {
-  const routes = new Hono<{ Bindings: HonoBindings }>();
+export function registerSystemRoutes(app: Hono<AppEnv>): void {
+  const routes = new Hono<AppEnv>();
 
   routes.get("/system/config", async (ctx) => {
     const url = new URL(ctx.req.url);
@@ -466,7 +469,7 @@ function hub(env: Env) {
  * All of it rides the standard /api/v1 auth ladder (origin guard + Access
  * gate, app.ts:37-42).
  */
-function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>): void {
+function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   const requireValidId = (raw: string): string => {
     if (!providerConfigIdSchema.safeParse(raw).success || !isValidProviderConfigId(raw)) {
       throw new ApiError({
@@ -525,6 +528,50 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
           "(set the Worker secret first; rows without keys still work in mock mode)",
       });
     }
+  };
+
+  /**
+   * SEC-W5-003 rebinding gate: /test and /discover-models decrypt the stored
+   * credential onto the wire toward the row's CURRENT baseUrl, so a write
+   * that moves baseUrl while KEEPING the stored key would hand that key to a
+   * caller-chosen endpoint. Moving baseUrl therefore requires re-entering the
+   * credential for the new target in the same request, or clearing it — the
+   * keep protocol alone is not enough to re-anchor a credential.
+   */
+  const refuseCredentialReplayAcrossBaseUrl = (
+    current: { baseUrl: string | null; hasCredential: boolean },
+    nextBaseUrl: string | null,
+    credential: CredentialUpdate,
+  ): void => {
+    if (credential.kind !== "keep" || !current.hasCredential) return;
+    if ((nextBaseUrl ?? null) === (current.baseUrl ?? null)) return;
+    throw new ApiError({
+      status: 422,
+      code: "credential_reentry_required",
+      message:
+        "changing baseUrl would send the stored credential to a new endpoint — " +
+        "re-enter apiKey for the new baseUrl in the same request, or clear the credential (apiKey: null)",
+    });
+  };
+
+  /**
+   * Shared probe-face budget (SEC-W5-003): both endpoints consume ONE fixed
+   * window keyed by the verified Access principal (gate-on deployments) or
+   * the client IP, so neither face is an unlimited outbound-request oracle
+   * even before any credential exists.
+   */
+  const assertProbeSlotAvailable = (ctx: Context<AppEnv>): void => {
+    const slot = consumeProbeSlot(
+      ctx.get("accessPrincipalId") ?? ctx.req.header("cf-connecting-ip") ?? "anonymous",
+    );
+    if (slot.allowed) return;
+    throw new ApiError({
+      status: 429,
+      code: "probe_rate_limited",
+      message: `probe rate limit exceeded — retry in ${slot.retryAfterSeconds}s`,
+      retryable: true,
+      details: { retryAfterSeconds: slot.retryAfterSeconds },
+    });
   };
 
   routes.get("/system/providers", async (ctx) => {
@@ -597,7 +644,8 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
   routes.put("/system/providers/:id", async (ctx) => {
     const id = requireValidId(ctx.req.param("id"));
     const payload = await requireJsonBody(ctx, providerConfigReplaceRequestSchema);
-    if ((await getProviderConfigTarget(ctx.env, id)) === null) {
+    const current = await getProviderConfigMutationContext(ctx.env, id);
+    if (current === null) {
       throw new ApiError({
         status: 404,
         code: "provider_config_not_found",
@@ -606,6 +654,9 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
     }
     const credential = credentialOf(payload.apiKey);
     refuseKeyWithoutMasterKey(ctx.env, credential);
+    // PUT writes the visible face wholesale (writeFieldsOf): an absent
+    // baseUrl IS the next value (null), so the gate compares that target.
+    refuseCredentialReplayAcrossBaseUrl(current, payload.baseUrl ?? null, credential);
     await replaceProviderConfig(ctx.env, id, writeFieldsOf(payload), credential);
     await hub(ctx.env).notifySystem(["config-changed"]);
     return ctx.json(await rowAfterWrite(ctx.env, id));
@@ -614,7 +665,8 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
   routes.patch("/system/providers/:id", async (ctx) => {
     const id = requireValidId(ctx.req.param("id"));
     const payload = await requireJsonBody(ctx, providerConfigPatchRequestSchema);
-    if ((await getProviderConfigTarget(ctx.env, id)) === null) {
+    const current = await getProviderConfigMutationContext(ctx.env, id);
+    if (current === null) {
       throw new ApiError({
         status: 404,
         code: "provider_config_not_found",
@@ -623,6 +675,13 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
     }
     const credential = credentialOf(payload.apiKey);
     refuseKeyWithoutMasterKey(ctx.env, credential);
+    // Omitted baseUrl means "not moving" (PATCH semantics): the gate only
+    // fires when the payload re-anchors the row somewhere else.
+    refuseCredentialReplayAcrossBaseUrl(
+      current,
+      payload.baseUrl !== undefined ? (payload.baseUrl ?? null) : current.baseUrl,
+      credential,
+    );
     await patchProviderConfig(
       ctx.env,
       id,
@@ -654,6 +713,7 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
   });
 
   routes.post("/system/providers/:id/test", async (ctx) => {
+    assertProbeSlotAvailable(ctx);
     const id = requireValidId(ctx.req.param("id"));
     const target = await getProviderConfigTarget(ctx.env, id);
     if (target === null) {
@@ -705,6 +765,7 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
   // row ({baseUrl, apiKey?}) or a saved one ({providerId} — the row's
   // baseUrl plus its DECRYPTED stored secret, which the panel never sees).
   routes.post("/system/providers/discover-models", async (ctx) => {
+    assertProbeSlotAvailable(ctx);
     const payload = await requireJsonBody(ctx, providerConfigDiscoverRequestSchema);
     const verdict =
       "providerId" in payload
@@ -769,6 +830,18 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
         });
         continue;
       }
+      // SEC-W5-003: import candidates ride the SAME baseUrl rule as the CRUD
+      // faces — an http/intranet target must not become a probe seam.
+      if (candidate.baseUrl !== null && !isPublicHttpsBaseUrl(candidate.baseUrl)) {
+        entries.push({
+          ...entryBase,
+          verdict: "skipped",
+          status: 422,
+          code: "invalid_base_url",
+          message: `provider "${candidate.id}": baseUrl must be an https URL naming a public domain — row skipped`,
+        });
+        continue;
+      }
       const credential = credentialOf(candidate.apiKey);
       if (
         credential.kind === "set" &&
@@ -823,7 +896,7 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
 /** The {providerId}-anchored discovery branch: resolves the row's baseUrl
  * and its stored secret (unless the panel re-typed a key for this probe). */
 async function discoverForSavedRow(
-  ctx: Context<{ Bindings: HonoBindings }>,
+  ctx: Context<AppEnv>,
   id: string,
   typedKey: string | undefined,
 ) {

@@ -19,10 +19,17 @@ const jwtHeaderSchema = z.object({ alg: z.string(), kid: z.string() });
 const accessClaimsSchema = z.object({
   aud: z.union([z.string(), z.array(z.string())]),
   exp: z.number(),
+  // SEC-W5-003 probe-face rate limiting keys on the verified identity when
+  // present; both are standard Cloudflare Access claims (optional here so
+  // exotic tokens still pass verification unchanged).
+  sub: z.string().min(1).optional(),
+  email: z.string().min(1).optional(),
 });
 interface AccessClaims {
   aud: string | string[];
   exp: number;
+  sub?: string;
+  email?: string;
 }
 
 export interface AccessJwk {
@@ -200,6 +207,13 @@ export function accessGateEnabled(env: Env): boolean {
   return env.ACCESS_CHECK_ENABLED === "true";
 }
 
+/** Hex sha-256 — the per-credential fallback principal when the token
+ * carries neither sub nor email (keeps raw bearer strings out of memory). */
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 // Return type is inferred (Promise<Response | void>, hono's own middleware
 // shape): writing `void` in a union trips no-invalid-void-type, and `next()`
 // itself returns Promise<void>, so an `undefined` annotation rejects it.
@@ -226,6 +240,10 @@ export async function accessGate(ctx: Context, next: Next) {
   if (jwk === undefined) {
     throw unauthorized();
   }
-  await verifyAccessToken(token, { jwks: [jwk], audience: (ctx.env as Env).ACCESS_AUD ?? "" });
+  const claims = await verifyAccessToken(token, {
+    jwks: [jwk],
+    audience: (ctx.env as Env).ACCESS_AUD ?? "",
+  });
+  ctx.set("accessPrincipalId", claims.sub ?? claims.email ?? (await sha256Hex(token)));
   return next();
 }

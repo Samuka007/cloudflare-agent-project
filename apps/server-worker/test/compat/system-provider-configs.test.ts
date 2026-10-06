@@ -1,10 +1,14 @@
-import { beforeAll, afterEach, describe, expect, it } from "vitest";
+import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import type { z } from "zod";
 import { decryptProviderSecret, resolveRelayCatalogWithOverlay } from "@cap/provider-app";
 import type { AnyAgentEvent, RelayCatalogProvider } from "@cap/agent-do";
 import { ensureMigrations } from "../migrate.js";
 import { insertProviderConfig, type ProviderConfigEnv } from "../../src/db/provider-configs.js";
+import {
+  PROBE_RATE_LIMIT_MAX,
+  resetProbeRateLimiter,
+} from "../../src/services/probe-rate-limit.js";
 import {
   providerConfigDiscoverResponseSchema,
   providerConfigRowSchema,
@@ -113,6 +117,23 @@ async function expect422(response: Response, code: string): Promise<void> {
   expect(response.status).toBe(422);
   const body = await response.json<{ code: string }>();
   expect(body.code).toBe(code);
+}
+
+/**
+ * Captures the probe faces' OUTBOUND calls (the exfil oracle SEC-W5-003
+ * closes): stubbing global fetch intercepts the worker's wire requests in the
+ * shared L1 isolate, while exports.default.fetch keeps driving the real app.
+ * The stub body satisfies the discovery envelope so verdicts stay ok:true.
+ */
+function stubProbeFetch(calls: { url: string; init: RequestInit }[]): void {
+  vi.stubGlobal(
+    "fetch",
+    (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      calls.push({ url: href, init: init ?? {} });
+      return Promise.resolve(new Response(JSON.stringify({ data: [{ id: "m" }] }), { status: 200 }));
+    },
+  );
 }
 
 /**
@@ -330,7 +351,7 @@ describe("#362 CRUD face", () => {
     expect(list.map((row) => row.id)).toContain("listy");
   });
 
-  it("PUT replaces the visible face and keeps the credential unless told otherwise", async () => {
+  it("PUT replaces the visible face; the credential keeps only with an unmoved baseUrl", async () => {
     await postProvider({
       id: "putty",
       displayName: "Before",
@@ -340,12 +361,13 @@ describe("#362 CRUD face", () => {
       apiKey: PANEL_KEY,
     });
 
-    // Omitted apiKey → KEEP (an edit that never mentions the key cannot wipe it).
+    // Omitted apiKey → KEEP (an edit that never mentions the key cannot wipe it) —
+    // legal only while the visible face keeps the credential's own baseUrl.
     const kept = providerConfigRowSchema.parse(
       await (
         await request("PUT", "/api/v1/system/providers/putty", {
           displayName: "After",
-          baseUrl: "https://after.example.com",
+          baseUrl: "https://before.example.com",
           api: "openai-responses",
           models: [{ id: "after-model" }],
         })
@@ -360,9 +382,23 @@ describe("#362 CRUD face", () => {
       PANEL_KEY,
     );
 
+    // SEC-W5-003: moving baseUrl while KEEPING the stored key is the exfil
+    // vector — the probe faces would decrypt that key onto the new target.
+    const rebased = await request("PUT", "/api/v1/system/providers/putty", {
+      displayName: "After",
+      baseUrl: "https://after.example.com",
+      api: "openai-responses",
+      models: [{ id: "after-model" }],
+    });
+    expect(rebased.status).toBe(422);
+    expect((await rebased.json<{ code: string }>()).code).toBe("credential_reentry_required");
+    const unmoved = await rawD1Row("putty");
+    expect(await decryptProviderSecret(RIG_MASTER_KEY, unmoved?.api_key_enc ?? "")).toBe(PANEL_KEY);
+
     // apiKey: string → ROTATE; the fresh IV makes the rotation observable.
     await request("PUT", "/api/v1/system/providers/putty", {
       displayName: "After",
+      baseUrl: "https://before.example.com",
       models: [{ id: "after-model" }],
       apiKey: PANEL_KEY_ROTATED,
     });
@@ -377,6 +413,7 @@ describe("#362 CRUD face", () => {
       await (
         await request("PUT", "/api/v1/system/providers/putty", {
           displayName: "After",
+          baseUrl: "https://before.example.com",
           models: [{ id: "after-model" }],
           apiKey: null,
         })
@@ -386,7 +423,7 @@ describe("#362 CRUD face", () => {
     expect((await rawD1Row("putty"))?.api_key_enc).toBeNull();
   });
 
-  it("PATCH moves only the provided columns", async () => {
+  it("PATCH moves only the provided columns; a baseUrl move requires credential re-entry", async () => {
     await postProvider({
       id: "patchy",
       displayName: "Keep",
@@ -396,10 +433,20 @@ describe("#362 CRUD face", () => {
       models: [{ id: "keep-model" }],
       apiKey: PANEL_KEY,
     });
+    // A move WITHOUT re-entry is refused (the probe faces decrypt the stored
+    // key onto the row's baseUrl — SEC-W5-003).
+    const rebased = await request("PATCH", "/api/v1/system/providers/patchy", {
+      baseUrl: "https://moved.example.com",
+    });
+    expect(rebased.status).toBe(422);
+    expect((await rebased.json<{ code: string }>()).code).toBe("credential_reentry_required");
+
+    // Same-request re-entry re-binds the credential to the new target.
     const patched = providerConfigRowSchema.parse(
       await (
         await request("PATCH", "/api/v1/system/providers/patchy", {
           baseUrl: "https://moved.example.com",
+          apiKey: PANEL_KEY_ROTATED,
           serviceTier: true,
         })
       ).json(),
@@ -410,6 +457,10 @@ describe("#362 CRUD face", () => {
     expect(patched.serviceTier).toBe(true);
     expect(patched.models).toEqual([{ id: "keep-model" }]);
     expect(patched.hasApiKey).toBe(true);
+    const rebound = await rawD1Row("patchy");
+    expect(await decryptProviderSecret(RIG_MASTER_KEY, rebound?.api_key_enc ?? "")).toBe(
+      PANEL_KEY_ROTATED,
+    );
   });
 
   it("DELETE removes the row; subsequent reads and writes 404", async () => {
@@ -734,19 +785,178 @@ describe("#362 test-connection and /models discovery faces", () => {
     expect(verdict.models).toEqual([]);
   });
 
-  it("raw-anchored discovery reports non-list upstream responses as ok:false", async () => {
-    // A refused TCP connection (discard port) exercises the real outbound
-    // fetch path and maps the transport failure to a null-status verdict.
-    const verdict = providerConfigDiscoverResponseSchema.parse(
+  // The transport-failure verdict mapping stays covered at the service seam
+  // (unit/provider-config-wire.test.ts); at the route face the raw anchor now
+  // meets the same https/public-origin rule as every other baseUrl input.
+});
+
+describe("SEC-W5-003: baseUrl must name a public https origin", () => {
+  it("write and discovery faces 422 non-https, IP-literal, and intranet targets", async () => {
+    const rejected = [
+      "http://attacker.example.com",
+      "https://192.168.1.1",
+      "https://[::1]/",
+      "https://127.0.0.1:8080",
+      "https://intranet",
+      "https://foo.internal",
+      "https://panel.local",
+      "https://user@attacker.example.com",
+      "not a url",
+    ];
+    for (const bad of rejected) {
+      await expect422(
+        await request("POST", "/api/v1/system/providers", {
+          id: "badurl",
+          baseUrl: bad,
+          models: [],
+        }),
+        "validation_failed",
+      );
+      await expect422(
+        await request("POST", "/api/v1/system/providers/discover-models", { baseUrl: bad }),
+        "validation_failed",
+      );
+      await postProvider({ id: "seeded", models: [{ id: "m" }] });
+      await expect422(
+        await request("PATCH", "/api/v1/system/providers/seeded", { baseUrl: bad }),
+        "validation_failed",
+      );
+      await request("DELETE", "/api/v1/system/providers/seeded");
+    }
+  });
+});
+
+describe("SEC-W5-003: stored-credential probe binding", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("refuses to re-anchor a stored credential onto a new baseUrl without re-entry", async () => {
+    await postProvider({
+      id: "exfil-gate",
+      api: "anthropic-messages",
+      baseUrl: "https://old.example.com",
+      models: [{ id: "m" }],
+      apiKey: PANEL_KEY,
+    });
+    const patchRefused = await request("PATCH", "/api/v1/system/providers/exfil-gate", {
+      baseUrl: "https://attacker.example.com",
+    });
+    expect(patchRefused.status).toBe(422);
+    expect((await patchRefused.json<{ code: string }>()).code).toBe("credential_reentry_required");
+    // PUT is the same gate: a wholesale visible-face write moves the target too.
+    const putRefused = await request("PUT", "/api/v1/system/providers/exfil-gate", {
+      displayName: "x",
+      baseUrl: "https://attacker.example.com",
+      models: [{ id: "m" }],
+    });
+    expect(putRefused.status).toBe(422);
+    const row = await rawD1Row("exfil-gate");
+    expect(await decryptProviderSecret(RIG_MASTER_KEY, row?.api_key_enc ?? "")).toBe(PANEL_KEY);
+  });
+
+  it("probes release the stored key ONLY toward the credential's own baseUrl", async () => {
+    await postProvider({
+      id: "exfil-probe",
+      api: "anthropic-messages",
+      baseUrl: "https://old.example.com",
+      models: [{ id: "m" }],
+      apiKey: PANEL_KEY,
+    });
+    const calls: { url: string; init: RequestInit }[] = [];
+    stubProbeFetch(calls);
+
+    const verdict = providerConfigTestResponseSchema.parse(
+      await (await request("POST", "/api/v1/system/providers/exfil-probe/test")).json(),
+    );
+    expect(verdict.ok).toBe(true);
+    expect(calls.map((call) => call.url)).toEqual(["https://old.example.com/v1/messages"]);
+    expect(new Headers(calls[0]?.init.headers).get("x-api-key")).toBe(PANEL_KEY);
+
+    // The providerId discovery branch rides the same binding.
+    calls.length = 0;
+    const discovery = providerConfigDiscoverResponseSchema.parse(
       await (
         await request("POST", "/api/v1/system/providers/discover-models", {
-          baseUrl: "http://127.0.0.1:9",
+          providerId: "exfil-probe",
         })
       ).json(),
     );
-    expect(verdict.ok).toBe(false);
-    expect(verdict.status).toBeNull();
-    expect(verdict.models).toEqual([]);
+    expect(discovery.ok).toBe(true);
+    expect(calls.map((call) => call.url)).toEqual(["https://old.example.com/models"]);
+    expect(new Headers(calls[0]?.init.headers).get("authorization")).toBe(`Bearer ${PANEL_KEY}`);
+  });
+
+  it("same-request re-entry re-binds deliberately; clearing releases the target", async () => {
+    await postProvider({
+      id: "exfil-rebind",
+      api: "anthropic-messages",
+      baseUrl: "https://old.example.com",
+      models: [{ id: "m" }],
+      apiKey: PANEL_KEY,
+    });
+    const moved = providerConfigRowSchema.parse(
+      await (
+        await request("PATCH", "/api/v1/system/providers/exfil-rebind", {
+          baseUrl: "https://new.example.com",
+          apiKey: PANEL_KEY_ROTATED,
+        })
+      ).json(),
+    );
+    expect(moved.baseUrl).toBe("https://new.example.com");
+    const rebound = await rawD1Row("exfil-rebind");
+    expect(await decryptProviderSecret(RIG_MASTER_KEY, rebound?.api_key_enc ?? "")).toBe(
+      PANEL_KEY_ROTATED,
+    );
+    // Clearing in the same request is the other legal exit: the target moves,
+    // the credential is gone.
+    const cleared = providerConfigRowSchema.parse(
+      await (
+        await request("PATCH", "/api/v1/system/providers/exfil-rebind", {
+          baseUrl: "https://third.example.com",
+          apiKey: null,
+        })
+      ).json(),
+    );
+    expect(cleared.baseUrl).toBe("https://third.example.com");
+    expect(cleared.hasApiKey).toBe(false);
+    expect((await rawD1Row("exfil-rebind"))?.api_key_enc).toBeNull();
+  });
+});
+
+describe("SEC-W5-003: probe-face rate limit", () => {
+  afterEach(() => {
+    resetProbeRateLimiter();
+    vi.unstubAllGlobals();
+  });
+
+  it("429s past the per-principal window with a shared budget across both faces", async () => {
+    resetProbeRateLimiter();
+    await postProvider({
+      id: "throttled",
+      api: "anthropic-messages",
+      baseUrl: "https://throttle.example.com",
+      models: [{ id: "m" }],
+    });
+    stubProbeFetch([]);
+    for (let i = 0; i < PROBE_RATE_LIMIT_MAX; i++) {
+      expect((await request("POST", "/api/v1/system/providers/throttled/test")).status).toBe(200);
+    }
+    const overLimit = await request("POST", "/api/v1/system/providers/throttled/test");
+    expect(overLimit.status).toBe(429);
+    const body = await overLimit.json<{
+      code: string;
+      retryable: boolean;
+      details: { retryAfterSeconds: number };
+    }>();
+    expect(body.code).toBe("probe_rate_limited");
+    expect(body.retryable).toBe(true);
+    expect(body.details.retryAfterSeconds).toBeGreaterThan(0);
+    // The bucket is shared across BOTH probe faces.
+    const discoverBlocked = await request("POST", "/api/v1/system/providers/discover-models", {
+      baseUrl: "https://throttle.example.com",
+    });
+    expect(discoverBlocked.status).toBe(429);
   });
 });
 
