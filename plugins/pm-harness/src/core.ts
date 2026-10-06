@@ -1958,16 +1958,192 @@ export function closeoutLedger(opts: CloseoutOptions = {}): {
 }
 
 // ---------------------------------------------------------------------------
+// Walk-due ledger (#391) — 走查挂账的落账面. The 「终检批」violation: PM
+// mid-wave deferred walk items into an unnamed buffer — no ticket, no
+// deadline, no audit — then reported "walked". The repair: a deferral is a
+// ledger row plus a ticket face. AP.walk appends {ticket, due, face}; audit
+// rule 8 flips the ticket red (Status → Wait for user) once the due date
+// passes with no settlement; settling is AP.walkDone with the evidence
+// anchor the #239 paradigm already requires. The store is an append-only
+// jsonl — one WalkEvent per line, replayed to the active set.
+// ---------------------------------------------------------------------------
+
+/** One jsonl line. `walk-due` registers; a later walk-due for the same
+ *  ticket supersedes (re-scheduling appends, never edits). `walk-done`
+ *  settles the ticket's active walk and carries the evidence anchor. */
+export interface WalkDueEvent {
+  event: "walk-due";
+  number: number;
+  /** ISO 8601 — when this walk MUST have run. */
+  due: string;
+  /** 走查面 — what exactly is walked (the claim/surface), one line. */
+  face: string;
+  /** When the gate recorded it (tests inject; default now). */
+  recordedAt: string;
+}
+
+export interface WalkDoneEvent {
+  event: "walk-done";
+  number: number;
+  /** Evidence anchor: walk report / comment / PR — the thing a reviewer
+   *  opens to re-check the verdict. */
+  evidence: string;
+  recordedAt: string;
+}
+
+export type WalkEvent = WalkDueEvent | WalkDoneEvent;
+
+export interface WalkOptions {
+  /** Ledger file override (default: `.pm-walks.jsonl` next to the module,
+   *  or the `PM_WALKS_PATH` env). */
+  path?: string;
+  /** Reference clock (tests inject; default now). */
+  now?: Date;
+}
+
+const DEFAULT_WALKS_PATH = join(
+  dirname(dirname(fileURLToPath(import.meta.url))),
+  ".pm-walks.jsonl",
+);
+
+const resolveWalkPath = (over?: string): string =>
+  over ?? process.env.PM_WALKS_PATH ?? DEFAULT_WALKS_PATH;
+
+function readWalkEvents(path: string): WalkEvent[] {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return []; // missing store = no deferrals outstanding — the honest empty
+  }
+  const events: WalkEvent[] = [];
+  for (const [i, line] of raw.split("\n").entries()) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    try {
+      events.push(JSON.parse(trimmed) as WalkEvent);
+    } catch {
+      throw new Error(
+        `AP.walk ledger: corrupt jsonl at ${path}:${i + 1} — repair or delete the file`,
+      );
+    }
+  }
+  return events;
+}
+
+function appendWalk(record: WalkEvent, path: string): void {
+  appendFileSync(path, `${JSON.stringify(record)}\n`, "utf8");
+}
+
+/** Replay to the active set: the newest walk-due per ticket whose number
+ *  carries no walk-done after it (a walk-done with nothing pending is a
+ *  no-op; the write path refuses one anyway). Exported pure: audit rule 8
+ *  consumes exactly this view. */
+export function activeWalks(events: readonly WalkEvent[]): WalkDueEvent[] {
+  const pending = new Map<number, WalkDueEvent>();
+  for (const e of events) {
+    if (e.event === "walk-due") pending.set(e.number, e);
+    else pending.delete(e.number);
+  }
+  return [...pending.values()];
+}
+
+/** The overdue slice of the active set — rule 8's finding input. */
+export function overdueWalks(events: readonly WalkEvent[], now: Date): WalkDueEvent[] {
+  const nowMs = now.getTime();
+  return activeWalks(events).filter((w) => Date.parse(w.due) < nowMs);
+}
+
+/** Register a walk deferral (#391). REFUSES — zero writes — on an anonymous
+ *  ticket, an empty 走查面, or an unparseable due date: an unowned,
+ *  undated deferral is the 「终检批」 pretending to be a ledger row. A due
+ *  date in the past registers fine (back-auditing existing deferrals);
+ *  re-registering an active walk supersedes it (改期重登记). */
+export function walk(
+  number: number,
+  due: string,
+  face: string,
+  opts: WalkOptions = {},
+): WalkDueEvent {
+  if (!Number.isInteger(number) || number <= 0) {
+    throw new Error(
+      "AP.walk: a ticket number is required — anonymous deferrals are the 终检批 again",
+    );
+  }
+  const trimmedFace = face.trim();
+  if (trimmedFace.length === 0) {
+    throw new Error("AP.walk: face is required (what exactly is walked, one line) — 无面不挂账");
+  }
+  if (Number.isNaN(Date.parse(due))) {
+    throw new Error(
+      `AP.walk: due must be an ISO-8601 parseable date, got ${JSON.stringify(due)} — ` +
+        "a deferral without a deadline is the 终检批 again",
+    );
+  }
+  const record: WalkDueEvent = {
+    event: "walk-due",
+    number,
+    due,
+    face: trimmedFace,
+    recordedAt: (opts.now ?? new Date()).toISOString(),
+  };
+  appendWalk(record, resolveWalkPath(opts.path));
+  return record;
+}
+
+/** Settle the active walk for a ticket (#391). REFUSES when nothing is
+ *  active — a settlement that closes nothing is a ledger bug (mirrors
+ *  AP.release) — and the anchor is mandatory (空框 = 未走查, #239). */
+export function walkDone(
+  number: number,
+  evidence: string,
+  opts: WalkOptions = {},
+): WalkDoneEvent {
+  if (!Number.isInteger(number) || number <= 0) {
+    throw new Error("AP.walkDone: a ticket number is required — anonymous settlements close nothing");
+  }
+  const anchor = evidence.trim();
+  if (anchor.length === 0) {
+    throw new Error(
+      "AP.walkDone: evidence anchor is required (walk report / comment / PR) — 空框不可销账",
+    );
+  }
+  const path = resolveWalkPath(opts.path);
+  if (!activeWalks(readWalkEvents(path)).some((w) => w.number === number)) {
+    throw new Error(`AP.walkDone: no active walk-due for #${number} — nothing to settle`);
+  }
+  const record: WalkDoneEvent = {
+    event: "walk-done",
+    number,
+    evidence: anchor,
+    recordedAt: (opts.now ?? new Date()).toISOString(),
+  };
+  appendWalk(record, path);
+  return record;
+}
+
+/** Ledger view: every event plus the replayed active set — the audit's
+ *  rule-8 input (`walks: AP.walkLedger().events`). */
+export function walkLedger(opts: WalkOptions = {}): {
+  events: WalkEvent[];
+  active: WalkDueEvent[];
+} {
+  const events = readWalkEvents(resolveWalkPath(opts.path));
+  return { events, active: activeWalks(events) };
+}
+
+// ---------------------------------------------------------------------------
 // AP.audit (#181) — per-beat drift rules. Pure: reads a snapshot, reports
 // board-vs-reality drift as findings + AP.apply-ready mutations, so the PM
 // beat reconciles in one guarded apply BEFORE dispatching.
 // ---------------------------------------------------------------------------
 
-/** Drift rule ids (#181, #240, #277), disjoint — one finding per (ticket, rule):
+/** Drift rule ids (#181, #240, #277, #391), disjoint — one finding per (ticket, rule):
  *  1 staleClosedStatus · 2 inProgressOnClosed · 3 laneStatusMismatch ·
  *  4 frontierAging · 6 browserLeaseMissing / browserLeaseCollision /
  *  browserLeaseUnreleased (armed only when `opts.leases` carries the ledger) ·
- *  7 closeoutNoEvidence (armed only when `opts.closeouts` carries the ledger). */
+ *  7 closeoutNoEvidence (armed only when `opts.closeouts` carries the ledger) ·
+ *  8 walkDueOverdue (armed only when `opts.walks` carries the ledger). */
 export type DriftRule =
   | "staleClosedStatus"
   | "inProgressOnClosed"
@@ -1976,7 +2152,8 @@ export type DriftRule =
   | "browserLeaseMissing"
   | "browserLeaseCollision"
   | "browserLeaseUnreleased"
-  | "closeoutNoEvidence";
+  | "closeoutNoEvidence"
+  | "walkDueOverdue";
 
 /** Rule-4 threshold: a dispatchable Todo untouched this many days is aged
  *  (reminder class — the repair is a dispatch, not a board write). */
@@ -2000,7 +2177,8 @@ export interface DriftFinding {
 export interface AuditReport {
   /** Findings in rule order (rules 1-3 in ticket order, then rule 4, then
    *  roster contradictions, then rule 6: missing in ticket order, unreleased
-   *  in ledger order, collisions last, then rule 7 in ticket order). */
+   *  in ledger order, collisions last, then rule 7 in ticket order, then
+   *  rule 8 in due order). */
   drift: DriftFinding[];
   /** The apply-ready flat list — `AP.apply(rep.mutations, { confirm: true })`
    *  is the one-shot reconcile. */
@@ -2025,6 +2203,10 @@ export interface AuditOptions {
    *  `AP.closeoutLedger().events`. Omitted → rule 7 is silent: a missing
    *  ledger must never fabricate closeout findings. */
   closeouts?: readonly CloseoutEvent[];
+  /** Rule-8 input (#391): the walk-due ledger — pass
+   *  `AP.walkLedger().events`. Omitted → rule 8 is silent: a missing
+   *  ledger must never fabricate walk findings. */
+  walks?: readonly WalkEvent[];
 }
 
 /**
@@ -2065,6 +2247,13 @@ export interface AuditOptions {
  *     write: `AP.closeout(...)` backfills the evidence trio (回填, #266 the
  *     first case) or the ticket reopens. Docs/research/decision tickets ship
  *     no runtime surface and are outside the gate.
+ *  8. walkDueOverdue (#391, armed by `opts.walks`) — an active walk deferral
+ *     whose due date has passed with no settlement: 到期翻红. An open ticket
+ *     not already red gets the board write itself (Status → Wait for user);
+ *     an already-red ticket is a plain reminder (run the walk); an
+ *     active-lane ticket stays mutation-free (flipping it would fight rule
+ *     3); a DELIVERED ticket with an unsettled walk is the #382/#364
+ *     violation shape — mutation-free, backfill or reopen.
  */
 export function audit(snap: Pick<Snapshot, "tickets">, opts: AuditOptions = {}): AuditReport {
   const drift: DriftFinding[] = [];
@@ -2233,8 +2422,86 @@ export function audit(snap: Pick<Snapshot, "tickets">, opts: AuditOptions = {}):
     }
   }
 
+  // Rule 8 (#391): overdue walk deferrals — 到期红.
+  if (opts.walks !== undefined) auditWalks(snap, opts.walks, active, nowMs, drift);
+
   const mutations = drift.flatMap((d) => (d.mutation === null ? [] : [d.mutation]));
   return { drift, mutations, clean: drift.length === 0 };
+}
+
+// Rule 8 (#391): overdue walk deferrals — the 到期红 gate. Kept beside the
+// audit for readability; armed only when `opts.walks` carries the ledger.
+function auditWalks(
+  snap: Pick<Snapshot, "tickets">,
+  walks: readonly WalkEvent[],
+  active: Set<number>,
+  nowMs: number,
+  drift: DriftFinding[],
+): void {
+  for (const w of overdueWalks(walks, new Date(nowMs))) {
+    const t = snap.tickets.find((x) => x.number === w.number);
+    if (t === undefined) {
+      drift.push({
+        rule: "walkDueOverdue",
+        number: w.number,
+        title: "(not on board)",
+        detail:
+          `walk-due ${w.due} overdue with no ticket in the snapshot (face: ${w.face}) — ` +
+          "file it or settle via AP.walkDone",
+        mutation: null,
+      });
+      continue;
+    }
+    const delivered = t.state === "CLOSED" || t.status === "Done" || t.status === "Canceled";
+    if (delivered) {
+      drift.push({
+        rule: "walkDueOverdue",
+        number: w.number,
+        title: t.title,
+        detail:
+          `delivered (state=${t.state}, Status=${t.status ?? "null"}) with an unsettled walk ` +
+          `(due ${w.due}, face: ${w.face}) — 挂账未跑就关票: backfill the evidence ` +
+          `(AP.closeout) + AP.walkDone, or reopen`,
+        mutation: null,
+      });
+      continue;
+    }
+    if (active.has(w.number)) {
+      drift.push({
+        rule: "walkDueOverdue",
+        number: w.number,
+        title: t.title,
+        detail:
+          `walk-due ${w.due} overdue on an active lane (face: ${w.face}) — settle before ` +
+          "delivery: run the walk (AP.walkDone / AP.closeout) or re-register with a new due; " +
+          "no board flip (rule 3 owns this ticket's Status)",
+        mutation: null,
+      });
+      continue;
+    }
+    if (t.status === "Wait for user") {
+      drift.push({
+        rule: "walkDueOverdue",
+        number: w.number,
+        title: t.title,
+        detail:
+          `walk-due ${w.due} overdue and the ticket is already red (face: ${w.face}) — ` +
+          "run the walk (AP.walkDone / AP.closeout) or re-register with a new due",
+        mutation: null,
+      });
+      continue;
+    }
+    drift.push({
+      rule: "walkDueOverdue",
+      number: w.number,
+      title: t.title,
+      detail:
+        `walk-due ${w.due} overdue (Status=${t.status ?? "null"}, face: ${w.face}) — ` +
+        "到期翻红: run the walk (AP.walkDone / AP.closeout) or re-register; " +
+        "the repair mutation flips the board red",
+      mutation: { op: "setStatus", number: w.number, value: "Wait for user" },
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3462,6 +3729,9 @@ export const AP = {
   audit,
   closeout,
   closeoutLedger,
+  walk,
+  walkDone,
+  walkLedger,
   intake,
   classifyIntake,
   gateOf,
@@ -3490,6 +3760,8 @@ export const AP = {
     activeLeases,
     acceptedNumbers,
     closeoutGated,
+    activeWalks,
+    overdueWalks,
   },
   /** Judge layer: question oracle + real transport (tests mock via fetch). */
   judge: { INTAKE_QUESTIONS, JEV_URL, JEV_MODEL, defaultJudge },

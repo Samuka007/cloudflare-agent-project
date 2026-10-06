@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "#270 PM harness as an omp custom-tool family: pm_lane / pm_apply / pm_audit / pm_release / pm_ledger",
+  "description": "#270 PM harness as an omp custom-tool family: pm_lane / pm_apply / pm_audit / pm_release / pm_ledger / pm_walk",
   "omp": {
     "name": "pm-harness",
-    "description": "PM harness board tools (#270): lane dispatch, guarded board writes, drift audit, browser-lease ledger",
+    "description": "PM harness board tools (#270): lane dispatch, guarded board writes, drift audit (walk-due rule 8, #391), browser-lease + walk ledgers",
     "tools": "./src/tools.ts"
   },
   "scripts": {

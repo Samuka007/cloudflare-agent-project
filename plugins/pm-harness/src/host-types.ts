@@ -64,6 +64,8 @@ export interface ZodNode {
   describe(text: string): ZodNode;
   optional(): ZodNode;
   default(value: string | number | boolean | null): ZodNode;
+  int(): ZodNode;
+  positive(): ZodNode;
 }
 
 /** Structural slice of the injected `pi.zod` builder (types.d.ts:61). */
