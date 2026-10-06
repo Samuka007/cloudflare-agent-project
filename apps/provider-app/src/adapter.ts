@@ -147,9 +147,11 @@ export class EdgeAgentProviderAdapter implements ProviderAdapter {
           model: this.harness.relay.model,
           displayName: `Edge agent (${this.harness.relay.model})`,
           description:
-            this.harness.relay.mode === "anthropic"
-              ? "Anthropic-protocol relay model (GLM coding plan)"
-              : "Fixed-reply mock (relay key not configured)",
+            this.harness.relay.mode === "mock"
+              ? "Fixed-reply mock (relay key not configured)"
+              : this.harness.relay.api === "openai-responses"
+                ? "OpenAI Responses-protocol relay model (#361 adaptor)"
+                : "Anthropic-protocol relay model (GLM coding plan)",
           supportedReasoningEfforts: [
             {
               reasoningEffort: "none",
