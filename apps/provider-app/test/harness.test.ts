@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { CompletionsRelayProvider } from "@cap/agent-do";
+import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import {
   classifyHarnessProjection,
   FixedReplyProvider,
@@ -32,7 +33,8 @@ describe("harness: three-key resolution", () => {
     expect(harness.relay.maxTokens).toBeGreaterThan(0);
     expect(harness.relay.contextWindow).toBe(200_000);
     expect(harness.relay.thinking).toEqual({ type: "disabled" });
-    expect(harness.hostBinding).toEqual({ machineId: "local" });
+    // #377: the honest default — no deployment machine is fabricated.
+    expect(harness.hostBinding).toEqual({ machineId: CLOUD_PLACEHOLDER_HOST_ID });
     expect(harness.execution).toMatchObject({
       model: "glm-5.3",
       serviceTier: "default",

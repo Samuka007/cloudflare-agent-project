@@ -8,13 +8,13 @@ import {
   threadWithIncludesResponseSchema,
 } from "../../src/contract/api/threads.js";
 import { threadListEntrySchema } from "../../src/contract/domain/thread.js";
-import { threadSummarySchema } from "@cap/protocol";
+import { CLOUD_PLACEHOLDER_HOST_ID, threadSummarySchema } from "@cap/protocol";
 import type { AgentDoRpc } from "../../src/seam/agent-do.js";
 
 /**
  * #288 binding feed-through (inventory #282 §2.A): POST /threads resolves the
  * workspace binding ONCE (explicit host/reuse > project default source >
- * deployment single machine), materializes the environments row, lands
+ * cloud placeholder, #377), materializes the environments row, lands
  * threads.environment_id, freezes thread.created.machineId into the
  * trajectory, and the read faces inline the binding (list join fields,
  * include=environment/host, GET /environments). Rebind is the explicit
@@ -201,7 +201,7 @@ describe("#288 explicit host binding lands in D1, trajectory and read faces", ()
     expect(foreign.status).toBe(409);
   });
 
-  it("no environment falls back to the project default source, then the deployment machine", async () => {
+  it("no environment falls back to the project default source, then the cloud placeholder", async () => {
     const host = await seedHost();
     const projectId = await seedProjectWithSource(host.id, "/repo/288-default-src");
     // Direct create with NO environment: the explicit personal payload the
@@ -219,10 +219,12 @@ describe("#288 explicit host binding lands in D1, trajectory and read faces", ()
     const body = threadWithIncludesResponseSchema.parse(detail.body);
     expect(body.environmentId).not.toBeNull();
     expect(body.environment?.path).toBe("/repo/288-default-src");
-    // The personal singleton has no source: deployment default, zero rows.
+    // The personal singleton has no source: the placeholder default, zero rows.
     const before = await environmentCount();
     const deployment = await createThread({ title: "deployment-default" });
-    expect(machineIdOfFirstEvent(await rawEvents(deployment.id))).toBe("local");
+    expect(machineIdOfFirstEvent(await rawEvents(deployment.id))).toBe(
+      CLOUD_PLACEHOLDER_HOST_ID,
+    );
     const bareDetail = threadResponseSchema.parse(
       (await getJson(`/api/v1/threads/${deployment.id}`)).body,
     );
