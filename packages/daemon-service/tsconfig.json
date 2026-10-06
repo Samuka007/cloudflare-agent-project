@@ -22,6 +22,7 @@
     "test/l1-task-isolation.test.ts",
     "test/l1-security-scan.test.ts",
     "test/l1-workspace-semantics.test.ts",
-    "test/l1-prompt-attachments.test.ts"
+    "test/l1-prompt-attachments.test.ts",
+    "test/l1-cf-access-headers.test.ts"
   ]
 }

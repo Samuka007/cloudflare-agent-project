@@ -37,6 +37,9 @@ export default defineConfig({
       "test/l1-workspace-semantics.test.ts",
       // #318 staging lane: node:fs + the omp runtime — Bun-only.
       "test/l1-prompt-attachments.test.ts",
+      // #420 CF Access header lane: the bun globalThis.fetch/WebSocket
+      // override drives the real client seam functions — Bun-only.
+      "test/l1-cf-access-headers.test.ts",
     ],
     maxWorkers: 1,
     minWorkers: 1,

@@ -25,15 +25,15 @@ WSL/工作站不参与运行面：daemon 在 CT142 上，工具 turn 的执行�
 
 ## CT142 参数（pct config 142 原文）
 
-| 项 | 值 |
-| --- | --- |
-| VMID / hostname | 142 / `lxc-stg-01`（= hosts 表 name，enroll 时自报） |
-| 配额 | 2 cores / 2048 MB / swap 512 / rootfs 20G（local-lvm thin） |
-| net0 | veth@vmbr0，静态 `192.168.1.142/24`，gw `192.168.1.1` |
-| features | `nesting=1`（systemd ≥257 ImportCredential 必需，CT140/141 同款教训） |
-| 特权 | 未加 `--unprivileged`（本宿主 pct 默认路径，wiki 已验证） |
-| onboot / ostype | 1 / nixos |
-| 系统 | NixOS 26.11，stateVersion 26.11 |
+| 项              | 值                                                                    |
+| --------------- | --------------------------------------------------------------------- |
+| VMID / hostname | 142 / `lxc-stg-01`（= hosts 表 name，enroll 时自报）                  |
+| 配额            | 2 cores / 2048 MB / swap 512 / rootfs 20G（local-lvm thin）           |
+| net0            | veth@vmbr0，静态 `192.168.1.142/24`，gw `192.168.1.1`                 |
+| features        | `nesting=1`（systemd ≥257 ImportCredential 必需，CT140/141 同款教训） |
+| 特权            | 未加 `--unprivileged`（本宿主 pct 默认路径，wiki 已验证）             |
+| onboot / ostype | 1 / nixos                                                             |
+| 系统            | NixOS 26.11，stateVersion 26.11                                       |
 
 ## 身份（bb 语义，非 local）
 
@@ -115,6 +115,10 @@ DAEMON_SERVICE_URL=https://cap-server-staging.dai-samuel.workers.dev
 DAEMON_JOIN_CODE=<code>
 DAEMON_DATA_DIR=/var/lib/cap-daemon/data
 DAEMON_SANDBOX_ROOT=/tmp/cap-sandbox
+# daemon face 过 Access（bb-staging.samuka007.com，Access app B）后双键必填；
+# 直连 workers.dev（无 Access）时两键整体省略。
+DAEMON_CF_ACCESS_CLIENT_ID=<cap-daemon service token 的 Client ID>
+DAEMON_CF_ACCESS_CLIENT_SECRET=<Secret，仅创建时可见，密库同 .staging-access.env>
 EOF
 scp /tmp/staging-daemon.env root@192.168.1.142:/var/lib/cap-daemon/staging-daemon.env
 ssh root@192.168.1.142 'chmod 600 /var/lib/cap-daemon/staging-daemon.env && \
@@ -122,6 +126,17 @@ ssh root@192.168.1.142 'chmod 600 /var/lib/cap-daemon/staging-daemon.env && \
 # journal 依次：boot → native addon gate → enrolled as hostId=host_xxx →
 # session.ready → sync.complete generation=1
 ```
+
+CF Access 双键说明（#420）：
+
+- daemon client 在三个缝合请求——`/enroll`、`/session/open`、`/ws` attach——上把
+  `CF-Access-Client-Id` / `CF-Access-Client-Secret` 与既有
+  `authorization: Bearer <hostKey>` **并行发送**：Access 是围墙，hostKey 是门锁，
+  两层各司其职（engineering.md 实践 7）；缝合内 hostKey 阶梯零改动。
+- 双键成对生效：只配一头 daemon 拒启（fail-closed，`decodeCfAccessConfig`）；
+  双缺省则线格式与 #420 之前逐字节一致（workers.dev 直连不受影响）。
+- 手动跑 client 也可用参数面 `--cf-client-id` / `--cf-client-secret`（arg 优先于
+  env，同 `--server`/`--join-code` 约定）。
 
 enroll 成功后**剥除 join code**（编辑 env 文件删 `DAEMON_JOIN_CODE` 行）并
 `systemctl restart cap-daemon`——常驻进程复用 dataDir 身份，不重铸。
@@ -166,7 +181,7 @@ dispatch 可能瞬时 `host_offline`（旧 DO 会话视图未落新 socket），
 
 1. CT142 enroll 完成、`/hosts` 见 `lxc-stg-01` connected（证据见下）。
 2. CT141 老 daemon 退役：`ssh root@192.168.1.141 'systemctl stop
-   cap-daemon-staging; systemctl reset-failed cap-daemon-staging'`——CT141
+cap-daemon-staging; systemctl reset-failed cap-daemon-staging'`——CT141
    回归纯 verify-ladder 用途；其 dataDir 的 `local` 身份不再上线
    （cap-verify.md 的 staging 段落自此作废，以本文件为准）。
 3. 幽灵行清理（staging `/api/v1/hosts` DELETE）：`local`（CT141 残余）、
@@ -203,8 +218,8 @@ tarball `nixos-lxc-stg-01-26.11-20261006.tar.xz` sha256 `410aa6f9…55b66f`。
 1. **CT 上 daemon systemd 常驻在线（connected 稳定无 replaced）**——
    单元声明式（`/etc/systemd/system/cap-daemon.service`，enabled，
    `Restart=always`）；enroll journal `boot → native addon gate: current →
-   enrolled as hostId=host_7xykdvxmdk → session.ready → sync.complete
-   generation=1`；落地后 25 min 窗口 journal `replaced|code 1000` 计数
+enrolled as hostId=host_7xykdvxmdk → session.ready → sync.complete
+generation=1`；落地后 25 min 窗口 journal `replaced|code 1000` 计数
    **0**，`NRestarts=0`；`/api/v1/hosts` 终态**仅一行**
    `host_7xykdvxmdk / lxc-stg-01 / connected`（幽灵 `local`、
    `host_6je2m3mn5u`、`host_z7zsq4g7sn` 已 DELETE，见 cutover）。
@@ -212,7 +227,7 @@ tarball `nixos-lxc-stg-01-26.11-20261006.tar.xz` sha256 `410aa6f9…55b66f`。
    `ct142-smoke.sh` 两轮 PASS（`thr_stg_smoke_muwiu4so`、
    `thr_stg_smoke_muwj2mio`）：`dispatch accepted (tool=bash)` →
    `roundtrip closed: exit 0`，输出 `lxc-stg-01 / x86_64 /
-   nix (Nix) 2.34.8 / root / cap-verify-smoke-ok-…` →
+nix (Nix) 2.34.8 / root / cap-verify-smoke-ok-…` →
    `result acked at journal seq 22/35`；smoke 报告 bootId 与 CT 单元
    journal 的 boot id 一致（回环在本机）。
 3. **WSL 关机后 staging 仍可跑工具 turn**——运行面零 WSL 组件：daemon
