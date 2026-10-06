@@ -1,7 +1,9 @@
 import {
   decodeRelayCatalog,
   deriveRelayReasoning,
+  IMAGE_SOURCE_API_FAMILY,
   type RelayCatalog,
+  type RelayCatalogModel,
   type RelayCatalogProvider,
   type RelayReasoningLevel,
 } from "@cap/agent-do";
@@ -38,6 +40,13 @@ export interface RelayCatalogModelRow {
    */
   contextWindow: number | null;
   maxTokens: number | null;
+  /**
+   * The row's effective thinking budget (#362): the model-declared
+   * thinkingBudgetTokens winning over the deployment scalar; null when the
+   * row runs budget-off. The dispatch half (relay-registry) reads this so a
+   * panel budget edit rides the overlay without a redeploy.
+   */
+  thinkingBudgetTokens: number | null;
   imageInput: boolean;
   /** Exactly the running model's row (the model turns actually run). */
   isDefault: boolean;
@@ -81,9 +90,9 @@ function synthesisFromHarness(
   decodeError: boolean,
 ): RelayCatalogResolution {
   const model = harness.relay.model;
-  const derived = deriveRelayReasoning({
-    thinkingEnabled: harness.relay.thinking.type === "enabled",
-  });
+  const globalBudget =
+    harness.relay.thinking.type === "enabled" ? harness.relay.thinking.budget_tokens : null;
+  const derived = deriveRelayReasoning({ thinkingEnabled: globalBudget !== null });
   return {
     configured,
     decodeError,
@@ -107,6 +116,7 @@ function synthesisFromHarness(
         defaultReasoningLevel: derived.defaultLevel,
         contextWindow: harness.relay.contextWindow,
         maxTokens: harness.relay.maxTokens,
+        thinkingBudgetTokens: globalBudget,
         imageInput: harness.relay.supportsImageInput,
         isDefault: true,
       },
@@ -197,14 +207,25 @@ function projectCatalogDirectory(
   providers: Record<string, RelayCatalogProvider>,
   flags: { configured: boolean; decodeError: boolean; defaultProviderId: string },
 ): RelayCatalogResolution {
-  const thinkingEnabled = harness.relay.thinking.type === "enabled";
+  const globalBudget =
+    harness.relay.thinking.type === "enabled" ? harness.relay.thinking.budget_tokens : null;
+  const thinkingEnabled = globalBudget !== null;
   const providerRows: RelayCatalogProviderRow[] = [];
   const models: RelayCatalogModelRow[] = [];
   let runningRow: RelayCatalogModelRow | undefined;
   for (const [providerId, provider] of Object.entries(providers)) {
+    // #362 scope absorption ②: `api: "openai-images"` rows are IMAGE
+    // sources (the generate_image tool reads them through the registry),
+    // not LLM chat providers — they never enter the selectable LLM
+    // directory (fail-closed selection vocabulary stays honest) and ride
+    // the Configured panel CRUD face instead.
+    if (provider.api === IMAGE_SOURCE_API_FAMILY) continue;
+    const rowBudgetOf = (entry: RelayCatalogModel): number | null =>
+      entry.thinkingBudgetTokens ?? globalBudget;
     const rows = provider.models.map((entry): RelayCatalogModelRow => {
+      const rowBudget = rowBudgetOf(entry);
       const derived = deriveRelayReasoning({
-        thinkingEnabled,
+        thinkingEnabled: rowBudget !== null,
         declaredLevels: entry.reasoningLevels,
         declaredDefault: entry.defaultReasoningLevel,
       });
@@ -222,6 +243,7 @@ function projectCatalogDirectory(
         // turns actually run, not two parallel answers.
         contextWindow: isRunning ? harness.relay.contextWindow : (entry.contextWindow ?? null),
         maxTokens: isRunning ? harness.relay.maxTokens : (entry.maxTokens ?? null),
+        thinkingBudgetTokens: rowBudget,
         imageInput: isRunning
           ? harness.relay.supportsImageInput
           : (entry.input?.includes("image") ?? false),
@@ -254,6 +276,7 @@ function projectCatalogDirectory(
       defaultReasoningLevel: derived.defaultLevel,
       contextWindow: harness.relay.contextWindow,
       maxTokens: harness.relay.maxTokens,
+      thinkingBudgetTokens: globalBudget,
       imageInput: harness.relay.supportsImageInput,
       isDefault: true,
     };

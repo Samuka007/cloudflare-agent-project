@@ -21,8 +21,11 @@
 
 import {
   AnthropicRelayProvider,
+  DEFAULT_IMAGE_TIMEOUT_SECONDS,
+  IMAGE_SOURCE_API_FAMILY,
   resolveRelaySelection,
   type AgentRuntime,
+  type GenerateImageConfig,
   type ModelProvider,
   type RelayCatalogProvider,
   type RelayConfig,
@@ -53,6 +56,33 @@ export interface RelayProviderRegistryResolution {
   reasoningLevel: RelayReasoningLevel;
   /** The wire config the selection dispatches under. */
   config: RelayConfig;
+}
+
+/**
+ * #362 scope absorption ②: the panel-resolved image source. A provider row
+ * with `api: "openai-images"` IS the generate_image switch + source config —
+ * row presence is the user opt-in (no separate gate seat), the row's baseUrl
+ * + decrypted key + first model row are the source. The env
+ * AGENT_DO_GENERATE_IMAGE/AGENT_DO_IMAGE_SOURCE pair is the fallback the DO
+ * applies when this returns null. Returns null with an empty-string
+ * baseUrl/model when the row is incomplete — the executor answers honestly
+ * that the source is not configured (never a guessed default).
+ */
+export function imageGenerationSourceFromOverlay(
+  overlay: RelayProviderOverlay | null,
+): GenerateImageConfig | null {
+  if (overlay === null) return null;
+  const entry = Object.entries(overlay.providers).find(
+    ([, provider]) => provider.api === IMAGE_SOURCE_API_FAMILY,
+  );
+  if (entry === undefined) return null;
+  const [id, provider] = entry;
+  return {
+    baseUrl: provider.baseUrl?.replace(/\/+$/, "") ?? "",
+    apiKey: overlay.credentials[id]?.apiKey ?? "",
+    model: provider.models[0]?.id ?? "",
+    timeoutSeconds: DEFAULT_IMAGE_TIMEOUT_SECONDS,
+  };
 }
 
 /**
@@ -206,12 +236,19 @@ export class RelayProviderRegistry {
             "",
         }
       : (this.credentials[resolved.providerId] ?? {});
-    const thinking: ThinkingConfig =
-      resolved.reasoningLevel === "none"
-        ? { type: "disabled" }
-        : harness.relay.thinking.type === "enabled"
-          ? harness.relay.thinking
+    // #362 scope absorption ①: the row's effective thinking budget wins over
+    // the deployment scalar (thinkingBudgetTokens on the projected row —
+    // model-declared budget, null = budget-off, undefined = legacy row that
+    // keeps the harness fold). A panel budget edit rides the overlay hot.
+    const rowBudget = row?.thinkingBudgetTokens;
+    const budgetThinking: ThinkingConfig =
+      rowBudget === undefined
+        ? harness.relay.thinking
+        : rowBudget !== null
+          ? { type: "enabled", budget_tokens: rowBudget }
           : { type: "disabled" };
+    const thinking: ThinkingConfig =
+      resolved.reasoningLevel === "none" ? { type: "disabled" } : budgetThinking;
     return {
       providerId: resolved.providerId,
       modelId: resolved.modelId,

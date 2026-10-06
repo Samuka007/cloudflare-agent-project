@@ -136,6 +136,7 @@ export {
   decodeRelayCatalog,
   deriveRelayReasoning,
   findRelayCatalogModel,
+  IMAGE_SOURCE_API_FAMILY,
   relayReasoningLevelSchema,
   relayCatalogSchema,
   relayCatalogModelSchema,
