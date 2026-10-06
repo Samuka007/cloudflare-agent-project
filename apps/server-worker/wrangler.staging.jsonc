@@ -15,6 +15,9 @@
   // bb-staging.samuka007.com——.com zone 已有 cvat/langfuse Access 先例）。
   // Access apps 就位前该域名与 workers.dev 同为无门禁（无回归）。
   "routes": [{ "pattern": "bb-staging.samuka007.com", "custom_domain": true }],
+  // routes 存在时 wrangler 默认关 workers.dev 面——显式保留：daemon/探针现行
+  // 通道 + 中间件纵深面（#397 后该面匿名 401，双层设计）。
+  "workers_dev": true,
   "compatibility_date": "2026-09-29",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
