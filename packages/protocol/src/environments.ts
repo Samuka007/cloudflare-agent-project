@@ -181,3 +181,17 @@ export const hostSummarySchema = z.object({
   lastSeenAt: z.number().nullable(),
 });
 export type HostSummary = z.infer<typeof hostSummarySchema>;
+
+/**
+ * #377 semantic placeholder for "no real host". The deployment-default
+ * binding (personal workspace with no explicit host, or no project default
+ * source) resolves here instead of a fabricated machine: zero enrolled hosts
+ * is a first-class state, not a ghost "local" machine. The provider
+ * conversation still runs on the edge; every host-tool dispatch answers the
+ * honest `host_offline` until tier-0/tier-1 (#307) gives this id a real
+ * cloud carrier. Deliberately NOT a hosts-table row — any row is
+ * primary-protected when it is the fleet's only one (bb resolvePrimaryHostId,
+ * services/hosts/primary-host.ts:70-76), which is exactly the un-deletable
+ * machine shape the ruling forbids.
+ */
+export const CLOUD_PLACEHOLDER_HOST_ID = "cloud";
