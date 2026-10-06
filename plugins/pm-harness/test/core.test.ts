@@ -39,7 +39,7 @@ import {
   snapshot,
   activeWalks,
   overdueWalks,
-  walk,
+  walkDue,
   walkDone,
   walkLedger,
   type CloseoutEvent,
@@ -2776,7 +2776,7 @@ describe("walk-due ledger (#391) — 挂账登记", () => {
   });
 
   it("walk records {ticket, due, face}; walkLedger replays events + the active set", () => {
-    const rec = walk(382, "2026-10-08", "staging 真机面板走查（cap-provider-config 两 section）", {
+    const rec = walkDue(382, "2026-10-08", "staging 真机面板走查（cap-provider-config 两 section）", {
       path: WALK_PATH,
       now: NOW,
     });
@@ -2793,15 +2793,15 @@ describe("walk-due ledger (#391) — 挂账登记", () => {
   });
 
   it("refuses anonymous tickets, empty faces and unparseable due dates with zero writes", () => {
-    expect(() => walk(0, "2026-10-08", "面")).toThrow(/ticket number is required/);
-    expect(() => walk(382, "2026-10-08", "   ")).toThrow(/face is required/);
-    expect(() => walk(382, "not-a-date", "面")).toThrow(/ISO-8601 parseable/);
+    expect(() => walkDue(0, "2026-10-08", "面")).toThrow(/ticket number is required/);
+    expect(() => walkDue(382, "2026-10-08", "   ")).toThrow(/face is required/);
+    expect(() => walkDue(382, "not-a-date", "面")).toThrow(/ISO-8601 parseable/);
     expect(fsProbe.files.size).toBe(0); // every refusal left the store untouched
   });
 
   it("re-registering an active walk supersedes it (改期重登记 appends, never edits)", () => {
-    walk(364, "2026-10-07", "粘贴导入走查", { path: WALK_PATH, now: NOW });
-    walk(364, "2026-10-12", "粘贴导入走查（改期）", {
+    walkDue(364, "2026-10-07", "粘贴导入走查", { path: WALK_PATH, now: NOW });
+    walkDue(364, "2026-10-12", "粘贴导入走查（改期）", {
       path: WALK_PATH,
       now: new Date(NOW.getTime() + 1000),
     });
@@ -2812,7 +2812,7 @@ describe("walk-due ledger (#391) — 挂账登记", () => {
   });
 
   it("walkDone settles the active walk and demands an anchor; settling nothing throws", () => {
-    walk(351, "2026-10-08", "staging 部分走查面", { path: WALK_PATH, now: NOW });
+    walkDue(351, "2026-10-08", "staging 部分走查面", { path: WALK_PATH, now: NOW });
     expect(() => walkDone(351, "   ", { path: WALK_PATH })).toThrow(/evidence anchor is required/);
     expect(() => walkDone(999, "e", { path: WALK_PATH })).toThrow(/no active walk-due for #999/);
     const closed = walkDone(351, "walk 报告评论", { path: WALK_PATH, now: NOW });
@@ -2834,7 +2834,7 @@ describe("walk-due ledger (#391) — 挂账登记", () => {
 
   it("PM_WALKS_PATH redirects the default store; a missing file reads as an empty ledger", () => {
     process.env.PM_WALKS_PATH = "env-walks.jsonl";
-    walk(382, "2026-10-08", "面板走查");
+    walkDue(382, "2026-10-08", "面板走查");
     expect(walkLedger().active).toHaveLength(1);
     expect(walkLedger({ path: WALK_PATH })).toEqual({ events: [], active: [] });
   });
