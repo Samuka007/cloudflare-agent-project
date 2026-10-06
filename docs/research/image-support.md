@@ -85,7 +85,11 @@
 | --- | --- | --- | --- | --- |
 | B1 | imageView 事件链 + host-file face | journal additive `imageView` 事件（含 `parentToolCallId`）→ timeline `image-view` 行生产者 → `GET /threads/:id/host-files/content` 宿主文件代理（README §1 deferred 的 files face 最小子集，只开 content 读） | P2 | 无硬依赖（A3 的 daemon 通道可复用） |
 | B2 | 产图工具（可选） | `generate_image` 作 edge 工具：图像模型出站、产物写 thread storage、发 imageView 事件；真实图像源（provider-app relay 路由 / CF AI）是外部前置 | P3 | B1 + 图像源 |
-| B3 | codex `imageGeneration` 处理 | 上游自身 unhandled（§1 B 线）；仅当接入 codex 原生 runtime 时立项跟踪上游 | P3 | 观望 |
+| B3 | codex `imageGeneration` 处理 | 上游自身 unhandled（§1 B 线，按钉版树）；仅当接入 codex 原生 runtime 时立项跟踪上游（#323 观望票，复查记录见下） | P3 | 观望 |
+
+### B3 复查记录（#323 观望票，每次 pin 前移检查一次）
+
+- **2026-10-06**（pin `381d47de6`，与 origin/main 一致，自 #401 pin→381d47de6 后未动）：无动作，留 open。**上游已翻盘**：`get-bb/bb` main 于 c3fcea144（#2920，2026-09-08）将 `imageGeneration` 接入 `codexHandledThreadItemSchema`（重构后位于 `plugins/provider-codex/src/schemas.ts:464-484`，字段含 `failure`(usageLimitExceeded)/`savedPath`/`transparentBackground`），1f4e9e547（#3327，2026-09-09）跟进修产图回归。fork `Samuka007/bb` main 仍是 pre-#1640 重构的同代快照（无 `plugins/provider-codex` 目录）。本仓无本地 codex 翻译镜像（§1 锚点全指 bb 子模块），下次 pin 前移跨过 #2920 即自动获得处理 + thread-view 渲染 + legacy 行迁移，本仓零代码跟随；复查锚点届时从 `codex/schemas.ts` 换轨到 `plugins/provider-codex/src/schemas.ts`。
 
 **不在本档切票**：语音转写（`contract/api/system.ts:108` 的 `SystemVoiceTranscriptionForm` 是移植死类型，属另一 face）；图片进历史后的 compaction 图预算（A4 落地后再评估）。
 
