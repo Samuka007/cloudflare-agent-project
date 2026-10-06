@@ -4,6 +4,15 @@ import { ensureMigrations } from "./migrate.js";
 /** Base URL for SELF requests; any origin works inside the pool. */
 export const BASE = "https://example.com";
 
+/**
+ * #398/SEC-W5-002: the compat rig's daemon-face credentials — the values
+ * vitest.config.ts injects as miniflare bindings. Test-only; deployments set
+ * real secrets (`wrangler secret put`), and the repo-public POC literals
+ * authenticate nothing anywhere.
+ */
+export const TEST_ENROLL_KEY = "l1-rig-enroll-key";
+export const TEST_HOST_KEY = "l1-rig-host-key";
+
 export async function apiGet(path: string, init?: RequestInit): Promise<Response> {
   await ensureMigrations();
   return exports.default.fetch(`${BASE}${path}`, {

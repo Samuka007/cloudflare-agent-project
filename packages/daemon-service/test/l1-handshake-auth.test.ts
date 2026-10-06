@@ -16,6 +16,36 @@ import { DAEMON_PROTOCOL_VERSION } from "../src/constants.js";
  */
 
 describe("L1 handshake + auth", () => {
+  test("the repo-public POC literals authenticate nothing (#398/SEC-W5-002)", async () => {
+    // Enroll: the retired literal misses the env key and redeems no join
+    // code — the KV path answers 401.
+    const enroll = await workerFetch(
+      new Request("https://daemon-service.test/enroll", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enrollKey: "[REDACTED-staging-secret]", hostId: uniqueHostId("retired") }),
+      }),
+    );
+    expect(enroll.status).toBe(401);
+    // session/open: the retired bearer key misses the env compare (digest),
+    // the KV cache, and the DO mirror — the full auth ladder refuses it.
+    const open = await workerFetch(
+      new Request("https://daemon-service.test/session/open", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer [REDACTED-staging-secret]",
+        },
+        body: JSON.stringify({
+          hostId: uniqueHostId("retired"),
+          bootId: "boot_retired_literal",
+          protocolVersion: DAEMON_PROTOCOL_VERSION,
+        }),
+      }),
+    );
+    expect(open.status).toBe(401);
+  });
+
   test("session/open with a wrong bearer hostKey is 401", async () => {
     const hostId = uniqueHostId("auth");
     const response = await workerFetch(

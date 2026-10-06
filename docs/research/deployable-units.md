@@ -64,6 +64,7 @@
 | packages/agent-do/wrangler.jsonc | `agent-do` | dev/POC rig（TestDaemonServiceDO） | :3-13 |
 | packages/agent-do/wrangler.hookup.jsonc | `agent-do-hookup` | 本地 E2E rig——poc-full-chain.ts:9 的 wrangler dev 目标（真 DaemonServiceDO 组合） | :3-14 |
 
+-（#398 起 daemon-service/agent-do-hookup 两行的「vars 内嵌 poc-dev 密钥」失效：deployable wrangler 配置不再携带明文凭据，daemon 面凭据一律 `wrangler secret put` / `.dev.vars` 注入，SEC-W5-002 fail-closed。）
 - KV id `5b39e87d559b424a8f6432e6a2bc9ff7` 被 4 处配置共享（server-worker ×2、daemon-service、agent-do hookup）——dev rig 与 staging 共用同一 namespace。
 - provider-app/daemon-worker 降级为库的证据：apps/server-worker/package.json:15-19 依赖二者；src/index.ts:7-15 import。
 

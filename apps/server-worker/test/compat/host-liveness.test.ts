@@ -4,7 +4,7 @@ import { ensureMigrations } from "../migrate.js";
 import { hostSchema } from "../../src/contract/domain/host.js";
 import type { Host } from "../../src/contract/domain/host.js";
 import { LIVENESS_PROJECTION_INTERVAL_MS } from "@cap/daemon-service";
-import { BASE, apiGet } from "../helpers.js";
+import { BASE, apiGet, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers.js";
 
 /**
  * #62 hosts liveness, bb-verbatim (apps/server/src/ws/daemon-protocol.ts:
@@ -22,7 +22,7 @@ async function enroll(hostId: string): Promise<Response> {
   return exports.default.fetch(`${BASE}/enroll`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ enrollKey: "[REDACTED-staging-secret]", hostId }),
+    body: JSON.stringify({ enrollKey: TEST_ENROLL_KEY, hostId }),
   });
 }
 
@@ -33,7 +33,7 @@ interface OpenedSession {
 async function openSession(hostId: string): Promise<OpenedSession> {
   const response = await exports.default.fetch(`${BASE}/session/open`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: "Bearer [REDACTED-staging-secret]" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${TEST_HOST_KEY}` },
     body: JSON.stringify({ hostId, bootId: `boot_${hostId}`, protocolVersion: 1 }),
   });
   expect(response.status).toBe(201);

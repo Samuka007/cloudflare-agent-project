@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate.js";
-import { apiGet, BASE } from "../helpers.js";
+import { apiGet, BASE, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers.js";
 import { hostSchema } from "../../src/contract/domain/host.js";
 
 /**
@@ -22,7 +22,7 @@ async function enroll(hostId: string): Promise<Response> {
   return exports.default.fetch(`${BASE}/enroll`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ enrollKey: "[REDACTED-staging-secret]", hostId }),
+    body: JSON.stringify({ enrollKey: TEST_ENROLL_KEY, hostId }),
   });
 }
 
@@ -33,7 +33,7 @@ interface OpenedSession {
 async function openSession(hostId: string): Promise<OpenedSession> {
   const response = await exports.default.fetch(`${BASE}/session/open`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: "Bearer [REDACTED-staging-secret]" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${TEST_HOST_KEY}` },
     body: JSON.stringify({ hostId, bootId: `boot_${hostId}`, protocolVersion: 1 }),
   });
   expect(response.status).toBe(201);

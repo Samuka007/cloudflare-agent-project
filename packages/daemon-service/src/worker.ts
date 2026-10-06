@@ -1,4 +1,9 @@
-import { apiError, CLOUD_PLACEHOLDER_HOST_ID, createHostId, httpStatusForCode } from "@cap/protocol";
+import {
+  apiError,
+  CLOUD_PLACEHOLDER_HOST_ID,
+  createHostId,
+  httpStatusForCode,
+} from "@cap/protocol";
 import { DAEMON_PROTOCOL_VERSION } from "./constants.js";
 import {
   armNegativeCache,
@@ -233,6 +238,42 @@ async function handleProjectAttachmentContent(request: Request, env: WorkerEnv):
  */
 export const DEPLOYMENT_AUTH_MIRROR_DO_ID = "deployment-auth-mirror";
 
+/**
+ * #398/SEC-W5-002: the daemon-face credentials are deployment secrets, so a
+ * composition without them must fail closed instead of falling back to the
+ * repo-public POC literals (the retired "poc-dev-*" defaults). Mirrors the
+ * daemon client's posture (client/index.ts:32-36: missing credential → the
+ * process refuses to start); server-side the refusal lands on the first
+ * daemon-face request, because a Worker has no startup phase to gate.
+ */
+export function requireDaemonCredentials(env: { ENROLL_KEY?: string; DAEMON_HOST_KEY?: string }): {
+  enrollKey: string;
+  hostKey: string;
+} {
+  if (env.ENROLL_KEY === undefined || env.ENROLL_KEY === "") {
+    throw new Error(
+      "ENROLL_KEY secret is not set — inject it with `wrangler secret put ENROLL_KEY` (the POC dev fallback was removed, #398/SEC-W5-002)",
+    );
+  }
+  if (env.DAEMON_HOST_KEY === undefined || env.DAEMON_HOST_KEY === "") {
+    throw new Error(
+      "DAEMON_HOST_KEY secret is not set — inject it with `wrangler secret put DAEMON_HOST_KEY` (the POC dev fallback was removed, #398/SEC-W5-002)",
+    );
+  }
+  return { enrollKey: env.ENROLL_KEY, hostKey: env.DAEMON_HOST_KEY };
+}
+
+/**
+ * SEC-W5-008: credentials compare through a digest, never raw `===` — the
+ * raw string compare's early-exit on a shared prefix is a matching-prefix
+ * timing oracle; SHA-256 gives both sides a fixed length and alignment the
+ * caller cannot steer.
+ */
+async function credentialMatches(candidate: string, secret: string): Promise<boolean> {
+  const [candidateHash, secretHash] = await Promise.all([sha256Hex(candidate), sha256Hex(secret)]);
+  return candidateHash === secretHash;
+}
+
 async function handleEnroll(request: Request, env: WorkerEnv): Promise<Response> {
   let body: unknown;
   try {
@@ -246,7 +287,7 @@ async function handleEnroll(request: Request, env: WorkerEnv): Promise<Response>
   }
   const credential = parsed.enrollKey;
   let hostId: string;
-  if (credential === env.ENROLL_KEY) {
+  if (await credentialMatches(credential, env.ENROLL_KEY)) {
     hostId = typeof parsed.hostId === "string" ? parsed.hostId : createHostId();
   } else if (env.DAEMON_EDGE_KV !== undefined) {
     // Join-code path: the mint record's hostId wins over any body claim.
@@ -476,9 +517,13 @@ async function handleAgentRoute(path: string, request: Request, env: WorkerEnv):
     const body = parsed;
     // #377: the smoke projection names its target host explicitly (body
     // machineId / ?hostId=) — no deployment var fabricates one.
-    const machineId = readString(body, "machineId") ?? new URL(request.url).searchParams.get("hostId");
+    const machineId =
+      readString(body, "machineId") ?? new URL(request.url).searchParams.get("hostId");
     if (machineId === null) {
-      return errorResponse("validation_failed", "machineId body field or hostId query param required");
+      return errorResponse(
+        "validation_failed",
+        "machineId body field or hostId query param required",
+      );
     }
     const stub = stubForHost(env, machineId);
     const executionId = readString(body, "executionId");
@@ -605,14 +650,14 @@ async function authorize(
 ): Promise<{ hostIdHint: string | null } | null> {
   const key = authKeyOf(request);
   if (key === null) return null;
-  if (env.DAEMON_HOST_KEY !== "" && key === env.DAEMON_HOST_KEY) {
+  const keyHash = await sha256Hex(key);
+  if (env.DAEMON_HOST_KEY !== "" && (await credentialMatches(key, env.DAEMON_HOST_KEY))) {
     // #377: the env key names NO host — the body hostId (bb contract,
     // required) must carry it. The old hint fabricated the deployment
     // identity, so a missing body claim silently created/attached the
     // synthetic host.
     return { hostIdHint: null };
   }
-  const keyHash = await sha256Hex(key);
   const cachedHostId = await loadCachedAuth(env.DAEMON_EDGE_KV, keyHash);
   if (cachedHostId !== null) return { hostIdHint: cachedHostId };
   const stub = stubForHost(env, DEPLOYMENT_AUTH_MIRROR_DO_ID);

@@ -25,11 +25,10 @@
     },
   ],
   "vars": {
-    // POC dev defaults. Production would inject these as secrets; the enroll
-    // flow (bb §5 shape) hands them to the client once, the client persists
-    // them in its dataDir (0600).
-    "ENROLL_KEY": "[REDACTED-staging-secret]",
-    "DAEMON_HOST_KEY": "[REDACTED-staging-secret]",
+    // #398/SEC-W5-002: the daemon-face credentials are secrets — no in-repo
+    // defaults. Deployments inject them with `wrangler secret put ENROLL_KEY`
+    // / `DAEMON_HOST_KEY`; local `wrangler dev` reads them from .dev.vars
+    // (gitignored), which the local smoke scripts write before starting.
     // L1-rig negative-cache window (#36): real-clock short window so the
     // expiry test polls a ~1.5s window. Production deploys leave this
     // UNSET — the named-constant default is 30s (NEGATIVE_CACHE_TTL_MS).

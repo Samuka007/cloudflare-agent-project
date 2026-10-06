@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate.js";
 import { hostSchema } from "../../src/contract/domain/host.js";
-import { BASE, apiGet } from "../helpers.js";
+import { BASE, apiGet, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers.js";
 
 /**
  * #49 bridge: the daemon client's attach handshake (daemon-service /enroll +
@@ -18,7 +18,7 @@ async function enroll(hostId: string): Promise<Response> {
   return exports.default.fetch(`${BASE}/enroll`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ enrollKey: "[REDACTED-staging-secret]", hostId }),
+    body: JSON.stringify({ enrollKey: TEST_ENROLL_KEY, hostId }),
   });
 }
 
@@ -27,7 +27,7 @@ async function openSession(hostId: string): Promise<Response> {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: "Bearer [REDACTED-staging-secret]",
+      authorization: `Bearer ${TEST_HOST_KEY}`,
     },
     body: JSON.stringify({ hostId, bootId: `boot_${hostId}`, protocolVersion: 1 }),
   });
