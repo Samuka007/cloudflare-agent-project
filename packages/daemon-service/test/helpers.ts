@@ -30,8 +30,6 @@ export interface HarnessEnv {
   DAEMON_EDGE_KV: KVNamespace;
   ENROLL_KEY: string;
   DAEMON_HOST_KEY: string;
-  DAEMON_HOST_ID: string;
-  DAEMON_MACHINE_ID: string;
 }
 
 export const testEnv = env as unknown as HarnessEnv;

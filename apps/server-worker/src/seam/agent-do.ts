@@ -207,15 +207,24 @@ function bridgeFailure(
   throw new Error(`${where} failed: ${outcome.errorCode}: ${outcome.errorMessage}`);
 }
 
+/**
+ * The composed provider lane's journal DO name (#31, #377). bb's
+ * host_daemon_commands journal is per-host; the composed port funnels every
+ * provider-route command through ONE journal DO whose name is deployment
+ * routing, not a host claim — the command carries its own machineId (the
+ * thread's frozen binding). Hardcoded: a var here could only ever re-create
+ * the synthetic "local" identity #377 removes.
+ */
+const ORCHESTRATOR_JOURNAL_DO_NAME = "journal";
+
 function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
-  const hostId = env.ORCHESTRATOR_HOST_ID ?? "local";
   const orchestratorNs = env.ORCHESTRATOR;
   const managerNs = env.MANAGER;
   if (orchestratorNs === undefined || managerNs === undefined) {
     throw new Error("composition requires the ORCHESTRATOR and MANAGER bindings");
   }
   const orchestrator = orchestratorNs.get(
-    orchestratorNs.idFromName(hostId),
+    orchestratorNs.idFromName(ORCHESTRATOR_JOURNAL_DO_NAME),
   ) as unknown as OrchestratorJournalRpc;
   const manager = managerNs.get(managerNs.idFromName("manager")) as unknown as ManagerRegistryRpc;
   // Reads stay direct: the event log projection lives on the per-thread DO.
@@ -225,9 +234,11 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
   >;
 
   async function dispatch(command: AdapterCommand): Promise<AdapterCommandOutcome> {
-    const ensured = await orchestrator.ensureHost({ hostId });
+    const ensured = await orchestrator.ensureHost({ hostId: ORCHESTRATOR_JOURNAL_DO_NAME });
     if (ensured.kind === "host_mismatch") {
-      throw new Error(`orchestrator host mismatch: bound ${ensured.boundHostId}, got ${hostId}`);
+      throw new Error(
+        `orchestrator host mismatch: bound ${ensured.boundHostId}, got ${ORCHESTRATOR_JOURNAL_DO_NAME}`,
+      );
     }
     const { commandId } = await orchestrator.enqueueCommand({
       type: command.type,

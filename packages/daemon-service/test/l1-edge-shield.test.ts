@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { serviceStub, testEnv, uniqueHostId, workerFetch } from "./helpers.js";
 import { DAEMON_PROTOCOL_VERSION } from "../src/constants.js";
+import { DEPLOYMENT_AUTH_MIRROR_DO_ID } from "../src/worker.js";
 import { authKvKey, sha256Hex } from "../src/edge.js";
 
 /**
@@ -75,12 +76,12 @@ describe("L1 edge shield — auth ladder (#36)", () => {
     // Simulate cache eviction + plant a non-env key directly in the mirror
     // (the M1 shape: issuance registry, no env key). The L1 rig's env key
     // path would otherwise short-circuit below the KV rungs. The mirror
-    // lives in the deployment-identity DO (DAEMON_HOST_ID = "poc-local" in
-    // this rig) — the DO the ladder's fallback consults.
+    // lives in the deployment auth-mirror DO (#377 constant) — the DO the
+    // ladder's fallback consults.
     const mirrorKey = `mirror-${crypto.randomUUID().slice(0, 8)}`;
     const mirrorHash = await sha256Hex(mirrorKey);
     await testEnv.DAEMON_EDGE_KV.delete(authKvKey(await sha256Hex(testEnv.DAEMON_HOST_KEY)));
-    await serviceStub(testEnv.DAEMON_HOST_ID).mirrorHostKey({
+    await serviceStub(DEPLOYMENT_AUTH_MIRROR_DO_ID).mirrorHostKey({
       keyHash: mirrorHash,
       hostId,
       ttlMs: 60_000,

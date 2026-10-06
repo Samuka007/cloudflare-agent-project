@@ -15,14 +15,16 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 // Journal op rows as the smoke reads them (structural — the script must not
 // pull the Workers-typed journal module into the Bun/Node type context).
-interface OpRow {
-  opSeq: number;
-  kind: string;
-  executionId?: string;
-  verified?: boolean;
-}
+const journalOpRowSchema = z.object({
+  opSeq: z.number(),
+  kind: z.string(),
+  executionId: z.string().optional(),
+  verified: z.boolean().optional(),
+});
+type OpRow = z.infer<typeof journalOpRowSchema>;
 
 // Run from packages/daemon-service (bun scripts/poc-smoke-service.ts).
 const PACKAGE = process.cwd();
@@ -33,6 +35,27 @@ const DATA_DIR = "/tmp/poc-daemon-smoke-data";
 const HOST_KEY = "poc-dev-host-key";
 const ENROLL_KEY = "poc-dev-enroll-key";
 const THREAD_ID = "thr_smoke";
+
+/**
+ * The client's enrolled host id (#377): enroll mints a fresh host now, and
+ * the minted identity lands in the client dataDir (host-id, 0600). The
+ * smoke reads it from there instead of assuming a deployment name.
+ */
+const HOST_ID_PATH = `${DATA_DIR}/host-id`;
+
+async function enrolledHostId(): Promise<string> {
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    try {
+      const hostId = readFileSync(HOST_ID_PATH, "utf8").trim();
+      if (hostId !== "") return hostId;
+    } catch {
+      // identity not persisted yet — the enroll is still in flight
+    }
+    if (Date.now() > deadline) throw new Error(`timeout waiting for ${HOST_ID_PATH}`);
+    await sleep(250);
+  }
+}
 
 interface DispatchOutcomeResponse {
   kind: "accepted" | "completed_cached" | "host_offline";
@@ -92,11 +115,21 @@ async function get(path: string): Promise<Response> {
 }
 
 async function journal(executionId?: string): Promise<OpRow[]> {
+  const hostId = await enrolledHostId();
   const response = await get(
-    `/agent/journal${executionId ? `?executionId=${encodeURIComponent(executionId)}` : ""}`,
+    `/agent/journal?hostId=${encodeURIComponent(hostId)}${
+      executionId ? `&executionId=${encodeURIComponent(executionId)}` : ""
+    }`,
   );
-  return ((await response.json()) as { ops: OpRow[] }).ops;
+  const body = JournalResponse.parse(await response.json());
+  return body.ops;
 }
+
+const JournalResponse = z.object({ ops: z.array(journalOpRowSchema) });
+
+const SessionView = z.object({
+  session: z.object({ syncing: z.boolean() }).nullable(),
+});
 
 async function sinkUpdates(): Promise<AgentUpdate[]> {
   const response = await get(`/agent-sink/updates?threadId=${THREAD_ID}`);
@@ -122,11 +155,12 @@ async function sinkUpdates(): Promise<AgentUpdate[]> {
 }
 
 async function dispatch(executionId: string, command: string): Promise<DispatchOutcomeResponse> {
+  const machineId = await enrolledHostId();
   const response = await post("/agent/dispatch", {
     threadId: THREAD_ID,
     turnId: `${THREAD_ID}-turn`,
     executionId,
-    machineId: "poc-local",
+    machineId,
     tool: "bash",
     arguments: { command },
     timeoutMs: 60_000,
@@ -201,9 +235,11 @@ async function main(): Promise<void> {
   client = startClient("boot1");
   await waitFor(async () => {
     try {
-      const session = (
-        (await (await get("/agent/session")).json()) as { session: { syncing: boolean } | null }
-      ).session;
+      const hostId = await enrolledHostId();
+      const body = SessionView.parse(
+        await (await get(`/agent/session?hostId=${encodeURIComponent(hostId)}`)).json(),
+      );
+      const session = body.session;
       return session !== null && !session.syncing;
     } catch {
       return false;

@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { Cause, Effect, Exit } from "effect";
 import {
+  CLOUD_PLACEHOLDER_HOST_ID,
   threadEventsAppendedMessage,
   threadDeltaMessage,
   threadPhaseChangedMessage,
@@ -574,7 +575,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     this.threadId = request.threadId;
     await this.appendEvent("thread.created", {
       title: request.title,
-      machineId: request.machineId ?? "local",
+      // #377: callers that omit the binding get the honest placeholder, not a
+      // fabricated "local" machine.
+      machineId: request.machineId ?? CLOUD_PLACEHOLDER_HOST_ID,
       ...(request.execution !== undefined
         ? { execution: normalizeRelaySelection(request.execution) ?? undefined }
         : {}),
@@ -2834,7 +2837,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   // -------------------------------------------------------------------------
 
   private daemon(): DaemonServiceClient {
-    return this.daemonFor(this.state.machineId ?? "local");
+    return this.daemonFor(this.state.machineId ?? CLOUD_PLACEHOLDER_HOST_ID);
   }
 
   /**
@@ -2975,7 +2978,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     // `tool.dispatch` row, the same shape as the in-DO URI-read resolutions
     // above; a routed override rides the TARGET machine's service DO with
     // the deviation journaled on the row (B2).
-    const boundMachineId = this.state.machineId ?? "local";
+    const boundMachineId = this.state.machineId ?? CLOUD_PLACEHOLDER_HOST_ID;
     const override: HostPathResolution =
       callData?.type === "tool.call"
         ? resolveHostPathOverride(toolName, callData.data.arguments)
@@ -4176,7 +4179,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     threadId: string,
     signal: AbortSignal,
   ): GenerateImageToolContext {
-    const machineId = this.state.machineId ?? "local";
+    const machineId = this.state.machineId ?? CLOUD_PLACEHOLDER_HOST_ID;
     return {
       config: this.imageSourceOverride ?? this.generateImageConfig,
       signal,
@@ -4284,7 +4287,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       executionId: execution.executionId,
       turnId: execution.turnId,
       threadId,
-      machineId: this.state.machineId ?? "local",
+      machineId: this.state.machineId ?? CLOUD_PLACEHOLDER_HOST_ID,
       // The spawning thread's own depth: Main is 0, a subagent reads its
       // journaled identity (replay-derived — recover() refolds it).
       depth: identity === null ? 0 : identity.depth,

@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "vitest";
 import { abortAllDurableObjects } from "cloudflare:test";
+import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import type {
   AdapterCommand,
   AdapterCommandOutcome,
@@ -126,7 +127,8 @@ test("registry survives manager DO eviction and stays consistent with the agent 
   // Agent DO consistency: same DO name still owns the same thread and log.
   const events = await afterAbort(() => eventsOf(threadId));
   expect(events[0]?.type).toBe("thread.created");
-  expect(events[0]?.data).toMatchObject({ machineId: "local" });
+  // #377: harness default = the cloud placeholder.
+  expect(events[0]?.data).toMatchObject({ machineId: CLOUD_PLACEHOLDER_HOST_ID });
 
   // And the recovered thread still runs turns end-to-end.
   const sent = expectOk(
