@@ -4,7 +4,7 @@ import { ApiError } from "../shared/api-error.js";
 import type { Env } from "../app-types.js";
 
 /**
- * Cloudflare Access JWT gate (spec #17 认证 decision; staging-flag gated via
+ * Cloudflare Access JWT gate (spec #17 认证 decision; flag-gated via
  * ACCESS_CHECK_ENABLED). When enabled, every /api/v1 request and /ws upgrade
  * must carry a valid Access token: `Cf-Access-Jwt-Assertion` header or the
  * `CF_Authorization` cookie (browsers send the cookie automatically; the SPA
@@ -13,6 +13,13 @@ import type { Env } from "../app-types.js";
  * per Cloudflare Access docs. Failure → 401 unauthorized JSON, so the SPA's
  * HTML/401 mapping degrades to "Authentication failed" and
  * ReconnectingWebSocket simply retries (bb-spa-ux-surface §4.2).
+ *
+ * SEC-W5-001 (#397): the gate is fail-closed. ACCESS_CHECK_ENABLED !==
+ * "true" no longer means "open" — it means the deployment has no
+ * authentication front, so /api/v1/* and /ws answer 503
+ * access_gate_disabled. The ONLY way to run gate-off is the explicit
+ * local-dev marker ACCESS_LOCAL_DEV="true" (L1 rig, `wrangler dev`);
+ * deployed configs must ship the gate on (deploy scripts assert it).
  */
 
 const jwtHeaderSchema = z.object({ alg: z.string(), kid: z.string() });
@@ -42,7 +49,9 @@ export interface AccessJwk {
 
 export interface VerifyAccessTokenOptions {
   jwks: readonly AccessJwk[];
-  audience: string;
+  /** Allowed audiences. ACCESS_AUD accepts a comma-separated list (#412):
+   * the app aud plus per-path Access apps mint JWTs with their own aud. */
+  audience: string | readonly string[];
   nowMs?: number;
 }
 
@@ -174,9 +183,10 @@ export async function verifyAccessToken(
   if (typeof claims.exp !== "number" || claims.exp * 1000 < nowMs) {
     throw unauthorized();
   }
-  const audienceOk =
-    claims.aud === options.audience ||
-    (Array.isArray(claims.aud) && claims.aud.includes(options.audience));
+  const allowed =
+    typeof options.audience === "string" ? [options.audience] : options.audience;
+  const presented = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+  const audienceOk = presented.some((a) => allowed.includes(a));
   if (!audienceOk) {
     throw unauthorized();
   }
@@ -219,6 +229,21 @@ async function sha256Hex(value: string): Promise<string> {
 // itself returns Promise<void>, so an `undefined` annotation rejects it.
 export async function accessGate(ctx: Context, next: Next) {
   if (!accessGateEnabled(ctx.env as Env)) {
+    // Fail-closed (SEC-W5-001 #397): gate-off no longer means open. The only
+    // branch that serves /api/v1 + /ws without the gate is the explicit
+    // local-dev marker (L1 rig, `wrangler dev`; never in wrangler configs) —
+    // otherwise the deployment has no authentication front at all, so reject
+    // the whole control plane. 503 (not 401): no client credential can fix a
+    // deployment-side misconfiguration.
+    if ((ctx.env as Env).ACCESS_LOCAL_DEV !== "true") {
+      throw new ApiError({
+        status: 503,
+        code: "access_gate_disabled",
+        message:
+          "Control plane is locked: the Cloudflare Access gate is disabled and this deployment is not marked local-dev (deployments must set ACCESS_CHECK_ENABLED=true with ACCESS_TEAM_DOMAIN/ACCESS_AUD secrets; local rigs set ACCESS_LOCAL_DEV=true)",
+        retryable: false,
+      });
+    }
     return next();
   }
   const token = bearerToken(ctx);
@@ -242,7 +267,8 @@ export async function accessGate(ctx: Context, next: Next) {
   }
   const claims = await verifyAccessToken(token, {
     jwks: [jwk],
-    audience: (ctx.env as Env).ACCESS_AUD ?? "",
+    // #412: comma-separated ACCESS_AUD — "mainAppAud[,pathAppAud…]".
+    audience: ((ctx.env as Env).ACCESS_AUD ?? "").split(",").filter(Boolean),
   });
   ctx.set("accessPrincipalId", claims.sub ?? claims.email ?? (await sha256Hex(token)));
   return next();

@@ -7,7 +7,7 @@ interface __BaseEnv_Env {
 	DB: D1Database;
 	HOSTS_DB: D1Database;
 	ASSETS: Fetcher;
-	ACCESS_CHECK_ENABLED: "false";
+	ACCESS_CHECK_ENABLED: "true";
 	DATA_DIR: "/data";
 	HUB: DurableObjectNamespace<import("./src/index").NotificationHubDO>;
 	LEASES: DurableObjectNamespace<import("./src/index").LeaseStoreDO>;

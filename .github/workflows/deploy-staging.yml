@@ -61,16 +61,21 @@ jobs:
           ENROLL_KEY: ${{ secrets.ENROLL_KEY }}
           DAEMON_HOST_KEY: ${{ secrets.DAEMON_HOST_KEY }}
         run: ./scripts/deploy-staging.sh
-      # Informative post-deploy smoke, not a gate: app-plane requests from GH
-      # runners are acceptable while staging sits on workers.dev with Access
-      # off, but must move to local/self-hosted once the Access front lands
-      # (docs/research/cf-access-agent-compat.md:130-131).
-      # /environments is the migration regression guard (#295): 0002 reached
-      # main without ever being applied to staging and this endpoint 500'd —
-      # a failed/missing deploy-chain migration resurfaces here as non-200.
-      - name: Post-deploy version smoke (informative)
+      # Post-deploy smoke, informative (continue-on-error). SEC-W5-001
+      # (#397): /health is the public face; /api/v1/* requires an Access JWT,
+      # so the anonymous probe must answer 401 — 200 would mean the gate
+      # drifted off in the deployment (the deploy script asserts the config,
+      # this asserts the live worker). The #295 /environments migration guard
+      # needs an authenticated probe once a CI-side Access token flow exists
+      # (401 now masks migration 500s from GH runners).
+      - name: Post-deploy gate smoke (informative)
         continue-on-error: true
         run: |
           sleep 5
-          curl -fsS https://cap-server-staging.dai-samuel.workers.dev/api/v1/system/version
-          curl -fsS https://cap-server-staging.dai-samuel.workers.dev/api/v1/environments
+          curl -fsS https://cap-server-staging.dai-samuel.workers.dev/health
+          code="$(curl -s -o /dev/null -w '%{http_code}' https://cap-server-staging.dai-samuel.workers.dev/api/v1/system/version)"
+          echo "anonymous /api/v1/system/version -> $code (expect 401 while the Access gate is on)"
+          if [[ "$code" != "401" ]]; then
+            echo "::error::anonymous /api/v1 answered $code, not 401 — Access gate drifted off (SEC-W5-001 #397)"
+            exit 1
+          fi
