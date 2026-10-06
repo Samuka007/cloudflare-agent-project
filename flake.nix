@@ -25,101 +25,14 @@
         ];
       };
 
-    in
-    {
-      devShells.${system}.default = pkgs.mkShell {
-        packages = with pkgs; [
-          nodejs_22
-          pnpm_10
-        ];
-      };
-
-      # Canonical staging deploy (engineering.md 横切实践 12). Thin credential
-      # adapter: the real flow (SPA stage → SERVER_VERSION stamp → deploy)
-      # lives in scripts/deploy-staging.sh, shared verbatim with the GHA CD
-      # workflow (#175) so local and CD surfaces cannot drift.
-      # Usage: nix run .#staging-deploy [-- --skip-spa-build]
-      # One combined apps.${system} set — a second dynamic `apps.${system}.…`
-      # path in the same attrset is a Nix eval error ("dynamic attribute
-      # already defined"), which is how #258's first cut failed flake eval.
-      apps.${system} = {
-        # Canonical staging deploy (engineering.md 横切实践 12). Thin credential
-        # adapter: the real flow (SPA stage → SERVER_VERSION stamp → deploy)
-        # lives in scripts/deploy-staging.sh, shared verbatim with the GHA CD
-        # workflow (#175) so local and CD surfaces cannot drift.
-        # Usage: nix run .#staging-deploy [-- --skip-spa-build]
-        staging-deploy = {
-          type = "app";
-          program = "${pkgs.writeShellApplication {
-            name = "deploy-staging";
-            runtimeInputs = with pkgs; [
-              bash
-              git
-              gnutar
-              gnugrep
-              findutils
-              coreutils
-              nodejs_22
-              pnpm_10
-            ];
-            text = ''
-              set -euo pipefail
-              REPO_ROOT="$(git rev-parse --show-toplevel)"
-              cd "$REPO_ROOT"
-
-              if [[ ! -f .dev.vars ]]; then
-                echo "ERROR: .dev.vars missing (CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID)" >&2
-                exit 1
-              fi
-              set -a
-              # shellcheck disable=SC1091
-              # .dev.vars is an intentional runtime credential file, not a static source target
-              source .dev.vars
-              set +a
-              exec bash scripts/deploy-staging.sh "$@"
-            '';
-          }}/bin/deploy-staging";
-        };
-
-        # #258 host onboarding: `nix run github:Samuka007/cloudflare-agent-project#cap-daemon`
-        # is what GET /install.sh execs on the joining machine (the Add-a-machine
-        # dialog one-liner). apps entry required — `nix run` on the package attr
-        # would try bin/daemon (the attr name), which does not exist.
-        cap-daemon = {
-          type = "app";
-          program = "${self.packages.${system}.daemon}/bin/cap-daemon";
-        };
-
-        # #337 repro hardening: loop the CI-equivalent apps/server-worker
-        # vitest run until the round budget is met or the first red. The real
-        # loop lives in scripts/verify-c2-list-window.sh (same thin-adapter
-        # pattern as staging-deploy above).
-        # Usage: nix run .#verify-c2-list-window [-- --rounds 50]
-        verify-c2-list-window = {
-          type = "app";
-          program = "${pkgs.writeShellApplication {
-            name = "verify-c2-list-window";
-            runtimeInputs = with pkgs; [
-              bash
-              git
-              gnugrep
-              coreutils
-              nodejs_22
-              pnpm_10
-            ];
-            text = ''
-              REPO_ROOT="$(git rev-parse --show-toplevel)"
-              exec bash "$REPO_ROOT/scripts/verify-c2-list-window.sh" "$@"
-            '';
-          }}/bin/verify-c2-list-window";
-        };
-      };
-
       # U3 daemon client as a runnable closure (ticket #176). Wrapper form:
       # nixpkgs bun + TS source + prod node_modules, NOT `bun build --compile`
       # — compiled standalone binaries SIGSEGV on NixOS (observed on this
       # host, even for hello-world) and the deploy target CT141 is NixOS.
-      packages.${system}.daemon = pkgs.stdenv.mkDerivation (finalAttrs: {
+      # Hoisted to the let so `cap-daemon-image` can share the exact same
+      # closure (sibling attrs cannot reference each other in a plain
+      # attrset; #425).
+      daemonPkg = pkgs.stdenv.mkDerivation (finalAttrs: {
         pname = "cap-daemon";
         version = "0.1.0";
         src = daemonSrc;
@@ -249,5 +162,164 @@
           platforms = [ "x86_64-linux" ];
         };
       });
+    in
+    {
+      devShells.${system}.default = pkgs.mkShell {
+        packages = with pkgs; [
+          nodejs_22
+          pnpm_10
+        ];
+      };
+
+      # Canonical staging deploy (engineering.md 横切实践 12). Thin credential
+      # adapter: the real flow (SPA stage → SERVER_VERSION stamp → deploy)
+      # lives in scripts/deploy-staging.sh, shared verbatim with the GHA CD
+      # workflow (#175) so local and CD surfaces cannot drift.
+      # Usage: nix run .#staging-deploy [-- --skip-spa-build]
+      # One combined apps.${system} set — a second dynamic `apps.${system}.…`
+      # path in the same attrset is a Nix eval error ("dynamic attribute
+      # already defined"), which is how #258's first cut failed flake eval.
+      apps.${system} = {
+        # Canonical staging deploy (engineering.md 横切实践 12). Thin credential
+        # adapter: the real flow (SPA stage → SERVER_VERSION stamp → deploy)
+        # lives in scripts/deploy-staging.sh, shared verbatim with the GHA CD
+        # workflow (#175) so local and CD surfaces cannot drift.
+        # Usage: nix run .#staging-deploy [-- --skip-spa-build]
+        staging-deploy = {
+          type = "app";
+          program = "${pkgs.writeShellApplication {
+            name = "deploy-staging";
+            runtimeInputs = with pkgs; [
+              bash
+              git
+              gnutar
+              gnugrep
+              findutils
+              coreutils
+              nodejs_22
+              pnpm_10
+            ];
+            text = ''
+              set -euo pipefail
+              REPO_ROOT="$(git rev-parse --show-toplevel)"
+              cd "$REPO_ROOT"
+
+              if [[ ! -f .dev.vars ]]; then
+                echo "ERROR: .dev.vars missing (CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID)" >&2
+                exit 1
+              fi
+              set -a
+              # shellcheck disable=SC1091
+              # .dev.vars is an intentional runtime credential file, not a static source target
+              source .dev.vars
+              set +a
+              exec bash scripts/deploy-staging.sh "$@"
+            '';
+          }}/bin/deploy-staging";
+        };
+
+        # #258 host onboarding: `nix run github:Samuka007/cloudflare-agent-project#cap-daemon`
+        # is what GET /install.sh execs on the joining machine (the Add-a-machine
+        # dialog one-liner). apps entry required — `nix run` on the package attr
+        # would try bin/daemon (the attr name), which does not exist.
+        cap-daemon = {
+          type = "app";
+          program = "${self.packages.${system}.daemon}/bin/cap-daemon";
+        };
+
+        # #337 repro hardening: loop the CI-equivalent apps/server-worker
+        # vitest run until the round budget is met or the first red. The real
+        # loop lives in scripts/verify-c2-list-window.sh (same thin-adapter
+        # pattern as staging-deploy above).
+        # Usage: nix run .#verify-c2-list-window [-- --rounds 50]
+        verify-c2-list-window = {
+          type = "app";
+          program = "${pkgs.writeShellApplication {
+            name = "verify-c2-list-window";
+            runtimeInputs = with pkgs; [
+              bash
+              git
+              gnugrep
+              coreutils
+              nodejs_22
+              pnpm_10
+            ];
+            text = ''
+              REPO_ROOT="$(git rev-parse --show-toplevel)"
+              exec bash "$REPO_ROOT/scripts/verify-c2-list-window.sh" "$@"
+            '';
+          }}/bin/verify-c2-list-window";
+        };
+      };
+
+      packages.${system} = {
+        daemon = daemonPkg;
+
+        # #425: the daemon as an OCI image — the LOCAL WSL test rig form
+        # (user ruling 2026-10-06: the daemon runs the container way on the
+        # dev box, without a systemd unit polluting the host; the remote
+        # appliances keep their declarative systemd units — CT142 migration
+        # needs only a house-flake cap pin bump, not this image). Reuses the
+        # `daemon` closure verbatim (bun runtime, pruned prod node_modules,
+        # client source), so the image and the host wrapper can never drift;
+        # dockerTools keeps store paths, the tree lands at /share/cap-daemon
+        # and the entrypoint is the same `bun run src/client/index.ts` the
+        # host wrapper execs. Layered image (no build VM): the pnpm store
+        # explodes into many small store paths, packed under docker's
+        # 127-layer ceiling. The baseline tool set replaces the #254
+        # host-profile PATH injection (a container has no
+        # /run/current-system/sw) — boundary: a tool missing here is an
+        # image change, not a host install.
+        # Configuration is env-only by contract: every DAEMON_* knob arrives
+        # via `docker run -e/--env-file` (docs/ops/host-onboarding.md 容器
+        # 形态); nothing is baked in, credentials never are.
+        cap-daemon-image = pkgs.dockerTools.buildLayeredImage {
+          name = "cap-daemon";
+          tag = "0.1.0-${self.shortRev or "dirty"}";
+          maxLayers = 127;
+          contents = with pkgs; [
+            bun
+            daemonPkg
+            bash
+            cacert
+            coreutils
+            findutils
+            gitMinimal
+            gnugrep
+            gnused
+            procps
+          ];
+          # HOME and the sandbox root exist even on a bare `docker run`
+          # without the /data volume (smoke arms); a persistent identity
+          # bind-mounts a host data dir → /data over them.
+          # Relative paths: fakeRootCommands runs with cwd = image root
+          # under fakeroot (metadata-only fake — no chroot), so an absolute
+          # mkdir /data hits the read-only build sandbox instead.
+          fakeRootCommands = ''
+            mkdir -p data tmp/cap-sandbox
+          '';
+          config = {
+            WorkingDir = "/share/cap-daemon/packages/daemon-service";
+            Entrypoint = [
+              "${bun}/bin/bun"
+              "run"
+              "src/client/index.ts"
+            ];
+            Env = [
+              "HOME=/data"
+              "TMPDIR=/tmp"
+              # bun seeds ~/.bun/install/cache on first module resolution —
+              # observed in the #425 smoke (HOME=/data → root-owned cache
+              # junk on the identity volume). Keep the /data volume to
+              # identity + sandbox artifacts only.
+              "BUN_INSTALL_CACHE_DIR=/tmp/bun-cache"
+              "PATH=/bin:/usr/bin:/sbin"
+              "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              "DAEMON_DATA_DIR=/data/data"
+              "DAEMON_SANDBOX_ROOT=/tmp/cap-sandbox"
+            ];
+          };
+        };
+      };
     };
 }
