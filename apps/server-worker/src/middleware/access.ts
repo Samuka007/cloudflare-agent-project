@@ -27,10 +27,13 @@ const accessClaimsSchema = z.object({
   aud: z.union([z.string(), z.array(z.string())]),
   exp: z.number(),
   // SEC-W5-003 probe-face rate limiting keys on the verified identity when
-  // present; both are standard Cloudflare Access claims (optional here so
-  // exotic tokens still pass verification unchanged).
-  sub: z.string().min(1).optional(),
-  email: z.string().min(1).optional(),
+  // present. #441: service-token JWTs carry an EMPTY sub (no identity by
+  // design) — present-but-empty rejected by the old .min(1) at claims-parse
+  // (staging tail实证: browser identity tokens passed, service tokens 401).
+  // Identity fields stay optional AND tolerate empty; the security-relevant
+  // strict fields are aud/exp/signature, not identity presence.
+  sub: z.string().optional(),
+  email: z.string().optional(),
 });
 interface AccessClaims {
   aud: string | string[];
@@ -175,10 +178,10 @@ export async function verifyAccessToken(
   if (!valid) {
     console.log(
       "verifyAccessToken stage: sig-invalid",
-      "tokenLen=" + token.length,
-      "first=" + JSON.stringify(token[0]),
-      "last=" + JSON.stringify(token[token.length - 1]),
-      "sigLen=" + signature.length,
+      `tokenLen=${token.length}`,
+      `first=${JSON.stringify(token[0])}`,
+      `last=${JSON.stringify(token[token.length - 1])}`,
+      `sigLen=${signature.length}`,
     );
     throw unauthorized();
   }
@@ -317,6 +320,10 @@ export async function accessGate(ctx: Context, next: Next) {
     );
     throw error;
   }
-  ctx.set("accessPrincipalId", claims.sub ?? claims.email ?? (await sha256Hex(token)));
+  // #441: empty-string identity (service tokens) must fall through to the
+  // digest principal — ?? only catches null/undefined, so guard on truthiness.
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty-string sub/email are the service-token shape and MUST fall through
+  const principal = claims.sub || claims.email || (await sha256Hex(token));
+  ctx.set("accessPrincipalId", principal);
   return next();
 }
