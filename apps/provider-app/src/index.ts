@@ -17,6 +17,12 @@ export {
   snapshotHarness,
 } from "./harness.js";
 export type { HarnessEnv, HarnessProjection, ResolvedHarness, ThinkingConfig } from "./harness.js";
+export {
+  resolveRelayCatalog,
+  type RelayCatalogModelRow,
+  type RelayCatalogProviderRow,
+  type RelayCatalogResolution,
+} from "./catalog.js";
 export { flattenPromptInputGroups } from "./flatten-input.js";
 
 import type { ManagerDoBindings } from "./manager-do.js";

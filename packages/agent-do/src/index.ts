@@ -130,3 +130,20 @@ export {
   estimateWireRequestTokens,
   type RelayConfig,
 } from "./relay/index.js";
+export {
+  DEFAULT_THINKING_REASONING_LEVEL,
+  decodeRelayCatalog,
+  deriveRelayReasoning,
+  findRelayCatalogModel,
+  relayCatalogSchema,
+  relayReasoningLevelValues,
+  relayModelEntrySchema,
+} from "./provider-catalog.js";
+export type {
+  RelayCatalog,
+  RelayCatalogModel,
+  RelayCatalogProvider,
+  RelayModelEntry,
+  RelayReasoningLadder,
+  RelayReasoningLevel,
+} from "./provider-catalog.js";

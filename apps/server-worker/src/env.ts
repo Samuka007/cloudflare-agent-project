@@ -90,6 +90,17 @@ export interface Env {
    * harness — the same deployment var both faces must agree on.
    */
   readonly MODEL_RELAY_IMAGE_INPUT?: string;
+  /**
+   * #350 catalog declaration (public, zero-secret JSON —
+   * packages/agent-do/src/provider-catalog.ts): providers × models ×
+   * capabilities the deployment bought, projected into
+   * GET /system/execution-options, the provider-projections catalog row and
+   * the project execution defaults — one resolution, shared with the
+   * provider-app harness. Strict decode: a shape violation degrades the
+   * read faces to the env-only synthesis and reports decodeError; secrets
+   * have no field in this schema (keys stay in their own env/secret slots).
+   */
+  readonly MODEL_RELAY_CATALOG?: string;
   /** `accept-edits` | `auto` | `full` (default `full`). */
   readonly HARNESS_PERMISSION_MODE?: string;
   /**

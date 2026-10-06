@@ -49,6 +49,7 @@ import {
 } from "../db/control-plane.js";
 import { listProjectSources } from "../db/project-sources.js";
 import { toThreadListEntries } from "../services/runtime-display.js";
+import { resolveRelayCatalog } from "@cap/provider-app";
 import type { Env, HonoBindings } from "../app-types.js";
 import type { ProjectRow } from "../db/rows.js";
 
@@ -348,22 +349,24 @@ async function toProjectWithThreads(env: Env, row: ProjectRow) {
 /**
  * bb resolveProjectCreateDefaultExecutionPlan (services/threads/
  * thread-execution-plan.ts:409-424) serves the stored defaults or null; the
- * port has no stored-defaults face yet, so it always resolves the bb
+ * port has no stored-defaults face yet, so it resolves the bb
  * ProjectExecutionDefaults shape (packages/domain shared-types.ts:639-645)
- * from runtime policy: the omp provider seam (routes/threads.ts thread
- * create), the relay model (env.MODEL_RELAY_MODEL, falling back to "glm-5.3"
- * exactly like packages/agent-do/src/worker.ts:41), bb's tier and reasoning
- * policy constants (services/threads/thread-default-policy.ts:24-25) and the
- * harness permission default "full" (env.ts HARNESS_PERMISSION_MODE).
+ * from the SAME catalog+harness resolution the picker faces serve (#350):
+ * provider = catalog default (or the omp seam), model/tier/reasoning/
+ * permission = the harness execution resolution. This is the roadmap §2.3
+ * contradiction-1 fix — the hardcoded "medium" (which nothing ran) vs the
+ * directory "none" vs the harness "none" split collapses onto one source:
+ * budget off → "none" everywhere, budget on → the declared default rung.
  */
 function resolveProjectDefaultExecutionOptions(env: Env) {
-  const relayModel = env.MODEL_RELAY_MODEL?.trim();
+  const catalog = resolveRelayCatalog(env);
+  const harness = catalog.harness;
   return projectExecutionDefaultsSchema.parse({
-    providerId: "omp",
-    model: relayModel === undefined || relayModel === "" ? "glm-5.3" : relayModel,
-    serviceTier: "default",
-    reasoningLevel: "medium",
-    permissionMode: "full",
+    providerId: catalog.defaultProviderId,
+    model: harness.relay.model,
+    serviceTier: harness.execution.serviceTier,
+    reasoningLevel: harness.execution.reasoningLevel,
+    permissionMode: harness.execution.permissionMode,
   });
 }
 
