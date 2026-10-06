@@ -38,7 +38,6 @@ import {
   type ModelRequest,
   type ModelStreamChunk,
   type RelayCatalog,
-  type RelayCatalogModel,
   type RelayConfig,
 } from "@cap/agent-do";
 import type { RuntimeThreadExecutionOptions } from "../../daemon-worker/src/provider-types.js";

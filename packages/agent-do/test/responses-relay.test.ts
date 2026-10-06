@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { ResponsesRelayProvider } from "../src/relay/responses-provider.js";
 import { responsesRequestBody } from "../src/relay/responses-wire.js";
 import type { RelayConfig } from "../src/relay/anthropic-provider.js";
-import type { ModelRequest, ModelStreamChunk, ModelUsageReceipt } from "../src/provider.js";
+import type { ModelRequest, ModelUsageReceipt } from "../src/provider.js";
 
 /**
  * #361 openai-responses adaptor: wire SHAPE (input items / function tools /
@@ -328,7 +328,11 @@ describe("responses client: stream mapping", () => {
     expect(toolCalls).toEqual([[{ name: "bash", arguments: { command: "echo hi" } }]]);
     // The wire recorded the exact body (replay proof artifact).
     expect(provider.bodies).toHaveLength(1);
-    expect(JSON.parse(provider.bodies[0] ?? "{}").model).toBe("glm-5.3-flash");
+    const parsed: unknown = JSON.parse(provider.bodies[0] ?? "{}");
+    const model = typeof parsed === "object" && parsed !== null && "model" in parsed && typeof parsed.model === "string"
+      ? parsed.model
+      : undefined;
+    expect(model).toBe("glm-5.3-flash");
   });
 
   test("refusal deltas surface as answer text (pi-ai anchor)", async () => {
@@ -509,7 +513,7 @@ describe("responses client: pre-first-byte classification", () => {
     const provider = new ResponsesRelayProvider({
       ...CONFIG,
       fetchImpl: (input, init) => {
-        seenUrl = String(input);
+        seenUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
         seenAuth = String(new Headers(init?.headers).get("authorization"));
         return Promise.resolve(streamResponse(sse([completed({})])));
       },

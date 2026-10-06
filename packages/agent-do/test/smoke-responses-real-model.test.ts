@@ -115,7 +115,11 @@ test.skipIf(
     // Both calls completed: turn.completed + receipts prove the terminal
     // response.completed frame rode every stream (the type-58 gate).
     for (const body of provider.bodies) {
-      expect(JSON.parse(body).model).toBe(responsesModel);
+      const parsed: unknown = JSON.parse(body);
+      const model = typeof parsed === "object" && parsed !== null && "model" in parsed && typeof parsed.model === "string"
+        ? parsed.model
+        : undefined;
+      expect(model).toBe(responsesModel);
     }
 
     // replay-identical assembly: the log replays byte-identically to BOTH
