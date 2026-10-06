@@ -23,7 +23,5 @@
   "vars": {
     "ENROLL_KEY": "[REDACTED-staging-secret]",
     "DAEMON_HOST_KEY": "[REDACTED-staging-secret]",
-    "DAEMON_HOST_ID": "local",
-    "DAEMON_MACHINE_ID": "local",
   },
 }

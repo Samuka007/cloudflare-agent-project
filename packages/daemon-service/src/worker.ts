@@ -1,4 +1,4 @@
-import { apiError, httpStatusForCode } from "@cap/protocol";
+import { apiError, createHostId, httpStatusForCode } from "@cap/protocol";
 import { DAEMON_PROTOCOL_VERSION } from "./constants.js";
 import {
   armNegativeCache,
@@ -39,8 +39,6 @@ export interface WorkerEnv extends DaemonServiceEnv {
   DAEMON_SERVICE: DurableObjectNamespace;
   ENROLL_KEY: string;
   DAEMON_HOST_KEY: string;
-  DAEMON_HOST_ID?: string;
-  DAEMON_MACHINE_ID?: string;
   /**
    * Control-plane host-registry bridge (#49): fired after enroll completes
    * and after each successful session/open, so the control plane's /hosts
@@ -212,13 +210,28 @@ async function handleProjectAttachmentContent(request: Request, env: WorkerEnv):
 
 // ---------------------------------------------------------------------------
 // Enroll (bb §5 shape): one-time credential → long-lived {hostId, hostKey}.
-// Two credential classes (#258): the POC static env ENROLL_KEY (hostId comes
-// from the body/deployment identity) and a one-time join code minted by the
-// control plane's POST /hosts/join-codes (the minted hostId is the authority
-// — bb machine-auth.enrollHost redeems the key's metadata, the daemon never
-// self-assigns: internal/hosts.ts:83-122, machine-auth.ts:360-401). M1's key
-// registry replaces both seams with per-host keys.
+// Two credential classes (#258): the POC static env ENROLL_KEY and a one-time
+// join code minted by the control plane's POST /hosts/join-codes (the minted
+// hostId is the authority — bb machine-auth.enrollHost redeems the key's
+// metadata, the daemon never self-assigns: internal/hosts.ts:83-122,
+// machine-auth.ts:360-401). M1's key registry replaces both seams with
+// per-host keys.
+//
+// #377: the env-key path no longer falls back to a deployment identity var —
+// an enroll without an explicit body hostId MINTS a fresh host (bb-shape
+// generator). The old fallback collapsed every env-key enrollee onto one
+// synthetic "local" row: an un-deletable primary (resolvePrimaryHostId
+// protects a lone host) whose replace-on-reopen session mirror fought every
+// real client. Two machines can never share an identity again.
 // ---------------------------------------------------------------------------
+
+/**
+ * The one DO that holds the deployment-scoped hostKey mirror (#36): at
+ * ladder-fallback time the host is not yet known, so "which DO validates"
+ * can only be a fixed deployment address. The name is routing, not a host
+ * claim — kept deliberately distinct from any host id (#377).
+ */
+export const DEPLOYMENT_AUTH_MIRROR_DO_ID = "deployment-auth-mirror";
 
 async function handleEnroll(request: Request, env: WorkerEnv): Promise<Response> {
   let body: unknown;
@@ -234,8 +247,7 @@ async function handleEnroll(request: Request, env: WorkerEnv): Promise<Response>
   const credential = parsed.enrollKey;
   let hostId: string;
   if (credential === env.ENROLL_KEY) {
-    hostId =
-      typeof parsed.hostId === "string" ? parsed.hostId : (env.DAEMON_HOST_ID ?? "poc-local");
+    hostId = typeof parsed.hostId === "string" ? parsed.hostId : createHostId();
   } else if (env.DAEMON_EDGE_KV !== undefined) {
     // Join-code path: the mint record's hostId wins over any body claim.
     const mintedHostId = await consumeJoinCode(env.DAEMON_EDGE_KV, credential);
@@ -247,17 +259,17 @@ async function handleEnroll(request: Request, env: WorkerEnv): Promise<Response>
   }
   const hostName = readString(parsed, "hostName");
   // Auth-ladder order (#36): DO mirror first (the authority), KV cache
-  // second. The mirror lands in the deployment-identity DO — the one the
+  // second. The mirror lands in the deployment auth-mirror DO — the one the
   // ladder's KV-miss fallback consults (at fallback time the host is not
-  // yet known, so "which DO validates" can only be the deployment's own
-  // identity; M1's key registry replaces this seam). Failure windows:
+  // yet known, so "which DO validates" can only be the fixed mirror; M1's
+  // key registry replaces this seam). Failure windows:
   // mirror write fails → enroll fails closed (no cache entry exists to
   // answer wrongly); KV put fails after a good mirror → enroll still
   // succeeds and the next open pays one DO authCheck that backfills the
   // cache (self-healing).
   const keyHash = await sha256Hex(env.DAEMON_HOST_KEY);
   try {
-    await stubForHost(env, env.DAEMON_HOST_ID ?? env.DAEMON_MACHINE_ID ?? hostId).mirrorHostKey({
+    await stubForHost(env, DEPLOYMENT_AUTH_MIRROR_DO_ID).mirrorHostKey({
       keyHash,
       hostId,
       ttlMs: 60_000,
@@ -447,13 +459,17 @@ async function handleWsAttach(request: Request, env: WorkerEnv): Promise<Respons
 // ---------------------------------------------------------------------------
 
 async function handleAgentRoute(path: string, request: Request, env: WorkerEnv): Promise<Response> {
-  const machineId = env.DAEMON_MACHINE_ID ?? env.DAEMON_HOST_ID ?? "poc-local";
-  const stub = stubForHost(env, machineId);
-
   if (path === "/agent/dispatch" && request.method === "POST") {
     const parsed = await jsonBody(request);
     if (parsed === null) return errorResponse("bad_request", "invalid json body");
     const body = parsed;
+    // #377: the smoke projection names its target host explicitly (body
+    // machineId / ?hostId=) — no deployment var fabricates one.
+    const machineId = readString(body, "machineId") ?? new URL(request.url).searchParams.get("hostId");
+    if (machineId === null) {
+      return errorResponse("validation_failed", "machineId body field or hostId query param required");
+    }
+    const stub = stubForHost(env, machineId);
     const executionId = readString(body, "executionId");
     const threadId = readString(body, "threadId");
     // The bash tool shape carries the command inside `arguments` (the same
@@ -477,6 +493,10 @@ async function handleAgentRoute(path: string, request: Request, env: WorkerEnv):
   }
 
   if (path === "/agent/kill" && request.method === "POST") {
+    const stub = agentHostStubOrNull(env, request);
+    if (stub === null) {
+      return errorResponse("validation_failed", "hostId query param required");
+    }
     const parsed = await jsonBody(request);
     if (parsed === null) return errorResponse("bad_request", "invalid json body");
     const executionId = readString(parsed, "executionId");
@@ -486,6 +506,10 @@ async function handleAgentRoute(path: string, request: Request, env: WorkerEnv):
   }
 
   if (path === "/agent/ack" && request.method === "POST") {
+    const stub = agentHostStubOrNull(env, request);
+    if (stub === null) {
+      return errorResponse("validation_failed", "hostId query param required");
+    }
     const parsed = await jsonBody(request);
     if (parsed === null) return errorResponse("bad_request", "invalid json body");
     const body = parsed;
@@ -499,6 +523,10 @@ async function handleAgentRoute(path: string, request: Request, env: WorkerEnv):
   }
 
   if (path === "/agent/unacked") {
+    const stub = agentHostStubOrNull(env, request);
+    if (stub === null) {
+      return errorResponse("validation_failed", "hostId query param required");
+    }
     const threadId = new URL(request.url).searchParams.get("threadId");
     if (threadId === null)
       return errorResponse("validation_failed", "threadId query param required");
@@ -506,17 +534,28 @@ async function handleAgentRoute(path: string, request: Request, env: WorkerEnv):
   }
 
   if (path === "/agent/journal") {
+    const stub = agentHostStubOrNull(env, request);
+    if (stub === null) {
+      return errorResponse("validation_failed", "hostId query param required");
+    }
     const executionId = new URL(request.url).searchParams.get("executionId") ?? undefined;
     return Response.json({ ops: await stub.journalOps(executionId) });
   }
 
   if (path === "/agent/session") {
+    const stub = agentHostStubOrNull(env, request);
+    if (stub === null) {
+      return errorResponse("validation_failed", "hostId query param required");
+    }
     return Response.json({ session: await stub.sessionView() });
   }
 
   // Agent-sink inspection (smoke assertions on forwarded updates).
   if (path === "/agent-sink/updates") {
-    const threadId = new URL(request.url).searchParams.get("threadId") ?? machineId;
+    const threadId = new URL(request.url).searchParams.get("threadId");
+    if (threadId === null) {
+      return errorResponse("validation_failed", "threadId query param required");
+    }
     const sink = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId)) as DurableObjectStub &
       TestAgentSinkDO;
     return Response.json({ updates: await sink.updates() });
@@ -529,9 +568,20 @@ async function handleAgentRoute(path: string, request: Request, env: WorkerEnv):
 // Helpers.
 // ---------------------------------------------------------------------------
 
+/** The smoke projection's explicit target host (#377): `?hostId=` only — no
+ * var, no default; null (the caller answers validation_failed) when unnamed.
+ * An unnamed target is a validation error, never a fabricated machine. */
+function agentHostStubOrNull(
+  env: WorkerEnv,
+  request: Request,
+): (DurableObjectStub & DaemonServiceDO) | null {
+  const hostId = new URL(request.url).searchParams.get("hostId");
+  if (hostId === null || hostId === "") return null;
+  return stubForHost(env, hostId);
+}
+
 function stubForHost(env: WorkerEnv, hostId: string): DurableObjectStub & DaemonServiceDO {
-  const name = hostId === "" ? (env.DAEMON_MACHINE_ID ?? "poc-local") : hostId;
-  return env.DAEMON_SERVICE.get(env.DAEMON_SERVICE.idFromName(name)) as DurableObjectStub &
+  return env.DAEMON_SERVICE.get(env.DAEMON_SERVICE.idFromName(hostId)) as DurableObjectStub &
     DaemonServiceDO;
 }
 
@@ -545,12 +595,16 @@ async function authorize(
   const key = authKeyOf(request);
   if (key === null) return null;
   if (env.DAEMON_HOST_KEY !== "" && key === env.DAEMON_HOST_KEY) {
-    return { hostIdHint: env.DAEMON_HOST_ID ?? "poc-local" };
+    // #377: the env key names NO host — the body hostId (bb contract,
+    // required) must carry it. The old hint fabricated the deployment
+    // identity, so a missing body claim silently created/attached the
+    // synthetic host.
+    return { hostIdHint: null };
   }
   const keyHash = await sha256Hex(key);
   const cachedHostId = await loadCachedAuth(env.DAEMON_EDGE_KV, keyHash);
   if (cachedHostId !== null) return { hostIdHint: cachedHostId };
-  const stub = stubForHost(env, env.DAEMON_HOST_ID ?? env.DAEMON_MACHINE_ID ?? "poc-local");
+  const stub = stubForHost(env, DEPLOYMENT_AUTH_MIRROR_DO_ID);
   const verdict = await stub.authCheck({ keyHash });
   if (!verdict.ok) return null;
   await backfillAuthCache(env.DAEMON_EDGE_KV, keyHash, verdict.hostId ?? "");

@@ -1,3 +1,4 @@
+import { createHostId as createProtocolHostId } from "@cap/protocol";
 import {
   GENERATED_ID_ALPHABET,
   GENERATED_ID_SUFFIX_LENGTH,
@@ -21,9 +22,8 @@ function createId(prefix: string): string {
   return `${prefix}_${suffix}`;
 }
 
-export function createHostId(): string {
-  return createId("host");
-}
+/** #377: one mint — the protocol generator (same bb byte-compat port). */
+export const createHostId = createProtocolHostId;
 
 export function createEnvironmentId(): string {
   return createId("env");

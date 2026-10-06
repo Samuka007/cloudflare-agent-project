@@ -30,8 +30,6 @@
     // them in its dataDir (0600).
     "ENROLL_KEY": "[REDACTED-staging-secret]",
     "DAEMON_HOST_KEY": "[REDACTED-staging-secret]",
-    "DAEMON_HOST_ID": "poc-local",
-    "DAEMON_MACHINE_ID": "poc-local",
     // L1-rig negative-cache window (#36): real-clock short window so the
     // expiry test polls a ~1.5s window. Production deploys leave this
     // UNSET — the named-constant default is 30s (NEGATIVE_CACHE_TTL_MS).
