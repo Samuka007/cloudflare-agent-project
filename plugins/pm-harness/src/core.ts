@@ -49,6 +49,15 @@
  *                                      // type:implementation/type:bug ticket with
  *                                      // no accepted entry — backfill or reopen.
  *
+ * Acceptance-face gate (#390): AP.closeout reads the ticket itself before
+ * writing (the board is the only truth — never the caller's summary). A
+ * ticket whose 验收 section names a user-visible surface (面板/走查/真机/
+ * 截图/UI…) refuses source "ci" outright; the walk path must cite surface
+ * evidence (console 错误 / 截图 / 选择器断言 + 目标 URL + 时间戳 — evidence
+ * format only, browser transport unconstrained). Every row carries an
+ * evidenceType (walk|run) column; legacy rows backfill from source via
+ * AP.migrateCloseoutLedger() (read paths normalize in memory regardless).
+ *
  * Ticket filing (#151) — intake-classified creation, the inverse of cascade:
  *
  *     await AP.file({ title, body, blockedBy: [150] });
@@ -165,7 +174,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1819,6 +1828,17 @@ function renderLeaseSection(plan: LaneLeasePlan): string {
  *  spot-check is neither — it is the #246 wave-final sampling. */
 export type AcceptanceSource = "acceptance-lane" | "ci";
 
+/** What kind of acceptance evidence a row carries — walk (a lane exercised
+ *  the real surface) or run (a CI run verified the code face). #390 schema
+ *  column; derived 1:1 from source on write, backfilled on legacy rows at
+ *  read/migrate time. */
+export type CloseoutEvidenceType = "walk" | "run";
+
+/** Which face the ticket's acceptance speaks for (#390): product (a
+ *  user-visible surface must actually be exercised on a real machine) or
+ *  code (tests/CI verify it). */
+export type AcceptanceFace = "product" | "code";
+
 /** One jsonl line: the acceptance verdict that lets a ticket close. The
  *  trio is mandatory (#239 paradigm): where the verdict lives, when it ran,
  *  which deployment it ran against — 空框 (unchecked box) is not evidence. */
@@ -1826,6 +1846,8 @@ export interface CloseoutEvent {
   event: "accepted";
   number: number;
   source: AcceptanceSource;
+  /** #390 schema column. */
+  evidenceType: CloseoutEvidenceType;
   /** Evidence anchor: acceptance comment / PR / CI run / report URL or
    *  file:line — the thing a reviewer opens to re-check the verdict. */
   evidence: string;
@@ -1835,6 +1857,10 @@ export interface CloseoutEvent {
    *  (`/api/v1/system/version`) for staging surfaces, the run id/ref for
    *  CI surfaces. */
   deploymentVersion: string;
+  /** The face the gate computed when the gate ran (closeoutGated labels);
+   *  absent on legacy rows and on non-gated tickets — the gate never
+   *  pretends to have judged what it did not read. */
+  acceptanceFace?: AcceptanceFace;
   /** When the gate recorded it (tests inject; default now). */
   recordedAt: string;
 }
@@ -1845,12 +1871,23 @@ export interface CloseoutOptions {
   path?: string;
   /** Reference clock (tests inject; default now). */
   now?: Date;
+  /** Pre-fetched ticket facts — offline flows and L1 inject; default reads
+   *  the live issue (board = only truth). Injecting skips the transport,
+   *  never the gate. */
+  ticket?: Pick<Ticket, "title" | "body" | "labels">;
 }
 
 const DEFAULT_CLOSEOUTS_PATH = join(
   dirname(dirname(fileURLToPath(import.meta.url))),
   ".pm-closeouts.jsonl",
 );
+
+/** A ledger row as it sits on disk: legacy rows (pre-#390) lack the
+ *  evidenceType column, so the jsonl is parsed as the legacy-tolerant shape
+ *  and normalized on the way out. */
+type LegacyCloseoutRow = Omit<CloseoutEvent, "evidenceType"> & {
+  evidenceType?: CloseoutEvidenceType;
+};
 
 function readCloseoutEvents(path: string): CloseoutEvent[] {
   let raw: string;
@@ -1859,12 +1896,19 @@ function readCloseoutEvents(path: string): CloseoutEvent[] {
   } catch {
     return []; // missing store = nothing accepted yet — the honest empty
   }
-  const events: CloseoutEvent[] = [];
+  return parseCloseoutEvents(raw, path).map(normalizeCloseoutEvent);
+}
+
+/** Raw jsonl parse — no schema backfill. The migrate path needs the rows
+ *  AS WRITTEN (a normalized view would hide exactly the rows it backfills);
+ *  read views layer normalizeCloseoutEvent on top. */
+function parseCloseoutEvents(raw: string, path: string): LegacyCloseoutRow[] {
+  const events: LegacyCloseoutRow[] = [];
   for (const [i, line] of raw.split("\n").entries()) {
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
     try {
-      events.push(JSON.parse(trimmed) as CloseoutEvent);
+      events.push(JSON.parse(trimmed) as LegacyCloseoutRow);
     } catch {
       throw new Error(
         `AP.closeout ledger: corrupt jsonl at ${path}:${i + 1} — repair or delete the file`,
@@ -1872,6 +1916,16 @@ function readCloseoutEvents(path: string): CloseoutEvent[] {
     }
   }
   return events;
+}
+
+/** #390 backfill: rows written before the evidenceType column derive it
+ *  from source (the mapping is 1:1). Pure — migrateCloseoutLedger persists
+ *  it; read paths normalize in memory either way. */
+function normalizeCloseoutEvent(e: LegacyCloseoutRow): CloseoutEvent {
+  return {
+    ...e,
+    evidenceType: e.evidenceType ?? (e.source === "ci" ? "run" : "walk"),
+  };
 }
 
 /** Numbers with a closeout on the ledger — audit rule 7's read view. The
@@ -1895,19 +1949,137 @@ export function closeoutGated(labels: readonly string[]): boolean {
   return labels.some((l) => CLOSEOUT_GATE_LABELS[l] === true);
 }
 
+// #390 acceptance-face gate. The #362/#382 复盘: UI deliverables closed on
+// CI runs while the panel had never been walked on a real machine — the
+// ledger checked THAT evidence existed, never WHAT the ticket's acceptance
+// demanded. The gate reads the ticket's 验收 fields and classifies the face
+// before any write.
+
+/** Explicit per-ticket override (the 独立 acceptance-type 字段 #390 names):
+ *  `acceptance-type: product|ui|walk|staging|真机` or `code|ci|test`, first
+ *  token of the line. Beats the keyword scan both ways — a harness ticket
+ *  that discusses UI without shipping it pins code; a subtly-worded product
+ *  ticket pins product. Unknown values fall through to the scan. */
+const ACCEPTANCE_TYPE_PATTERN = /^[-*\s]*acceptance-type\s*[:：]\s*(\S+)/im;
+
+const PRODUCT_FACE_TYPE_VALUES: Record<string, true> = {
+  product: true,
+  ui: true,
+  walk: true,
+  staging: true,
+  真机: true,
+};
+
+/** User-visible-surface claims, in the words the violating tickets wrote
+ *  (#362 面板/走查, #382 staging 走查/真机面板, #387 真机/面板). Deliberately
+ *  NOT matching: bare "staging" (infra tickets like #378 ship no surface),
+ *  bare "UI" before 票 (meta-mentions of the ticket class — #390's own
+ *  acceptance talks ABOUT UI tickets while shipping tests). */
+const PRODUCT_FACE_PATTERN = /走查|真机|手验|截图|面板|界面|浏览器|\bCDP\b|screenshot|\bUI\b(?!\s*票)/i;
+
+/** The 票面验收字段: the markdown section headed 验收 (验收标准/验收判据
+ *  prefix-match), through the next heading of any level. A ticket without
+ *  one has no acceptance fields to read — the DoR gate already flags that
+ *  as advisory. */
+const ACCEPTANCE_SECTION_PATTERN = /^#{1,6}\s*验收[^\n]*$/m;
+
+export function acceptanceSectionOf(body: string): string | null {
+  const head = ACCEPTANCE_SECTION_PATTERN.exec(body);
+  if (head === null) return null;
+  const rest = body.slice(head.index + head[0].length);
+  const next = /^#{1,6}\s/m.exec(rest);
+  return (next === null ? rest : rest.slice(0, next.index)).trim();
+}
+
+/** Classify the ticket's acceptance face (#390). The explicit acceptance-type
+ *  field wins; otherwise any product-face keyword in the 验收 section makes
+ *  it product — a mixed section ("staging 走查 … CI 绿") is product, since
+ *  CI green covers only part of what the section demands. */
+export function acceptanceFaceOf(body: string): AcceptanceFace {
+  const pinned = ACCEPTANCE_TYPE_PATTERN.exec(body)?.[1]?.toLowerCase();
+  if (pinned !== undefined) {
+    if (pinned === "code" || pinned === "ci" || pinned === "test") return "code";
+    if (PRODUCT_FACE_TYPE_VALUES[pinned] === true) return "product";
+  }
+  const section = acceptanceSectionOf(body);
+  if (section !== null && PRODUCT_FACE_PATTERN.test(section)) return "product";
+  return "code";
+}
+
+/** Surface-evidence markers the walk anchor must cite on a product-face
+ *  ticket: console errors / screenshot / selector assertions (plus 目标
+ *  URL + 时间戳 in the report per the 2026-10-06 steering). Evidence FORMAT
+ *  only — the browser transport is deliberately unconstrained (today's
+ *  default: WSL local headless Chromium via raw CDP). "ACC=WALK:本地全链"
+ *  alone is exactly the gap this closes. */
+const SURFACE_EVIDENCE_PATTERN =
+  /console|截图|screenshot|\.(?:png|jpe?g|webp|gif)\b|选择器断言|selector|对账|api[\s-]*face|\bCDP\b/i;
+
+const CLOSEOUT_TICKET_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    issue(number: $number) { title bodyText labels(first: 50) { nodes { name } } }
+  }
+}`;
+
+interface CloseoutTicketFacts {
+  title: string;
+  body: string;
+  labels: string[];
+}
+
+/** The gate's read primitive: the ticket, from the board — never from the
+ *  caller's summary. Fail-closed: a ticket the gate cannot read is a ticket
+ *  it cannot classify, and an unclassifiable closeout is the #362 复盘. */
+async function fetchCloseoutTicket(number: number): Promise<CloseoutTicketFacts> {
+  let data: Record<string, unknown>;
+  try {
+    data = await gql(CLOSEOUT_TICKET_QUERY, {
+      owner: REPO.split("/")[0],
+      repo: REPO_DIR,
+      number,
+    });
+  } catch (err) {
+    throw new Error(
+      `AP.closeout: cannot read ticket #${number} (${(err as Error).message}) — ` +
+        `the acceptance-face gate refuses to pass an unread ticket (#390); ` +
+        `retry, or inject opts.ticket for offline flows`,
+    );
+  }
+  const issue = (
+    data.repository as
+      | { issue: { title: string; bodyText: string | null; labels: { nodes: { name: string }[] | null } | null } | null }
+      | null
+  )?.issue;
+  if (issue === null || issue === undefined) {
+    throw new Error(`AP.closeout: ticket #${number} not found on ${REPO} — wrong number?`);
+  }
+  return {
+    title: issue.title,
+    body: issue.bodyText ?? "",
+    labels: issue.labels?.nodes?.map((l) => l.name) ?? [],
+  };
+}
+
 /**
  * Record acceptance evidence for a ticket (#277). REFUSES — zero writes —
  * on an incomplete evidence trio: an acceptance without an evidence anchor
  * or a deployment version is the 空框 gate pretending to have passed and
  * cannot be re-checked later. Re-accepting a reopened ticket is legal
  * (append-only; the newest accepted entry carries).
+ *
+ * #390 face gate: before writing, the ticket is read (opts.ticket override
+ * or live fetch) and its acceptance face classified. On code-delivering
+ * labels (closeoutGated), a product face refuses source "ci" outright and
+ * requires the walk anchor to cite surface evidence; a code face accepts
+ * either source unchanged. Non-gated labels (docs/research) bypass the
+ * face rules entirely.
  */
-export function closeout(
+export async function closeout(
   number: number,
   source: AcceptanceSource,
   evidence: { evidence: string; date?: string; deploymentVersion: string },
   opts: CloseoutOptions = {},
-): CloseoutEvent {
+): Promise<CloseoutEvent> {
   if (!Number.isInteger(number) || number <= 0) {
     throw new Error(
       "AP.closeout: a ticket number is required — anonymous acceptance closes nothing",
@@ -1927,16 +2099,40 @@ export function closeout(
         "run id/ref for CI) — evidence without a deployment cannot be re-checked",
     );
   }
+  const t = opts.ticket ?? (await fetchCloseoutTicket(number));
+  let acceptanceFace: AcceptanceFace | undefined;
+  if (closeoutGated(t.labels)) {
+    acceptanceFace = acceptanceFaceOf(t.body);
+    if (acceptanceFace === "product") {
+      if (source === "ci") {
+        throw new Error(
+          `AP.closeout: ticket #${number} has product-face acceptance (验收 names a ` +
+            `user-visible surface) — source "ci" is refused (#390). Run the staging ` +
+            `walk (acceptance lane) and close with source "acceptance-lane" + surface ` +
+            `evidence (console 错误 / 截图 / 选择器断言 + 目标 URL + 时间戳)`,
+        );
+      }
+      if (!SURFACE_EVIDENCE_PATTERN.test(anchor)) {
+        throw new Error(
+          `AP.closeout: ticket #${number} is product-face — the walk anchor must cite ` +
+            `surface evidence (console 错误 / 截图 / 选择器断言 / API-face 对账); ` +
+            `"${anchor}" names none (#390)`,
+        );
+      }
+    }
+  }
   const now = (opts.now ?? new Date()).toISOString();
   const record: CloseoutEvent = {
     event: "accepted",
     number,
     source,
+    evidenceType: source === "ci" ? "run" : "walk",
     evidence: anchor,
     date: evidence.date ?? now,
     deploymentVersion: version,
     recordedAt: now,
   };
+  if (acceptanceFace !== undefined) record.acceptanceFace = acceptanceFace;
   appendFileSync(
     opts.path ?? process.env.PM_CLOSEOUTS_PATH ?? DEFAULT_CLOSEOUTS_PATH,
     `${JSON.stringify(record)}\n`,
@@ -1957,17 +2153,220 @@ export function closeoutLedger(opts: CloseoutOptions = {}): {
   return { events, accepted: acceptedNumbers(events) };
 }
 
+/**
+ * #390 schema migration: backfill the evidenceType column on legacy rows
+ * (derived 1:1 from source) and persist the rewrite. Idempotent — a
+ * migrated ledger returns { migrated: 0 }. Read paths normalize in memory
+ * regardless, so audit rule 7 never depends on having run this.
+ */
+export function migrateCloseoutLedger(
+  opts: CloseoutOptions = {},
+): { migrated: number; total: number } {
+  const path = opts.path ?? process.env.PM_CLOSEOUTS_PATH ?? DEFAULT_CLOSEOUTS_PATH;
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return { migrated: 0, total: 0 }; // missing store = nothing to migrate
+  }
+  const events = parseCloseoutEvents(raw, path);
+  const stale = events.filter((e) => e.evidenceType === undefined);
+  if (stale.length === 0) return { migrated: 0, total: events.length };
+  writeFileSync(
+    path,
+    `${events.map((e) => JSON.stringify(normalizeCloseoutEvent(e))).join("\n")}\n`,
+    "utf8",
+  );
+  return { migrated: stale.length, total: events.length };
+}
+
+// ---------------------------------------------------------------------------
+// Walk-due ledger (#391) — 走查挂账的落账面. The 「终检批」violation: PM
+// mid-wave deferred walk items into an unnamed buffer — no ticket, no
+// deadline, no audit — then reported "walked". The repair: a deferral is a
+// ledger row plus a ticket face. AP.walk appends {ticket, due, face}; audit
+// rule 8 flips the ticket red (Status → Wait for user) once the due date
+// passes with no settlement; settling is AP.walkDone with the evidence
+// anchor the #239 paradigm already requires. The store is an append-only
+// jsonl — one WalkEvent per line, replayed to the active set.
+// ---------------------------------------------------------------------------
+
+/** One jsonl line. `walk-due` registers; a later walk-due for the same
+ *  ticket supersedes (re-scheduling appends, never edits). `walk-done`
+ *  settles the ticket's active walk and carries the evidence anchor. */
+export interface WalkDueEvent {
+  event: "walk-due";
+  number: number;
+  /** ISO 8601 — when this walk MUST have run. */
+  due: string;
+  /** 走查面 — what exactly is walked (the claim/surface), one line. */
+  face: string;
+  /** When the gate recorded it (tests inject; default now). */
+  recordedAt: string;
+}
+
+export interface WalkDoneEvent {
+  event: "walk-done";
+  number: number;
+  /** Evidence anchor: walk report / comment / PR — the thing a reviewer
+   *  opens to re-check the verdict. */
+  evidence: string;
+  recordedAt: string;
+}
+
+export type WalkEvent = WalkDueEvent | WalkDoneEvent;
+
+export interface WalkOptions {
+  /** Ledger file override (default: `.pm-walks.jsonl` next to the module,
+   *  or the `PM_WALKS_PATH` env). */
+  path?: string;
+  /** Reference clock (tests inject; default now). */
+  now?: Date;
+}
+
+const DEFAULT_WALKS_PATH = join(
+  dirname(dirname(fileURLToPath(import.meta.url))),
+  ".pm-walks.jsonl",
+);
+
+const resolveWalkPath = (over?: string): string =>
+  over ?? process.env.PM_WALKS_PATH ?? DEFAULT_WALKS_PATH;
+
+function readWalkEvents(path: string): WalkEvent[] {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return []; // missing store = no deferrals outstanding — the honest empty
+  }
+  const events: WalkEvent[] = [];
+  for (const [i, line] of raw.split("\n").entries()) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    try {
+      events.push(JSON.parse(trimmed) as WalkEvent);
+    } catch {
+      throw new Error(
+        `AP.walk ledger: corrupt jsonl at ${path}:${i + 1} — repair or delete the file`,
+      );
+    }
+  }
+  return events;
+}
+
+function appendWalk(record: WalkEvent, path: string): void {
+  appendFileSync(path, `${JSON.stringify(record)}\n`, "utf8");
+}
+
+/** Replay to the active set: the newest walk-due per ticket whose number
+ *  carries no walk-done after it (a walk-done with nothing pending is a
+ *  no-op; the write path refuses one anyway). Exported pure: audit rule 8
+ *  consumes exactly this view. */
+export function activeWalks(events: readonly WalkEvent[]): WalkDueEvent[] {
+  const pending = new Map<number, WalkDueEvent>();
+  for (const e of events) {
+    if (e.event === "walk-due") pending.set(e.number, e);
+    else pending.delete(e.number);
+  }
+  return [...pending.values()];
+}
+
+/** The overdue slice of the active set — rule 8's finding input. */
+export function overdueWalks(events: readonly WalkEvent[], now: Date): WalkDueEvent[] {
+  const nowMs = now.getTime();
+  return activeWalks(events).filter((w) => Date.parse(w.due) < nowMs);
+}
+
+/** Register a walk deferral (#391). REFUSES — zero writes — on an anonymous
+ *  ticket, an empty 走查面, or an unparseable due date: an unowned,
+ *  undated deferral is the 「终检批」 pretending to be a ledger row. A due
+ *  date in the past registers fine (back-auditing existing deferrals);
+ *  re-registering an active walk supersedes it (改期重登记). */
+export function walk(
+  number: number,
+  due: string,
+  face: string,
+  opts: WalkOptions = {},
+): WalkDueEvent {
+  if (!Number.isInteger(number) || number <= 0) {
+    throw new Error(
+      "AP.walk: a ticket number is required — anonymous deferrals are the 终检批 again",
+    );
+  }
+  const trimmedFace = face.trim();
+  if (trimmedFace.length === 0) {
+    throw new Error("AP.walk: face is required (what exactly is walked, one line) — 无面不挂账");
+  }
+  if (Number.isNaN(Date.parse(due))) {
+    throw new Error(
+      `AP.walk: due must be an ISO-8601 parseable date, got ${JSON.stringify(due)} — ` +
+        "a deferral without a deadline is the 终检批 again",
+    );
+  }
+  const record: WalkDueEvent = {
+    event: "walk-due",
+    number,
+    due,
+    face: trimmedFace,
+    recordedAt: (opts.now ?? new Date()).toISOString(),
+  };
+  appendWalk(record, resolveWalkPath(opts.path));
+  return record;
+}
+
+/** Settle the active walk for a ticket (#391). REFUSES when nothing is
+ *  active — a settlement that closes nothing is a ledger bug (mirrors
+ *  AP.release) — and the anchor is mandatory (空框 = 未走查, #239). */
+export function walkDone(
+  number: number,
+  evidence: string,
+  opts: WalkOptions = {},
+): WalkDoneEvent {
+  if (!Number.isInteger(number) || number <= 0) {
+    throw new Error("AP.walkDone: a ticket number is required — anonymous settlements close nothing");
+  }
+  const anchor = evidence.trim();
+  if (anchor.length === 0) {
+    throw new Error(
+      "AP.walkDone: evidence anchor is required (walk report / comment / PR) — 空框不可销账",
+    );
+  }
+  const path = resolveWalkPath(opts.path);
+  if (!activeWalks(readWalkEvents(path)).some((w) => w.number === number)) {
+    throw new Error(`AP.walkDone: no active walk-due for #${number} — nothing to settle`);
+  }
+  const record: WalkDoneEvent = {
+    event: "walk-done",
+    number,
+    evidence: anchor,
+    recordedAt: (opts.now ?? new Date()).toISOString(),
+  };
+  appendWalk(record, path);
+  return record;
+}
+
+/** Ledger view: every event plus the replayed active set — the audit's
+ *  rule-8 input (`walks: AP.walkLedger().events`). */
+export function walkLedger(opts: WalkOptions = {}): {
+  events: WalkEvent[];
+  active: WalkDueEvent[];
+} {
+  const events = readWalkEvents(resolveWalkPath(opts.path));
+  return { events, active: activeWalks(events) };
+}
+
 // ---------------------------------------------------------------------------
 // AP.audit (#181) — per-beat drift rules. Pure: reads a snapshot, reports
 // board-vs-reality drift as findings + AP.apply-ready mutations, so the PM
 // beat reconciles in one guarded apply BEFORE dispatching.
 // ---------------------------------------------------------------------------
 
-/** Drift rule ids (#181, #240, #277), disjoint — one finding per (ticket, rule):
+/** Drift rule ids (#181, #240, #277, #391), disjoint — one finding per (ticket, rule):
  *  1 staleClosedStatus · 2 inProgressOnClosed · 3 laneStatusMismatch ·
  *  4 frontierAging · 6 browserLeaseMissing / browserLeaseCollision /
  *  browserLeaseUnreleased (armed only when `opts.leases` carries the ledger) ·
- *  7 closeoutNoEvidence (armed only when `opts.closeouts` carries the ledger). */
+ *  7 closeoutNoEvidence (armed only when `opts.closeouts` carries the ledger) ·
+ *  8 walkDueOverdue (armed only when `opts.walks` carries the ledger). */
 export type DriftRule =
   | "staleClosedStatus"
   | "inProgressOnClosed"
@@ -1976,7 +2375,8 @@ export type DriftRule =
   | "browserLeaseMissing"
   | "browserLeaseCollision"
   | "browserLeaseUnreleased"
-  | "closeoutNoEvidence";
+  | "closeoutNoEvidence"
+  | "walkDueOverdue";
 
 /** Rule-4 threshold: a dispatchable Todo untouched this many days is aged
  *  (reminder class — the repair is a dispatch, not a board write). */
@@ -2000,7 +2400,8 @@ export interface DriftFinding {
 export interface AuditReport {
   /** Findings in rule order (rules 1-3 in ticket order, then rule 4, then
    *  roster contradictions, then rule 6: missing in ticket order, unreleased
-   *  in ledger order, collisions last, then rule 7 in ticket order). */
+   *  in ledger order, collisions last, then rule 7 in ticket order, then
+   *  rule 8 in due order). */
   drift: DriftFinding[];
   /** The apply-ready flat list — `AP.apply(rep.mutations, { confirm: true })`
    *  is the one-shot reconcile. */
@@ -2025,6 +2426,10 @@ export interface AuditOptions {
    *  `AP.closeoutLedger().events`. Omitted → rule 7 is silent: a missing
    *  ledger must never fabricate closeout findings. */
   closeouts?: readonly CloseoutEvent[];
+  /** Rule-8 input (#391): the walk-due ledger — pass
+   *  `AP.walkLedger().events`. Omitted → rule 8 is silent: a missing
+   *  ledger must never fabricate walk findings. */
+  walks?: readonly WalkEvent[];
 }
 
 /**
@@ -2065,6 +2470,13 @@ export interface AuditOptions {
  *     write: `AP.closeout(...)` backfills the evidence trio (回填, #266 the
  *     first case) or the ticket reopens. Docs/research/decision tickets ship
  *     no runtime surface and are outside the gate.
+ *  8. walkDueOverdue (#391, armed by `opts.walks`) — an active walk deferral
+ *     whose due date has passed with no settlement: 到期翻红. An open ticket
+ *     not already red gets the board write itself (Status → Wait for user);
+ *     an already-red ticket is a plain reminder (run the walk); an
+ *     active-lane ticket stays mutation-free (flipping it would fight rule
+ *     3); a DELIVERED ticket with an unsettled walk is the #382/#364
+ *     violation shape — mutation-free, backfill or reopen.
  */
 export function audit(snap: Pick<Snapshot, "tickets">, opts: AuditOptions = {}): AuditReport {
   const drift: DriftFinding[] = [];
@@ -2233,8 +2645,86 @@ export function audit(snap: Pick<Snapshot, "tickets">, opts: AuditOptions = {}):
     }
   }
 
+  // Rule 8 (#391): overdue walk deferrals — 到期红.
+  if (opts.walks !== undefined) auditWalks(snap, opts.walks, active, nowMs, drift);
+
   const mutations = drift.flatMap((d) => (d.mutation === null ? [] : [d.mutation]));
   return { drift, mutations, clean: drift.length === 0 };
+}
+
+// Rule 8 (#391): overdue walk deferrals — the 到期红 gate. Kept beside the
+// audit for readability; armed only when `opts.walks` carries the ledger.
+function auditWalks(
+  snap: Pick<Snapshot, "tickets">,
+  walks: readonly WalkEvent[],
+  active: Set<number>,
+  nowMs: number,
+  drift: DriftFinding[],
+): void {
+  for (const w of overdueWalks(walks, new Date(nowMs))) {
+    const t = snap.tickets.find((x) => x.number === w.number);
+    if (t === undefined) {
+      drift.push({
+        rule: "walkDueOverdue",
+        number: w.number,
+        title: "(not on board)",
+        detail:
+          `walk-due ${w.due} overdue with no ticket in the snapshot (face: ${w.face}) — ` +
+          "file it or settle via AP.walkDone",
+        mutation: null,
+      });
+      continue;
+    }
+    const delivered = t.state === "CLOSED" || t.status === "Done" || t.status === "Canceled";
+    if (delivered) {
+      drift.push({
+        rule: "walkDueOverdue",
+        number: w.number,
+        title: t.title,
+        detail:
+          `delivered (state=${t.state}, Status=${t.status ?? "null"}) with an unsettled walk ` +
+          `(due ${w.due}, face: ${w.face}) — 挂账未跑就关票: backfill the evidence ` +
+          `(AP.closeout) + AP.walkDone, or reopen`,
+        mutation: null,
+      });
+      continue;
+    }
+    if (active.has(w.number)) {
+      drift.push({
+        rule: "walkDueOverdue",
+        number: w.number,
+        title: t.title,
+        detail:
+          `walk-due ${w.due} overdue on an active lane (face: ${w.face}) — settle before ` +
+          "delivery: run the walk (AP.walkDone / AP.closeout) or re-register with a new due; " +
+          "no board flip (rule 3 owns this ticket's Status)",
+        mutation: null,
+      });
+      continue;
+    }
+    if (t.status === "Wait for user") {
+      drift.push({
+        rule: "walkDueOverdue",
+        number: w.number,
+        title: t.title,
+        detail:
+          `walk-due ${w.due} overdue and the ticket is already red (face: ${w.face}) — ` +
+          "run the walk (AP.walkDone / AP.closeout) or re-register with a new due",
+        mutation: null,
+      });
+      continue;
+    }
+    drift.push({
+      rule: "walkDueOverdue",
+      number: w.number,
+      title: t.title,
+      detail:
+        `walk-due ${w.due} overdue (Status=${t.status ?? "null"}, face: ${w.face}) — ` +
+        "到期翻红: run the walk (AP.walkDone / AP.closeout) or re-register; " +
+        "the repair mutation flips the board red",
+      mutation: { op: "setStatus", number: w.number, value: "Wait for user" },
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3462,6 +3952,10 @@ export const AP = {
   audit,
   closeout,
   closeoutLedger,
+  migrateCloseoutLedger,
+  walk,
+  walkDone,
+  walkLedger,
   intake,
   classifyIntake,
   gateOf,
@@ -3490,6 +3984,10 @@ export const AP = {
     activeLeases,
     acceptedNumbers,
     closeoutGated,
+    acceptanceFaceOf,
+    acceptanceSectionOf,
+    activeWalks,
+    overdueWalks,
   },
   /** Judge layer: question oracle + real transport (tests mock via fetch). */
   judge: { INTAKE_QUESTIONS, JEV_URL, JEV_MODEL, defaultJudge },
