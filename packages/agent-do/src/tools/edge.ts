@@ -8,6 +8,7 @@ import { runYieldTool, type YieldToolArgs } from "./yield.js";
 import { runAskTool, type AskToolContext } from "./ask.js";
 import { type CheckpointRewindState, type TodoJournalState } from "./session-tree.js";
 import { runWebSearchTool, type WebSearchToolContext } from "./web-search.js";
+import { runGenerateImageTool, type GenerateImageToolContext } from "./generate-image.js";
 import {
   applyParams,
   clonePhases,
@@ -35,6 +36,14 @@ export interface EdgeToolResult {
    * outbound fetch — omp throwIfAborted rethrow semantics). */
   status: "ok" | "error" | "cancelled";
   output: string;
+  /**
+   * B2 (#322): host-disk paths this call produced (generate_image only).
+   * executeEdgeLocal forwards them into the ToolResultPayload, whose fold
+   * lands one `imageView` journal row per image BEFORE the closing
+   * tool.result (ingestResult — the B1 event chain; parentToolCallId = the
+   * bare call executionId).
+   */
+  images?: { path: string }[];
 }
 
 /** Storage seam the DO binds at execution time — keeps executors pure. */
@@ -61,6 +70,12 @@ export interface EdgeToolContext {
   /** Outbound-search surface — bound only for `web_search` (M1.5 T12):
    * decoded config, the owning call's cancel signal, and the DO's fetch. */
   webSearch?: WebSearchToolContext;
+  /**
+   * Image-source surface — bound only for `generate_image` (B2 #322):
+   * decoded `AGENT_DO_IMAGE_SOURCE` config, the owning call's cancel
+   * signal, the DO's fetch, and the daemon-service thread-file seams.
+   */
+  generateImage?: GenerateImageToolContext;
   /**
    * Yield-gate fold source — bound only for `yield` (M1.5 T17): the child
    * journal accessor the schema/empty streaks and the identity schema read.
@@ -294,6 +309,23 @@ export async function runEdgeTool(
       return { status: "error", output: "web_search requires the DO-bound network context." };
     }
     return runWebSearchTool(validated as Parameters<typeof runWebSearchTool>[0], ctx.webSearch);
+  }
+
+  if (row.name === "generate_image") {
+    // omp imageGenTool.execute (image-gen.ts:232-335) over the single
+    // env-resolved image source; the save leg lands the bytes on the host
+    // disk via the daemon-service write seam. Abort rethrows as cancelled.
+    if (ctx.generateImage === undefined) {
+      return {
+        status: "error",
+        output:
+          "generate_image requires the DO-bound image-source context (AGENT_DO_GENERATE_IMAGE + AGENT_DO_IMAGE_SOURCE).",
+      };
+    }
+    return runGenerateImageTool(
+      validated as Parameters<typeof runGenerateImageTool>[0],
+      ctx.generateImage,
+    );
   }
 
   return { status: "error", output: `No edge executor for tool ${row.name}.` };

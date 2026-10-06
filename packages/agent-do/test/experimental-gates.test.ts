@@ -11,16 +11,23 @@ import { anthropicRequestBody, supportsExternalThinking } from "../src/relay/wir
 import type { ModelRequest } from "../src/provider.js";
 
 /**
- * #150 L1 — the five experimental tools are gated OFF by default (omp
+ * #150 L1 — the experimental tools are gated OFF by default (omp
  * tools/index.ts:766-772 posture: cfgExternalThinking,
- * cfgCompactionExperimentalContextManagement, cfgCheckpointEnabled), flip on
+ * cfgCompactionExperimentalContextManagement, cfgCheckpointEnabled; B2
+ * #322 adds generate_image behind omp's `generate_image.enabled`), flip on
  * per env gate, and the `think` gate pairs with the omp forceReasoningOff
  * reasoning pin (sdk.ts:4275-4282).
  */
 
 const FIVE = ["think", "context_notes", "new_context", "checkpoint", "rewind"];
+const SIX = [...FIVE, "generate_image"];
 
-const GATES_ON = { externalThinking: true, contextNotes: true, checkpoint: true };
+const GATES_ON = {
+  externalThinking: true,
+  contextNotes: true,
+  checkpoint: true,
+  generateImage: true,
+};
 
 function requestWith(overrides: Partial<ModelRequest> = {}): ModelRequest {
   return {
@@ -41,16 +48,19 @@ function wireNames(request: ModelRequest): string[] {
   return tools.map((tool) => tool.name);
 }
 
-describe("#150 — gate map covers exactly the five experimental tools", () => {
-  test("EXPERIMENTAL_TOOL_GATE keys are the five; every gate key exists in the config", () => {
-    expect(Object.keys(EXPERIMENTAL_TOOL_GATE).sort()).toEqual([...FIVE].sort());
+describe("#150/#322 — gate map covers exactly the experimental tools", () => {
+  test("EXPERIMENTAL_TOOL_GATE keys are the six; every gate key exists in the config", () => {
+    expect(Object.keys(EXPERIMENTAL_TOOL_GATE).sort()).toEqual([...SIX].sort());
     for (const gate of Object.values(EXPERIMENTAL_TOOL_GATE)) {
-      expect(gate === "externalThinking" || gate === "contextNotes" || gate === "checkpoint").toBe(
-        true,
-      );
+      expect(
+        gate === "externalThinking" ||
+          gate === "contextNotes" ||
+          gate === "checkpoint" ||
+          gate === "generateImage",
+      ).toBe(true);
     }
-    // The five are registered rows (the gate map can only hide real tools).
-    for (const name of FIVE) {
+    // The gated names are registered rows (the gate map can only hide real tools).
+    for (const name of SIX) {
       expect(TOOL_REGISTRY.some((row) => row.name === name)).toBe(true);
     }
   });
@@ -61,6 +71,7 @@ describe("#150 — gate map covers exactly the five experimental tools", () => {
       externalThinking: false,
       contextNotes: false,
       checkpoint: false,
+      generateImage: false,
     });
     expect(
       decodeExperimentalToolConfig({
@@ -68,14 +79,25 @@ describe("#150 — gate map covers exactly the five experimental tools", () => {
         AGENT_DO_CONTEXT_NOTES: "true",
         AGENT_DO_CHECKPOINT: "on",
       }),
-    ).toEqual({ externalThinking: true, contextNotes: true, checkpoint: true });
+    ).toEqual({
+      externalThinking: true,
+      contextNotes: true,
+      checkpoint: true,
+      // Only the three envs above were set — the gate twin stays off.
+      generateImage: false,
+    });
     expect(
       decodeExperimentalToolConfig({
         AGENT_DO_EXTERNAL_THINKING: "yes",
         AGENT_DO_CONTEXT_NOTES: "0",
         AGENT_DO_CHECKPOINT: "",
       }),
-    ).toEqual({ externalThinking: false, contextNotes: false, checkpoint: false });
+    ).toEqual({
+      externalThinking: false,
+      contextNotes: false,
+      checkpoint: false,
+      generateImage: false,
+    });
   });
 });
 

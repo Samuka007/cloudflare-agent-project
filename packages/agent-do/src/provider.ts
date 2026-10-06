@@ -181,14 +181,16 @@ export interface ModelRequest {
   toolChoice?: { name: string };
   /**
    * Deployment-time experimental tool gates (#150): the wire assembly filters
-   * think/context_notes/new_context/checkpoint/rewind off the surface unless
-   * their gate is on (config.ts ExperimentalToolConfig, all default false).
+   * think/context_notes/new_context/checkpoint/rewind/generate_image off the
+   * surface unless their gate is on (config.ts ExperimentalToolConfig, all
+   * default false).
    * Absent = the ungated default surfaces (mock/test passthrough).
    */
   experimentalGates?: {
     externalThinking: boolean;
     contextNotes: boolean;
     checkpoint: boolean;
+    generateImage: boolean;
   };
   /**
    * Discovered MCP server tools (matrix C2, #327): the `mcp__<server>__<tool>`

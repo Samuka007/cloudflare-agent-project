@@ -2,6 +2,8 @@ import type {
   DaemonServiceClient,
   DispatchOutcome,
   ExecutionUpdate,
+  HostThreadFileReadOutcome,
+  HostThreadFileWriteOutcome,
   IsolationOpOutcome,
   ToolDispatchRequest,
   ToolResultPayload,
@@ -210,6 +212,31 @@ export class FakeDaemonService implements DaemonServiceClient {
   readonly silentExecutionIds = new Set<string>();
   /** I21 injection: fail the next N acks (result stays un-tombstoned). */
   failNextAcks = 0;
+  /**
+   * B2 (#322) injection: the thread-file write seam. Default answers a
+   * synthetic absolute path under a fake host root; tests override the
+   * handler to simulate offline/timeout/daemon dispatch failures.
+   */
+  hostThreadFileWriteHandler: (request: Parameters<
+    DaemonServiceClient["hostThreadFileWrite"]
+  >[0]) => Promise<HostThreadFileWriteOutcome> = (request) =>
+    Promise.resolve({
+      kind: "ok",
+      path: `/fake-host/${request.threadId}/Generated/${request.filename}`,
+    });
+  /** B2 (#322): the read seam. Default answers a tiny valid PNG; tests
+   * override for ENOENT/unsupported-type/timeout simulation. */
+  hostThreadFileReadHandler: (request: Parameters<
+    DaemonServiceClient["hostThreadFileRead"]
+  >[0]) => Promise<HostThreadFileReadOutcome> = () =>
+    Promise.resolve({
+      kind: "ok",
+      // PNG magic bytes (\x89PNG\r\n\x1a\n), base64 — the workers runtime
+      // carries no node Buffer, so the fixture is a literal.
+      content: "iVBORw0KGgo=",
+      contentEncoding: "base64",
+      mimeType: "image/png",
+    });
 
   attachClient(client: FakeDaemonClient): void {
     this.client = client;
@@ -443,6 +470,18 @@ export class FakeDaemonService implements DaemonServiceClient {
       kind: "ok",
       result: { status: "ok", exitCode: 0, output },
     });
+  }
+
+  hostThreadFileWrite(
+    request: Parameters<DaemonServiceClient["hostThreadFileWrite"]>[0],
+  ): Promise<HostThreadFileWriteOutcome> {
+    return this.hostThreadFileWriteHandler(request);
+  }
+
+  hostThreadFileRead(
+    request: Parameters<DaemonServiceClient["hostThreadFileRead"]>[0],
+  ): Promise<HostThreadFileReadOutcome> {
+    return this.hostThreadFileReadHandler(request);
   }
 
   // -- I19: eviction + deterministic journal replay -------------------------
