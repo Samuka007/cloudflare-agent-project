@@ -65,6 +65,11 @@ WSL/工作站不参与运行面：daemon 在 CT142 上，工具 turn 的执行�
 - **cap flake input**：`github:Samuka007/cloudflare-agent-project/...`，锁
   在 lane 分支 rev（PR 合并后 `nix flake update cap` 切回 main）。daemon
   更新 = CAP 仓合入后 house 仓更新锁 + CT119 rebuild；CT142 永不自行构建。
+- house 仓提交位置（2026-10-06）：workstation 本地 `main`
+  （`e090d5f` 建机 + `04b5359` 单元简化 + `6954062`/`3aa9755` cap 锁
+  两跳）；origin（minisforum 100.64.0.83）连接超时未推——cap-verify
+  （CT141）同款先例：workstation 工作区即构建源，origin push 待那台
+  工作区可达后补推 `lane/378-lxc-stg-01`。
 - 凭据**永不进镜像/flake**：`/var/lib/cap-daemon/staging-daemon.env`
   （root 0600，scp 推送，gitignore 仓外物）。首启含 `DAEMON_JOIN_CODE`，
   enroll 成功后即剥除（码一次性，留着只会在 dataDir 丢失时产生 401 死循环）。
