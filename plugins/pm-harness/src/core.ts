@@ -153,6 +153,25 @@
  * spawn time, rolling it back if the spawn throws. Dry-run plans it, writes
  * nothing.
  *
+ * Acceptance probe surface (#392) — AP.walk: the execution面 behind
+ * "UI: verify actual surface — visual proof" and #390's source:walk gate.
+ * One call walks a real page and leaves ledger-able evidence:
+ *
+ *     const report = await AP.walk(
+ *         "https://staging.../settings/plugins/cap-provider-config",
+ *         [{ selector: "[data-testid]", atLeast: 1 }],
+ *         { tabName: "l392-walk" });
+ *     report.ok;                     // checks passed ∧ zero console errors
+ *     report.consoleErrors;          // console.error + pageerrors + log
+ *     report.evidence.anchor;        // "<report.json> sha256=…" — the string
+ *                                    //   AP.closeout's evidence field takes
+ *
+ * Transport ladder: kernel browser facade (managed headless Chromium) by
+ * default; explicit `cdpHttp` opts INTO the raw-CDP Windows Chrome bridge
+ * for Access-gated faces (never a silent default); `allowFetchFallback`
+ * downgrades honestly (consoleCapture: "unavailable"). Evidence lands in
+ * `.pm-walk/<stamp>-<slug>/` (report.json + screenshot; gitignored).
+ *
  * PM session bootstrap = ONE cell (persistent carrier, #206):
  *
  *     %load "scripts/pm-harness.ts"
@@ -188,6 +207,20 @@ import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { validateWalkSpec, walk, walkVerdict } from "./walk.js";
+
+export type {
+  WalkCheck,
+  WalkCheckResult,
+  WalkConsoleEntry,
+  WalkFailedRequest,
+  WalkReport,
+} from "./walk.js";
+// WalkOptions stays core-local (#391 ledger opts) — walk.js's probe options
+// type under the same name is not re-exported to avoid the clash; probe
+// callers take the walk.ts shape via AP.walk's own signature.
+export { validateWalkSpec, walk, walkVerdict };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -949,8 +982,7 @@ export type SpawnTransportKind = "registered" | "default" | "fallback";
  *  default kernel global → #270 plugin fallback → "missing" (reported on the
  *  report, never a silent skip — a confirm run without a transport is an
  *  incomplete dispatch). */
-function resolveSpawn():
-  { fn: SpawnFn; transport: SpawnTransportKind } | { missing: string } {
+function resolveSpawn(): { fn: SpawnFn; transport: SpawnTransportKind } | { missing: string } {
   if (spawnOverride !== null) return { fn: spawnOverride, transport: "registered" };
   // omp eval-kernel global as a named unchecked view by design: the typeof
   // guard below is the runtime validation (absent global → transport-missing).
@@ -2419,7 +2451,7 @@ export function overdueWalks(events: readonly WalkEvent[], now: Date): WalkDueEv
  *  undated deferral is the 「终检批」 pretending to be a ledger row. A due
  *  date in the past registers fine (back-auditing existing deferrals);
  *  re-registering an active walk supersedes it (改期重登记). */
-export function walk(
+export function walkDue(
   number: number,
   due: string,
   face: string,
@@ -4144,7 +4176,7 @@ export const AP = {
   closeout,
   closeoutLedger,
   migrateCloseoutLedger,
-  walk,
+  walkDue,
   walkDone,
   walkLedger,
   intake,
@@ -4162,6 +4194,9 @@ export const AP = {
   lease,
   release,
   ledger,
+  walk,
+  validateWalkSpec,
+  walkVerdict,
   dorChecklist,
   /** Pure internals, exposed for tests/inspection. */
   pure: {
