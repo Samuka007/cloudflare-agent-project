@@ -59,10 +59,11 @@ export interface PocDriveEnv {
 let runtimeRegistered = false;
 
 /**
- * The rig's single-row directory ("omp" = the synthetic provider, thinking
+ * The rig's single declared directory row (the reserved id "omp", thinking
  * disabled → the only runnable reasoning rung is "none"). Shared verbatim by
  * the runtime resolver and the drive-surface validation so the two can never
- * disagree on what a selection means.
+ * disagree on what a selection means. An in-code declaration, not a default:
+ * the row exists only because the rig env named the model (ensureRuntime).
  */
 function rigRelayDirectory(model: string) {
   const ladder = deriveRelayReasoning({ thinkingEnabled: false });
@@ -97,15 +98,23 @@ function ensureRuntime(env: PocDriveEnv): void {
   if (runtimeRegistered) return;
   const baseUrl = env.MODEL_RELAY_BASE_URL_ANTHROPIC;
   const apiKey = env.MODEL_RELAY_API_KEY;
+  // #434: no model fallback — the rig runs exactly the model the deployment
+  // declares. An unset MODEL_RELAY_MODEL is a named deployment error.
+  const modelRaw = env.MODEL_RELAY_MODEL?.trim() ?? "";
   if (baseUrl === undefined || baseUrl === "" || apiKey === undefined || apiKey === "") {
     throw new Error(
       "MODEL_RELAY_BASE_URL_ANTHROPIC / MODEL_RELAY_API_KEY missing — the composed rig needs the relay env (repo-root .dev.vars) to drive turns",
     );
   }
+  if (modelRaw === "") {
+    throw new Error(
+      "MODEL_RELAY_MODEL missing — the rig declares no default model; set the env to the relay model turns should run",
+    );
+  }
   const contextWindowParsed = Number.parseInt(env.MODEL_RELAY_CONTEXT_WINDOW ?? "", 10);
   const contextWindow =
     Number.isFinite(contextWindowParsed) && contextWindowParsed > 0 ? contextWindowParsed : null;
-  const model = env.MODEL_RELAY_MODEL ?? "glm-5.3";
+  const model = modelRaw;
   // #361: the rig dials the face the deployment declares — the responses
   // face rides the selection-default effort "none" (deterministic budget).
   const relayApi = resolveRelayApi(env.MODEL_RELAY_API);
@@ -145,7 +154,7 @@ function ensureRuntime(env: PocDriveEnv): void {
             api: relayApi,
           });
   // #351: the single-line relay registration became a providerId-keyed
-  // registry — the rig declares one synthetic "omp" row and every selection
+  // registry — the rig declares one "omp" row and every selection
   // resolves through the same fail-closed grammar the composed deployment
   // runs (dispatch never silently re-routes). The rig runs thinking
   // disabled, so the only runnable reasoning rung is "none".
@@ -213,7 +222,20 @@ async function handleDriveRoute(
       }
       // #351: the drive surface exercises the selection seam verbatim —
       // unknown values fail closed here (422 named code), never dispatch.
-      const model = env.MODEL_RELAY_MODEL ?? "glm-5.3";
+      // #434: no model fallback — an unset MODEL_RELAY_MODEL fails the
+      // request with the named deployment error instead of guessing glm-5.3.
+      const modelRaw = env.MODEL_RELAY_MODEL?.trim() ?? "";
+      if (modelRaw === "") {
+        return Response.json(
+          {
+            code: "validation_failed",
+            message:
+              "MODEL_RELAY_MODEL missing — the rig declares no default model; set the env to the relay model turns should run",
+          },
+          { status: 422 },
+        );
+      }
+      const model = modelRaw;
       const candidate: RelaySelection = {};
       if ("providerId" in raw && typeof raw.providerId === "string") {
         candidate.providerId = raw.providerId;

@@ -65,6 +65,8 @@ afterEach(() => {
 
 test("#225 register → interactions-changed(true); resolve → (false); listInteractions folds the row", async () => {
   const rig = await createRig({
+    // Pre-#351 journal shape (no execution): the interaction provenance
+    // carries the honest "unknown" — #434 retired the "omp" constant.
     turns: [
       { toolCalls: [{ name: "ask", arguments: { questions: [ASK_QUESTION] } }] },
       { deltas: ["ok"] },
@@ -80,9 +82,7 @@ test("#225 register → interactions-changed(true); resolve → (false); listInt
 
   // The register row carries the interaction patch: pending, badge on.
   const calls = await interactionCallsFor(rig.threadId);
-  const registerCall = calls.find(
-    (call) => call.metadata?.hasPendingInteraction === true,
-  );
+  const registerCall = calls.find((call) => call.metadata?.hasPendingInteraction === true);
   expect(registerCall).toBeDefined();
   expect(typeof registerCall?.metadata?.latestSeq).toBe("number");
 
@@ -102,7 +102,7 @@ test("#225 register → interactions-changed(true); resolve → (false); listInt
   expect(row.resolution).toBeNull();
   expect(row.origin).toEqual({
     kind: "provider",
-    providerId: "omp",
+    providerId: "unknown",
     providerThreadId: rig.threadId,
     providerRequestId: registered.data.executionId,
   });

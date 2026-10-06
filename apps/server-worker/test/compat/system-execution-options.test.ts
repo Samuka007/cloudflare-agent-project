@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { exports } from "cloudflare:workers";
+import { restoreRigRelayCatalog, unsetRigRelayCatalog } from "../helpers.js";
 import { ensureMigrations } from "../migrate.js";
 import {
   systemConfigResponseSchema,
@@ -16,28 +17,59 @@ import { buildExecutionOptions } from "../../src/routes/system.js";
  * execution-options.ts:484-490, route at bb apps/server/src/routes/system.ts:
  * 347-349 (path public-api.ts:1405-1409). No host probing; the catalog is a
  * deployment declaration (#350 MODEL_RELAY_CATALOG) projected through the
- * same resolution the harness runs — absent declaration → the M0 synthesis:
- * one provider "omp" whose only model is the relay model turns actually run.
+ * same resolution the harness runs — #434: absent/broken declaration → an
+ * EMPTY directory (nothing synthesized); only declared rows are served.
  */
 beforeAll(ensureMigrations);
 
 describe("GET /api/v1/system/execution-options", () => {
-  it("serves a contract-valid catalog with the single omp provider", async () => {
-    const response = await exports.default.fetch(
-      "https://example.com/api/v1/system/execution-options",
+  it("serves the empty directory on an unconfigured deployment (#434)", async () => {
+    // The L1 rig binds a declared catalog (#434); the unconfigured face is
+    // asserted with the binding locally unset.
+    unsetRigRelayCatalog();
+    try {
+      const response = await exports.default.fetch(
+        "https://example.com/api/v1/system/execution-options",
+      );
+      expect(response.status).toBe(200);
+      const parsed = systemExecutionOptionsResponseSchema.parse(await response.json());
+      expect(parsed.providers).toEqual([]);
+      expect(parsed.permissionCeiling).toBe("full");
+      expect(parsed.modelLoadError).toBeNull();
+      expect(parsed.selectedOnlyModels).toEqual([]);
+      expect(parsed.models).toEqual([]);
+    } finally {
+      restoreRigRelayCatalog();
+    }
+  });
+
+  it("serves a contract-valid single-provider catalog from the declaration", () => {
+    const catalog = JSON.stringify({
+      defaultProvider: "declared",
+      providers: {
+        declared: {
+          models: [
+            {
+              id: "glm-5.3",
+              reasoningLevels: ["none"],
+              defaultReasoningLevel: "none",
+            },
+          ],
+        },
+      },
+    });
+    const parsed = systemExecutionOptionsResponseSchema.parse(
+      buildExecutionOptions({ MODEL_RELAY_CATALOG: catalog }),
     );
-    expect(response.status).toBe(200);
-    const parsed = systemExecutionOptionsResponseSchema.parse(await response.json());
     expect(parsed.providers).toHaveLength(1);
-    expect(parsed.providers[0]?.id).toBe("omp");
+    expect(parsed.providers[0]?.id).toBe("declared");
     expect(parsed.providers[0]?.available).toBe(true);
     expect(parsed.permissionCeiling).toBe("full");
     expect(parsed.modelLoadError).toBeNull();
     expect(parsed.selectedOnlyModels).toEqual([]);
     expect(parsed.models).toHaveLength(1);
     expect(parsed.models[0]?.isDefault).toBe(true);
-    // The glm relay runs thinking disabled, so the only offered reasoning
-    // level is "none" (bb reasoningLevelValues, domain/shared-types.ts:13-20).
+    // The declared ladder is the offer; budget off collapses it to "none".
     expect(
       parsed.models[0]?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort),
     ).toEqual(["none"]);
@@ -47,26 +79,32 @@ describe("GET /api/v1/system/execution-options", () => {
   it("takes the advertised model name from MODEL_RELAY_MODEL", () => {
     // Staging sets MODEL_RELAY_MODEL; the endpoint must advertise exactly the
     // model the agent runtime will run (agent-do worker.ts reads the same var).
+    const catalog = JSON.stringify({
+      providers: { main: { models: [{ id: "glm-5.3-air" }, { id: "spare" }] } },
+    });
     const configured = systemExecutionOptionsResponseSchema.parse(
-      buildExecutionOptions({ MODEL_RELAY_MODEL: "glm-5.3-air" }),
+      buildExecutionOptions({ MODEL_RELAY_CATALOG: catalog, MODEL_RELAY_MODEL: "glm-5.3-air" }),
     );
-    expect(configured.models.map((model) => model.model)).toEqual(["glm-5.3-air"]);
-    expect(configured.models.map((model) => model.id)).toEqual(["glm-5.3-air"]);
-    // Unset env falls back to the SAME default the harness resolution runs
-    // (HARNESS_DEFAULTS.model) — the face convergence (#350) retired the
-    // divergent "glm-5.3-anth" hardcode.
-    const fallback = systemExecutionOptionsResponseSchema.parse(buildExecutionOptions({}));
-    expect(fallback.models.map((model) => model.model)).toEqual(["glm-5.3"]);
+    expect(configured.models.map((model) => model.model)).toEqual(["glm-5.3-air", "spare"]);
+    expect(configured.models.map((model) => model.id)).toEqual(["glm-5.3-air", "spare"]);
+    // The catalog's first row is NOT auto-defaulted by the face: the running
+    // marker follows the harness model only when the declaration carries it.
+    expect(configured.models.filter((model) => model.isDefault)).toHaveLength(1);
   });
 
   it("projects the image-input capability from MODEL_RELAY_IMAGE_INPUT (#319)", () => {
     // The same deployment declaration the provider-app harness reads — the
     // picker face and the relay wire dispatch can never disagree.
+    const catalog = JSON.stringify({
+      providers: { main: { models: [{ id: "glm-5.3" }] } },
+    });
     const declared = systemExecutionOptionsResponseSchema.parse(
-      buildExecutionOptions({ MODEL_RELAY_IMAGE_INPUT: "1" }),
+      buildExecutionOptions({ MODEL_RELAY_CATALOG: catalog, MODEL_RELAY_IMAGE_INPUT: "1" }),
     );
     expect(declared.providers[0]?.capabilities.supportsImageInput).toBe(true);
-    const undeclared = systemExecutionOptionsResponseSchema.parse(buildExecutionOptions({}));
+    const undeclared = systemExecutionOptionsResponseSchema.parse(
+      buildExecutionOptions({ MODEL_RELAY_CATALOG: catalog }),
+    );
     expect(undeclared.providers[0]?.capabilities.supportsImageInput).toBe(false);
   });
 
@@ -142,40 +180,38 @@ describe("GET /api/v1/system/execution-options", () => {
       declared.models[0]?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort),
     ).toEqual(["none", "low", "medium", "high"]);
     expect(declared.models[0]?.defaultReasoningEffort).toBe("high");
-    // Budget on without a declaration → the single honest medium rung.
+    // Budget on without a declaration → NO rows at all (#434: nothing is
+    // synthesized, so there is no implicit "medium" row to serve).
     const undeclared = systemExecutionOptionsResponseSchema.parse(
       buildExecutionOptions({ MODEL_RELAY_THINKING_BUDGET_TOKENS: "4096" }),
     );
-    expect(
-      undeclared.models[0]?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort),
-    ).toEqual(["medium"]);
-    expect(undeclared.models[0]?.defaultReasoningEffort).toBe("medium");
+    expect(undeclared.models).toEqual([]);
+    expect(undeclared.providers).toEqual([]);
   });
 
-  it("#350 marks the running model as the advertised default even when undeclared", () => {
+  it("#350 leaves the running model unmarked when the declaration omits it", () => {
     const catalog = JSON.stringify({
       providers: { main: { models: [{ id: "glm-5.3-flash" }] } },
     });
     const parsed = systemExecutionOptionsResponseSchema.parse(
       buildExecutionOptions({ MODEL_RELAY_CATALOG: catalog, MODEL_RELAY_MODEL: "glm-5.3" }),
     );
-    const defaults = parsed.models.filter((model) => model.isDefault);
-    expect(defaults).toHaveLength(1);
-    expect(defaults[0]?.model).toBe("glm-5.3");
-    expect(parsed.models).toHaveLength(2);
+    // #434: the omission is configuration — the declared row serves, and
+    // nothing is synthesized under it to carry the default marker.
+    expect(parsed.models.map((model) => model.model)).toEqual(["glm-5.3-flash"]);
+    expect(parsed.models.filter((model) => model.isDefault)).toHaveLength(0);
   });
 
-  it("#350 serves the functional synthesis when the declaration fails the strict decode", () => {
+  it("#350 serves an empty directory when the declaration fails the strict decode", () => {
     const parsed = systemExecutionOptionsResponseSchema.parse(
       buildExecutionOptions({
         MODEL_RELAY_CATALOG: '{"providers":{},"apiKey":"sk-leak"}',
       }),
     );
-    // Contract-valid M0 shape — turns keep running while the decode error is
-    // reported on the provider-projections catalog row.
-    expect(parsed.providers.map((provider) => provider.id)).toEqual(["omp"]);
-    expect(parsed.models).toHaveLength(1);
-    expect(parsed.models[0]?.isDefault).toBe(true);
+    // #434: the decode error is loud on the projections faces; the picker
+    // face is honestly empty and no secret value ever reaches the wire.
+    expect(parsed.providers).toEqual([]);
+    expect(parsed.models).toEqual([]);
     expect(JSON.stringify(parsed)).not.toContain("sk-leak");
   });
 

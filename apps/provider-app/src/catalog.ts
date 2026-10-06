@@ -25,6 +25,11 @@ import { resolveHarness, type HarnessEnv, type ResolvedHarness } from "./harness
  * maxTokens, contextWindow, image input, thinking ladder default) — the
  * picker face and the turns-actually-run truth cannot disagree, which is
  * exactly the assertion the ticket pins ("harness 与目录对同一 env 求值一致").
+ *
+ * #434: the resolution is a pure projection of the declaration. Absent or
+ * broken declarations serve zero rows (`decodeError` marks the broken case);
+ * nothing is synthesized, no first-key default is guessed, and a selection
+ * without an explicit provider fails closed at the resolver.
  */
 
 export interface RelayCatalogModelRow {
@@ -73,74 +78,43 @@ export interface RelayCatalogProviderRow {
 export interface RelayCatalogResolution {
   /** True when MODEL_RELAY_CATALOG is set (including the decodeError case). */
   configured: boolean;
-  /** True when the env JSON failed the strict decode — a synthesis is served. */
+  /** True when the env JSON failed the strict decode — no rows are served. */
   decodeError: boolean;
-  /** The seam default-execution-options reports (catalog default or "omp"). */
-  defaultProviderId: string;
+  /**
+   * The declaration's defaultProvider; null when the declaration names none
+   * or no usable declaration exists (#434: no first-key fill, no seam — an
+   * absent default fails closed at selection instead).
+   */
+  defaultProviderId: string | null;
   providers: RelayCatalogProviderRow[];
   models: RelayCatalogModelRow[];
   /** The running relay truth (resolveHarness) the default row projects. */
   harness: ResolvedHarness;
 }
 
-/** The omp provider seam id (routes/threads.ts thread create). */
-const SYNTHETIC_PROVIDER_ID = "omp";
-
-/**
- * The env-only synthesis: one provider "omp" whose only model is the model
- * turns actually run — the M0 directory shape (routes/system.ts before
- * #350), kept as the absent-catalog AND broken-catalog fallback so the
- * picker stays functional while the decode error is reported on the
- * provider-projections catalog row.
- */
-function synthesisFromHarness(
+/** The empty resolution face: no usable declaration, nothing synthesized. */
+function emptyResolution(
   harness: ResolvedHarness,
   configured: boolean,
   decodeError: boolean,
 ): RelayCatalogResolution {
-  const model = harness.relay.model;
-  const globalBudget =
-    harness.relay.thinking.type === "enabled" ? harness.relay.thinking.budget_tokens : null;
-  const derived = deriveRelayReasoning({ thinkingEnabled: globalBudget !== null });
   return {
     configured,
     decodeError,
-    defaultProviderId: SYNTHETIC_PROVIDER_ID,
-    providers: [
-      {
-        id: SYNTHETIC_PROVIDER_ID,
-        displayName: SYNTHETIC_PROVIDER_ID,
-        serviceTier: false,
-        imageInput: harness.relay.supportsImageInput,
-      },
-    ],
-    models: [
-      {
-        providerId: SYNTHETIC_PROVIDER_ID,
-        id: model,
-        model,
-        displayName: model,
-        description: "",
-        reasoningLevels: derived.levels,
-        defaultReasoningLevel: derived.defaultLevel,
-        contextWindow: harness.relay.contextWindow,
-        maxTokens: harness.relay.maxTokens,
-        thinkingBudgetTokens: globalBudget,
-        imageInput: harness.relay.supportsImageInput,
-        api: harness.relay.api,
-        reasoningEffortMap: undefined,
-        isDefault: true,
-      },
-    ],
+    defaultProviderId: null,
+    providers: [],
+    models: [],
     harness,
   };
 }
 
 /**
  * Resolve the catalog directory over the deployment env. Never throws on env
- * content: a broken declaration degrades to the harness synthesis with
- * `decodeError: true` (the web_search decodeError precedent) so turns keep
- * running while the misconfiguration is loudly visible on the read faces.
+ * content: absent or broken declarations serve NO directory rows
+ * (#434 — no env-only synthesis; the deployment channel inside
+ * `harness` is untouched), with `decodeError: true` marking the broken case
+ * (the web_search decodeError precedent) so the misconfiguration stays
+ * loudly visible on the read faces.
  */
 export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
   const harness = resolveHarness(env);
@@ -150,17 +124,16 @@ export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
   try {
     catalog = decodeRelayCatalog(raw);
   } catch {
-    return synthesisFromHarness(harness, configured, true);
+    return emptyResolution(harness, configured, true);
   }
   if (catalog === null) {
-    return synthesisFromHarness(harness, false, false);
+    return emptyResolution(harness, false, false);
   }
 
   return projectCatalogDirectory(harness, catalog.providers, {
     configured: true,
     decodeError: false,
-    defaultProviderId:
-      catalog.defaultProvider ?? Object.keys(catalog.providers)[0] ?? SYNTHETIC_PROVIDER_ID,
+    defaultProviderId: catalog.defaultProvider ?? null,
   });
 }
 
@@ -170,9 +143,9 @@ export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
  * the env declaration wholesale (the ticket's "同 id D1 覆盖"); new ids are
  * added. A broken env declaration keeps its loud `decodeError: true` flag
  * while the overlay rows still serve (a misconfigured deployment seed must
- * not take user-configured providers down). Zero overlay rows (or no D1 at
- * all — the loader returns null) falls through to the plain env resolution,
- * byte-identical to resolveRelayCatalog.
+ * not take user-configured providers down). Zero rows overall (no usable
+ * declaration and no overlay) serves the empty resolution — #434: nothing
+ * is synthesized.
  */
 export function resolveRelayCatalogWithOverlay(
   env: HarnessEnv,
@@ -194,36 +167,33 @@ export function resolveRelayCatalogWithOverlay(
     merged[providerId] = provider;
   }
   if (Object.keys(merged).length === 0) {
-    // Every declared row failed decode and nothing overlays: the synthesis
-    // path keeps the loud decodeError semantics of the plain resolution.
-    if (decodeError) return synthesisFromHarness(harness, configured, true);
-    return synthesisFromHarness(harness, false, false);
+    // Every declared row failed decode and nothing overlays: the empty
+    // resolution keeps the loud decodeError semantics of the plain one.
+    return emptyResolution(harness, configured, decodeError);
   }
   const envDefault = base?.defaultProvider;
   return projectCatalogDirectory(harness, merged, {
     configured: true,
     decodeError,
-    defaultProviderId: envDefault ?? Object.keys(merged)[0] ?? SYNTHETIC_PROVIDER_ID,
+    defaultProviderId: envDefault ?? null,
   });
 }
 
 /**
  * The shared projection body: declared provider entries → directory rows.
- * The model turns actually run stays visible regardless of declaration
- * (wire truth beats the declaration) — synthesized under the default
- * provider when no row carries it.
+ * Only declared rows are projected (#434): a declaration that omits the
+ * running model simply has no default row on the directory face — the
+ * omission is configuration, never papered over with a synthesized row.
  */
 function projectCatalogDirectory(
   harness: ResolvedHarness,
   providers: Record<string, RelayCatalogProvider>,
-  flags: { configured: boolean; decodeError: boolean; defaultProviderId: string },
+  flags: { configured: boolean; decodeError: boolean; defaultProviderId: string | null },
 ): RelayCatalogResolution {
   const globalBudget =
     harness.relay.thinking.type === "enabled" ? harness.relay.thinking.budget_tokens : null;
-  const thinkingEnabled = globalBudget !== null;
   const providerRows: RelayCatalogProviderRow[] = [];
   const models: RelayCatalogModelRow[] = [];
-  let runningRow: RelayCatalogModelRow | undefined;
   for (const [providerId, provider] of Object.entries(providers)) {
     // #362 scope absorption ②: `api: "openai-images"` rows are IMAGE
     // sources (the generate_image tool reads them through the registry),
@@ -261,12 +231,11 @@ function projectCatalogDirectory(
           : (entry.input?.includes("image") ?? false),
         // #361: the face this row dispatches under — model declaration,
         // then the provider's, then the incumbent anthropic face.
-        api: entry.api ?? (providerApi ?? DEFAULT_RELAY_API),
+        api: entry.api ?? providerApi ?? DEFAULT_RELAY_API,
         reasoningEffortMap: entry.reasoningEffortMap,
         isDefault: isRunning,
       };
     });
-    runningRow ??= rows.find((row) => row.isDefault);
     models.push(...rows);
     providerRows.push({
       id: providerId,
@@ -277,34 +246,10 @@ function projectCatalogDirectory(
     });
   }
 
-  const defaultProviderId = flags.defaultProviderId;
-  if (runningRow === undefined) {
-    // The model turns actually run must always be visible on the directory
-    // face (wire truth beats the declaration): synthesize its row under the
-    // default provider when the declaration omits it.
-    const derived = deriveRelayReasoning({ thinkingEnabled });
-    runningRow = {
-      providerId: defaultProviderId,
-      id: harness.relay.model,
-      model: harness.relay.model,
-      displayName: harness.relay.model,
-      description: "",
-      reasoningLevels: derived.levels,
-      defaultReasoningLevel: derived.defaultLevel,
-      contextWindow: harness.relay.contextWindow,
-      maxTokens: harness.relay.maxTokens,
-      thinkingBudgetTokens: globalBudget,
-      imageInput: harness.relay.supportsImageInput,
-      api: harness.relay.api,
-      reasoningEffortMap: undefined,
-      isDefault: true,
-    };
-    models.unshift(runningRow);
-  }
   return {
     configured: flags.configured,
     decodeError: flags.decodeError,
-    defaultProviderId,
+    defaultProviderId: flags.defaultProviderId,
     providers: providerRows,
     models,
     harness,

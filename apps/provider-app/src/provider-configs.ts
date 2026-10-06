@@ -1,10 +1,11 @@
 /**
  * #362 the D1 provider-config overlay loader — the user-face configuration
  * 正本 (provider_configs table). The env MODEL_RELAY_CATALOG /
- * MODEL_RELAY_PROVIDER_CREDENTIALS pair degrades to the deployment
- * seed/defaults: every read face merges the D1 rows OVER the env
- * declaration (same id → D1 wins), and dispatch merges the DECRYPTED row
- * keys over the env credential slots.
+ * MODEL_RELAY_PROVIDER_CREDENTIALS pair is the deployment seed: the D1 rows
+ * are the user-face 正本, merged OVER the env declaration (same id → D1
+ * wins), and dispatch merges the DECRYPTED row keys over the env credential
+ * slots. #434: the CRUD display face lists ONLY these user rows — the env
+ * seed's read faces are the projections/execution-options faces.
  *
  * Discipline carried from #350/#266:
  * - Bad rows are skipped WITH a warning — never silently deleted. The row
@@ -19,21 +20,13 @@
  */
 
 import {
-  decodeRelayCatalog,
   IMAGE_SOURCE_API_FAMILY,
   relayApiValues,
   relayCatalogModelSchema,
-  SYNTHETIC_RELAY_PROVIDER_ID,
   type RelayCatalogProvider,
-  type RelayCatalog,
 } from "@cap/agent-do";
-import { resolveRelayCatalog, type RelayCatalogResolution } from "./catalog.js";
-import type { HarnessEnv } from "./harness.js";
 import { decryptProviderSecret } from "./provider-config-crypto.js";
-import {
-  decodeRelayProviderCredentials,
-  type RelayProviderCredentialMap,
-} from "./relay-registry.js";
+import type { RelayProviderCredentialMap } from "./relay-registry.js";
 
 /** The env slice this loader reads (structural — the worker Env satisfies it). */
 export interface ProviderConfigEnv {
@@ -41,14 +34,7 @@ export interface ProviderConfigEnv {
   PROVIDER_CONFIG_MASTER_KEY?: string;
 }
 
-/** Where a CRUD-face row lives — the #388 display-face provenance marker. */
-export type ProviderConfigSource = "user" | "deployment-seed";
-
-/**
- * One decoded provider row as the CRUD face returns it (zero-secret): a
- * stored D1 row (`source: "user"`) or an env seed provider riding the merged
- * display face read-only (`source: "deployment-seed"`, #388).
- */
+/** One decoded provider row as the CRUD face returns it (zero-secret). */
 export interface ProviderConfigRecord {
   id: string;
   displayName: string | null;
@@ -65,10 +51,9 @@ export interface ProviderConfigRecord {
   dispatchable: boolean;
   createdAt: number;
   updatedAt: number;
-  source: ProviderConfigSource;
 }
 
-/** The catalog half: validated rows over the env seed + content fingerprint. */
+/** The catalog half: validated rows + content fingerprint. */
 export interface ProviderConfigCatalogOverlay {
   providers: Record<string, RelayCatalogProvider>;
   /** Content fingerprint (no secret values) for hot-reload gating. */
@@ -248,98 +233,10 @@ async function readProviderConfigs(
       dispatchable,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      source: "user",
     });
   }
   const fingerprint = await fingerprintOf(providers, credentials, maxUpdatedAt);
   return { rows, catalog: { providers, fingerprint }, credentials, warnings };
-}
-
-/**
- * #388 the deployment-seed half of the CRUD display face: the env
- * MODEL_RELAY_CATALOG providers that no effective D1 row overrides, returned
- * as read-only rows (`source: "deployment-seed"`). The display face must be
- * the merged execution-options truth (the #388 incident: the panel listed
- * zero providers while the env seed's glm-5.3-flash stayed selectable), so:
- * - the exclusion set is the EFFECTIVE overlay keys — a broken D1 row is
- *   skip-with-warning, never enters the overlay, and therefore does not
- *   suppress its env row (both faces keep serving the env row);
- * - the env-only synthesis (no usable declaration, nothing effective
- *   configured) projects its omp row exactly the way execution-options
- *   serves it — provider "omp", the running model, harness-folded facts.
- *
- * Zero-secret: the declaration is the public catalog; key facts are
- * presence only, folded per provider like the registry's env-only wire
- * resolution (relay-registry resolve(): per-provider slot, else the
- * harness deployment fold, else "no key (mock)"). createdAt/updatedAt are
- * 0 — seed rows are redeploy-managed and carry no write history.
- */
-export function seedProviderConfigRows(
-  env: HarnessEnv,
-  overlayProviderIds: ReadonlySet<string>,
-): ProviderConfigRecord[] {
-  // ONE resolution with the projection faces (#350 doctrine): the env-only
-  // truth execution-options serves. A throw (malformed credential slots —
-  // the deployment-loud posture) degrades this face to the D1 rows.
-  let resolution: RelayCatalogResolution;
-  try {
-    resolution = resolveRelayCatalog(env);
-  } catch {
-    return [];
-  }
-  let catalog: RelayCatalog | null;
-  try {
-    catalog = decodeRelayCatalog(env.MODEL_RELAY_CATALOG);
-  } catch {
-    // The decodeError posture: loudly reported on the projections faces;
-    // this face keeps serving whatever still decodes (the D1 rows).
-    catalog = null;
-  }
-  // Proven decodable — resolveHarness above already ran the strict decode
-  // and a failure would have taken the early return.
-  const credentials = decodeRelayProviderCredentials(env.MODEL_RELAY_PROVIDER_CREDENTIALS);
-  const deploymentKeyPresent = resolution.harness.relay.apiKey !== "";
-  const rows: ProviderConfigRecord[] = [];
-  for (const [id, provider] of Object.entries(catalog?.providers ?? {})) {
-    if (overlayProviderIds.has(id)) continue; // same id → the D1 row wins wholesale
-    rows.push({
-      id,
-      displayName: provider.displayName ?? id,
-      baseUrl: provider.baseUrl ?? null,
-      api: provider.api ?? null,
-      serviceTier: provider.serviceTier ?? false,
-      models: provider.models,
-      hasApiKey: credentials[id]?.apiKey !== undefined || deploymentKeyPresent,
-      status: "ok",
-      warnings: [],
-      dispatchable: provider.models.length > 0,
-      createdAt: 0,
-      updatedAt: 0,
-      source: "deployment-seed",
-    });
-  }
-  if (rows.length === 0 && overlayProviderIds.size === 0) {
-    const omp = resolution.providers[0];
-    const running = resolution.models[0];
-    if (omp !== undefined && running !== undefined && omp.id === SYNTHETIC_RELAY_PROVIDER_ID) {
-      rows.push({
-        id: omp.id,
-        displayName: omp.displayName,
-        baseUrl: resolution.harness.relay.baseUrl,
-        api: running.api,
-        serviceTier: omp.serviceTier,
-        models: [{ id: running.id, name: running.displayName }],
-        hasApiKey: deploymentKeyPresent,
-        status: "ok",
-        warnings: [],
-        dispatchable: true,
-        createdAt: 0,
-        updatedAt: 0,
-        source: "deployment-seed",
-      });
-    }
-  }
-  return rows;
 }
 
 /**

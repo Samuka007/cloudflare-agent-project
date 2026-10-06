@@ -49,9 +49,9 @@ export interface ResolvedThreadExecutionSelection {
   reasoningLevel: RelayReasoningLevel;
 }
 
-/** The explicit selection that rides the DO journal (unset members absent). */
+/** The explicit selection that rides the DO journal (null = payload had none). */
 export interface ValidatedThreadExecutionSelection {
-  explicit: RelaySelection;
+  explicit: RelaySelection | null;
   resolved: ResolvedThreadExecutionSelection;
 }
 
@@ -74,23 +74,33 @@ function explicitOf(input: ThreadExecutionSelectionInput): RelaySelection | null
 }
 
 /**
- * Validate one selection against the catalog directory. null = the payload
- * carries no selection fields (the legacy path — nothing to validate,
- * nothing to ride). Throws 422 named errors: provider_unknown /
- * model_unknown / reasoning_level_unknown (fail-closed including the empty
- * catalog state — the M0 synthesis admits exactly the running row).
+ * Validate one selection against the catalog directory. A payload without
+ * selection fields resolves against the DECLARATION's defaultProvider
+ * (#434 point 3 — never an "omp" sentinel: a deployment that declares no
+ * defaultProvider fails the create/send with the named
+ * provider_default_undeclared 422). Throws 422 named errors:
+ * provider_default_undeclared / provider_unknown / model_unknown /
+ * reasoning_level_unknown (fail-closed including the empty catalog state —
+ * no synthesis admits anything).
  */
 export function validateThreadExecutionSelection(
   env: HarnessEnv,
   input: ThreadExecutionSelectionInput,
   overlayProviders?: Record<string, RelayCatalogProvider>,
-): ValidatedThreadExecutionSelection | null {
+): ValidatedThreadExecutionSelection {
   const explicit = explicitOf(input);
-  if (explicit === null) return null;
   const catalog: RelayCatalogResolution =
     overlayProviders === undefined
       ? resolveRelayCatalog(env)
       : resolveRelayCatalogWithOverlay(env, overlayProviders);
+  if (explicit === null) {
+    try {
+      return { explicit: null, resolved: resolveRelayCatalogSelection(catalog, {}) };
+    } catch (error) {
+      if (error instanceof RelaySelectionError) throw selectionErrorToApiError(error);
+      throw error;
+    }
+  }
   try {
     const resolved = resolveRelayCatalogSelection(catalog, explicit);
     return { explicit, resolved };

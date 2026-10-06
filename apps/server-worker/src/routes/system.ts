@@ -21,7 +21,6 @@ import {
   projectHarness,
   resolveRelayCatalog,
   resolveRelayCatalogWithOverlay,
-  seedProviderConfigRows,
   type HarnessEnv,
   type ModelsYmlImportParse,
 } from "@cap/provider-app";
@@ -138,10 +137,11 @@ export function buildSystemConfig(env: Env, requestUrl: URL) {
  * packages/agent-do/src/provider-catalog.ts) projected through ONE
  * resolution shared with the harness (provider-app resolveRelayCatalog —
  * the #319 dual-face pattern generalized to the catalog layer, roadmap
- * §0.1/§2.3). No declaration → the M0 synthesis: one provider "omp" whose
- * only model is the relay model turns actually run. The response shape is
- * bb-verbatim (server-contract/src/api/system.ts:35-58) so the SPA picker
- * consumes it unmodified (shape fixture:
+ * §0.1/§2.3). #434: no declaration (or a broken one) → an EMPTY directory —
+ * nothing is synthesized; the picker simply has no providers until the
+ * deployment declares a catalog (or the panel adds user rows). The response
+ * shape is bb-verbatim (server-contract/src/api/system.ts:35-58) so the SPA
+ * picker consumes it unmodified (shape fixture:
  * apps/app/src/hooks/useThreadCreationOptions.test.tsx:44-114); the typed
  * return is the compile-time parity guard pinning the catalog ladder
  * vocabulary to bb's ReasoningLevel enum (shared-types.ts:18-27).
@@ -579,15 +579,11 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
 
   routes.get("/system/providers", async (ctx) => {
     const load = await loadProviderConfigOverlay(ctx.env);
-    // #388: the display face IS the merged directory truth. Env-seed rows no
-    // effective D1 row overrides ride the list (source "deployment-seed",
-    // read-only), so the panel shows exactly the provider set
-    // execution-options serves — the staging incident had the panel listing
-    // zero providers while the env seed's glm-5.3-flash stayed selectable.
-    const seedRows = seedProviderConfigRows(ctx.env, new Set(Object.keys(load?.providers ?? {})));
-    return ctx.json(
-      providerConfigsListResponseSchema.parse({ providers: [...seedRows, ...(load?.rows ?? [])] }),
-    );
+    // #434 (point 6): the display face lists ONLY user rows — the D1 正本.
+    // The env seed's read faces are provider-projections and
+    // execution-options (the #388 merged-face posture is retired with the
+    // seed-row projection; the seed stays redeploy-managed).
+    return ctx.json(providerConfigsListResponseSchema.parse({ providers: load?.rows ?? [] }));
   });
 
   routes.get("/system/providers/:id", async (ctx) => {
@@ -597,13 +593,8 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     if (row !== undefined) {
       return ctx.json(providerConfigRowSchema.parse(row));
     }
-    // #388: a seed id resolves to its read-only deployment-seed row.
-    const seed = seedProviderConfigRows(ctx.env, new Set()).find(
-      (candidate) => candidate.id === id,
-    );
-    if (seed !== undefined) {
-      return ctx.json(providerConfigRowSchema.parse(seed));
-    }
+    // #434: seed ids resolve 404 like any unknown id — there is no config
+    // row behind them (the seed lives in env, read through the projections).
     throw new ApiError({
       status: 404,
       code: "provider_config_not_found",
@@ -624,7 +615,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
       throw new ApiError({
         status: 409,
         code: "provider_config_reserved",
-        message: `"${SYNTHETIC_RELAY_PROVIDER_ID}" is the deployment-default seam id and cannot be configured`,
+        message: `"${SYNTHETIC_RELAY_PROVIDER_ID}" is reserved (sentinel-era journals reference it) and cannot be configured`,
       });
     }
     if ((await getProviderConfigTarget(ctx.env, payload.id)) !== null) {
@@ -819,7 +810,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
           verdict: "skipped",
           status: 409,
           code: "reserved_id",
-          message: `"${SYNTHETIC_RELAY_PROVIDER_ID}" is the deployment-default seam id and cannot be configured`,
+          message: `"${SYNTHETIC_RELAY_PROVIDER_ID}" is reserved (sentinel-era journals reference it) and cannot be configured`,
         });
         continue;
       }
@@ -898,11 +889,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
 
 /** The {providerId}-anchored discovery branch: resolves the row's baseUrl
  * and its stored secret (unless the panel re-typed a key for this probe). */
-async function discoverForSavedRow(
-  ctx: Context<AppEnv>,
-  id: string,
-  typedKey: string | undefined,
-) {
+async function discoverForSavedRow(ctx: Context<AppEnv>, id: string, typedKey: string | undefined) {
   const target = await getProviderConfigTarget(ctx.env, id);
   if (target === null) {
     throw new ApiError({

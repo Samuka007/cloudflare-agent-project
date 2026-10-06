@@ -11,9 +11,10 @@
  *   (resolveRelaySelection) — fail-closed, named errors;
  * - this module owns the env-side construction: the catalog resolution
  *   (#350 projection), the per-provider credential slots (#255 ruling C —
- *   keys live here, never in the public catalog), the RelayConfig fold, the
- *   per-selection provider instance cache, and the mock-first degradation
- *   for a row whose credential slot never got a key (#28 ruling).
+ *   keys live here, never in the public catalog), the RelayConfig fold, and
+ *   the per-selection provider instance cache. #434 (point ⑦): a row whose
+ *   credential slot never got a key FAILS dispatch with the named error —
+ *   no row-level mock degradation.
  *
  * Every registration site (ComposedAgentDO, ManagerDo, dev rigs) installs
  * the runtime this module returns — one registry, no per-site second source.
@@ -41,7 +42,6 @@ import {
 import type { RelayCatalogResolution } from "./catalog.js";
 import { resolveRelayCatalog, resolveRelayCatalogWithOverlay } from "./catalog.js";
 import {
-  FixedReplyProvider,
   relayProviderFrom,
   resolveHarness,
   type HarnessEnv,
@@ -280,9 +280,7 @@ export class RelayProviderRegistry {
       modelId: resolved.modelId,
       reasoningLevel: resolved.reasoningLevel,
       config: {
-        baseUrl: standalone
-          ? (slot.baseUrl ?? "")
-          : (slot.baseUrl ?? harness.relay.baseUrl),
+        baseUrl: standalone ? (slot.baseUrl ?? "") : (slot.baseUrl ?? harness.relay.baseUrl),
         apiKey: standalone ? (slot.apiKey ?? "") : (slot.apiKey ?? harness.relay.apiKey),
         model: resolved.modelId,
         maxTokens: isRunning
@@ -304,9 +302,8 @@ export class RelayProviderRegistry {
   /**
    * The ModelProvider a selection dispatches through. Cache key =
    * provider+model+rung (the rung decides `thinking`, so it is part of the
-   * wire identity). A row whose resolved apiKey is empty degrades to the
-   * fixed-reply mock (mock-first ruling #28, per row) — a credential gap is
-   * a visible product mode, not a thread-killing surprise.
+   * wire identity). A row whose resolved apiKey is empty throws the named
+   * credential error (#434 point ⑦ — fail-closed, never a fixed-reply mock).
    */
   providerFor(selection: RelaySelection): ModelProvider {
     const resolution = this.resolve(selection);
@@ -314,35 +311,33 @@ export class RelayProviderRegistry {
     const existing = this.instances.get(key);
     if (existing !== undefined) return existing;
     // Standalone rows additionally need a wire base: a D1 provider without
-    // (decryptable) key OR baseUrl has no honest wire target and rides the
-    // mock — deployment credentials are not a fallback (see resolve()).
+    // (decryptable) key OR baseUrl has no honest wire target — deployment
+    // credentials are not a fallback (see resolve()).
     const standaloneIncomplete =
       this.overlay?.providers[resolution.providerId] !== undefined &&
       (resolution.config.apiKey === "" || resolution.config.baseUrl === "");
+    // #434 (point ⑦): no row-level mock degradation. A credential gap used
+    // to serve the fixed-reply mock as a product mode; that was an implicit
+    // default masquerading as the declared row — dispatch now fails with the
+    // named remedy instead. (The DEPLOYMENT-channel mock in harness.ts
+    // relayProviderFrom is a different, kept posture: the projections face
+    // reports it as relayMode "mock".)
+    if (resolution.config.apiKey === "" || standaloneIncomplete) {
+      throw new Error(
+        `relay provider "${resolution.providerId}" (${resolution.modelId}) has no usable credential` +
+          (standaloneIncomplete
+            ? " — the provider-config row lacks a usable key/baseUrl and deployment " +
+              "credentials are never a fallback for user-configured rows; set the row's apiKey/baseUrl"
+            : " — no MODEL_RELAY_PROVIDER_CREDENTIALS slot and no deployment key; set one before dispatching") +
+          " (fail-closed, #434)",
+      );
+    }
     const created: ModelProvider =
-      resolution.config.apiKey === "" || standaloneIncomplete
-        ? new FixedReplyProvider(
-            `model relay not configured for provider "${resolution.providerId}" ` +
-              (standaloneIncomplete
-                ? "(provider-config row without a usable key/baseUrl — deployment " +
-                  "credentials are never a fallback for user-configured rows)"
-                : "(no MODEL_RELAY_PROVIDER_CREDENTIALS slot and no deployment key)") +
-              " — fixed-reply mock in service (ticket #28 M0, #362 rows)",
-            {
-              model: resolution.config.model,
-              maxTokens: resolution.config.maxTokens,
-              thinking: resolution.config.thinking ?? { type: "disabled" },
-              contextWindow: resolution.config.contextWindow ?? 200_000,
-              supportsImageInput: resolution.config.supportsImageInput,
-              api: resolution.config.api,
-              reasoningEffort: resolution.config.reasoningEffort,
-            },
-          )
-        : resolution.config.api === "openai-responses"
-          ? new ResponsesRelayProvider(resolution.config)
-          : resolution.config.api === "openai-completions"
-            ? new CompletionsRelayProvider(resolution.config)
-            : new AnthropicRelayProvider(resolution.config);
+      resolution.config.api === "openai-responses"
+        ? new ResponsesRelayProvider(resolution.config)
+        : resolution.config.api === "openai-completions"
+          ? new CompletionsRelayProvider(resolution.config)
+          : new AnthropicRelayProvider(resolution.config);
     this.instances.set(key, created);
     return created;
   }

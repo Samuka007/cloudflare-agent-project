@@ -303,4 +303,43 @@ describe("#361 relay api face + effort mapping", () => {
       expect((error as RelaySelectionError).code).toBe("reasoning_level_unknown");
     }
   });
+
+  test("#434 the omp sentinel is retired: undeclared default and unknown ids fail closed", () => {
+    const directory = {
+      rows: [
+        {
+          providerId: "main",
+          id: "m",
+          reasoningLevels: ["none"] as const,
+          defaultReasoningLevel: "none" as const,
+        },
+      ],
+      defaultProviderId: null,
+      defaultModelId: "m",
+      thinkingEnabled: false,
+    };
+    // No selection and no declared default → the named 422 code.
+    try {
+      resolveRelaySelection(directory, {});
+      expect.unreachable();
+    } catch (error) {
+      expect((error as RelaySelectionError).code).toBe("provider_default_undeclared");
+    }
+    // "omp" is no longer a seam: a selection naming it is provider_unknown
+    // unless a row actually declares it.
+    try {
+      resolveRelaySelection(directory, { providerId: "omp", model: "m" });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as RelaySelectionError).code).toBe("provider_unknown");
+    }
+    // A declared default still fills an absent selection — the explicit,
+    // declared configuration path.
+    const declared = { ...directory, defaultProviderId: "main" as const };
+    expect(resolveRelaySelection(declared, {})).toEqual({
+      providerId: "main",
+      modelId: "m",
+      reasoningLevel: "none",
+    });
+  });
 });

@@ -4,6 +4,7 @@ import type { z } from "zod";
 import { decryptProviderSecret, resolveRelayCatalogWithOverlay } from "@cap/provider-app";
 import type { AnyAgentEvent, RelayCatalogProvider } from "@cap/agent-do";
 import { ensureMigrations } from "../migrate.js";
+import { restoreRigRelayCatalog, unsetRigRelayCatalog } from "../helpers.js";
 import { insertProviderConfig, type ProviderConfigEnv } from "../../src/db/provider-configs.js";
 import {
   PROBE_RATE_LIMIT_MAX,
@@ -33,7 +34,10 @@ import {
  * - The merged directory (env seed ⊕ D1 rows, same id → D1 wins) feeds
  *   execution-options / projections hot — a panel write appears on the
  *   next request — and the thread selection (#351 chain) consumes it,
- *   down to a real dispatched turn riding the row-level mock.
+ *   down to a keyless row's dispatch failing closed (#434 point ⑦: no
+ *   row-level mock).
+ * - The CRUD display face lists ONLY user rows (#434 point 6): the env
+ *   seed's read faces are execution-options / provider-projections.
  * - Zero-secret discipline (#266 extension): no projection face carries a
  *   stored key value; hasApiKey presence only.
  */
@@ -126,14 +130,11 @@ async function expect422(response: Response, code: string): Promise<void> {
  * The stub body satisfies the discovery envelope so verdicts stay ok:true.
  */
 function stubProbeFetch(calls: { url: string; init: RequestInit }[]): void {
-  vi.stubGlobal(
-    "fetch",
-    (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
-      const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
-      calls.push({ url: href, init: init ?? {} });
-      return Promise.resolve(new Response(JSON.stringify({ data: [{ id: "m" }] }), { status: 200 }));
-    },
-  );
+  vi.stubGlobal("fetch", (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+    calls.push({ url: href, init: init ?? {} });
+    return Promise.resolve(new Response(JSON.stringify({ data: [{ id: "m" }] }), { status: 200 }));
+  });
 }
 
 /**
@@ -149,15 +150,16 @@ afterEach(async () => {
   // The suite shares one worker (isolate:false): a leftover D1 row would
   // leak onto later files' execution-options faces.
   await env.DB.prepare("DELETE FROM provider_configs").run();
-  // #388: the display-face describe injects a seed catalog onto the worker
-  // env — restore the deployment-shaped (unset) state for later files.
-  delete (env as unknown as Record<string, string>).MODEL_RELAY_CATALOG;
+  // The display-face describe injects a seed catalog onto the worker env —
+  // restore the RIG declaration for later files (#434: the rig is a
+  // configured deployment).
+  restoreRigRelayCatalog();
   delete (env as unknown as Record<string, string>).MODEL_RELAY_MODEL;
 });
 
-describe("#388 merged display face: the panel list = execution-options truth", () => {
-  // The staging #388 incident: the env seed (omp/glm-5.3-flash) served the
-  // picker while GET /system/providers read D1 only and listed nothing.
+describe("#434 point 6: the CRUD display face lists ONLY user rows", () => {
+  // The #388 merged-face posture is retired: the env seed is redeploy-managed
+  // configuration, never a fake row on the write face.
   const SEED = JSON.stringify({
     defaultProvider: "omp",
     providers: {
@@ -174,29 +176,20 @@ describe("#388 merged display face: the panel list = execution-options truth", (
     setEnvVar("MODEL_RELAY_CATALOG", SEED);
   }
 
-  it("an empty D1 still lists the env seed row (source deployment-seed)", async () => {
+  it("an env seed alone lists NOTHING on the CRUD face; execution-options still serves it", async () => {
     injectSeed();
     const providers = await listProviders();
-    expect(providers.map((row) => [row.id, row.source])).toEqual([["omp", "deployment-seed"]]);
-    expect(providers[0]).toMatchObject({
-      displayName: "newapi",
-      baseUrl: "https://newapi.example.com/v1",
-      api: "openai-responses",
-      dispatchable: true,
-      status: "ok",
-      hasApiKey: false,
-    });
-    expect(providers[0]?.models).toEqual([{ id: "glm-5.3-flash", name: "GLM 5.3 Flash" }]);
-    // The same resolution the picker serves — the provider set matches
-    // execution-options exactly (the acceptance).
+    expect(providers).toEqual([]);
+    // The declared catalog still serves the picker face — the declaration is
+    // the seed's read face, not the CRUD list.
     expect((await executionOptions()).providers.map((provider) => provider.id)).toEqual(["omp"]);
   });
 
-  it("a seed id resolves read-only on :id and refuses every write verb", async () => {
+  it("a seed id is 404 on :id like any unknown id; the reserved id stays refused on create", async () => {
     injectSeed();
     const single = await request("GET", "/api/v1/system/providers/omp");
-    expect(single.status).toBe(200);
-    expect(providerConfigRowSchema.parse(await single.json()).source).toBe("deployment-seed");
+    expect(single.status).toBe(404);
+    expect((await single.json<{ code: string }>()).code).toBe("provider_config_not_found");
     const reserved = await request("POST", "/api/v1/system/providers", {
       id: "omp",
       models: [{ id: "m" }],
@@ -214,7 +207,7 @@ describe("#388 merged display face: the panel list = execution-options truth", (
     expect((await request("DELETE", "/api/v1/system/providers/omp")).status).toBe(404);
   });
 
-  it("a same-id D1 row replaces the seed row; new D1 rows join; ordering stays seed-then-user", async () => {
+  it("user rows list alone; the D1 row shadows its env twin on execution-options", async () => {
     injectSeed();
     await postProvider({
       id: "panelp",
@@ -222,12 +215,9 @@ describe("#388 merged display face: the panel list = execution-options truth", (
       models: [{ id: "panel-only" }],
     });
     let providers = await listProviders();
-    expect(providers.map((row) => [row.id, row.source])).toEqual([
-      ["omp", "deployment-seed"],
-      ["panelp", "user"],
-    ]);
-    // The override: id omp is reserved, so the wholesale-replacement half is
-    // proven with a second seed provider the panel CAN shadow.
+    expect(providers.map((row) => row.id)).toEqual(["panelp"]);
+    // The same-id wholesale replacement half is proven with a seed provider
+    // the panel CAN shadow (id omp is reserved for the sentinel-era guard).
     setEnvVar(
       "MODEL_RELAY_CATALOG",
       JSON.stringify({
@@ -238,29 +228,32 @@ describe("#388 merged display face: the panel list = execution-options truth", (
       }),
     );
     providers = await listProviders();
-    expect(providers.map((row) => [row.id, row.source])).toEqual([["panelp", "user"]]);
+    expect(providers.map((row) => row.id)).toEqual(["panelp"]);
     expect(providers[0]?.models).toEqual([{ id: "panel-only" }]);
   });
 
-  it("a broken D1 row (warning, not in the overlay) leaves the seed row serving", async () => {
+  it("a broken D1 row stays visible with its warning; the env row keeps serving the picker", async () => {
     injectSeed();
     // models column is not valid JSON → skip-with-warning, never in the
-    // effective overlay — the seed row keeps serving and stays visible.
+    // effective overlay — the env declaration keeps serving the picker while
+    // the broken USER row stays visible for repair.
     await insertRawRow("omp", '{"id": "half');
     const providers = await listProviders();
-    expect(providers.map((row) => [row.id, row.source, row.status])).toEqual([
-      ["omp", "deployment-seed", "ok"],
-      ["omp", "user", "warning"],
-    ]);
+    expect(providers.map((row) => [row.id, row.status])).toEqual([["omp", "warning"]]);
     expect((await executionOptions()).providers.map((provider) => provider.id)).toEqual(["omp"]);
   });
 
-  it("no catalog anywhere: the omp synthesis row rides the display face too", async () => {
+  it("no catalog anywhere: both faces are honestly empty", async () => {
+    unsetRigRelayCatalog();
     setEnvVar("MODEL_RELAY_MODEL", "glm-5.3-flash");
-    const providers = await listProviders();
-    expect(providers.map((row) => [row.id, row.source])).toEqual([["omp", "deployment-seed"]]);
-    expect(providers[0]?.models).toEqual([{ id: "glm-5.3-flash", name: "glm-5.3-flash" }]);
-    expect((await executionOptions()).providers.map((provider) => provider.id)).toEqual(["omp"]);
+    try {
+      const providers = await listProviders();
+      expect(providers).toEqual([]);
+      expect((await executionOptions()).providers).toEqual([]);
+      expect((await executionOptions()).models).toEqual([]);
+    } finally {
+      restoreRigRelayCatalog();
+    }
   });
 });
 
@@ -610,14 +603,9 @@ describe("#362 merged directory: env seed ⊕ D1 rows (D1 wins)", () => {
     expect(modelRows.has("panel-model")).toBe(true);
     expect(modelRows.has("panel-only")).toBe(true);
     // The env DECLARED row ("Env Model") is gone — the D1 models replaced it
-    // wholesale. The env-derived RUNNING model stays visible exactly once as
-    // the synthesized wire-truth row (selection-less threads still run it),
-    // under the default provider, as the default.
-    const envModelRows = merged.models.filter((model) => model.id === "env-model");
-    expect(envModelRows).toHaveLength(1);
-    expect(envModelRows[0]?.displayName).toBe("env-model");
-    expect(envModelRows[0]?.isDefault).toBe(true);
-    expect(envModelRows[0]?.providerId).toBe("envp");
+    // wholesale, and nothing is synthesized back (#434): no env-model row,
+    // no wire-truth prepend.
+    expect(merged.models.filter((model) => model.id === "env-model")).toHaveLength(0);
     expect(merged.models.map((model) => model.displayName)).not.toContain("Env Model");
     // The env catalog's default provider survives the overlay.
     expect(merged.defaultProviderId).toBe("envp");
@@ -656,9 +644,10 @@ describe("#362 merged directory: env seed ⊕ D1 rows (D1 wins)", () => {
 });
 
 describe("#362 thread selection consumes the merged directory (#351 chain)", () => {
-  it("a panel provider is selectable at create and a dispatched turn rides its mock", async () => {
-    // No key and no baseUrl → the row-level mock posture (standalone rows
-    // never fall back to deployment credentials).
+  it("a panel provider is selectable at create and a keyless dispatch fails closed (#434 ⑦)", async () => {
+    // No key and no baseUrl → NO row-level mock: the turn fails loudly with
+    // the named credential error (standalone rows never fall back to
+    // deployment credentials).
     await postProvider({
       id: "mockrow",
       displayName: "Mock Row",
@@ -684,18 +673,20 @@ describe("#362 thread selection consumes the merged directory (#351 chain)", () 
     expect(threadCreated?.data).toMatchObject({
       execution: { providerId: "mockrow", model: "mock-model" },
     });
-
     const wait = await request(
       "GET",
-      `/api/v1/threads/${thread.id}/events/wait?type=${encodeURIComponent("turn/completed")}&afterSeq=0&waitMs=15000`,
+      // The UX projection names a failed turn system/error (turn.failed is
+      // the raw journal spelling — asserted below).
+      `/api/v1/threads/${thread.id}/events/wait?type=${encodeURIComponent("system/error")}&afterSeq=0&waitMs=15000`,
     );
     expect(wait.status).toBe(200);
     const turnEvents = await rawEvents(thread.id);
+    console.log("TURN_EVENTS", JSON.stringify(turnEvents.map((event) => event.type)));
+    console.log("TURN_DETAIL", JSON.stringify(turnEvents.slice(-6)));
     // Raw journal spells terminal events with a dot (UX projects a slash).
-    expect(turnEvents.some((event) => event.type === "turn.completed")).toBe(true);
-    // The fixed-reply mock names the row — the turn rode the D1 provider,
-    // not the deployment relay slot.
-    expect(JSON.stringify(turnEvents)).toContain('provider \\"mockrow\\"');
+    expect(turnEvents.some((event) => event.type === "turn.failed")).toBe(true);
+    // The failure names the row and the remedy — fail-closed, not a mock.
+    expect(JSON.stringify(turnEvents)).toContain("no usable credential");
   });
 
   it("fail-closed: an unknown/deleted provider is 422 provider_unknown on the merged directory", async () => {

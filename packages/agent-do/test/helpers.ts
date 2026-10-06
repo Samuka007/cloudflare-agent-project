@@ -4,6 +4,7 @@ import { newThreadId } from "@cap/protocol";
 import type { AgentDO } from "../src/agent-do.js";
 import type { AgentEventType, AnyAgentEvent } from "../src/fsm-events.js";
 import { clearAgentRuntimes, setAgentRuntime } from "../src/injection.js";
+import type { RelaySelection } from "../src/provider-catalog.js";
 import type { ModelProvider } from "../src/provider.js";
 import { MockModelProvider, type MockTurn } from "../src/testing/mock-provider.js";
 import type { TestDaemonServiceStub } from "../src/testing/test-daemon-do.js";
@@ -19,6 +20,9 @@ export interface RigOptions {
   /** Overrides the mock (real-model smoke registers its relay client). */
   provider?: ModelProvider;
   threadId?: string;
+  /** Journaled create-time execution selection (#351; ask derives its
+   * interaction providerId from it — #434). */
+  execution?: RelaySelection;
   /** #326: booleans ride too (autoCompactionEnabled gate flips). */
   watchdog?: Record<string, number | boolean>;
 }
@@ -62,7 +66,12 @@ export async function createRig(options: RigOptions = {}): Promise<Rig> {
   // machineId = threadId: the fake service DO stays per-thread-named (the
   // rig's service stubs resolve by threadId), matching the per-machine real
   // seam's naming rule — the DO name is the machineId either way.
-  const created = await stubFor().createThread({ threadId, title: "rig", machineId: threadId });
+  const created = await stubFor().createThread({
+    threadId,
+    title: "rig",
+    machineId: threadId,
+    ...(options.execution !== undefined ? { execution: options.execution } : {}),
+  });
   expect(created.duplicated).toBe(false);
   if (options.watchdog !== undefined) {
     await stubFor().configureWatchdog(options.watchdog);

@@ -13,6 +13,30 @@ export const BASE = "https://example.com";
 export const TEST_ENROLL_KEY = "l1-rig-enroll-key";
 export const TEST_HOST_KEY = "l1-rig-host-key";
 
+/**
+ * The L1 rig's declared catalog (vitest.config bindings — #434). The rig is
+ * a CONFIGURED deployment: selection-less creates resolve the "rig" default.
+ * Suites asserting the UNCONFIGURED faces unset the binding locally and
+ * restore it.
+ */
+export const RIG_RELAY_CATALOG = JSON.stringify({
+  defaultProvider: "rig",
+  providers: {
+    rig: {
+      displayName: "L1 Rig Relay",
+      models: [{ id: "rig-model", reasoningLevels: ["none"], defaultReasoningLevel: "none" }],
+    },
+  },
+});
+
+export function unsetRigRelayCatalog(): void {
+  delete (env as unknown as Record<string, string>).MODEL_RELAY_CATALOG;
+}
+
+export function restoreRigRelayCatalog(): void {
+  (env as unknown as Record<string, string>).MODEL_RELAY_CATALOG = RIG_RELAY_CATALOG;
+}
+
 export async function apiGet(path: string, init?: RequestInit): Promise<Response> {
   await ensureMigrations();
   return exports.default.fetch(`${BASE}${path}`, {

@@ -1,8 +1,9 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { classifyExecutionSettingsChange } from "@cap/provider-app";
 import type { AnyAgentEvent } from "@cap/agent-do";
 import { ensureMigrations } from "../migrate.js";
+import { restoreRigRelayCatalog } from "../helpers.js";
 import {
   classifyThreadSelectionChange,
   type ResolvedThreadExecutionSelection,
@@ -13,19 +14,45 @@ import type { RuntimeThreadExecutionOptions } from "../../../daemon-worker/src/p
  * #351 thread-level provider/model/reasoningLevel selection: the create/send
  * payloads validate fail-closed against the catalog directory (unknown
  * values 422 with a NAMED error — provider_unknown / model_unknown /
- * reasoning_level_unknown — including the empty-catalog synthesis state
- * where exactly one provider/model/rung exists); a valid selection persists
- * to the threads row overrides, bridges through the composed chain
+ * reasoning_level_unknown — and #434 adds provider_default_undeclared for a
+ * selection-less payload under a declaration with no defaultProvider); a
+ * valid selection persists to the threads row overrides, bridges through the
+ * composed chain
  * (route → orchestrator → manager → agent DO) into thread.created /
  * turn.input journal rows, and send-time drift classifies over the bb
  * unchanged/live/session vocabulary.
  *
- * The test worker env declares no MODEL_RELAY_CATALOG → the M0 synthesis:
- * provider "omp", the running model, ladder ["none"]. That IS the
- * empty-catalog fail-closed state the ticket pins.
+ * The suite injects ONE declared catalog (budget off → every declared ladder
+ * collapses to ["none"]). The empty-catalog fail-closed state is covered by
+ * the unconfigured-deployment assertions in system-execution-options.test.ts
+ * and the agent-do/provider-app suites (#434: nothing is synthesized, so an
+ * empty directory admits no selection at all).
  */
 
 beforeAll(ensureMigrations);
+
+const SUITE_CATALOG = JSON.stringify({
+  defaultProvider: "main",
+  providers: {
+    main: {
+      models: [
+        { id: "model-a", reasoningLevels: ["none", "high"], defaultReasoningLevel: "none" },
+        { id: "model-b" },
+      ],
+    },
+    side: { models: [{ id: "model-c" }] },
+  },
+});
+
+beforeAll(() => {
+  (env as unknown as Record<string, string>).MODEL_RELAY_CATALOG = SUITE_CATALOG;
+});
+
+afterAll(() => {
+  // The suite shares one worker (isolate:false) — restore the RIG
+  // declaration (#434: the rig is a configured deployment).
+  restoreRigRelayCatalog();
+});
 
 const BASE = "https://example.com";
 
@@ -64,9 +91,7 @@ async function rawEvents(threadId: string): Promise<AnyAgentEvent[]> {
   return events;
 }
 
-async function threadRow(
-  threadId: string,
-): Promise<{
+async function threadRow(threadId: string): Promise<{
   provider_id: string;
   model_override: string | null;
   reasoning_level_override: string | null;
@@ -96,7 +121,7 @@ async function expect422(
   return body;
 }
 
-describe("#351 fail-closed selection validation (empty catalog state)", () => {
+describe("#351 fail-closed selection validation over the declared catalog", () => {
   it("create with an unknown providerId → 422 provider_unknown", async () => {
     const response = await createThread({ providerId: "ghost-provider" });
     await expect422(response, "provider_unknown");
@@ -110,6 +135,20 @@ describe("#351 fail-closed selection validation (empty catalog state)", () => {
   it("create with a non-none reasoning rung → 422 reasoning_level_unknown (budget off collapses the ladder)", async () => {
     const response = await createThread({ reasoningLevel: "high" });
     await expect422(response, "reasoning_level_unknown");
+  });
+
+  it("create with NO selection under a declared default → the declaration fills it", async () => {
+    // #434 point 3: the declared defaultProvider is the only implicit fill;
+    // the resolved provider lands on the row, the journal carries no
+    // explicit selection.
+    const response = await createThread({});
+    expect(response.status).toBe(201);
+    const thread = await response.json<CreatedThread>();
+    const row = await threadRow(thread.id);
+    expect(row.provider_id).toBe("main");
+    expect(row.model_override).toBeNull();
+    const events = await rawEvents(thread.id);
+    expect(events.find((event) => event.type === "thread.created")?.data.execution).toBeUndefined();
   });
 
   it("send with an unknown model → 422 model_unknown before any turn lands", async () => {
@@ -143,8 +182,8 @@ describe("#351 fail-closed selection validation (empty catalog state)", () => {
 describe("#351 selection consumption", () => {
   it("a valid selection persists to the row overrides and bridges into the journal", async () => {
     const response = await createThread({
-      providerId: "omp",
-      model: "glm-5.3",
+      providerId: "main",
+      model: "model-a",
       reasoningLevel: "none",
     });
     expect(response.status).toBe(201);
@@ -152,8 +191,8 @@ describe("#351 selection consumption", () => {
 
     // Control-plane half: the threads row override columns.
     const row = await threadRow(thread.id);
-    expect(row.provider_id).toBe("omp");
-    expect(row.model_override).toBe("glm-5.3");
+    expect(row.provider_id).toBe("main");
+    expect(row.model_override).toBe("model-a");
     expect(row.reasoning_level_override).toBe("none");
 
     // Trajectory half (through the composed bridge: route → orchestrator →
@@ -162,20 +201,29 @@ describe("#351 selection consumption", () => {
     const events = await rawEvents(thread.id);
     const created = events.find((event) => event.type === "thread.created");
     expect(created?.data).toMatchObject({
-      execution: { providerId: "omp", model: "glm-5.3", reasoningLevel: "none" },
+      execution: { providerId: "main", model: "model-a", reasoningLevel: "none" },
     });
     const turnInput = events.find((event) => event.type === "turn.input");
     expect(turnInput?.data).toMatchObject({
-      execution: { providerId: "omp", model: "glm-5.3", reasoningLevel: "none" },
+      execution: { providerId: "main", model: "model-a", reasoningLevel: "none" },
     });
   });
 
-  it("a selection-less create keeps the M0 shape (omp row, null overrides, no journal execution)", async () => {
+  it("#434 point 8: a selection naming the retired omp sentinel is 422 provider_unknown", async () => {
+    const response = await createThread({
+      providerId: "omp",
+      model: "model-a",
+      reasoningLevel: "none",
+    });
+    await expect422(response, "provider_unknown");
+  });
+
+  it("a fork create without selection or input resolves the declared default", async () => {
     const response = await createThread({ input: [], originKind: "fork" });
     expect(response.status).toBe(201);
     const thread = await response.json<CreatedThread>();
     const row = await threadRow(thread.id);
-    expect(row.provider_id).toBe("omp");
+    expect(row.provider_id).toBe("main");
     expect(row.model_override).toBeNull();
     expect(row.reasoning_level_override).toBeNull();
     const events = await rawEvents(thread.id);
@@ -185,7 +233,7 @@ describe("#351 selection consumption", () => {
 
   it("an equal send is classified unchanged — no ride row, no override churn", async () => {
     const created = await createThread({
-      model: "glm-5.3",
+      model: "model-a",
       reasoningLevel: "none",
     });
     expect(created.status).toBe(201);
@@ -197,7 +245,7 @@ describe("#351 selection consumption", () => {
     const response = await post(`/api/v1/threads/${thread.id}/send`, {
       input: [{ type: "text", text: "same selection again" }],
       mode: "auto",
-      model: "glm-5.3",
+      model: "model-a",
       reasoningLevel: "none",
     });
     expect(response.status).toBe(200);
@@ -208,7 +256,7 @@ describe("#351 selection consumption", () => {
     const inputs = events.filter((event) => event.type === "turn.input");
     expect(inputs.length).toBe(turnCount + 1);
     const row = await threadRow(thread.id);
-    expect(row.model_override).toBe("glm-5.3");
+    expect(row.model_override).toBe("model-a");
     expect(row.reasoning_level_override).toBe("none");
   });
 });
@@ -216,14 +264,12 @@ describe("#351 selection consumption", () => {
 describe("#351 drift classification (bb three-value vocabulary)", () => {
   it("selection triples classify unchanged/live over the shared classifier", () => {
     const current: ResolvedThreadExecutionSelection = {
-      providerId: "omp",
-      model: "glm-5.3",
+      providerId: "main",
+      model: "model-a",
       reasoningLevel: "none",
     };
     expect(classifyThreadSelectionChange(current, current)).toBe("unchanged");
-    expect(classifyThreadSelectionChange(current, { ...current, model: "glm-5.3-air" })).toBe(
-      "live",
-    );
+    expect(classifyThreadSelectionChange(current, { ...current, model: "model-b" })).toBe("live");
     expect(classifyThreadSelectionChange(current, { ...current, reasoningLevel: "high" })).toBe(
       "live",
     );
@@ -231,7 +277,7 @@ describe("#351 drift classification (bb three-value vocabulary)", () => {
 
   it("the classifier keeps the session verdict for permission drift (vocabulary guard)", () => {
     const full: RuntimeThreadExecutionOptions = {
-      model: "glm-5.3",
+      model: "model-a",
       serviceTier: "default" as const,
       reasoningLevel: "none" as const,
       workflowsEnabled: false,

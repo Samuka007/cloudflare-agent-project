@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate.js";
+import { restoreRigRelayCatalog, unsetRigRelayCatalog } from "../helpers.js";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import { systemProviderProjectionsResponseSchema } from "../../src/contract/api/system.js";
 import { buildProviderProjections } from "../../src/routes/system.js";
@@ -17,39 +18,46 @@ beforeAll(ensureMigrations);
 
 describe("GET /api/v1/system/provider-projections", () => {
   it("serves a contract-valid default projection (mock relay, ruled chain)", async () => {
-    const response = await exports.default.fetch(
-      "https://example.com/api/v1/system/provider-projections",
-    );
-    expect(response.status).toBe(200);
-    const parsed = systemProviderProjectionsResponseSchema.parse(await response.json());
-    // No MODEL_RELAY_API_KEY in the test worker env → mock mode (mock-first
-    // ruling #28), key gate false, defaults from HARNESS_DEFAULTS.
-    expect(parsed.harness.relayMode).toBe("mock");
-    // #361: no catalog → the incumbent anthropic face is the api default.
-    expect(parsed.harness.relayApi).toBe("anthropic-messages");
-    expect(parsed.harness.relayKeyPresent).toBe(false);
-    expect(parsed.harness.relayBaseUrlHost).toBe("open.bigmodel.cn");
-    expect(parsed.harness.relayModel).toBe("glm-5.3");
-    // #377: no DAEMON_MACHINE_ID var → the cloud placeholder is the honest
-    // harness default (no deployment machine is fabricated).
-    expect(parsed.harness.machineId).toBe(CLOUD_PLACEHOLDER_HOST_ID);
-    expect(parsed.harness.permissionMode).toBe("full");
-    // Unset AGENT_DO_WEB_SEARCH → ruled default chain: keyed API first,
-    // credential-free aggregate as fallback (#144).
-    expect(parsed.webSearch.configured).toBe(false);
-    expect(parsed.webSearch.decodeError).toBe(false);
-    expect(
-      parsed.webSearch.chain.map((engine) => [
-        engine.engine,
-        engine.credentialsRequired,
-        engine.credentialsPresent,
-      ]),
-    ).toEqual([
-      ["brave", true, false],
-      ["public", false, true],
-    ]);
-    expect(parsed.webSearch.timeoutSeconds).toBe(60);
-    expect(parsed.webSearch.browserBackedEngines).toEqual(["google", "ecosia", "mojeek"]);
+    // The default-projection shape is the UNCONFIGURED deployment; the rig
+    // binding is unset locally (the catalog-ledger row is covered below).
+    unsetRigRelayCatalog();
+    try {
+      const response = await exports.default.fetch(
+        "https://example.com/api/v1/system/provider-projections",
+      );
+      expect(response.status).toBe(200);
+      const parsed = systemProviderProjectionsResponseSchema.parse(await response.json());
+      // No MODEL_RELAY_API_KEY in the test worker env → mock mode (mock-first
+      // ruling #28), key gate false, defaults from HARNESS_DEFAULTS.
+      expect(parsed.harness.relayMode).toBe("mock");
+      // #361: no catalog → the incumbent anthropic face is the api default.
+      expect(parsed.harness.relayApi).toBe("anthropic-messages");
+      expect(parsed.harness.relayKeyPresent).toBe(false);
+      expect(parsed.harness.relayBaseUrlHost).toBe("open.bigmodel.cn");
+      expect(parsed.harness.relayModel).toBe("glm-5.3");
+      // #377: no DAEMON_MACHINE_ID var → the cloud placeholder is the honest
+      // harness default (no deployment machine is fabricated).
+      expect(parsed.harness.machineId).toBe(CLOUD_PLACEHOLDER_HOST_ID);
+      expect(parsed.harness.permissionMode).toBe("full");
+      // Unset AGENT_DO_WEB_SEARCH → ruled default chain: keyed API first,
+      // credential-free aggregate as fallback (#144).
+      expect(parsed.webSearch.configured).toBe(false);
+      expect(parsed.webSearch.decodeError).toBe(false);
+      expect(
+        parsed.webSearch.chain.map((engine) => [
+          engine.engine,
+          engine.credentialsRequired,
+          engine.credentialsPresent,
+        ]),
+      ).toEqual([
+        ["brave", true, false],
+        ["public", false, true],
+      ]);
+      expect(parsed.webSearch.timeoutSeconds).toBe(60);
+      expect(parsed.webSearch.browserBackedEngines).toEqual(["google", "ecosia", "mojeek"]);
+    } finally {
+      restoreRigRelayCatalog();
+    }
   });
 
   it("never emits secret values (评审断言)", () => {
@@ -154,17 +162,18 @@ describe("GET /api/v1/system/provider-projections", () => {
     expect(parsed.harness.relayThinking).toBe("enabled:2048");
   });
 
-  it("#350 reports the catalog declaration status (synthesis by default)", () => {
-    // No MODEL_RELAY_CATALOG in the test worker env → not configured, the
-    // M0 omp synthesis stands in with the harness model.
+  it("#350/#434 reports the catalog declaration status (empty when undeclared)", () => {
+    // No MODEL_RELAY_CATALOG in the test worker env → not configured, and
+    // NOTHING stands in (#434): the catalog ledger is honestly empty; the
+    // harness row keeps folding the declared deployment channel model.
     const built = buildProviderProjections({});
     const parsed = systemProviderProjectionsResponseSchema.parse(built);
     expect(parsed.catalog.configured).toBe(false);
     expect(parsed.catalog.decodeError).toBe(false);
-    expect(parsed.catalog.defaultProviderId).toBe("omp");
+    expect(parsed.catalog.defaultProviderId).toBeNull();
     expect(parsed.catalog.defaultModel).toBe("glm-5.3");
-    expect(parsed.catalog.providers).toEqual(["omp"]);
-    expect(parsed.catalog.models).toEqual(["glm-5.3"]);
+    expect(parsed.catalog.providers).toEqual([]);
+    expect(parsed.catalog.models).toEqual([]);
   });
 
   it("#350 reports a configured catalog's ids without leaking declared values", () => {
@@ -188,15 +197,17 @@ describe("GET /api/v1/system/provider-projections", () => {
     expect(JSON.stringify(parsed.catalog)).not.toContain("GLM-5.3");
   });
 
-  it("#350 reports catalog decodeError without env content when the JSON is unusable", () => {
+  it("#350/#434 reports catalog decodeError without env content when the JSON is unusable", () => {
     const broken = systemProviderProjectionsResponseSchema.parse(
       buildProviderProjections({ MODEL_RELAY_CATALOG: "{not-json" }),
     );
     expect(broken.catalog.configured).toBe(true);
     expect(broken.catalog.decodeError).toBe(true);
-    // The functional synthesis is served; the error text (which can quote
-    // raw env content) is dropped — the webSearch decodeError precedent.
-    expect(broken.catalog.providers).toEqual(["omp"]);
+    // NO rows are served (#434); the error text (which can quote raw env
+    // content) is dropped — the webSearch decodeError precedent.
+    expect(broken.catalog.providers).toEqual([]);
+    expect(broken.catalog.models).toEqual([]);
+    expect(broken.catalog.defaultProviderId).toBeNull();
 
     // A credential field has no seat in the public ledger: the strict decode
     // rejects the whole declaration, and the secret never reaches the face.

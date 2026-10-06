@@ -311,15 +311,16 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     await validatePromptAttachmentReferences(ctx.env.BLOBS, payload.projectId, payload.input);
     // #351: fail-closed selection validation over the catalog directory —
     // unknown provider/model/reasoning 422 with a named error before any
-    // write lands (ROADMAP red line: never silently relax). No selection
-    // fields → the legacy M0 path: provider "omp" (the synthetic default),
-    // null overrides.
+    // write lands (ROADMAP red line: never silently relax). #434 (point 3):
+    // no selection fields resolve against the DECLARED defaultProvider —
+    // and a deployment that declares none fails the create with the named
+    // 422 (provider_default_undeclared) instead of storing an "omp" sentinel.
     // #362: the selection validates against the MERGED directory (env seed ⊕
     // D1 provider rows) — a panel-side provider is selectable the moment it
     // exists.
     const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
     const selection = validateThreadExecutionSelection(ctx.env, payload, overlay?.providers);
-    const providerId = selection?.resolved.providerId ?? "omp";
+    const providerId = selection.resolved.providerId;
     // #288: the binding source chain resolves once, here — explicit choice >
     // project default source > deployment single machine — and feeds BOTH
     // halves: the environments row / threads.environment_id (control plane)
@@ -357,7 +358,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       threadId,
       title: payload.title ?? "",
       machineId: binding.machineId,
-      ...(selection !== null ? { execution: selection.explicit } : {}),
+      ...(selection.explicit !== null ? { execution: selection.explicit } : {}),
     });
     // bb createThread broadcasts (packages/db/src/data/threads.ts:337-340).
     await hub(ctx).notifyThread(threadId, ["thread-created"], { projectId: payload.projectId });
@@ -559,17 +560,17 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
         },
         overlay?.providers,
       );
-      if (next !== null) {
-        const current = resolveStoredThreadExecution(ctx.env, row, overlay?.providers);
-        if (classifyThreadSelectionChange(current, next.resolved) === "live") {
-          await updateThreadRecord(ctx.env, row.id, {
-            ...(payload.model !== undefined ? { modelOverride: payload.model } : {}),
-            ...(payload.reasoningLevel !== undefined
-              ? { reasoningLevelOverride: payload.reasoningLevel }
-              : {}),
-          });
-          executionRide = next.explicit;
-        }
+      // validateThreadExecutionSelection never returns null anymore (#434):
+      // the payload always carries providerId here, so `explicit` is set.
+      const current = resolveStoredThreadExecution(ctx.env, row, overlay?.providers);
+      if (classifyThreadSelectionChange(current, next.resolved) === "live" && next.explicit) {
+        await updateThreadRecord(ctx.env, row.id, {
+          ...(payload.model !== undefined ? { modelOverride: payload.model } : {}),
+          ...(payload.reasoningLevel !== undefined
+            ? { reasoningLevelOverride: payload.reasoningLevel }
+            : {}),
+        });
+        executionRide = next.explicit;
       }
     }
     // bb generates the client turn request id server-side when appending the

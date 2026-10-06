@@ -42,18 +42,13 @@ export {
   isValidProviderConfigId,
   loadProviderConfigCatalogOverlay,
   loadProviderConfigOverlay,
-  seedProviderConfigRows,
   type ProviderConfigCatalogOverlay,
   type ProviderConfigEnv,
   type ProviderConfigFullOverlay,
   type ProviderConfigLoad,
   type ProviderConfigRecord,
-  type ProviderConfigSource,
 } from "./provider-configs.js";
-export {
-  decryptProviderSecret,
-  encryptProviderSecret,
-} from "./provider-config-crypto.js";
+export { decryptProviderSecret, encryptProviderSecret } from "./provider-config-crypto.js";
 export {
   ModelsYmlImportError,
   OMP_API_VOCABULARY,

@@ -43,6 +43,23 @@ export default defineConfig({
           // same bindings-override seam as above).
           ACCESS_CHECK_ENABLED: "false",
           ACCESS_LOCAL_DEV: "true",
+          // #434: the L1 rig is a CONFIGURED deployment — thread creates
+          // without an explicit selection resolve the declared default
+          // (fail-closed 422 would otherwise reject every programmatic
+          // create). The keyless "rig" row still dispatches through the
+          // deployment-channel mock; suites asserting the UNCONFIGURED
+          // faces unset this binding locally and restore it.
+          MODEL_RELAY_CATALOG: JSON.stringify({
+            defaultProvider: "rig",
+            providers: {
+              rig: {
+                displayName: "L1 Rig Relay",
+                models: [
+                  { id: "rig-model", reasoningLevels: ["none"], defaultReasoningLevel: "none" },
+                ],
+              },
+            },
+          }),
         },
       },
     }),

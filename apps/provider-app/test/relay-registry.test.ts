@@ -1,7 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
   RelaySelectionError,
-  SYNTHETIC_RELAY_PROVIDER_ID,
   AnthropicRelayProvider,
   CompletionsRelayProvider,
   ResponsesRelayProvider,
@@ -11,7 +10,6 @@ import {
   decodeRelayProviderCredentials,
   relayAgentRuntime,
 } from "../src/relay-registry.js";
-import { FixedReplyProvider } from "../src/harness.js";
 
 /**
  * #351 relay provider registry: the providerId-keyed dispatch half of the
@@ -120,13 +118,18 @@ describe("#351 RelayProviderRegistry resolution", () => {
     }
   });
 
-  test("the empty catalog state (synthesis) admits exactly the running row", () => {
+  test("the empty catalog state admits nothing (#434 fail-closed)", () => {
     const registry = RelayProviderRegistry.fromEnv({});
-    const only = registry.resolve({});
-    expect(only.providerId).toBe(SYNTHETIC_RELAY_PROVIDER_ID);
-    expect(only.modelId).toBe("glm-5.3");
-    expect(only.reasoningLevel).toBe("none");
-    expect(registry.resolve({ providerId: "omp" }).modelId).toBe("glm-5.3");
+    // No selection and no declared default → the named undeclared-default 422.
+    expect(() => registry.resolve({})).toThrow(/names no defaultProvider/);
+    // The retired "omp" sentinel is an unknown provider like any other —
+    // sentinel-era stored threads fail loudly (point ⑧).
+    try {
+      registry.resolve({ providerId: "omp" });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as RelaySelectionError).code).toBe("provider_unknown");
+    }
     try {
       registry.resolve({ providerId: "ghost" });
       expect.unreachable();
@@ -137,15 +140,24 @@ describe("#351 RelayProviderRegistry resolution", () => {
       registry.resolve({ reasoningLevel: "high" });
       expect.unreachable();
     } catch (error) {
-      // Budget off → the ladder is ["none"]: a budget rung fails closed.
-      expect((error as RelaySelectionError).code).toBe("reasoning_level_unknown");
+      // No provider resolvable at all — the default absence fires first.
+      expect((error as RelaySelectionError).code).toBe("provider_default_undeclared");
     }
     try {
       registry.resolve({ model: "glm-5.3-air" });
       expect.unreachable();
     } catch (error) {
-      expect((error as RelaySelectionError).code).toBe("model_unknown");
+      expect((error as RelaySelectionError).code).toBe("provider_default_undeclared");
     }
+  });
+});
+
+describe("#351 selection defaults over a declared catalog", () => {
+  test("no explicit selection resolves the declaration's defaultProvider", () => {
+    const registry = RelayProviderRegistry.fromEnv(BUDGET_ON);
+    const resolved = registry.resolve({});
+    expect(resolved.providerId).toBe("main");
+    expect(resolved.modelId).toBe("glm-5.3");
   });
 });
 
@@ -184,13 +196,14 @@ describe("#351 credential slots (#255 C)", () => {
     expect(first).toBeInstanceOf(AnthropicRelayProvider);
   });
 
-  test("a keyless row degrades to the fixed-reply mock (mock-first, #28)", () => {
+  test("a keyless row fails dispatch with the named credential error (#434 ⑦)", () => {
     const registry = RelayProviderRegistry.fromEnv({
       MODEL_RELAY_CATALOG: DECLARED_CATALOG,
       MODEL_RELAY_THINKING_BUDGET_TOKENS: "4096",
     });
-    const provider = registry.providerFor({ providerId: "backup", model: "flash-mini" });
-    expect(provider).toBeInstanceOf(FixedReplyProvider);
+    expect(() => registry.providerFor({ providerId: "backup", model: "flash-mini" })).toThrow(
+      /backup.*no usable credential.*MODEL_RELAY_PROVIDER_CREDENTIALS/s,
+    );
   });
 
   test("credential decoding is strict", () => {
@@ -303,13 +316,14 @@ describe("#361 openai-responses dispatch", () => {
     }
   });
 
-  test("a keyless responses row degrades to the fixed-reply mock (mock-first, row-level)", () => {
+  test("a keyless responses row fails dispatch with the named credential error", () => {
     const registry = RelayProviderRegistry.fromEnv({
       MODEL_RELAY_CATALOG: RESPONSES_CATALOG,
       MODEL_RELAY_MODEL: "glm-5.3-flash",
     });
-    const provider = registry.providerFor({ providerId: "newapi", model: "glm-5.3-flash" });
-    expect(provider).toBeInstanceOf(FixedReplyProvider);
+    expect(() => registry.providerFor({ providerId: "newapi", model: "glm-5.3-flash" })).toThrow(
+      /newapi.*no usable credential/s,
+    );
   });
 });
 
@@ -386,14 +400,13 @@ describe("#363 openai-completions dispatch", () => {
     }
   });
 
-  test("a keyless completions row degrades to the fixed-reply mock (mock-first, row-level)", () => {
+  test("a keyless completions row fails dispatch with the named credential error", () => {
     const registry = RelayProviderRegistry.fromEnv({
       MODEL_RELAY_CATALOG: COMPLETIONS_CATALOG,
       MODEL_RELAY_MODEL: "glm-5.3-flash",
     });
-    const provider = registry.providerFor({ providerId: "newapi", model: "glm-5.3-flash" });
-    expect(provider).toBeInstanceOf(FixedReplyProvider);
-    // The mock still renders the completions wire body for the row's face.
-    expect(provider).toBeDefined();
+    expect(() => registry.providerFor({ providerId: "newapi", model: "glm-5.3-flash" })).toThrow(
+      /newapi.*no usable credential/s,
+    );
   });
 });
