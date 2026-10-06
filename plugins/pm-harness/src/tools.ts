@@ -48,7 +48,15 @@ import {
   renderPreflight,
   snapshot,
 } from "./core.js";
-import type { ApplyReport, AuditReport, LaneDispatchReport, Snapshot, SpawnRequest } from "./core.js";
+import type {
+  ApplyReport,
+  AuditReport,
+  LaneDispatchReport,
+  Snapshot,
+  SpawnRequest,
+} from "./core.js";
+import { walk } from "./walk.js";
+import type { WalkReport } from "./walk.js";
 import type { CustomTool, CustomToolAPI, CustomToolFactory, ToolResult } from "./host-types.js";
 
 // ---------------------------------------------------------------------------
@@ -140,6 +148,16 @@ export interface ReleaseArgs {
 
 export interface LedgerArgs {
   leasesPath?: string;
+}
+
+export interface WalkArgs {
+  url: string;
+  checks?: { selector: string; atLeast?: number; text?: string }[];
+  tabName?: string;
+  cdpHttp?: string;
+  settleMs?: number;
+  outDir?: string;
+  allowFetchFallback?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -235,12 +253,11 @@ function renderLane(reports: LaneDispatchReport[]): string {
 }
 
 function renderApply(r: ApplyReport): string {
-  const head =
-    r.dryRun
-      ? "== pm_apply preflight (dry-run — pass confirm:true to write) =="
-      : r.ok
-        ? "== pm_apply applied + verified =="
-        : "== pm_apply FAILED ==";
+  const head = r.dryRun
+    ? "== pm_apply preflight (dry-run — pass confirm:true to write) =="
+    : r.ok
+      ? "== pm_apply applied + verified =="
+      : "== pm_apply FAILED ==";
   const lines = [head, renderPreflight(r.preflight)];
   if (r.appliedBatches.length > 0) {
     lines.push(`  batches applied: ${JSON.stringify(r.appliedBatches)}`);
@@ -262,6 +279,38 @@ function renderAudit(rep: AuditReport): string {
   return lines.join("\n");
 }
 
+function renderWalk(rep: WalkReport): string {
+  const lines = [
+    `== pm_walk: ${rep.ok ? "PASS" : "FAIL"} ${rep.url}`,
+    `  transport=${rep.transport}${rep.cdpHttp === "" ? "" : ` (${rep.cdpHttp})`} tab=${rep.tabName}` +
+      ` console=${rep.consoleCapture}`,
+    `  title=${JSON.stringify(rep.title)} finalUrl=${rep.finalUrl}`,
+    `  checks=${String(rep.checks.filter((c) => c.passed).length)}/${String(rep.checks.length)}` +
+      ` passed consoleErrors=${String(rep.consoleErrors.length)}` +
+      ` failedRequests=${String(rep.failedRequests.length)}`,
+  ];
+  for (const check of rep.checks) {
+    lines.push(
+      `  ${check.passed ? "PASS" : "FAIL"} ${check.selector} count=${String(check.count)}` +
+        ` ≥${String(check.atLeast)}${check.why !== undefined ? ` — ${check.why}` : ""}`,
+    );
+  }
+  for (const error of rep.consoleErrors.slice(0, 5)) {
+    lines.push(`  [${error.kind}] ${error.text.slice(0, 160)}`);
+  }
+  if (rep.consoleErrors.length > 5)
+    lines.push(`  … ${String(rep.consoleErrors.length - 5)} more console errors`);
+  for (const failed of rep.failedRequests.slice(0, 5)) {
+    lines.push(
+      `  [net] ${failed.url.slice(0, 140)}${failed.status !== undefined ? ` → ${String(failed.status)}` : ""}`,
+    );
+  }
+  if (rep.failedRequests.length > 5)
+    lines.push(`  … ${String(rep.failedRequests.length - 5)} more failed requests`);
+  lines.push(`  evidence=${rep.evidence.anchor === "" ? "(not written)" : rep.evidence.anchor}`);
+  return lines.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // The factory
 // ---------------------------------------------------------------------------
@@ -277,7 +326,9 @@ export const createPmHarnessTools = (pi: CustomToolAPI): CustomTool[] => {
     z.object({
       op: z.enum(["setStatus"]),
       number: z.number().describe("Issue number"),
-      value: z.enum(STATUS_OPTIONS).describe("Target Status (closed states only for CLOSED issues)"),
+      value: z
+        .enum(STATUS_OPTIONS)
+        .describe("Target Status (closed states only for CLOSED issues)"),
     }),
     z.object({
       op: z.enum(["setPriority"]),
@@ -297,7 +348,9 @@ export const createPmHarnessTools = (pi: CustomToolAPI): CustomTool[] => {
     z.object({
       op: z.enum(["addLabels"]),
       number: z.number().describe("Issue number"),
-      labels: z.array(z.string()).describe("Registered label names (unknown labels are preflight errors)"),
+      labels: z
+        .array(z.string())
+        .describe("Registered label names (unknown labels are preflight errors)"),
     }),
   ]);
 
@@ -314,9 +367,7 @@ export const createPmHarnessTools = (pi: CustomToolAPI): CustomTool[] => {
       "herdr worktree provision → subagent spawn → guarded board flip to In Progress. " +
       "Accepts one ticket number or an array. Dry-run (default) returns the DoR table + spawn plan.",
     parameters: z.object({
-      ticket: z
-        .union([z.number(), z.array(z.number())])
-        .describe("Ticket number(s) to dispatch"),
+      ticket: z.union([z.number(), z.array(z.number())]).describe("Ticket number(s) to dispatch"),
       agent: z.string().optional().describe("omp agent type (default 'task')"),
       model: z.string().optional().describe("Model selector override for the lane"),
       confirm: confirmNode,
@@ -334,10 +385,9 @@ export const createPmHarnessTools = (pi: CustomToolAPI): CustomTool[] => {
         ...(params.leasesPath !== undefined ? { leasesPath: params.leasesPath } : {}),
       };
       // Overload narrowing: single number | Ticket vs the batch array form.
-      const list =
-        Array.isArray(params.ticket)
-          ? await lane(params.ticket, spec, opts)
-          : [await lane(params.ticket, spec, opts)];
+      const list = Array.isArray(params.ticket)
+        ? await lane(params.ticket, spec, opts)
+        : [await lane(params.ticket, spec, opts)];
       return {
         content: [{ type: "text", text: renderLane(list) }],
         details: { reports: list.map(laneDetails) },
@@ -386,7 +436,11 @@ export const createPmHarnessTools = (pi: CustomToolAPI): CustomTool[] => {
       const snap = await snapshot();
       const rep = audit(snap, {
         ...(params.activeLanes !== undefined ? { activeLanes: params.activeLanes } : {}),
-        ...(params.withLeases === true ? { leases: ledger(params.leasesPath !== undefined ? { path: params.leasesPath } : {}).events }
+        ...(params.withLeases === true
+          ? {
+              leases: ledger(params.leasesPath !== undefined ? { path: params.leasesPath } : {})
+                .events,
+            }
           : {}),
       });
       return {
@@ -458,7 +512,68 @@ export const createPmHarnessTools = (pi: CustomToolAPI): CustomTool[] => {
     },
   };
 
-  return [laneTool, applyTool, auditTool, releaseTool, ledgerTool];
+  const walkTool: CustomTool<WalkArgs> = {
+    name: "pm_walk",
+    label: "PM Acceptance Walk",
+    description:
+      "Walk a real page surface and leave ledger-able acceptance evidence (#392): navigates a " +
+      "lane-owned tab, captures console errors / page errors / failed requests, runs selector " +
+      "assertions, screenshots, and writes .pm-walk/<stamp>-<slug>/report.json with a sha256 " +
+      "anchor for AP.closeout's evidence field (source:walk, gate #390). Default surface: the " +
+      "kernel browser facade (managed headless Chromium). cdpHttp opts INTO the raw-CDP Windows " +
+      "Chrome bridge for Access-gated faces. allowFetchFallback downgrades to fetch+raw-HTML " +
+      "(console capture impossible — the report says so).",
+    parameters: z.object({
+      url: z.string().describe("http(s) URL to walk"),
+      checks: z
+        .array(
+          z.object({
+            selector: z.string().describe("CSS selector"),
+            atLeast: z
+              .number()
+              .optional()
+              .describe("Minimum matches, positive integer (default 1)"),
+            text: z.string().optional().describe("Substring the first match's text must contain"),
+          }),
+        )
+        .optional()
+        .describe("Selector assertions (default none — observation-only walk)"),
+      tabName: z
+        .string()
+        .optional()
+        .describe("Lane-owned tab name (lease discipline #240; default 'pm-walk')"),
+      cdpHttp: z
+        .string()
+        .optional()
+        .describe(
+          "Raw-CDP endpoint override (Windows Chrome bridge for Access faces, e.g. " +
+            "http://172.27.0.1:9222); omit for the kernel facade",
+        ),
+      settleMs: z.number().optional().describe("Post-load settle time in ms (default 3000)"),
+      outDir: z.string().optional().describe("Evidence root (default .pm-walk)"),
+      allowFetchFallback: z
+        .boolean()
+        .optional()
+        .describe("Allow the fetch+raw-HTML downgrade when no browser answers (default false)"),
+    }),
+    async execute(_toolCallId, params): Promise<ToolResult> {
+      const report = await walk(params.url, params.checks ?? [], {
+        ...(params.tabName !== undefined ? { tabName: params.tabName } : {}),
+        ...(params.cdpHttp !== undefined ? { cdpHttp: params.cdpHttp } : {}),
+        ...(params.settleMs !== undefined ? { settleMs: params.settleMs } : {}),
+        ...(params.outDir !== undefined ? { outDir: params.outDir } : {}),
+        ...(params.allowFetchFallback !== undefined
+          ? { allowFetchFallback: params.allowFetchFallback }
+          : {}),
+      });
+      return {
+        content: [{ type: "text", text: renderWalk(report) }],
+        details: { report },
+      };
+    },
+  };
+
+  return [laneTool, applyTool, auditTool, releaseTool, ledgerTool, walkTool];
 };
 
 const factory: CustomToolFactory = createPmHarnessTools;
