@@ -418,6 +418,41 @@ export const providerConfigTestResponseSchema = z.object({
 });
 export type ProviderConfigTestResponse = z.infer<typeof providerConfigTestResponseSchema>;
 
+/**
+ * POST /system/providers/discover-models (PM addition ①): the /models
+ * discovery face. Exactly one anchor is required — an unsaved row's
+ * {baseUrl, apiKey?} (the typed key is write-only, used for the one probe)
+ * or a saved row's {providerId} (uses the row's baseUrl + stored secret;
+ * the plaintext never round-trips through the panel). Discovered entries
+ * that cannot become a catalog model seat ride `warnings` — skip-with-
+ * warning, never silently dropped.
+ */
+const providerConfigDiscoverByRowSchema = z.strictObject({
+  providerId: providerConfigIdSchema,
+  apiKey: z.string().min(1).optional(),
+});
+const providerConfigDiscoverByBaseUrlSchema = z.strictObject({
+  baseUrl: z.string().min(1).max(2000),
+  apiKey: z.string().min(1).optional(),
+});
+/** The union IS the exactly-one-anchor rule: strict members reject mixed
+ * or empty payloads (422), and the route narrows on the discriminant. */
+export const providerConfigDiscoverRequestSchema = z.union([
+  providerConfigDiscoverByRowSchema,
+  providerConfigDiscoverByBaseUrlSchema,
+]);
+export type ProviderConfigDiscoverRequest = z.infer<typeof providerConfigDiscoverRequestSchema>;
+
+export const providerConfigDiscoverResponseSchema = z.object({
+  ok: z.boolean(),
+  status: z.number().int().nullable(),
+  latencyMs: z.number().int().nullable(),
+  error: z.string().nullable(),
+  models: z.array(z.object({ id: z.string().min(1), name: z.string().optional() })),
+  warnings: z.array(z.string()),
+});
+export type ProviderConfigDiscoverResponse = z.infer<typeof providerConfigDiscoverResponseSchema>;
+
 export const systemConfigReloadResponseSchema = z.object({
   ok: z.literal(true),
 });

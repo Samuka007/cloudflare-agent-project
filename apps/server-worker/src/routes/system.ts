@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import {
   BROWSER_BACKED_ENGINES,
@@ -25,6 +25,8 @@ import {
   systemExecutionOptionsResponseSchema,
   systemVersionResponseSchema,
   providerConfigCreateRequestSchema,
+  providerConfigDiscoverRequestSchema,
+  providerConfigDiscoverResponseSchema,
   providerConfigIdSchema,
   providerConfigPatchRequestSchema,
   providerConfigReplaceRequestSchema,
@@ -56,7 +58,10 @@ import {
   type CredentialUpdate,
   type ProviderConfigWriteFields,
 } from "../db/provider-configs.js";
-import { probeProviderConnection } from "../services/provider-config-test.js";
+import {
+  discoverProviderModels,
+  probeProviderConnection,
+} from "../services/provider-config-test.js";
 import {
   getAppSettingsRow,
   getExperiments,
@@ -629,4 +634,50 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
     });
     return ctx.json(providerConfigTestResponseSchema.parse(verdict));
   });
+
+  // PM addition ① (#362): /models discovery. Anchored either on an unsaved
+  // row ({baseUrl, apiKey?}) or a saved one ({providerId} — the row's
+  // baseUrl plus its DECRYPTED stored secret, which the panel never sees).
+  routes.post("/system/providers/discover-models", async (ctx) => {
+    const payload = await requireJsonBody(ctx, providerConfigDiscoverRequestSchema);
+    const verdict =
+      "providerId" in payload
+        ? await discoverForSavedRow(ctx, requireValidId(payload.providerId), payload.apiKey)
+        : await discoverProviderModels({
+            baseUrl: payload.baseUrl,
+            apiKey: payload.apiKey ?? null,
+          });
+    return ctx.json(providerConfigDiscoverResponseSchema.parse(verdict));
+  });
+}
+
+/** The {providerId}-anchored discovery branch: resolves the row's baseUrl
+ * and its stored secret (unless the panel re-typed a key for this probe). */
+async function discoverForSavedRow(
+  ctx: Context<{ Bindings: HonoBindings }>,
+  id: string,
+  typedKey: string | undefined,
+) {
+  const target = await getProviderConfigTarget(ctx.env, id);
+  if (target === null) {
+    throw new ApiError({
+      status: 404,
+      code: "provider_config_not_found",
+      message: `provider config "${id}" not found`,
+    });
+  }
+  if (target.baseUrl === null || target.baseUrl === "") {
+    return providerConfigDiscoverResponseSchema.parse({
+      ok: false,
+      status: null,
+      latencyMs: null,
+      error: "row declares no baseUrl — set one before discovering",
+      models: [],
+      warnings: [],
+    });
+  }
+  // An explicitly typed key (panel re-entry) wins for this one probe;
+  // otherwise the row's decrypted stored secret rides — never echoed back.
+  const apiKey = typedKey ?? (await readProviderConfigSecret(ctx.env, id));
+  return discoverProviderModels({ baseUrl: target.baseUrl, apiKey });
 }

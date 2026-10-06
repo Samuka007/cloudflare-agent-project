@@ -120,20 +120,26 @@ async function readProviderConfigs(
     maxUpdatedAt = Math.max(maxUpdatedAt, row.updated_at);
     const rowWarnings: string[] = [];
     let models: unknown = [];
+    let jsonBroken = false;
     if (typeof row.models === "string" && row.models.trim() !== "") {
       try {
         models = JSON.parse(row.models);
       } catch (error) {
+        // The raw column value rides the row (one-element wrapper on the
+        // CRUD face) so the panel sees exactly what to repair — the warning
+        // alone would leave an unactionable bad row.
+        models = row.models;
         rowWarnings.push(
           skipWarning(
             row.id,
             `models is not valid JSON (${error instanceof Error ? error.message : String(error)})`,
           ),
         );
+        jsonBroken = true;
       }
     }
     let decodedModels: RelayCatalogProvider["models"] = [];
-    if (models !== undefined) {
+    if (!jsonBroken) {
       const parsed = relayCatalogModelSchema.array().safeParse(models);
       if (parsed.success) {
         decodedModels = parsed.data;

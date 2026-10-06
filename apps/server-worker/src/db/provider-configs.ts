@@ -1,5 +1,14 @@
-import type { Env } from "../env.js";
 import { decryptProviderSecret, encryptProviderSecret } from "@cap/provider-app";
+
+/**
+ * The capability slice this module needs — structural, so routes pass their
+ * full Env and the L1 rig can construct a deployment WITHOUT the master
+ * secret (the master-key gate test) without dragging unrelated bindings in.
+ */
+export interface ProviderConfigEnv {
+  DB: D1Database;
+  PROVIDER_CONFIG_MASTER_KEY?: string;
+}
 
 /**
  * #362 provider_configs persistence (the user-face provider 正本). The row's
@@ -36,7 +45,10 @@ export interface ProviderConfigWriteFields {
  * Returns null when the row has no key or the master key is not configured.
  * The plaintext lives only in the caller's request scope.
  */
-export async function readProviderConfigSecret(env: Env, id: string): Promise<string | null> {
+export async function readProviderConfigSecret(
+  env: ProviderConfigEnv,
+  id: string,
+): Promise<string | null> {
   if (env.PROVIDER_CONFIG_MASTER_KEY === undefined || env.PROVIDER_CONFIG_MASTER_KEY === "") {
     return null;
   }
@@ -55,7 +67,7 @@ export interface ProviderConfigTarget {
 }
 
 export async function getProviderConfigTarget(
-  env: Env,
+  env: ProviderConfigEnv,
   id: string,
 ): Promise<ProviderConfigTarget | null> {
   const row = await env.DB.prepare("SELECT base_url, api, models FROM provider_configs WHERE id = ?")
@@ -82,7 +94,7 @@ export type CredentialUpdate =
   | { kind: "set"; plaintext: string };
 
 export async function insertProviderConfig(
-  env: Env,
+  env: ProviderConfigEnv,
   id: string,
   fields: ProviderConfigWriteFields,
   credential: CredentialUpdate,
@@ -108,7 +120,7 @@ export async function insertProviderConfig(
 
 /** PUT semantics: the visible face is replaced wholesale, updated_at bumps. */
 export async function replaceProviderConfig(
-  env: Env,
+  env: ProviderConfigEnv,
   id: string,
   fields: ProviderConfigWriteFields,
   credential: CredentialUpdate,
@@ -144,7 +156,7 @@ export interface ProviderConfigPatchColumns {
 
 /** PATCH semantics: only the provided columns move; the rest stays. */
 export async function patchProviderConfig(
-  env: Env,
+  env: ProviderConfigEnv,
   id: string,
   columns: ProviderConfigPatchColumns,
   credential: CredentialUpdate,
@@ -181,13 +193,13 @@ export async function patchProviderConfig(
     .run();
 }
 
-export async function deleteProviderConfig(env: Env, id: string): Promise<void> {
+export async function deleteProviderConfig(env: ProviderConfigEnv, id: string): Promise<void> {
   await env.DB.prepare("DELETE FROM provider_configs WHERE id = ?").bind(id).run();
 }
 
 /** Resolve the next api_key_enc column value under the null protocol. */
 async function encryptedCredentialColumn(
-  env: Env,
+  env: ProviderConfigEnv,
   current: string | null,
   credential: CredentialUpdate,
 ): Promise<string | null> {
