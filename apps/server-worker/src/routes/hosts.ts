@@ -19,7 +19,7 @@ import { ApiError } from "../shared/api-error.js";
 import { parseOr422, requireJsonBody } from "../shared/route-utils.js";
 import { getHostRow, listNonDestroyedHostRows, updateHostRow } from "../db/hosts.js";
 import { toHostRecord } from "../services/host-records.js";
-import type { Env, HonoBindings } from "../app-types.js";
+import type { AppEnv, Env } from "../app-types.js";
 
 /** bb COMMAND_TIMEOUT_MS (apps/server/src/constants.ts:1) — the host online
  * RPC window (directory browsing today, #302). */
@@ -40,8 +40,8 @@ const HOST_COMMAND_TIMEOUT_MS = 30_000;
  * deletable and the row itself carries the empty-machine semantics (never
  * connected, never heartbeats).
  */
-export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void {
-  const routes = new Hono<{ Bindings: HonoBindings }>();
+export function registerHostRoutes(app: Hono<AppEnv>): void {
+  const routes = new Hono<AppEnv>();
 
   // bb routes/hosts.ts:111-124: the add-a-machine mint — owner-gated like the
   // rest of the public API ("this route intentionally does not require

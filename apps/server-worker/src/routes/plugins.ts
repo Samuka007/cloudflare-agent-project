@@ -3,7 +3,7 @@ import {
   pluginContributionsResponseSchema,
   pluginListResponseSchema,
 } from "../contract/api/plugins.js";
-import type { HonoBindings } from "../app-types.js";
+import type { AppEnv } from "../app-types.js";
 import {
   loadStaticRegistryAsset,
   loadStaticRegistryEntry,
@@ -19,8 +19,8 @@ import {
  * hash-busting cache policy (plugins.ts:297-347): ?h=<current hash> →
  * immutable, anything else → no-store.
  */
-export function registerPluginRoutes(app: Hono<{ Bindings: HonoBindings }>): void {
-  const routes = new Hono<{ Bindings: HonoBindings }>();
+export function registerPluginRoutes(app: Hono<AppEnv>): void {
+  const routes = new Hono<AppEnv>();
 
   routes.get("/plugins", async (ctx) => {
     const entry = await loadStaticRegistryEntry(ctx.env);

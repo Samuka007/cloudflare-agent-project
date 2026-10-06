@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 import { ensureMigrations } from "../migrate.js";
 import { accessGate } from "../../src/middleware/access.js";
 import { verifyAccessToken } from "../../src/middleware/access.js";
@@ -12,11 +12,19 @@ import { exports } from "cloudflare:workers";
  * (staging), so L1 covers: disabled default, enabled rejection, and the pure
  * JWT verification path against a locally generated RS256 keypair.
  */
-function fakeContext(headers: Record<string, string>, env: Record<string, string>) {
+function fakeContext(
+  headers: Record<string, string>,
+  env: Record<string, string>,
+  state: Record<string, string> = {},
+) {
   return {
     env,
     req: {
       header: (name: string): string | undefined => headers[name.toLowerCase()],
+    },
+    get: (name: string) => state[name],
+    set: (name: string, value: string) => {
+      state[name] = value;
     },
   } as unknown as Parameters<typeof accessGate>[0];
 }
@@ -130,5 +138,125 @@ describe("criterion 5: Access gate", () => {
     const jwks = [{ kid, kty: "RSA", n: jwk.n, e: jwk.e }];
     const verified = await verifyAccessToken(token, { jwks, audience: "aud-cookie" });
     expect(verified.aud).toBe("aud-cookie");
+  });
+
+  // SEC-W5-003: the probe-face rate limiter keys on the VERIFIED identity,
+  // so the gate must publish it — sub first, email second, token digest as
+  // the per-credential fallback.
+  describe("principal capture for the probe-face limiter", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    async function mintToken(
+      claims: Record<string, unknown>,
+      keyPair: CryptoKeyPair,
+    ): Promise<string> {
+      const encode = (value: object): string =>
+        btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+      const header = encode({ alg: "RS256", kid: "principal-key" });
+      const signature = await crypto.subtle.sign(
+        "RSASSA-PKCS1-v1_5",
+        keyPair.privateKey,
+        new TextEncoder().encode(`${header}.${encode(claims)}`),
+      );
+      return `${header}.${encode(claims)}.${btoa(
+        String.fromCharCode(...new Uint8Array(signature)),
+      )
+        .replaceAll("+", "-")
+        .replaceAll("/", "_")
+        .replaceAll("=", "")}`;
+    }
+
+    async function mintKeyPairWithJwks(): Promise<{
+      keyPair: CryptoKeyPair;
+      jwks: object[];
+    }> {
+      const keyPair = (await crypto.subtle.generateKey(
+        {
+          name: "RSASSA-PKCS1-v1_5",
+          modulusLength: 2048,
+          publicExponent: new Uint8Array([1, 0, 1]),
+          hash: "SHA-256",
+        },
+        true,
+        ["sign", "verify"],
+      )) as CryptoKeyPair;
+      const jwk = (await crypto.subtle.exportKey("jwk", keyPair.publicKey)) as JsonWebKey;
+      if (jwk.n === undefined || jwk.e === undefined) {
+        throw new Error("generated RSA JWK is missing modulus/exponent");
+      }
+      return {
+        keyPair,
+        jwks: [{ kid: "principal-key", kty: "RSA", n: jwk.n, e: jwk.e }],
+      };
+    }
+
+    function stubJwks(jwks: object[]): void {
+      vi.stubGlobal(
+        "fetch",
+        () =>
+          Promise.resolve(
+            new Response(JSON.stringify({ keys: jwks }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+            }),
+          ),
+      );
+    }
+
+    it("publishes the verified sub (then email, then token digest) on the context", async () => {
+      // One keypair for both tokens: the module JWKS cache serves the first
+      // fetch for 10 minutes, so the second gate call must verify under the
+      // same kid.
+      const { keyPair, jwks } = await mintKeyPairWithJwks();
+      const token = await mintToken(
+        {
+          aud: "test-aud",
+          exp: Math.floor(Date.now() / 1000) + 300,
+          sub: "user-123",
+          email: "user@example.com",
+        },
+        keyPair,
+      );
+      stubJwks(jwks);
+      const state: Record<string, string> = {};
+      await accessGate(
+        fakeContext(
+          { "cf-access-jwt-assertion": token },
+          {
+            ACCESS_CHECK_ENABLED: "true",
+            ACCESS_TEAM_DOMAIN: "https://team.example.com",
+            ACCESS_AUD: "test-aud",
+          },
+          state,
+        ),
+        next,
+      );
+      expect(state.accessPrincipalId).toBe("user-123");
+
+      const emailOnlyToken = await mintToken(
+        {
+          aud: "test-aud",
+          exp: Math.floor(Date.now() / 1000) + 300,
+          email: "user@example.com",
+        },
+        keyPair,
+      );
+      const emailState: Record<string, string> = {};
+      await accessGate(
+        fakeContext(
+          { "cf-access-jwt-assertion": emailOnlyToken },
+          {
+            ACCESS_CHECK_ENABLED: "true",
+            ACCESS_TEAM_DOMAIN: "https://team.example.com",
+            ACCESS_AUD: "test-aud",
+          },
+          emailState,
+        ),
+        next,
+      );
+      expect(emailState.accessPrincipalId).toBe("user@example.com");
+    });
   });
 });
