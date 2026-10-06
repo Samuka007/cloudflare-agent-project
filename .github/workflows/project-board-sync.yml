@@ -109,17 +109,22 @@ jobs:
               core.info(`Added issue #${issue.number} to project as item ${itemId}`);
             }
 
-            // PM-owned state guard: In Progress is written directly by the PM
-            // at dispatch time. A later label/milestone event must not derive
-            // it back down to Todo/Backlog while the lane still runs. Wait for
-            // user and terminal states still win (user queue takes precedence).
+            // PM-owned state guard: In Progress and Wait for user are written
+            // directly by the PM (dispatch time / HITL queue — #365 lesson:
+            // user-blocked tickets must surface in the HITL view immediately).
+            // A later label/milestone event must not derive them back down to
+            // Todo/Backlog. Wait for user is sticky: it clears only by PM
+            // action or issue close, never by label churn (the
+            // ready-for-human label can still SET it via desiredState above).
+            // Terminal states (closed → Done/Canceled) always win.
             if (issue.state === 'open' && desiredState !== 'Wait for user') {
               const { node: curItem } = await github.graphql(
                 `query($iid: ID!) { node(id: $iid) { ... on ProjectV2Item { fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } }`,
                 { iid: itemId },
               );
-              if (curItem?.fieldValueByName?.name === 'In Progress') {
-                core.info(`Issue #${issue.number} is In Progress (PM-owned); keeping it, derived Status=${desiredState} skipped.`);
+              const current = curItem?.fieldValueByName?.name;
+              if (current === 'In Progress' || current === 'Wait for user') {
+                core.info(`Issue #${issue.number} is ${current} (PM-owned); keeping it, derived Status=${desiredState} skipped.`);
                 return;
               }
             }
