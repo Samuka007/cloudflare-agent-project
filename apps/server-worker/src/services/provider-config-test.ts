@@ -187,7 +187,7 @@ export async function discoverProviderModels(
     const parsed = discoveredModelEntrySchema.safeParse(entry);
     if (!parsed.success) {
       warnings.push(
-        `discovered entry without a usable string id (${JSON.stringify(entry)?.slice(0, 80)}) — skipped, never silently dropped`,
+        `discovered entry without a usable string id (${JSON.stringify(entry ?? null).slice(0, 80)}) — skipped, never silently dropped`,
       );
       continue;
     }

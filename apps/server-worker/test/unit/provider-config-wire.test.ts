@@ -28,9 +28,9 @@ describe("#362 probeProviderConnection (test-connection)", () => {
         model: "claude-panel",
         apiKey: "sk-probe-362",
       },
-      async (url, init) => {
+      (url, init) => {
         calls.push({ url, init });
-        return jsonResponse({ ok: true });
+        return Promise.resolve(jsonResponse({ ok: true }));
       },
     );
     expect(verdict.ok).toBe(true);
@@ -49,9 +49,9 @@ describe("#362 probeProviderConnection (test-connection)", () => {
         model: "panel-model",
         apiKey: null,
       },
-      async (url, init) => {
+      (url, init) => {
         calls.push({ url, init });
-        return jsonResponse({ ok: true });
+        return Promise.resolve(jsonResponse({ ok: true }));
       },
     );
     expect(verdict.ok).toBe(true);
@@ -63,7 +63,7 @@ describe("#362 probeProviderConnection (test-connection)", () => {
   it("answers a bounded-error verdict on upstream failure", async () => {
     const verdict = await probeProviderConnection(
       { api: "anthropic", baseUrl: "https://up.example.com", model: "m", apiKey: null },
-      async () => jsonResponse({ error: { message: "nope sk-echo-should-not-matter" } }, 401),
+      () => Promise.resolve(jsonResponse({ error: { message: "nope sk-echo-should-not-matter" } }, 401)),
     );
     expect(verdict.ok).toBe(false);
     expect(verdict.status).toBe(401);
@@ -73,7 +73,7 @@ describe("#362 probeProviderConnection (test-connection)", () => {
   it("maps transport failures to a null-status verdict", async () => {
     const verdict = await probeProviderConnection(
       { api: "anthropic", baseUrl: "https://up.example.com", model: "m", apiKey: null },
-      async () => {
+      () => {
         throw new Error("connect ECONNREFUSED");
       },
     );
@@ -88,15 +88,17 @@ describe("#362 discoverProviderModels (/models discovery)", () => {
     const calls: { url: string; init: RequestInit }[] = [];
     const verdict = await discoverProviderModels(
       { baseUrl: "https://newapi.example.com/v1/", apiKey: "sk-disc-362" },
-      async (url, init) => {
+      (url, init) => {
         calls.push({ url, init });
-        return jsonResponse({
-          object: "list",
-          data: [
-            { id: "glm-5.3", object: "model", owned_by: "zhipu" },
-            { id: "glm-5.3-air", name: "GLM Air" },
-          ],
-        });
+        return Promise.resolve(
+          jsonResponse({
+            object: "list",
+            data: [
+              { id: "glm-5.3", object: "model", owned_by: "zhipu" },
+              { id: "glm-5.3-air", name: "GLM Air" },
+            ],
+          }),
+        );
       },
     );
     expect(verdict.ok).toBe(true);
@@ -109,7 +111,7 @@ describe("#362 discoverProviderModels (/models discovery)", () => {
   it("reports unusable entries as warnings — never silently dropped", async () => {
     const verdict = await discoverProviderModels(
       { baseUrl: "https://up.example.com", apiKey: null },
-      async () => jsonResponse({ data: [{ id: "good" }, { nope: 1 }, "junk", { id: "" }] }),
+      () => Promise.resolve(jsonResponse({ data: [{ id: "good" }, { nope: 1 }, "junk", { id: "" }] })),
     );
     expect(verdict.ok).toBe(true);
     expect(verdict.models).toEqual([{ id: "good" }]);
@@ -120,14 +122,14 @@ describe("#362 discoverProviderModels (/models discovery)", () => {
   it("answers ok:false on non-list envelopes and non-JSON bodies", async () => {
     const notList = await discoverProviderModels(
       { baseUrl: "https://up.example.com", apiKey: null },
-      async () => jsonResponse({ version: "1.0" }),
+      () => Promise.resolve(jsonResponse({ version: "1.0" })),
     );
     expect(notList.ok).toBe(false);
     expect(notList.error).toContain("models list");
 
     const notJson = await discoverProviderModels(
       { baseUrl: "https://up.example.com", apiKey: null },
-      async () => new Response("<html>gateway</html>", { status: 200 }),
+      () => Promise.resolve(new Response("<html>gateway</html>", { status: 200 })),
     );
     expect(notJson.ok).toBe(false);
     expect(notJson.error).toContain("not JSON");
@@ -136,7 +138,7 @@ describe("#362 discoverProviderModels (/models discovery)", () => {
   it("answers ok:false with the upstream status on HTTP errors", async () => {
     const verdict = await discoverProviderModels(
       { baseUrl: "https://up.example.com", apiKey: null },
-      async () => jsonResponse({ error: "unauthorized" }, 401),
+      () => Promise.resolve(jsonResponse({ error: "unauthorized" }, 401)),
     );
     expect(verdict.ok).toBe(false);
     expect(verdict.status).toBe(401);

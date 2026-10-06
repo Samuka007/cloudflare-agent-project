@@ -66,7 +66,7 @@ async function request(
 
 async function postProvider(body: unknown): Promise<{ status: number; row?: ProviderRow }> {
   const response = await request("POST", "/api/v1/system/providers", body);
-  const payload = (await response.json()) as unknown;
+  const payload = await response.json<unknown>();
   return {
     status: response.status,
     ...(response.status === 201 ? { row: providerConfigRowSchema.parse(payload) } : {}),
@@ -120,7 +120,7 @@ async function rawEvents(threadId: string): Promise<AnyAgentEvent[]> {
 
 async function expect422(response: Response, code: string): Promise<void> {
   expect(response.status).toBe(422);
-  const body = (await response.json()) as { code: string };
+  const body = await response.json<{ code: string }>();
   expect(body.code).toBe(code);
 }
 
@@ -177,14 +177,14 @@ describe("#362 CRUD face", () => {
       models: [{ id: "m" }],
     });
     expect(duplicate.status).toBe(409);
-    expect(((await duplicate.json()) as { code: string }).code).toBe("provider_config_exists");
+    expect((await duplicate.json<{ code: string }>()).code).toBe("provider_config_exists");
 
     const reserved = await request("POST", "/api/v1/system/providers", {
       id: "omp",
       models: [{ id: "m" }],
     });
     expect(reserved.status).toBe(409);
-    expect(((await reserved.json()) as { code: string }).code).toBe("provider_config_reserved");
+    expect((await reserved.json<{ code: string }>()).code).toBe("provider_config_reserved");
 
     await expect422(
       await request("POST", "/api/v1/system/providers", { id: "has space", models: [] }),
@@ -212,7 +212,7 @@ describe("#362 CRUD face", () => {
     expect(providerConfigRowSchema.parse(await single.json()).id).toBe("listy");
     const missing = await request("GET", "/api/v1/system/providers/ghost");
     expect(missing.status).toBe(404);
-    expect(((await missing.json()) as { code: string }).code).toBe("provider_config_not_found");
+    expect((await missing.json<{ code: string }>()).code).toBe("provider_config_not_found");
     const list = await listProviders();
     expect(list.map((row) => row.id)).toContain("listy");
   });
@@ -510,7 +510,7 @@ describe("#362 thread selection consumes the merged directory (#351 chain)", () 
       reasoningLevel: "none",
     });
     expect(created.status).toBe(201);
-    const thread = (await created.json()) as { id: string };
+    const thread = await created.json<{ id: string }>();
 
     // The selection bridges into the journal (#351 shape) with the panel id.
     const events = await rawEvents(thread.id);

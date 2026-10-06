@@ -41,14 +41,15 @@ describe("#362 provider-config crypto (AES-256-GCM)", () => {
 
   test("tampered and truncated payloads throw instead of half-decrypting", async () => {
     const payload = await encryptProviderSecret(MASTER_KEY, "sk-unit-362");
-    const bytes = Buffer.from(payload, "base64");
-    bytes[bytes.length - 1] ^= 0xff; // flip one ciphertext/tag bit
+    const bytes = Uint8Array.from(atob(payload), (character) => character.charCodeAt(0));
+    const last = bytes[bytes.length - 1] ?? 0;
+    bytes[bytes.length - 1] = last ^ 0xff; // flip one ciphertext/tag bit
     await expect(
-      decryptProviderSecret(MASTER_KEY, Buffer.from(bytes).toString("base64")),
+      decryptProviderSecret(MASTER_KEY, btoa(String.fromCharCode(...bytes))),
     ).rejects.toThrow();
-    await expect(decryptProviderSecret(MASTER_KEY, Buffer.from([1, 2, 3]).toString("base64"))).rejects.toThrow(
-      /truncated/,
-    );
+    await expect(
+      decryptProviderSecret(MASTER_KEY, btoa(String.fromCharCode(1, 2, 3))),
+    ).rejects.toThrow(/truncated/);
   });
 });
 
