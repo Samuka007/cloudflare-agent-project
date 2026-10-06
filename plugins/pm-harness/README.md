@@ -1,6 +1,6 @@
 # pm-harness — omp plugin (#270)
 
-The PM harness as an **omp custom-tool family**: five model-callable tools over
+The PM harness as an **omp custom-tool family**: six model-callable tools over
 the AP core (`src/core.ts`, ex `scripts/pm-autopilot.ts`), registered through
 the omp custom-tools pipeline into the same registry as the built-ins. With
 `tools.xdev` enabled they additionally mount under `xd://pm_*` (the
@@ -10,9 +10,10 @@ the omp custom-tools pipeline into the same registry as the built-ins. With
 | --- | --- | --- |
 | `pm_lane` | `AP.lane` | Gate check (open ∧ Todo ∧ no open blockers) → herdr worktree provision → lane spawn → guarded board flip to In Progress. Dry-run default. |
 | `pm_apply` | `AP.apply` | The ONLY board write path: preflight diff → batched guarded writes with per-batch re-verify; drift withholds remaining batches. Dry-run default. |
-| `pm_audit` | `AP.audit` | Board-vs-reality drift reconcile (read-only); returns `pm_apply`-ready repair mutations. |
+| `pm_audit` | `AP.audit` | Board-vs-reality drift reconcile (read-only); walk-due rule 8 always armed from the repo ledger; returns `pm_apply`-ready repair mutations. |
 | `pm_release` | `AP.release` | Browser-lease release (CDP tab/thread discipline) in the append-only ledger. |
 | `pm_ledger` | `AP.ledger` | Lease ledger read: full event log + replayed active set. |
+| `pm_walk` | `AP.walk` / `AP.walkDone` / `AP.walkLedger` | 走查挂账 ledger (#391): register {ticket, due, face}, settle with evidence, read events + active set. Overdue = audit rule 8 → board flips red (Wait for user). |
 
 Bundles one task-agent def: `agents/pm-guard.md` (board guardian; same
 guarded-write discipline).
@@ -27,7 +28,7 @@ omp plugin link /path/to/cloudflare-agent-project/plugins/pm-harness
 omp plugin list
 ```
 
-In any omp session the five tools are then discoverable without any import —
+In any omp session the six tools are then discoverable without any import —
 model-callable directly, callable from the eval kernel as
 `await tool.pm_lane(310, {}, { confirm: true })`, or mounted as
 `xd://pm_lane` under `tools.xdev`.
@@ -52,12 +53,12 @@ core's transport-missing L1 assertions are unchanged.
 plugins/pm-harness/
   package.json        # omp manifest: tools → ./src/tools.ts
   src/core.ts         # AP core (#131, relocated #270) — pure fns + injected gh/jev
-  src/tools.ts        # the five custom tools + detached-omp fallback
+  src/tools.ts        # the six custom tools + detached-omp fallback
   src/host-types.ts   # structural omp CustomToolAPI types (no omp dep needed)
   agents/pm-guard.md  # task-agent def (board guardian)
   test/               # L1: core.test.ts (moved), tools.test.ts, fixtures/
 ```
 
 Config (unchanged from #131): `PM_REPO`, `PM_PROJECT_ID`, `GH_TOKEN` (or
-`gh auth token`), `JEV_API_KEY` (intake/file flows only — the five tools never
-touch jev), `PM_LEASES_PATH`.
+`gh auth token`), `JEV_API_KEY` (intake/file flows only — the tools never
+touch jev), `PM_LEASES_PATH`, `PM_CLOSEOUTS_PATH`, `PM_WALKS_PATH`.

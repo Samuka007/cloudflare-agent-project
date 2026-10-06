@@ -13,10 +13,13 @@
  *   pm_apply   — the ONLY write path: preflight diff (dry-run default) →
  *                batched guarded writes with per-batch re-verify (drift →
  *                remaining batches withheld)
- *   pm_audit   — board-vs-reality drift reconcile; returns pm_apply-ready
+ *   pm_audit   — board-vs-reality drift reconcile (walk-due rule 8 always
+ *                armed from the repo ledger); returns pm_apply-ready
  *                mutations (read-only: nothing writes here)
  *   pm_release — browser-lease release (ledger close-out)
  *   pm_ledger  — browser-lease ledger read (events + active set)
+ *   pm_walk    — 走查挂账 ledger (#391): register {ticket, due, face},
+ *                settle with evidence, or read events + active set
  *
  * Safety posture inherited from the core, unchanged: closed-state Statuses
  * (Done/Canceled) are rejected as write targets, unknown labels/milestones/
@@ -47,6 +50,9 @@ import {
   release,
   renderPreflight,
   snapshot,
+  walk,
+  walkDone,
+  walkLedger,
 } from "./core.js";
 import type { ApplyReport, AuditReport, LaneDispatchReport, Snapshot, SpawnRequest } from "./core.js";
 import type { CustomTool, CustomToolAPI, CustomToolFactory, ToolResult } from "./host-types.js";
@@ -128,6 +134,9 @@ export interface AuditArgs {
    *  audit stays pure unless the caller opts in. */
   withLeases?: boolean;
   leasesPath?: string;
+  /** Walk-due ledger path override (rule 8 is always armed from the repo
+   *  ledger — an overdue deferral must surface on every audit, #391). */
+  walksPath?: string;
 }
 
 export interface ReleaseArgs {
@@ -140,6 +149,19 @@ export interface ReleaseArgs {
 
 export interface LedgerArgs {
   leasesPath?: string;
+}
+
+export interface WalkArgs {
+  action: "register" | "done" | "list";
+  /** Ticket number (register/done). */
+  number?: number;
+  /** ISO-8601 due date (register). */
+  due?: string;
+  /** 走查面 — what exactly is walked, one line (register). */
+  face?: string;
+  /** Evidence anchor: walk report / comment / PR (done). */
+  evidence?: string;
+  walksPath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -372,7 +394,8 @@ export const createPmHarnessTools = (pi: CustomToolAPI): CustomTool[] => {
     description:
       "Reconcile the project board against reality (read-only): closed-status convergence, dead-lane " +
       "In Progress, active-lane status mismatch, frontier aging, and (with withLeases) browser-lease " +
-      "ledger drift. Returns pm_apply-ready repair mutations — one-shot reconcile is " +
+      "ledger drift, plus overdue walk deferrals (rule 8, always armed: 到期翻红 → Wait for user). " +
+      "Returns pm_apply-ready repair mutations — one-shot reconcile is " +
       "pm_audit → pm_apply(mutations, confirm).",
     parameters: z.object({
       activeLanes: z.array(z.number()).optional().describe("Ticket numbers with live lanes"),
@@ -381,6 +404,7 @@ export const createPmHarnessTools = (pi: CustomToolAPI): CustomTool[] => {
         .optional()
         .describe("Arm rule 6 (browser-lease drift) from the repo lease ledger"),
       leasesPath: z.string().optional().describe("Browser-lease ledger path override"),
+      walksPath: z.string().optional().describe("Walk-due ledger path override"),
     }),
     async execute(_toolCallId, params): Promise<ToolResult> {
       const snap = await snapshot();
@@ -388,6 +412,7 @@ export const createPmHarnessTools = (pi: CustomToolAPI): CustomTool[] => {
         ...(params.activeLanes !== undefined ? { activeLanes: params.activeLanes } : {}),
         ...(params.withLeases === true ? { leases: ledger(params.leasesPath !== undefined ? { path: params.leasesPath } : {}).events }
           : {}),
+        walks: walkLedger(params.walksPath !== undefined ? { path: params.walksPath } : {}).events,
       });
       return {
         content: [{ type: "text", text: renderAudit(rep) }],
@@ -458,7 +483,67 @@ export const createPmHarnessTools = (pi: CustomToolAPI): CustomTool[] => {
     },
   };
 
-  return [laneTool, applyTool, auditTool, releaseTool, ledgerTool];
+  const walkTool: CustomTool<WalkArgs> = {
+    name: "pm_walk",
+    label: "PM Walk Ledger",
+    description:
+      "走查挂账 ledger (#391 — the 终检批 ban): register a deferred walk as {ticket, due, face} " +
+      "(register), settle it with the evidence anchor (done), or read events + the active set " +
+      "(list). Overdue active walks are pm_audit rule 8 — the board flips red " +
+      "(Wait for user) at the next audit.",
+    parameters: z.object({
+      action: z.enum(["register", "done", "list"]).describe("register / done / list"),
+      number: z.number().int().positive().optional().describe("Ticket number (register/done)"),
+      due: z.string().optional().describe("ISO-8601 due date (register)"),
+      face: z.string().optional().describe("走查面 — what exactly is walked, one line (register)"),
+      evidence: z.string().optional().describe("Evidence anchor: walk report / comment / PR (done)"),
+      walksPath: z.string().optional().describe("Ledger path override"),
+    }),
+    execute(_toolCallId, params): ToolResult {
+      const opts = params.walksPath !== undefined ? { path: params.walksPath } : {};
+      if (params.action === "register") {
+        if (params.number === undefined || params.due === undefined || params.face === undefined) {
+          throw new Error("pm_walk register requires number, due and face — 无票无期限的挂账=终检批");
+        }
+        const rec = walk(params.number, params.due, params.face, opts);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `== pm_walk: #${rec.number} registered (due ${rec.due}) ==\n  face: ${rec.face}`,
+            },
+          ],
+          details: { ...rec },
+        };
+      }
+      if (params.action === "done") {
+        if (params.number === undefined || params.evidence === undefined) {
+          throw new Error("pm_walk done requires number and evidence — 空框不可销账");
+        }
+        const rec = walkDone(params.number, params.evidence, opts);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `== pm_walk: #${rec.number} settled ==\n  evidence: ${rec.evidence}`,
+            },
+          ],
+          details: { ...rec },
+        };
+      }
+      const view = walkLedger(opts);
+      const lines = [
+        `== pm_walk: ${view.events.length} event(s), ${view.active.length} active ==`,
+        ...view.active.map((w) => `  DUE #${w.number} ${w.due} — ${w.face} (registered ${w.recordedAt})`),
+      ];
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: { events: view.events, active: view.active },
+      };
+    },
+  };
+
+  return [laneTool, applyTool, auditTool, releaseTool, ledgerTool, walkTool];
 };
 
 const factory: CustomToolFactory = createPmHarnessTools;
