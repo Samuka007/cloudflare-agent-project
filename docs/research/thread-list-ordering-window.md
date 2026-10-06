@@ -75,7 +75,8 @@ id 每轮随机重生成 → 新线程 rank 在 [0, total] 均匀分布 → 绿�
 ## 3. 复现加固与验收
 
 - 脚本：`scripts/verify-c2-list-window.sh`（flake 入口 `nix run .#verify-c2-list-window [-- --rounds N]`，默认 20 轮）。场景 = CI verify 对本缺陷的红面（apps/server-worker 全量 vitest run，isolate:false 共享 D1），逐轮日志落 `.c2-verify-logs/`（gitignored），首红即停并保留现场。
-- 修复后本地 `--rounds 50` 零红（2026-10-06 记录，日志目录轮次齐全）。
+- **验收（2026-10-06）**：修复后 50 轮全量套件（round 01-50）+ 2 次 CI verify（runs 37414340068 / 37414309379，push 与 PR-sync 各一，即历史上互异的同提交双实例场景）——**c2-thread-list 零红（54 次全量场景全绿）**。修复前对照：全量套件 4 轮中 1 红（rank 59 实录）。
+- **50 轮中浮现的两个他票间歇红（非本缺陷，均不触 c2）**：round 20 `test/unit/lease-do.test.ts`（50ms TTL 墙钟竞速，单文件 10 连跑全绿 → 负载依赖）；round 21 `test/compat/join-codes-onboarding.test.ts`（mint/enroll 500 ×2）。两者与 listThreads 排序零交集（leases/join-codes 不读 threads 列表面），各有独立日志为证，另立票处理。
 - 防复发知识：任何给 `listThreads` 加排序键/加窗口的改动，先跑 `nix run .#verify-c2-list-window -- --rounds 20`。
 
 > AGENT GENERATED: by zhipu-coding-plan/glm-5.3-flash
