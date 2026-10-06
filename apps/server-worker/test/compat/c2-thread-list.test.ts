@@ -14,36 +14,23 @@ import { exports } from "cloudflare:workers";
 beforeAll(ensureMigrations);
 
 describe("criterion 2: thread list bare array", () => {
-  // #337 exception note: real-clock backoff, not fake timers — the visibility
-  // window lives in the workers-pool runtime (workerd isolate scheduling), a
-  // domain vi.useFakeTimers cannot advance.
-  const backoff = (ms: number): Promise<void> => {
-    const { promise, resolve } = Promise.withResolvers<undefined>();
-    setTimeout(() => {
-      resolve(undefined);
-    }, ms);
-    return promise;
-  };
-
   it("returns a bare array of valid thread list entries", async () => {
     const created = await createThread({ title: "list-entry" });
-    // #337: under CI's parallel workers-pool load the freshly created row can
-    // take a moment to become visible to the list read. Retry the READ ONLY
-    // (bounded): a genuine consistency defect still fails — the create is
-    // never repeated, so a row that never lands stays missing. #326
-    // recurrence (two consecutive CI verify runs red at ~750ms while the
-    // identical suite passed locally twice): widen to 12×250ms ≈ 3s — the
-    // 2-core runners need more headroom than the original 6×150ms budget.
-    let match: ThreadListEntry | undefined;
-    for (let attempt = 0; attempt < 12 && match === undefined; attempt++) {
-      if (attempt > 0) await backoff(250);
-      const response = await exports.default.fetch("https://example.com/api/v1/threads?limit=50");
-      expect(response.status).toBe(200);
-      const body = await response.json();
-      expect(Array.isArray(body)).toBe(true);
-      const entries = (body as unknown[]).map((entry) => threadListEntrySchema.parse(entry));
-      match = entries.find((entry) => entry.id === created.id);
-    }
+    // #337: the create→list read is synchronously consistent (same D1
+    // binding, read-after-write) — no retry needed. What bit CI was the
+    // read face's ordering, not consistency: listThreads sorted unpinned
+    // threads by their random id suffix, so once the shared suite database
+    // (isolate:false — storage persists across all 42 files) grew past the
+    // limit window, a fresh thread landed at a uniformly random rank
+    // (observed 73 threads / rank 59 / window 50) and no read retry could
+    // ever see it. The face now orders unpinned threads recency-first, so
+    // the just-created thread is deterministically in the window.
+    const response = await exports.default.fetch("https://example.com/api/v1/threads?limit=50");
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(Array.isArray(body)).toBe(true);
+    const entries = (body as unknown[]).map((entry) => threadListEntrySchema.parse(entry));
+    const match: ThreadListEntry | undefined = entries.find((entry) => entry.id === created.id);
     expect(match).toBeDefined();
     expect(match?.runtime.displayStatus).toBeTypeOf("string");
     expect(match?.activity.activeBackgroundAgentCount).toBe(0);
