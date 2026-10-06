@@ -109,17 +109,28 @@ jobs:
               core.info(`Added issue #${issue.number} to project as item ${itemId}`);
             }
 
-            // PM-owned state guard: In Progress is written directly by the PM
-            // at dispatch time. A later label/milestone event must not derive
-            // it back down to Todo/Backlog while the lane still runs. Wait for
-            // user and terminal states still win (user queue takes precedence).
-            if (issue.state === 'open' && desiredState !== 'Wait for user') {
+            // Read-before-write ownership model (#365 lesson, user ruling
+            // 2026-10-06): the sync owns ONLY the unclaimed states — empty,
+            // Backlog, Todo. Any other current value (In Progress, Wait for
+            // user, or any status option added later by the user) means a
+            // human/PM has taken ownership; a lifecycle event must not
+            // derive over it. One carve-out: the ready-for-human label is an
+            // explicit user queue entry, so desiredState "Wait for user" may
+            // also land on In Progress (a running lane the user wants in
+            // their queue) — custom statuses stay protected. Close is the
+            // sole other override (terminal states always win, handled above
+            // by issue.state === 'closed').
+            if (issue.state === 'open') {
               const { node: curItem } = await github.graphql(
                 `query($iid: ID!) { node(id: $iid) { ... on ProjectV2Item { fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } }`,
                 { iid: itemId },
               );
-              if (curItem?.fieldValueByName?.name === 'In Progress') {
-                core.info(`Issue #${issue.number} is In Progress (PM-owned); keeping it, derived Status=${desiredState} skipped.`);
+              const current = curItem?.fieldValueByName?.name ?? '';
+              const syncOwned = ['', 'Backlog', 'Todo'];
+              const writable = syncOwned.includes(current)
+                || (current === 'In Progress' && desiredState === 'Wait for user');
+              if (!writable) {
+                core.info(`Issue #${issue.number} Status="${current}" is human/PM-owned; derived Status=${desiredState} skipped (read-before-write).`);
                 return;
               }
             }
