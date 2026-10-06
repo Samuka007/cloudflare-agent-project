@@ -16,12 +16,15 @@ import {
   INTAKE_QUESTIONS,
   activeLeases,
   acceptedNumbers,
+  acceptanceFaceOf,
+  acceptanceSectionOf,
   browserInvolved,
   closeout,
   closeoutGated,
   closeoutLedger,
   ledger,
   lease,
+  migrateCloseoutLedger,
   release,
   lane,
   JEV_MODEL,
@@ -79,6 +82,9 @@ vi.mock("node:fs", () => ({
   appendFileSync: (path: unknown, data: string): void => {
     const key = String(path);
     fsProbe.files.set(key, (fsProbe.files.get(key) ?? "") + data);
+  },
+  writeFileSync: (path: unknown, data: string): void => {
+    fsProbe.files.set(String(path), data);
   },
   existsSync: (path: unknown): boolean => fsProbe.files.has(String(path)),
 }));
@@ -2084,11 +2090,46 @@ describe("AP.audit rule 6 — browser lease drift (#240)", () => {
 
 const CLOSEOUT_PATH = "test-closeouts.jsonl";
 
+/** A pure-code ticket: acceptance is tests/CI, no 验收 section keywords.
+ *  (Shape of #390 itself — it talks ABOUT UI tickets while shipping L1.) */
+const CODE_TICKET = {
+  title: "[W5] harness gate",
+  labels: ["type:implementation"],
+  body: [
+    "## 验收",
+    "- UI 票 ci 关账被拒的 L1 断言+walk 证据链落账断言",
+    "- 台账新列迁移+既有行回填",
+    "- CI 绿",
+  ].join("\n"),
+};
+
+/** A product-face ticket: the #362-shaped 验收 section names the panel. */
+const PRODUCT_TICKET = {
+  title: "provider configurable panel",
+  labels: ["type:implementation"],
+  body: [
+    "## 用户裁决",
+    "pi/bb 式用户可配置 provider 面板（这句话在验收节外，不参与判面）",
+    "## 验收",
+    "- 面板新增 provider（openai-responses + anthropic 两型）→ execution-options 即刻出现",
+    "- staging 部分走查（配置面+mock turn 不依赖真模型）",
+    "- CI 绿",
+  ].join("\n"),
+};
+
+/** Non-gated labels: outside the #277 closeout gate, hence outside #390. */
+const DOCS_TICKET = {
+  title: "docs: provider panel",
+  labels: ["type:docs"],
+  body: PRODUCT_TICKET.body,
+};
+
 const acceptedEvent = (
   over: Partial<CloseoutEvent> & Pick<CloseoutEvent, "number">,
 ): CloseoutEvent => ({
   event: "accepted",
   source: "acceptance-lane",
+  evidenceType: "walk",
   evidence: `https://issue/${over.number}#comment`,
   date: "2026-10-05T06:00:00Z",
   deploymentVersion: "ece470f",
@@ -2104,17 +2145,18 @@ describe("closeout evidence ledger (#277)", () => {
     delete process.env.PM_CLOSEOUTS_PATH;
   });
 
-  it("closeout records the evidence trio; closeoutLedger replays the accepted set", () => {
-    const rec = closeout(
+  it("closeout records the evidence trio; closeoutLedger replays the accepted set", async () => {
+    const rec = await closeout(
       266,
       "acceptance-lane",
       { evidence: "https://issue/266#comment", deploymentVersion: "ece470f" },
-      { path: CLOSEOUT_PATH, now: NOW },
+      { path: CLOSEOUT_PATH, now: NOW, ticket: CODE_TICKET },
     );
     expect(rec).toMatchObject({
       event: "accepted",
       number: 266,
       source: "acceptance-lane",
+      evidenceType: "walk",
       evidence: "https://issue/266#comment",
       deploymentVersion: "ece470f",
       date: NOW.toISOString(),
@@ -2129,56 +2171,56 @@ describe("closeout evidence ledger (#277)", () => {
     ]).toEqual([266]);
   });
 
-  it("refuses an incomplete trio with zero writes — 无证据不关票", () => {
-    expect(() =>
+  it("refuses an incomplete trio with zero writes — 无证据不关票", async () => {
+    await expect(
       closeout(
         266,
         "acceptance-lane",
         { evidence: "   ", deploymentVersion: "ece470f" },
         { path: CLOSEOUT_PATH },
       ),
-    ).toThrow(/evidence anchor is required/);
-    expect(() =>
+    ).rejects.toThrow(/evidence anchor is required/);
+    await expect(
       closeout(
         266,
         "ci",
         { evidence: "run link", deploymentVersion: "  " },
         { path: CLOSEOUT_PATH },
       ),
-    ).toThrow(/deploymentVersion is required/);
-    expect(() =>
+    ).rejects.toThrow(/deploymentVersion is required/);
+    await expect(
       closeout(
         0,
         "ci",
         { evidence: "run link", deploymentVersion: "run-1" },
         { path: CLOSEOUT_PATH },
       ),
-    ).toThrow(/ticket number is required/);
+    ).rejects.toThrow(/ticket number is required/);
     expect(closeoutLedger({ path: CLOSEOUT_PATH }).events).toHaveLength(0);
   });
 
-  it("re-accepting a reopened ticket appends; source records who verified", () => {
-    closeout(
+  it("re-accepting a reopened ticket appends; source records who verified", async () => {
+    await closeout(
       266,
       "acceptance-lane",
       { evidence: "e1", deploymentVersion: "v1" },
-      { path: CLOSEOUT_PATH, now: NOW },
+      { path: CLOSEOUT_PATH, now: NOW, ticket: CODE_TICKET },
     );
-    closeout(
+    await closeout(
       266,
       "ci",
       { evidence: "e2", deploymentVersion: "run-9" },
-      { path: CLOSEOUT_PATH, now: new Date(NOW.getTime() + 1_000) },
+      { path: CLOSEOUT_PATH, now: new Date(NOW.getTime() + 1_000), ticket: CODE_TICKET },
     );
     const view = closeoutLedger({ path: CLOSEOUT_PATH });
     expect(view.events).toHaveLength(2);
-    expect(view.events[1]).toMatchObject({ source: "ci", evidence: "e2" });
+    expect(view.events[1]).toMatchObject({ source: "ci", evidence: "e2", evidenceType: "run" });
     expect(view.accepted.has(266)).toBe(true);
   });
 
-  it("PM_CLOSEOUTS_PATH redirects the default store; a missing file reads as an empty ledger", () => {
+  it("PM_CLOSEOUTS_PATH redirects the default store; a missing file reads as an empty ledger", async () => {
     process.env.PM_CLOSEOUTS_PATH = "env-closeouts.jsonl";
-    closeout(266, "ci", { evidence: "run-1", deploymentVersion: "run-1" });
+    await closeout(266, "ci", { evidence: "run-1", deploymentVersion: "run-1" }, { ticket: CODE_TICKET });
     expect(closeoutLedger().accepted.has(266)).toBe(true);
     expect(closeoutLedger({ path: CLOSEOUT_PATH }).events).toHaveLength(0);
     expect(closeoutLedger({ path: "nope.jsonl" }).events).toHaveLength(0);
@@ -2199,6 +2241,216 @@ describe("closeout evidence ledger (#277)", () => {
     expect(closeoutGated(["type:bug"])).toBe(true);
     expect(closeoutGated(["type:docs", "track:acceptance"])).toBe(false);
     expect(closeoutGated([])).toBe(false);
+  });
+});
+
+describe("closeout acceptance-face gate (#390)", () => {
+  const NOW = new Date("2026-10-06T12:00:00Z");
+
+  beforeEach(() => {
+    fsProbe.files.clear();
+    delete process.env.PM_CLOSEOUTS_PATH;
+  });
+
+  afterEach(() => {
+    _inject(null);
+  });
+
+  it("a product-face ticket refuses source:ci — zero writes, error names the walk path", async () => {
+    await expect(
+      closeout(
+        362,
+        "ci",
+        { evidence: "run-37450877857", deploymentVersion: "run-37450877857" },
+        { path: CLOSEOUT_PATH, now: NOW, ticket: PRODUCT_TICKET },
+      ),
+    ).rejects.toThrow(/source "ci" is refused[\s\S]*acceptance-lane[\s\S]*console 错误/);
+    expect(closeoutLedger({ path: CLOSEOUT_PATH }).events).toHaveLength(0);
+  });
+
+  it("a product-face walk without surface evidence is refused — ACC=WALK:本地全链 is the gap", async () => {
+    await expect(
+      closeout(
+        382,
+        "acceptance-lane",
+        { evidence: "ACC=WALK:本地 staging 全链（plugin staged hash c62ac717）", deploymentVersion: "c62ac717" },
+        { path: CLOSEOUT_PATH, now: NOW, ticket: PRODUCT_TICKET },
+      ),
+    ).rejects.toThrow(/surface evidence[\s\S]*截图/);
+    expect(closeoutLedger({ path: CLOSEOUT_PATH }).events).toHaveLength(0);
+  });
+
+  it("a product-face walk with surface evidence lands: evidenceType walk + face recorded", async () => {
+    const rec = await closeout(
+      382,
+      "acceptance-lane",
+      {
+        evidence:
+          "console 无错误；截图 https://telegraph/l382-panel.png；选择器断言 .provider-row 可见（目标 URL /settings，2026-10-06T12:00Z）",
+        deploymentVersion: "c62ac717",
+      },
+      { path: CLOSEOUT_PATH, now: NOW, ticket: PRODUCT_TICKET },
+    );
+    expect(rec).toMatchObject({
+      source: "acceptance-lane",
+      evidenceType: "walk",
+      acceptanceFace: "product",
+    });
+    expect(closeoutLedger({ path: CLOSEOUT_PATH }).accepted.has(382)).toBe(true);
+  });
+
+  it("a code-face ticket keeps both sources; ci rows record evidenceType run", async () => {
+    const rec = await closeout(
+      377,
+      "ci",
+      { evidence: "run-37449681303", deploymentVersion: "run-37449681303" },
+      { path: CLOSEOUT_PATH, now: NOW, ticket: CODE_TICKET },
+    );
+    expect(rec).toMatchObject({ source: "ci", evidenceType: "run", acceptanceFace: "code" });
+  });
+
+  it("an explicit acceptance-type field beats the keyword scan both ways", async () => {
+    // #390 itself: acceptance TALKS about UI tickets but ships tests — the
+    // 独立字段 pins code, source:ci passes.
+    const pinned = await closeout(
+      390,
+      "ci",
+      { evidence: "run-1", deploymentVersion: "run-1" },
+      { path: CLOSEOUT_PATH, now: NOW, ticket: CODE_TICKET },
+    );
+    expect(pinned.acceptanceFace).toBe("code");
+    // A subtly-worded product ticket: no keywords, the field pins product —
+    // source:ci still refused.
+    await expect(
+      closeout(
+        391,
+        "ci",
+        { evidence: "run-2", deploymentVersion: "run-2" },
+        {
+          path: CLOSEOUT_PATH,
+          now: NOW,
+          ticket: {
+            title: "dashboard",
+            labels: ["type:implementation"],
+            body: "## 验收\n- 部署完成\n\nacceptance-type: product",
+          },
+        },
+      ),
+    ).rejects.toThrow(/product-face/);
+  });
+
+  it("an unknown acceptance-type value falls through to the keyword scan", async () => {
+    await expect(
+      closeout(
+        392,
+        "ci",
+        { evidence: "run-3", deploymentVersion: "run-3" },
+        {
+          path: CLOSEOUT_PATH,
+          now: NOW,
+          ticket: {
+            title: "hybrid",
+            labels: ["type:implementation"],
+            body: "## 验收\n- 面板渲染\n\nacceptance-type: hybrid",
+          },
+        },
+      ),
+    ).rejects.toThrow(/product-face/);
+  });
+
+  it("non-gated labels bypass the face rules and record no face", async () => {
+    const rec = await closeout(
+      393,
+      "ci",
+      { evidence: "run-4", deploymentVersion: "run-4" },
+      { path: CLOSEOUT_PATH, now: NOW, ticket: DOCS_TICKET },
+    );
+    expect(rec.evidenceType).toBe("run");
+    expect(rec.acceptanceFace).toBeUndefined();
+  });
+
+  it("the gate reads the live ticket through the transport seam — and fails closed", async () => {
+    // Canned transport: the real fetch path runs, the wire is canned.
+    _inject({
+      gql: () =>
+        Promise.resolve({
+          repository: {
+            issue: {
+              title: PRODUCT_TICKET.title,
+              bodyText: PRODUCT_TICKET.body,
+              labels: { nodes: [{ name: "type:implementation" }] },
+            },
+          },
+        }),
+    });
+    await expect(
+      closeout(362, "ci", { evidence: "run-5", deploymentVersion: "run-5" }, { path: CLOSEOUT_PATH, now: NOW }),
+    ).rejects.toThrow(/source "ci" is refused/);
+
+    // Fail-closed: an unread ticket is an unclassifiable closeout.
+    _inject({ gql: () => Promise.reject(new Error("transport down")) });
+    await expect(
+      closeout(377, "ci", { evidence: "run-6", deploymentVersion: "run-6" }, { path: CLOSEOUT_PATH, now: NOW }),
+    ).rejects.toThrow(/cannot read ticket #377[\s\S]*unread ticket/);
+    expect(closeoutLedger({ path: CLOSEOUT_PATH }).events).toHaveLength(0);
+  });
+
+  it("acceptanceFaceOf reads the way the violating tickets were written", () => {
+    // #362/#382 shape: 面板/走查 in the 验收 section → product.
+    expect(acceptanceFaceOf(PRODUCT_TICKET.body)).toBe("product");
+    expect(acceptanceFaceOf(CODE_TICKET.body)).toBe("code");
+    // Section discipline: surface words OUTSIDE the 验收 section don't count.
+    expect(acceptanceSectionOf(PRODUCT_TICKET.body)).not.toContain("用户裁决");
+    expect(
+      acceptanceFaceOf("pi/bb 式面板\n\n## 切分\n- P0=CRUD"),
+    ).toBe("code");
+    // Mixed section: CI 绿 alongside 走查 is still product.
+    expect(acceptanceFaceOf("## 验收\n- CI 绿\n- staging 走查")).toBe("product");
+    // The deliberate non-matches: bare staging (infra), UI before 票 (meta).
+    expect(acceptanceFaceOf("## 验收\n- staging 宿主 daemon 常驻\n- CI 绿")).toBe("code");
+    expect(acceptanceFaceOf("## 验收\n- UI 票重审断言")).toBe("code");
+    // A real UI claim still lands.
+    expect(acceptanceFaceOf("## 验收\n- UI 增删改 provider")).toBe("product");
+  });
+});
+
+describe("closeout ledger evidenceType migration (#390)", () => {
+  beforeEach(() => {
+    fsProbe.files.clear();
+    delete process.env.PM_CLOSEOUTS_PATH;
+  });
+
+  it("legacy rows backfill evidenceType from source in the read view", () => {
+    fsProbe.files.set(
+      CLOSEOUT_PATH,
+      [
+        JSON.stringify({ ...acceptedEvent({ number: 266 }), evidenceType: undefined }),
+        JSON.stringify({
+          ...acceptedEvent({ number: 377, source: "ci", evidence: "run-1", deploymentVersion: "run-1" }),
+          evidenceType: undefined,
+        }),
+      ].join("\n"),
+    );
+    const view = closeoutLedger({ path: CLOSEOUT_PATH });
+    expect(view.events.map((e) => e.evidenceType)).toEqual(["walk", "run"]);
+  });
+
+  it("migrateCloseoutLedger backfills on disk and is idempotent", () => {
+    fsProbe.files.set(
+      CLOSEOUT_PATH,
+      [
+        JSON.stringify({ ...acceptedEvent({ number: 266 }), evidenceType: undefined }),
+        JSON.stringify({
+          ...acceptedEvent({ number: 377, source: "ci", evidence: "run-1", deploymentVersion: "run-1" }),
+          evidenceType: undefined,
+        }),
+      ].join("\n"),
+    );
+    expect(migrateCloseoutLedger({ path: CLOSEOUT_PATH })).toEqual({ migrated: 2, total: 2 });
+    const rows = fsProbe.files.get(CLOSEOUT_PATH)?.trim().split("\n") ?? [];
+    expect(JSON.parse(rows[0] ?? "{}")).toMatchObject({ number: 266, evidenceType: "walk" });
+    expect(JSON.parse(rows[1] ?? "{}")).toMatchObject({ number: 377, evidenceType: "run" });
+    expect(migrateCloseoutLedger({ path: CLOSEOUT_PATH })).toEqual({ migrated: 0, total: 2 });
   });
 });
 
