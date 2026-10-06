@@ -200,37 +200,50 @@ describe("protocol upgrade face: lastRejectedProtocolVersion + retry-update (#19
 });
 
 describe("delete terminal (#195 S4, G11) + destroyed 404 shape (G12)", () => {
-  // The primary-host cascade reads the WHOLE fleet, so earlier describes'
-  // hosts would defeat the "lone host" setup — the two cascade tests wipe
-  // the registry first (test rig only; production never wipes). Each wipe
-  // owns its test: the lone-primary refusal below leaves its host behind,
-  // so the terminal test wipes again before seeding its pair.
+  // The removal guard reads the whole fleet, so earlier describes' hosts
+  // would crowd the "lone real host" setup — these tests wipe the registry
+  // first (test rig only; production never wipes). #386: the wipe preserves
+  // the seeded cloud placeholder — the row the guard anchors on; production
+  // can never reach a placeholder-less fleet.
   async function wipeHosts(): Promise<void> {
-    await env.DB.prepare("DELETE FROM hosts").run();
+    await env.DB.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
   }
 
-  it("a lone host is the primary and refuses removal (bb routes/hosts.ts:192-198)", async () => {
+  it("DELETE of the placeholder refuses with the empty-machine judgment (#386)", async () => {
     await wipeHosts();
-    const hostId = "local-s4-primary";
-    expect((await enroll(hostId)).status).toBe(201);
-    const refused = await exports.default.fetch(`${BASE}/api/v1/hosts/${hostId}`, {
+    const refused = await exports.default.fetch(`${BASE}/api/v1/hosts/cloud`, {
       method: "DELETE",
     });
     expect(refused.status).toBe(400);
-    expect((await refused.json<{ code: string }>()).code).toBe("primary_host_removal_refused");
-    const row = await env.DB.prepare("SELECT destroyed_at FROM hosts WHERE id = ?")
-      .bind(hostId)
-      .first<{ destroyed_at: number | null }>();
+    const body = await refused.json<{ code: string; message: string }>();
+    expect(body.code).toBe("placeholder_host_removal_refused");
+    expect(body.message).toBe("placeholder holds empty-machine semantics");
+    const row = await env.DB.prepare("SELECT destroyed_at FROM hosts WHERE id = 'cloud'").first<{
+      destroyed_at: number | null;
+    }>();
     expect(row?.destroyed_at).toBeNull();
+  });
+
+  it("a lone real host is deletable — the guard no longer anchors real machines (#386)", async () => {
+    await wipeHosts();
+    const hostId = "local-s4-primary";
+    expect((await enroll(hostId)).status).toBe(201);
+    const response = await exports.default.fetch(`${BASE}/api/v1/hosts/${hostId}`, {
+      method: "DELETE",
+    });
+    expect(response.status).toBe(200);
+    // The fleet fell back to the placeholder with its semantics intact.
+    const listing = await apiGet("/api/v1/hosts");
+    const body = await listing.json<unknown[]>();
+    expect(body.map((entry) => hostSchema.parse(entry).id)).toEqual(["cloud"]);
   });
 
   it("delete closes the live DO session, then tombstones", async () => {
     await wipeHosts();
     const hostId = "local-s4-terminal";
     expect((await enroll(hostId)).status).toBe(201);
-    // bb's cascade (primary-host.ts:70-76): with exactly one connected host,
-    // THAT host is primary — so the anchor must be connected too; two
-    // connected hosts resolve primary = null and both are deletable.
+    // The anchor host keeps the DO-session close observable from a still-
+    // attached machine; under #386 both are deletable regardless.
     expect((await enroll("local-s4-terminal-anchor")).status).toBe(201);
     const anchor = await openSession("local-s4-terminal-anchor");
     const anchorSocket = await openDaemonSocket("local-s4-terminal-anchor", anchor.sessionId);
@@ -293,12 +306,14 @@ describe("delete terminal (#195 S4, G11) + destroyed 404 shape (G12)", () => {
     expect(typeof body.details.destroyedAt).toBe("number");
   });
 
-  it("after the deletion the remaining host becomes primary and refuses removal", async () => {
-    const refused = await exports.default.fetch(`${BASE}/api/v1/hosts/local-s4-terminal-anchor`, {
+  it("the last real host is deletable too; the fleet then is the placeholder alone", async () => {
+    const response = await exports.default.fetch(`${BASE}/api/v1/hosts/local-s4-terminal-anchor`, {
       method: "DELETE",
     });
-    expect(refused.status).toBe(400);
-    expect((await refused.json<{ code: string }>()).code).toBe("primary_host_removal_refused");
+    expect(response.status).toBe(200);
+    const listing = await apiGet("/api/v1/hosts");
+    const body = await listing.json<unknown[]>();
+    expect(body.map((entry) => hostSchema.parse(entry).id)).toEqual(["cloud"]);
   });
 
   it("mutation routes answer a destroyed host with plain host_not_found (bb requireMutableHost)", async () => {

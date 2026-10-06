@@ -2,11 +2,17 @@ import { env } from "cloudflare:workers";
 import controlPlaneSql from "../migrations/0001_control_plane.sql";
 import environmentsSql from "../migrations/0002_environments.sql";
 import providerConfigsSql from "../migrations/0003_provider_configs.sql";
+import cloudPlaceholderHostSql from "../migrations/0004_cloud_placeholder_host.sql";
 
 /** The migration files, in apply order. The deploy chain replays the whole
  * `migrations/*.sql` directory per deploy (#295, scripts/deploy-staging.sh);
  * tests pin the same set explicitly so a new file must be registered here. */
-export const MIGRATION_FILES: string[] = [controlPlaneSql, environmentsSql, providerConfigsSql];
+export const MIGRATION_FILES: string[] = [
+  controlPlaneSql,
+  environmentsSql,
+  providerConfigsSql,
+  cloudPlaceholderHostSql,
+];
 
 /** Statement splitter shared with the deploy replay: one statement per `;\n`
  * boundary, comment lines stripped. */
