@@ -49,7 +49,9 @@ export interface AccessJwk {
 
 export interface VerifyAccessTokenOptions {
   jwks: readonly AccessJwk[];
-  audience: string;
+  /** Allowed audiences. ACCESS_AUD accepts a comma-separated list (#412):
+   * the app aud plus per-path Access apps mint JWTs with their own aud. */
+  audience: string | readonly string[];
   nowMs?: number;
 }
 
@@ -181,9 +183,10 @@ export async function verifyAccessToken(
   if (typeof claims.exp !== "number" || claims.exp * 1000 < nowMs) {
     throw unauthorized();
   }
-  const audienceOk =
-    claims.aud === options.audience ||
-    (Array.isArray(claims.aud) && claims.aud.includes(options.audience));
+  const allowed =
+    typeof options.audience === "string" ? [options.audience] : options.audience;
+  const presented = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+  const audienceOk = presented.some((a) => allowed.includes(a));
   if (!audienceOk) {
     throw unauthorized();
   }
@@ -264,7 +267,8 @@ export async function accessGate(ctx: Context, next: Next) {
   }
   const claims = await verifyAccessToken(token, {
     jwks: [jwk],
-    audience: (ctx.env as Env).ACCESS_AUD ?? "",
+    // #412: comma-separated ACCESS_AUD — "mainAppAud[,pathAppAud…]".
+    audience: ((ctx.env as Env).ACCESS_AUD ?? "").split(",").filter(Boolean),
   });
   ctx.set("accessPrincipalId", claims.sub ?? claims.email ?? (await sha256Hex(token)));
   return next();

@@ -150,6 +150,50 @@ describe("criterion 5: Access gate", () => {
     ).rejects.toMatchObject({ status: 401 });
   });
 
+  it("accepts an audience list — a token matching any allowed aud passes (#412 comma ACCESS_AUD)", async () => {
+    const keyPair = (await crypto.subtle.generateKey(
+      {
+        name: "RSASSA-PKCS1-v1_5",
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: "SHA-256",
+      },
+      true,
+      ["sign", "verify"],
+    )) as CryptoKeyPair;
+    const jwk = (await crypto.subtle.exportKey("jwk", keyPair.publicKey)) as JsonWebKey;
+    const kid = "list-key";
+    const claims = { aud: "path-aud", exp: Math.floor(Date.now() / 1000) + 300 };
+    const encode = (value: object): string =>
+      btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+    const signingInput = `${encode({ alg: "RS256", kid })}.${encode(claims)}`;
+    const signature = await crypto.subtle.sign(
+      "RSASSA-PKCS1-v1_5",
+      keyPair.privateKey,
+      new TextEncoder().encode(signingInput),
+    );
+    const token = `${signingInput}.${btoa(String.fromCharCode(...new Uint8Array(signature)))
+      .replaceAll("+", "-")
+      .replaceAll("/", "_")
+      .replaceAll("=", "")}`;
+    if (jwk.n === undefined || jwk.e === undefined) {
+      throw new Error("generated RSA JWK is missing modulus/exponent");
+    }
+    const jwks = [{ kid, kty: "RSA", n: jwk.n, e: jwk.e }];
+
+    // Position 2 of the comma list matches → pass.
+    const verified = await verifyAccessToken(token, {
+      jwks,
+      audience: ["main-aud", "path-aud"],
+    });
+    expect(verified.aud).toBe("path-aud");
+
+    // Absent from the list → 401, same as the single-audience mismatch.
+    await expect(
+      verifyAccessToken(token, { jwks, audience: ["main-aud", "other-aud"] }),
+    ).rejects.toMatchObject({ status: 401 });
+  });
+
   it("accepts the token from the CF_Authorization cookie (browser path)", async () => {
     const keyPair = (await crypto.subtle.generateKey(
       {
