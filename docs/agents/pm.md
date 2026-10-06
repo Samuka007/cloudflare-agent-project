@@ -52,7 +52,7 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 1. 干净树复跑关键测试/命令。
 2. 七反模式过一遍：慢通道／重做／串行化／闲置占用／无账保守／轮询／retry-and-hope。
-3. 关票评论附证据（测试数、部署 URL、run 链接、file:line）；**无证据不关票**。**关账序列（#277 固化）**：实现 lane 交付 → 验收 lane 出证据（staging 面）或 CI 出证据（纯代码面）→ `AP.closeout` 入账（证据三件套：证据/日期/部署版本）→ 才可 merge/close；PM 抽验不再作为关账输入——降为 wave 终检抽样（第 8 条）。漏网兜底：`AP.audit` 规则 7 `closeoutNoEvidence`（已关无账 = `AP.closeout` 回填——#266 为首例回填——或重开票）。
+3. 关票评论附证据（测试数、部署 URL、run 链接、file:line）；**无证据不关票**。**关账序列（#277 固化）**：实现 lane 交付 → 验收 lane 出证据（staging 面）或 CI 出证据（纯代码面）→ `AP.closeout` 入账（证据三件套：证据/日期/部署版本）→ 才可 merge/close；PM 抽验不再作为关账输入——降为 wave 终检抽样（第 8 条）。漏网兜底：`AP.audit` 规则 7 `closeoutNoEvidence`（已关无账 = `AP.closeout` 回填——#266 为首例回填——或重开票）。**判面前置闸（#390）**：`AP.closeout` 入账前自读票面验收——产品面（面板/走查/真机/UI…）拒 `source: "ci"`，walk 必须附表面证据（console 错误/截图/选择器断言）；#362/#382/#364 以 ci 关 UI 票即此漏洞。
 4. 验收判据 = 用户打开能看到什么（反例 #53：字段全部"就位"但 Priority 列五个视图全不可见，验收却已通过）。
 5. staging 验证经 `scripts/deploy-staging.sh` 两条调用面（#175）：merge→main 由 GHA `deploy-staging` workflow 自动部署；任意 commit 手动经 `nix run .#staging-deploy`。
 6. **CDP 三层纪律（用户裁决 2026-10-05，#240 audit 规则 6）**：①每 lane 具名 tab（`l<票号>-<用途>`），禁默认 tab 与他人 tab；②**staging thread=抢占资源**（一 thread 一在飞 turn）——交互测试一律新建专属线程（前缀 `l<票号>-`），禁用共享线程（`thr_jk45qe4786`=PM 保留），只读观察可访现有线程但零发送；③用毕关闭——交付关账前 `AP.release("browser", { lane })` 释放租约。涉浏览器 lane 无租约登记／租约碰撞／交付后未释放 = `AP.audit` 规则 6 漂移清单。
