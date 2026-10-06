@@ -110,6 +110,16 @@ if (baseUrl === "") throw new Error("--url or DAEMON_SERVICE_URL required");
 const hostKey = hostKeyFromEnvOrArgs();
 const hostId = hostIdFromEnvOrArgs();
 
+/** #412: the smoke's HTTP face rides the same Access wall as the daemon's
+ * stitched seams (#420) — attach the CF service-token pair when the target
+ * sits behind Access. Both-or-neither, mirroring decodeCfAccessConfig: a
+ * half-configured pair must fail closed, not silently 302 into login HTML. */
+const cfClientId = argValue("--cf-client-id") ?? process.env.DAEMON_CF_ACCESS_CLIENT_ID;
+const cfClientSecret = argValue("--cf-client-secret") ?? process.env.DAEMON_CF_ACCESS_CLIENT_SECRET;
+if ((cfClientId === undefined) !== (cfClientSecret === undefined)) {
+  throw new Error("CF Access pair must be both-or-neither: --cf-client-id/--cf-client-secret or DAEMON_CF_ACCESS_CLIENT_ID/DAEMON_CF_ACCESS_CLIENT_SECRET");
+}
+
 const stamp = Date.now().toString(36);
 const threadId = `thr_stg_smoke_${stamp}`;
 const executionId = `${threadId}:1`;
@@ -122,7 +132,11 @@ const command =
     ? `echo ${marker} $(uname -m)`
     : `${customCommand} && echo ${marker}`;
 
-const headers = { "content-type": "application/json", authorization: `Bearer ${hostKey}` };
+const headers: Record<string, string> = { "content-type": "application/json", authorization: `Bearer ${hostKey}` };
+if (cfClientId !== undefined && cfClientSecret !== undefined) {
+  headers["CF-Access-Client-Id"] = cfClientId;
+  headers["CF-Access-Client-Secret"] = cfClientSecret;
+}
 
 async function getJson<S extends z.ZodType>(path: string, schema: S): Promise<z.infer<S>> {
   const response = await fetch(`${baseUrl}${path}`, { headers });
