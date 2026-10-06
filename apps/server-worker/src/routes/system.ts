@@ -21,6 +21,7 @@ import {
   projectHarness,
   resolveRelayCatalog,
   resolveRelayCatalogWithOverlay,
+  seedProviderConfigRows,
   type HarnessEnv,
   type ModelsYmlImportParse,
 } from "@cap/provider-app";
@@ -268,8 +269,7 @@ export function buildProviderProjections(
   const imageRowPresent =
     overlayProviders !== undefined &&
     Object.values(overlayProviders).some(
-      (provider) =>
-        provider.api === IMAGE_SOURCE_API_FAMILY && provider.models.length > 0,
+      (provider) => provider.api === IMAGE_SOURCE_API_FAMILY && provider.models.length > 0,
     );
   const imageGeneration = {
     configured:
@@ -428,7 +428,9 @@ export function registerSystemRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // provider appears here on the next request (no redeploy, no reload).
     const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
     return ctx.json(
-      systemExecutionOptionsResponseSchema.parse(buildExecutionOptions(ctx.env, overlay?.providers)),
+      systemExecutionOptionsResponseSchema.parse(
+        buildExecutionOptions(ctx.env, overlay?.providers),
+      ),
     );
   });
 
@@ -482,15 +484,13 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
     return { kind: "set", plaintext: apiKey };
   };
 
-  const writeFieldsOf = (
-    payload: {
-      displayName?: string;
-      baseUrl?: string;
-      api?: string;
-      serviceTier?: boolean;
-      models?: unknown[];
-    },
-  ): ProviderConfigWriteFields => ({
+  const writeFieldsOf = (payload: {
+    displayName?: string;
+    baseUrl?: string;
+    api?: string;
+    serviceTier?: boolean;
+    models?: unknown[];
+  }): ProviderConfigWriteFields => ({
     displayName: payload.displayName ?? null,
     baseUrl: payload.baseUrl ?? null,
     api: payload.api ?? null,
@@ -529,21 +529,36 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
 
   routes.get("/system/providers", async (ctx) => {
     const load = await loadProviderConfigOverlay(ctx.env);
-    return ctx.json(providerConfigsListResponseSchema.parse({ providers: load?.rows ?? [] }));
+    // #388: the display face IS the merged directory truth. Env-seed rows no
+    // effective D1 row overrides ride the list (source "deployment-seed",
+    // read-only), so the panel shows exactly the provider set
+    // execution-options serves — the staging incident had the panel listing
+    // zero providers while the env seed's glm-5.3-flash stayed selectable.
+    const seedRows = seedProviderConfigRows(ctx.env, new Set(Object.keys(load?.providers ?? {})));
+    return ctx.json(
+      providerConfigsListResponseSchema.parse({ providers: [...seedRows, ...(load?.rows ?? [])] }),
+    );
   });
 
   routes.get("/system/providers/:id", async (ctx) => {
     const id = requireValidId(ctx.req.param("id"));
     const load = await loadProviderConfigOverlay(ctx.env);
     const row = load?.rows.find((candidate) => candidate.id === id);
-    if (row === undefined) {
-      throw new ApiError({
-        status: 404,
-        code: "provider_config_not_found",
-        message: `provider config "${id}" not found`,
-      });
+    if (row !== undefined) {
+      return ctx.json(providerConfigRowSchema.parse(row));
     }
-    return ctx.json(providerConfigRowSchema.parse(row));
+    // #388: a seed id resolves to its read-only deployment-seed row.
+    const seed = seedProviderConfigRows(ctx.env, new Set()).find(
+      (candidate) => candidate.id === id,
+    );
+    if (seed !== undefined) {
+      return ctx.json(providerConfigRowSchema.parse(seed));
+    }
+    throw new ApiError({
+      status: 404,
+      code: "provider_config_not_found",
+      message: `provider config "${id}" not found`,
+    });
   });
 
   routes.post("/system/providers", async (ctx) => {
@@ -757,7 +772,8 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
       const credential = credentialOf(candidate.apiKey);
       if (
         credential.kind === "set" &&
-        (ctx.env.PROVIDER_CONFIG_MASTER_KEY === undefined || ctx.env.PROVIDER_CONFIG_MASTER_KEY === "")
+        (ctx.env.PROVIDER_CONFIG_MASTER_KEY === undefined ||
+          ctx.env.PROVIDER_CONFIG_MASTER_KEY === "")
       ) {
         entries.push({
           ...entryBase,
