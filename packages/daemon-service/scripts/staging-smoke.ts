@@ -244,14 +244,18 @@ async function main(): Promise<void> {
   log(`roundtrip closed: exit 0, output "${output.trim().slice(0, 120)}"`);
 
   const unacked = await getJson(
-    `/agent/unacked?threadId=${encodeURIComponent(threadId)}`,
+    `/agent/unacked?threadId=${encodeURIComponent(threadId)}&hostId=${encodeURIComponent(hostId)}`,
     UnackedResponseSchema,
   );
   const entry = unacked.unacked.find((item) => item.executionId === executionId);
   if (entry === undefined) {
     log(`no unacked result to ack (already settled)`);
   } else {
-    await postJson("/agent/ack", { executionId, resultSeq: exited.opSeq }, z.object({}));
+    await postJson(
+      `/agent/ack?hostId=${encodeURIComponent(hostId)}`,
+      { executionId, resultSeq: exited.opSeq },
+      z.object({}),
+    );
     log(`result acked at journal seq ${exited.opSeq}`);
   }
 
