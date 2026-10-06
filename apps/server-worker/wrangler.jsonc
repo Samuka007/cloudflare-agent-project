@@ -83,11 +83,10 @@
     // secrets set) once the Worker fronts real Cloudflare Access.
     "ACCESS_CHECK_ENABLED": "false",
     "DATA_DIR": "/data",
-    // Composition identity (#31): journal host / machine name — must match
-    // the daemon client's enrolled hostId and the harness machineId so the
-    // client WS and the agent seam meet on the same per-machine DO.
-    "ORCHESTRATOR_HOST_ID": "local",
-    "DAEMON_HOST_ID": "local",
-    "DAEMON_MACHINE_ID": "local",
+    // #377: no composition identity vars. The provider journal DO is named
+    // by a code constant, the binding default is the cloud placeholder, and
+    // a daemon enroll mints its own host — the deployment fabricates no
+    // machine. (DAEMON_MACHINE_ID may be set deliberately to pin the harness
+    // host binding to a real machine name; unset = the placeholder.)
   },
 }

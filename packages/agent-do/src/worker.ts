@@ -15,6 +15,7 @@ import {
 import { TestDaemonServiceDO } from "./testing/test-daemon-do.js";
 import { RecordingHubDO } from "./testing/recording-hub.js";
 import { envFlag } from "./config.js";
+import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import { DaemonServiceDO, daemonServiceWorker, type WorkerEnv } from "@cap/daemon-service";
 
 /**
@@ -42,6 +43,11 @@ export interface PocDriveEnv {
   MODEL_RELAY_CONTEXT_WINDOW?: string;
   /** A4 image-input capability declaration (1/true/on); unset = degrade. */
   MODEL_RELAY_IMAGE_INPUT?: string;
+  /**
+   * #377 optional explicit host pin for drive-created threads. Unset = the
+   * cloud placeholder — the rig fabricates no machine.
+   */
+  DAEMON_MACHINE_ID?: string;
 }
 
 /** Register-once runtime seam: module state is shared with the DOs' isolate. */
@@ -234,7 +240,9 @@ async function handleDriveRoute(
     await stub.createThread({
       threadId,
       title: text.slice(0, 60),
-      machineId: env.DAEMON_MACHINE_ID ?? env.DAEMON_HOST_ID ?? "local",
+      // #377: an explicit DAEMON_MACHINE_ID pin wins; absent = the cloud
+      // placeholder (no fabricated machine).
+      machineId: env.DAEMON_MACHINE_ID ?? CLOUD_PLACEHOLDER_HOST_ID,
       ...(selection !== undefined ? { execution: selection } : {}),
     });
     const result = await stub.sendMessage({
@@ -293,8 +301,6 @@ export default {
           AGENT_DO: agentDo,
           ENROLL_KEY: env.ENROLL_KEY ?? "poc-dev-enroll-key",
           DAEMON_HOST_KEY: env.DAEMON_HOST_KEY ?? "poc-dev-host-key",
-          DAEMON_HOST_ID: env.DAEMON_HOST_ID,
-          DAEMON_MACHINE_ID: env.DAEMON_MACHINE_ID,
           DAEMON_EDGE_KV: env.DAEMON_EDGE_KV,
           DAEMON_NEGATIVE_CACHE_MS: env.DAEMON_NEGATIVE_CACHE_MS,
           DAEMON_RATE_LIMIT_CAPACITY: env.DAEMON_RATE_LIMIT_CAPACITY,

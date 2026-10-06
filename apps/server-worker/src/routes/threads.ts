@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { HostRpcCommand } from "@cap/daemon-service";
 import { activeTurnIdFromEvents, type RelaySelection } from "@cap/agent-do";
+import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import {
   classifyThreadSelectionChange,
   resolveStoredThreadExecution,
@@ -114,7 +115,7 @@ import {
 import { computeTimelineRowDelta } from "../contract/thread-timeline.js";
 import { validatePromptAttachmentReferences } from "../services/attachments.js";
 import { agentDoCancelTurn, agentDoCompactThread, agentDoFor } from "../seam/agent-do.js";
-import { deploymentHostId, resolveThreadBinding } from "../services/thread-binding.js";
+import { resolveThreadBinding } from "../services/thread-binding.js";
 import type { PromptInput } from "../contract/domain/shared-types.js";
 import type { PromptContent } from "@cap/protocol";
 import type { Env, HonoBindings } from "../app-types.js";
@@ -795,13 +796,13 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
    * buildThreadHostFileContentUrl). bb demands an attached environment (409
    * thread_environment_unavailable otherwise); this stack's deployment-host
    * posture (#318 pickup §2.1) resolves the bound environment's host, else
-   * the deployment machine — M0 threads have no environment row and still
-   * run on a real daemon.
+   * the cloud placeholder (#377) — a placeholder-bound thread has no machine
+   * to read from and the RPC answers the honest host_offline.
    */
   routes.get("/threads/:id/host-files/content", async (ctx) => {
     const query = parseOr422(threadHostFileContentQuerySchema, ctx.req.query());
     const row = await requirePublicThread(ctx);
-    let hostId = deploymentHostId(ctx.env);
+    let hostId = CLOUD_PLACEHOLDER_HOST_ID;
     if (row.environmentId !== null) {
       const environment = await getEnvironmentRow(ctx.env, row.environmentId);
       if (environment === null) {

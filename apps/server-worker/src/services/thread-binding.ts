@@ -1,4 +1,7 @@
-import type { CreateThreadEnvironmentArgs } from "@cap/protocol";
+import {
+  CLOUD_PLACEHOLDER_HOST_ID,
+  type CreateThreadEnvironmentArgs,
+} from "@cap/protocol";
 import { ApiError } from "../shared/api-error.js";
 import { createEnvironmentId } from "../shared/ids.js";
 import { getHostRow } from "../db/hosts.js";
@@ -23,8 +26,8 @@ import type { Env } from "../env.js";
  *   2. project-level workspace binding default — the project's default source
  *      checkout (`project_sources.is_default`; bb resolveProjectWorkspaceTarget
  *      anchor; layer doc §6 leaves the field shape to implementation)
- *   3. deployment default single machine — pure function, zero D1 (§2.3:
- *      "命中部署默认时连 D1 都不碰")
+ *   3. the cloud placeholder — pure function, zero D1 (#377: no deployment
+ *      machine exists to fall back on; "命中部署默认时连 D1 都不碰" stays)
  *
  * Scope (inventory §4): `unmanaged` + `personal` land here; managed-worktree
  * provisioning is a separate ticket and fails explicitly instead of silently
@@ -39,11 +42,6 @@ export interface ResolvedThreadBinding {
   environmentId: string | null;
   /** The full row when one was found-or-created. */
   environment: EnvironmentDbRow | null;
-}
-
-/** The deployment single machine (seam/agent-do.ts identity var; #31). */
-export function deploymentHostId(env: Env): string {
-  return env.ORCHESTRATOR_HOST_ID ?? "local";
 }
 
 async function requireNonDestroyedHost(env: Env, hostId: string): Promise<void> {
@@ -119,13 +117,13 @@ export async function resolveThreadBinding(
           "managed-worktree provisioning is not implemented; use unmanaged or personal workspaces",
       });
     }
-    // Personal on the composition machine = the deployment personal
-    // workspace (bb: the host dataDir scratch). §2.3 zero-D1 default: no
-    // registry validation, no row — the attach bridge lands the fleet row
-    // when the daemon connects; the configured machine is authoritative
-    // before that.
+    // Personal with no explicit host = the cloud placeholder (#377): no
+    // composition machine exists to own bb's host-dataDir scratch. §2.3
+    // zero-D1 default: no registry validation, no row; a real host arrives
+    // only through an explicit hostId claim (the attach bridge lands the
+    // fleet row when its daemon connects).
     if (requested.workspace.type === "personal" && requested.hostId === undefined) {
-      return { machineId: deploymentHostId(env), environmentId: null, environment: null };
+      return { machineId: CLOUD_PLACEHOLDER_HOST_ID, environmentId: null, environment: null };
     }
     const hostId = requested.hostId;
     if (hostId === undefined) {
@@ -146,10 +144,10 @@ export async function resolveThreadBinding(
   }
 
   // `project-default` or omitted: the project's default source checkout, then
-  // the deployment single machine (zero D1 on the deployment default).
+  // the cloud placeholder (zero D1 on the deployment default, #377).
   const source = await getDefaultProjectSource(env, args.projectId);
   if (source === null) {
-    return { machineId: deploymentHostId(env), environmentId: null, environment: null };
+    return { machineId: CLOUD_PLACEHOLDER_HOST_ID, environmentId: null, environment: null };
   }
   await requireNonDestroyedHost(env, source.hostId);
   const row = await materializeWorkspaceRow(env, {

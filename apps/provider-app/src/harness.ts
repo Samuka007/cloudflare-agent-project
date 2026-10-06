@@ -43,6 +43,7 @@ import {
   type RelayCatalog,
   type RelayConfig,
 } from "@cap/agent-do";
+import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import type { RuntimeThreadExecutionOptions } from "../../daemon-worker/src/provider-types.js";
 import { decodeRelayProviderCredentials } from "./relay-registry.js";
 
@@ -91,7 +92,7 @@ export interface HarnessEnv {
    * would surface as upstream 403s instead.
    */
   MODEL_RELAY_PROVIDER_CREDENTIALS?: string;
-  /** Host binding default (default `local`). */
+  /** Host binding pin; unset = the cloud placeholder (#377, no fabricated machine). */
   DAEMON_MACHINE_ID?: string;
   /** `accept-edits` | `auto` | `full` (default `full`). */
   HARNESS_PERMISSION_MODE?: string;
@@ -132,7 +133,10 @@ export const HARNESS_DEFAULTS = {
   maxTokens: 8192,
   /** docs.bigmodel.cn GLM-5 family page: 上下文窗口 200K. */
   contextWindow: 200_000,
-  machineId: "local",
+  // #377: the "composition machine" default was a synthetic host; the
+  // placeholder binds honestly until a real host (or the tier-0/tier-1
+  // cloud carrier, #307) takes the thread.
+  machineId: CLOUD_PLACEHOLDER_HOST_ID,
 } as const;
 
 function executionOptionsOf(

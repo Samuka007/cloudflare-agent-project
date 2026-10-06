@@ -63,17 +63,19 @@ export interface Env {
   /** bb config.hostDaemonPort analogue; null when unset. */
   readonly HOST_DAEMON_PORT?: string;
 
-  // --- composition vars (#31) -------------------------------------------------
+  // --- composition vars (#31, #377) -------------------------------------------
 
-  /** Orchestrator DO name / journal host identity (default "local"). */
-  readonly ORCHESTRATOR_HOST_ID?: string;
   /**
    * Daemon-service front credentials (daemon client enroll/hostKey). Set as
    * staging secrets; the hookup literals are the local-dev fallback.
    */
   readonly ENROLL_KEY?: string;
   readonly DAEMON_HOST_KEY?: string;
-  readonly DAEMON_HOST_ID?: string;
+  /**
+   * #377: optional explicit harness host pin. Unset = the cloud placeholder
+   * (no deployment machine is fabricated); only a deliberate deployment that
+   * really runs a machine under this name should set it.
+   */
   readonly DAEMON_MACHINE_ID?: string;
   /**
    * Relay harness (#28 three keys): read by the manager and the composed

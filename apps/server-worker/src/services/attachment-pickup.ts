@@ -1,7 +1,7 @@
 import type { ProjectAttachmentContentResult, ProjectAttachmentReader } from "@cap/daemon-service";
+import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import { getThreadRow } from "../db/control-plane.js";
 import { getEnvironmentRow } from "../db/environments.js";
-import { deploymentHostId } from "./thread-binding.js";
 import { readAttachment } from "./attachments.js";
 import { ApiError } from "../shared/api-error.js";
 import type { Env } from "../env.js";
@@ -15,10 +15,12 @@ import type { Env } from "../env.js";
  * - `thread.projectId !== query.projectId` → 403 "Thread does not belong to
  *   project" (upstream verbatim: attachment paths are project-scoped upload
  *   tokens, so cross-check projectId before reading bytes);
- * - the thread's bound host (environments.host_id; null = the deployment
- *   machine — thread-binding §2.1's resolution, trajectory half is
+ * - the thread's bound host (environments.host_id; null = the cloud
+ *   placeholder, #377 — thread-binding §2.1's resolution, trajectory half is
  *   thread.created.machineId) must be the daemon asking → 403 "Host is not
- *   assigned to thread environment" (upstream verbatim);
+ *   assigned to thread environment" (upstream verbatim). A placeholder-bound
+ *   thread has no daemon attachment by construction, so the cross-check
+ *   denies any daemon — the honest face for a thread with no real host.
  * - the byte read is A1's R2 attachment face (#316) — escape/missing/binding
  *   ApiErrors surface verbatim.
  */
@@ -40,7 +42,7 @@ export function projectAttachmentReader(env: Env): ProjectAttachmentReader {
       };
     }
 
-    let boundHostId = deploymentHostId(env);
+    let boundHostId = CLOUD_PLACEHOLDER_HOST_ID;
     if (thread.environmentId !== null) {
       const environment = await getEnvironmentRow(env, thread.environmentId);
       if (environment === null) {

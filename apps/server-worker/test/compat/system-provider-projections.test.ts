@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate.js";
+import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import { systemProviderProjectionsResponseSchema } from "../../src/contract/api/system.js";
 import { buildProviderProjections } from "../../src/routes/system.js";
 
@@ -29,7 +30,9 @@ describe("GET /api/v1/system/provider-projections", () => {
     expect(parsed.harness.relayKeyPresent).toBe(false);
     expect(parsed.harness.relayBaseUrlHost).toBe("open.bigmodel.cn");
     expect(parsed.harness.relayModel).toBe("glm-5.3");
-    expect(parsed.harness.machineId).toBe("local");
+    // #377: no DAEMON_MACHINE_ID var → the cloud placeholder is the honest
+    // harness default (no deployment machine is fabricated).
+    expect(parsed.harness.machineId).toBe(CLOUD_PLACEHOLDER_HOST_ID);
     expect(parsed.harness.permissionMode).toBe("full");
     // Unset AGENT_DO_WEB_SEARCH → ruled default chain: keyed API first,
     // credential-free aggregate as fallback (#144).

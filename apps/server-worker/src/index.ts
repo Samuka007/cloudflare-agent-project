@@ -105,8 +105,6 @@ export default {
         HUB: env.HUB,
         ENROLL_KEY: env.ENROLL_KEY ?? "poc-dev-enroll-key",
         DAEMON_HOST_KEY: env.DAEMON_HOST_KEY ?? "poc-dev-host-key",
-        DAEMON_HOST_ID: env.DAEMON_HOST_ID,
-        DAEMON_MACHINE_ID: env.DAEMON_MACHINE_ID,
         DAEMON_EDGE_KV: env.DAEMON_EDGE_KV,
         DAEMON_NEGATIVE_CACHE_MS: env.DAEMON_NEGATIVE_CACHE_MS,
         DAEMON_RATE_LIMIT_CAPACITY: env.DAEMON_RATE_LIMIT_CAPACITY,

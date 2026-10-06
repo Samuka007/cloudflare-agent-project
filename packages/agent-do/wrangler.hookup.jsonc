@@ -23,7 +23,5 @@
   "vars": {
     "ENROLL_KEY": "poc-dev-enroll-key",
     "DAEMON_HOST_KEY": "poc-dev-host-key",
-    "DAEMON_HOST_ID": "local",
-    "DAEMON_MACHINE_ID": "local",
   },
 }
