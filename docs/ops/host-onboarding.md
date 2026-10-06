@@ -66,6 +66,56 @@ flowchart LR
    注意 enroll 只在**没有已持久化身份**时发生；常驻进程直接复用 dataDir 里的
    `host-id` + `auth.json`（0600），断电重启不重铸。
 
+### 容器形态（#425，本地测试 rig）
+
+不想在宿主上留 systemd 单元（WSL 测试环境同款）时，daemon 以 docker 容器跑。
+镜像 `packages.cap-daemon-image` 与 `packages.daemon` 同闭包（bun + client 源 +
+生产 node_modules），entrypoint 即 `bun run src/client/index.ts`，`--help` 直达
+用法面：
+
+```bash
+nix build github:Samuka007/cloudflare-agent-project#cap-daemon-image \
+  --out-link result-cap-daemon-image
+docker load < result-cap-daemon-image        # → cap-daemon:0.1.0-<rev>
+
+# 一次性接入（join code 走上节 Add a machine 流程；--hostname 决定 enroll 自报
+# 机器名——不指定则是容器 id）
+docker run --rm --name cap-daemon-test \
+  --hostname "$(hostname)" \
+  -v ~/.local/state/cap-daemon-container:/data \
+  -e DAEMON_SERVICE_URL=<server> \
+  -e DAEMON_JOIN_CODE=<code> \
+  cap-daemon:0.1.0-<rev>
+```
+
+配置全走容器环境变量（`-e`/`--env-file`）：`DAEMON_SERVICE_URL`、
+`DAEMON_ENROLL_KEY`|`DAEMON_JOIN_CODE`（二选一）、CF Access 双键
+`DAEMON_CF_ACCESS_CLIENT_ID`/`_SECRET`（过 Access 的 face 才要，成对）、
+`DAEMON_DATA_DIR`（镜像缺省 `/data/data`）、`DAEMON_SANDBOX_ROOT`（缺省
+`/tmp/cap-sandbox`）。身份卷：`-v <host-dir>:/data` 后 `host-id`/`auth.json`
+落在 `<host-dir>/data/`（0600）；同卷重启即身份恢复，不再要求凭据（#378 门）。
+镜像内自带基线工具集（bash/coreutils/git/grep/sed/find/ps）替代宿主 profile
+PATH（#254）——容器里没有宿主工具，工具 turn 的能力边界以镜像为准。
+
+对本地 `wrangler dev` 走查（无 Access 墙，E2E 最短路径）：
+
+```bash
+# 服务端（另一终端）
+cd apps/server-worker
+wrangler d1 migrations apply cap-control-plane --local
+printf 'ENROLL_KEY=dev-enroll-key\nDAEMON_HOST_KEY=dev-host-key\n' > .dev.vars
+wrangler dev                                  # :8787
+
+# 容器侧（Linux docker 需 host-gateway 才有 host.docker.internal）
+docker run --rm --add-host host.docker.internal:host-gateway \
+  -e DAEMON_SERVICE_URL=http://host.docker.internal:8787 \
+  -e DAEMON_ENROLL_KEY=dev-enroll-key \
+  cap-daemon:0.1.0-<rev>
+```
+
+日志序列同第 2 步：boot → native addon gate → enrolled as hostId=… →
+session opened → session.ready → sync.complete。
+
 ## 身份与重来
 
 - 身份只有一份：`<dataDir>/host-id` + `<dataDir>/auth.json`（0600）。dataDir 缺省
