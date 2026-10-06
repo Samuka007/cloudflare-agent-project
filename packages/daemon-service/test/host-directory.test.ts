@@ -113,6 +113,7 @@ describe("dispatchHostRpc (bb command-router.ts:160-191)", () => {
   test("a browse answers one ok response carrying the listing", async () => {
     const socket = new CapturingSocket();
     await dispatchHostRpc(
+      tmpReal,
       socket as unknown as WebSocket,
       rpcFrame({ type: "host.browse_directory", path: tmpRoot }, "req-1"),
     );
@@ -130,6 +131,7 @@ describe("dispatchHostRpc (bb command-router.ts:160-191)", () => {
   test("a browse failure answers ok:false with the dispatch error code", async () => {
     const socket = new CapturingSocket();
     await dispatchHostRpc(
+      tmpReal,
       socket as unknown as WebSocket,
       rpcFrame({ type: "host.browse_directory", path: path.join(tmpReal, "readme.md") }, "req-2"),
     );

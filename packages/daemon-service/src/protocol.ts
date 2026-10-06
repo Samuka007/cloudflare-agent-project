@@ -183,9 +183,28 @@ export const hostReadFileCommandSchema = z.object({
 });
 export type HostReadFileCommand = z.infer<typeof hostReadFileCommandSchema>;
 
+/**
+ * B2 (#322): land one edge-produced image onto the host disk — the write
+ * twin of the B1 read face. The command is thread-scoped, not
+ * path-scoped: the daemon resolves `<sandboxRoot>/<threadId>/Generated/`
+ * itself (a remote caller has no way to know the host's sandbox root —
+ * same posture as browse_directory's home default), sanitizes the
+ * filename and answers the ABSOLUTE path the bytes landed at, which is
+ * what the imageView journal row and the host-file content face address.
+ */
+export const hostWriteFileCommandSchema = z.object({
+  type: z.literal("host.write_file"),
+  threadId: z.string().min(1),
+  filename: z.string().min(1),
+  /** Raw file bytes, base64 (the WS frame is JSON — there is no binary leg). */
+  contentBase64: z.string().min(1),
+});
+export type HostWriteFileCommand = z.infer<typeof hostWriteFileCommandSchema>;
+
 export const hostRpcCommandSchema = z.discriminatedUnion("type", [
   hostBrowseDirectoryCommandSchema,
   hostReadFileCommandSchema,
+  hostWriteFileCommandSchema,
 ]);
 export type HostRpcCommand = z.infer<typeof hostRpcCommandSchema>;
 
@@ -222,6 +241,17 @@ export const hostFileReadResultSchema = z.object({
   sha256: z.string(),
 });
 export type HostFileReadResult = z.infer<typeof hostFileReadResultSchema>;
+
+/**
+ * B2 (#322): where the written bytes landed. `path` is absolute and feeds
+ * the imageView journal row verbatim; `sizeBytes` echoes the decoded
+ * length so the caller can pin it in tool output without re-encoding.
+ */
+export const hostFileWriteResultSchema = z.object({
+  path: z.string().min(1),
+  sizeBytes: z.number().int().positive(),
+});
+export type HostFileWriteResult = z.infer<typeof hostFileWriteResultSchema>;
 
 export const hostRpcRequestFrameSchema = z.object({
   type: z.literal("host-rpc.request"),
