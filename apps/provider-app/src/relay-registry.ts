@@ -21,11 +21,13 @@
 
 import {
   AnthropicRelayProvider,
+  CompletionsRelayProvider,
   ResponsesRelayProvider,
   resolveRelaySelection,
   RelaySelectionError,
   RelayEffortMapError,
   resolveResponsesEffort,
+  relayApiConsumesEffortMap,
   type AgentRuntime,
   type ModelProvider,
   type RelayConfig,
@@ -165,13 +167,13 @@ export class RelayProviderRegistry {
     // provider ?? harness default), resolved with the same precedence the
     // catalog rows were built under.
     const api = row?.api ?? harness.relay.api;
-    // #361: the rung → Responses effort fold. resolveRelaySelection already
-    // 422s an unmappable rung on openai-responses rows (fail-closed effort
+    // #361/#363: the rung → OpenAI effort fold. resolveRelaySelection already
+    // 422s an unmappable rung on openai-effort rows (fail-closed effort
     // mapping); this re-resolution is belt over the harness-face path whose
     // rows may predate that grammar. An anthropic-face row keeps its budget
     // semantics — no effort fold.
     let reasoningEffort = harness.relay.reasoningEffort;
-    if (api === "openai-responses") {
+    if (relayApiConsumesEffortMap(api)) {
       try {
         reasoningEffort = resolveResponsesEffort(resolved.reasoningLevel, row?.reasoningEffortMap);
       } catch (error) {
@@ -242,7 +244,9 @@ export class RelayProviderRegistry {
           )
         : resolution.config.api === "openai-responses"
           ? new ResponsesRelayProvider(resolution.config)
-          : new AnthropicRelayProvider(resolution.config);
+          : resolution.config.api === "openai-completions"
+            ? new CompletionsRelayProvider(resolution.config)
+            : new AnthropicRelayProvider(resolution.config);
     this.instances.set(key, created);
     return created;
   }

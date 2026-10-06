@@ -1,4 +1,8 @@
 export { AnthropicRelayProvider, type RelayConfig } from "./anthropic-provider.js";
+export {
+  CompletionsRelayProvider,
+  type CompletionsRelayConfig,
+} from "./completions-provider.js";
 export { ResponsesRelayProvider } from "./responses-provider.js";
 export { parseSseStream, type SseMessage } from "./sse.js";
 export {
@@ -13,6 +17,17 @@ export {
   type WalkOptions,
   type WalkUserPart,
 } from "./context-walk.js";
+export {
+  completionsRequestBody,
+  type CompletionsContentPart,
+  type CompletionsFunctionCallEntry,
+  type CompletionsFunctionTool,
+  type CompletionsImagePart,
+  type CompletionsMessage,
+  type CompletionsRequestBody,
+  type CompletionsTextPart,
+  type CompletionsWireCallOptions,
+} from "./completions-wire.js";
 export {
   SYSTEM_PROMPT_BLOCKS,
   anthropicRequestBody,
