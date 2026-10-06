@@ -45,11 +45,19 @@ export interface Env {
   // --- vars -----------------------------------------------------------------
 
   /**
-   * Cloudflare Access gate. Staging flag (ruling: config-gated until the
-   * staging Worker fronts real Access): "true" enforces JWT validation on
-   * /api/v1/* and /ws; anything else leaves the gate open (L1/local).
+   * Cloudflare Access gate. "true" enforces JWT validation on /api/v1/* and
+   * /ws. SEC-W5-001 (#397) fail-closed: every other value LOCKS the control
+   * plane (503 access_gate_disabled) unless the deployment is explicitly
+   * marked local-dev via ACCESS_LOCAL_DEV="true" — never ship the marker in
+   * wrangler configs; deployed configs must flip this to "true".
    */
   readonly ACCESS_CHECK_ENABLED?: string;
+  /**
+   * SEC-W5-001 (#397): explicit local-dev marker — the only way a gate-off
+   * deployment serves /api/v1/* and /ws. For the L1 rig and `wrangler dev`
+   * only; deployed configs set ACCESS_CHECK_ENABLED="true" instead.
+   */
+  readonly ACCESS_LOCAL_DEV?: string;
   /** e.g. "https://myteam.cloudflareaccess.com" — JWKS source. */
   readonly ACCESS_TEAM_DOMAIN?: string;
   /** Access application AUD claim. */

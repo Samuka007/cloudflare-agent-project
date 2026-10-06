@@ -2,15 +2,20 @@ import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 import { ensureMigrations } from "../migrate.js";
 import { accessGate } from "../../src/middleware/access.js";
 import { verifyAccessToken } from "../../src/middleware/access.js";
+import { createApp } from "../../src/app.js";
 import { ApiError } from "../../src/shared/api-error.js";
+import type { Env } from "../../src/env.js";
 import { exports } from "cloudflare:workers";
 
 /**
  * Criterion 5 (port-inventory §6.5): Access rejects unauthorized callers; the
  * SPA keeps zero token logic (all verification is Worker-side, header/cookie
- * only). The gate is staging-flag gated; full JWKS round-trips are L2
- * (staging), so L1 covers: disabled default, enabled rejection, and the pure
- * JWT verification path against a locally generated RS256 keypair.
+ * only). SEC-W5-001 (#397): the gate is fail-closed — gate-off deployments
+ * reject /api/v1 + /ws (503 access_gate_disabled) unless the explicit
+ * ACCESS_LOCAL_DEV marker is set. Full JWKS round-trips are L2 (staging), so
+ * L1 covers: the fail-closed default, the marker branch, enabled rejection,
+ * and the pure JWT verification path against a locally generated RS256
+ * keypair.
  */
 function fakeContext(
   headers: Record<string, string>,
@@ -34,9 +39,48 @@ const next = (): Promise<void> => Promise.resolve(undefined);
 beforeAll(ensureMigrations);
 
 describe("criterion 5: Access gate", () => {
-  it("leaves the API open while the staging flag is off (default vars)", async () => {
+  it("serves the API only on the explicit local-dev branch (L1 rig env)", async () => {
+    // Rig bindings (vitest.config.ts): gate off + ACCESS_LOCAL_DEV — the one
+    // sanctioned gate-off surface; deployed configs ship the gate on.
     const response = await exports.default.fetch("https://example.com/api/v1/threads");
     expect(response.status).toBe(200);
+  });
+
+  it("rejects with 503 when the gate is off and no local-dev marker is set", async () => {
+    // Fail-closed default: flag unset (fresh deployment, vars missing).
+    await expect(accessGate(fakeContext({}, {}), next)).rejects.toMatchObject({
+      status: 503,
+      code: "access_gate_disabled",
+    });
+    // Explicit "false" is equally locked.
+    await expect(
+      accessGate(fakeContext({}, { ACCESS_CHECK_ENABLED: "false" }), next),
+    ).rejects.toMatchObject({ status: 503, code: "access_gate_disabled" });
+  });
+
+  it("passes gate-off traffic only with the explicit local-dev marker", async () => {
+    await accessGate(
+      fakeContext({}, { ACCESS_CHECK_ENABLED: "false", ACCESS_LOCAL_DEV: "true" }),
+      next,
+    );
+  });
+
+  it("locks /api/v1 and /ws at the assembled-app level when gate-off without the marker", async () => {
+    // Bindings ride app.fetch's env argument, so the gate-off non-local
+    // deployment is exercisable without touching the rig env; the gate
+    // rejects before any binding is read, hence the empty env.
+    const lockedEnv = {} as unknown as Env;
+    const app = createApp(lockedEnv);
+    const threads = await app.fetch(
+      new Request("https://example.com/api/v1/threads"),
+      lockedEnv,
+    );
+    expect(threads.status).toBe(503);
+    expect(await threads.json()).toMatchObject({ code: "access_gate_disabled" });
+
+    const ws = await app.fetch(new Request("https://example.com/ws"), lockedEnv);
+    expect(ws.status).toBe(503);
+    expect(await ws.json()).toMatchObject({ code: "access_gate_disabled" });
   });
 
   it("rejects requests without a token when the gate is enabled", async () => {

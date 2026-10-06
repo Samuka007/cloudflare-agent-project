@@ -79,9 +79,12 @@
     "crons": ["*/5 * * * *"],
   },
   "vars": {
-    // Staging flag: flip to "true" (with ACCESS_TEAM_DOMAIN + ACCESS_AUD
-    // secrets set) once the Worker fronts real Cloudflare Access.
-    "ACCESS_CHECK_ENABLED": "false",
+    // SEC-W5-001 (#397) fail-closed: "true" = the Access gate verifies JWTs
+    // on /api/v1/* and /ws (needs ACCESS_TEAM_DOMAIN + ACCESS_AUD secrets).
+    // Gate-off deployments LOCK the control plane (503 access_gate_disabled)
+    // unless marked local-dev (ACCESS_LOCAL_DEV=true, never set here). The
+    // deploy scripts assert this stays "true" before any deploy.
+    "ACCESS_CHECK_ENABLED": "true",
     "DATA_DIR": "/data",
     // #377: no composition identity vars. The provider journal DO is named
     // by a code constant, the binding default is the cloud placeholder, and
