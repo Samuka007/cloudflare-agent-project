@@ -52,6 +52,15 @@ export {
   decryptProviderSecret,
   encryptProviderSecret,
 } from "./provider-config-crypto.js";
+export {
+  ModelsYmlImportError,
+  OMP_API_VOCABULARY,
+  OMP_UNADMITTED_API_VALUES,
+  parseModelsYml,
+  type ModelsYmlImportParse,
+  type ModelsYmlProviderCandidate,
+  type ModelsYmlProviderSkip,
+} from "./models-yml-import.js";
 export { flattenPromptInputGroups } from "./flatten-input.js";
 
 import type { ManagerDoBindings } from "./manager-do.js";
