@@ -14,7 +14,13 @@ import {
   type SpawnRequest,
 } from "../src/core.js";
 import { createPmHarnessTools, detachedLaneSpawn } from "../src/tools.js";
-import type { CustomTool, CustomToolAPI, ToolResult, ZodBuilder, ZodNode } from "../src/host-types.js";
+import type {
+  CustomTool,
+  CustomToolAPI,
+  ToolResult,
+  ZodBuilder,
+  ZodNode,
+} from "../src/host-types.js";
 import { LABEL_IDS, MockBoard, PRIORITY_FIELD_ID, STATUS_FIELD_ID } from "./fixtures/mock-board.js";
 
 // The child_process mock is hoisted so the static import of tools.js below
@@ -22,10 +28,12 @@ import { LABEL_IDS, MockBoard, PRIORITY_FIELD_ID, STATUS_FIELD_ID } from "./fixt
 // transport. core.ts's execFileSync binding is included for module integrity;
 // every core path that would call it is injected away in this file.
 const spawnMock = vi.hoisted(() =>
-  vi.fn((_command: string, _args: string[], _options: { detached?: boolean; stdio?: unknown[] }) => ({
-    pid: 4242,
-    unref: () => undefined,
-  })),
+  vi.fn(
+    (_command: string, _args: string[], _options: { detached?: boolean; stdio?: unknown[] }) => ({
+      pid: 4242,
+      unref: () => undefined,
+    }),
+  ),
 );
 vi.mock("node:child_process", () => ({
   spawn: spawnMock,
@@ -92,7 +100,6 @@ function toolByName(tools: CustomTool[], name: string): CustomTool {
   return found;
 }
 
-
 /** omp invokes execute with the full 5-arg signature; tests pass the host's
  *  no-UI shape (no update callback, inert ctx, no signal). Async bridge: a
  *  sync execute throw surfaces as a rejection, like the host's adapter. */
@@ -148,7 +155,7 @@ function seedBoard(): MockBoard {
 // ---------------------------------------------------------------------------
 
 describe("pm-harness tools factory (#270)", () => {
-  it("registers exactly the five tools under stable names", () => {
+  it("registers exactly the six tools under stable names", () => {
     const tools = createPmHarnessTools(fakeApi());
     expect(tools.map((t) => t.name)).toEqual([
       "pm_lane",
@@ -156,6 +163,7 @@ describe("pm-harness tools factory (#270)", () => {
       "pm_audit",
       "pm_release",
       "pm_ledger",
+      "pm_walk",
     ]);
     for (const t of tools) {
       expect(t.label.length).toBeGreaterThan(0);
@@ -392,9 +400,9 @@ describe("detached-omp spawn fallback", () => {
   });
 
   it("refuses to spawn without a provisioned worktree cwd", () => {
-    expect(() => detachedLaneSpawn({ prompt: "p", label: "l", agent: "task", context: null })).toThrow(
-      /no worktree cwd/,
-    );
+    expect(() =>
+      detachedLaneSpawn({ prompt: "p", label: "l", agent: "task", context: null }),
+    ).toThrow(/no worktree cwd/);
   });
 
   it("spawns a detached `omp -p --cwd <worktree>` with one append fd for out+err", () => {
@@ -494,7 +502,9 @@ describe("pm_release + pm_ledger tools", () => {
       lane: "lane-310-x",
       leasesPath: ledgerPath,
     });
-    expect(toolDetails<{ releasedAt: string | null }>(released, ["releasedAt"]).releasedAt).not.toBeNull();
+    expect(
+      toolDetails<{ releasedAt: string | null }>(released, ["releasedAt"]).releasedAt,
+    ).not.toBeNull();
 
     const after = await callTool(ledgerTool, { leasesPath: ledgerPath });
     const afterDetails = toolDetails<{ events: unknown[]; active: unknown[] }>(after, ["events"]);

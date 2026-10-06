@@ -8,6 +8,7 @@ dist/
 .env.local
 .pm-leases.jsonl
 .pm-closeouts.jsonl
+.pm-walk/
 .c2-verify-logs/
 apps/server-worker/public/
 result
