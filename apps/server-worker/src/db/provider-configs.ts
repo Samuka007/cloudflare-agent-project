@@ -87,6 +87,32 @@ export async function getProviderConfigTarget(
   };
 }
 
+/**
+ * The write-gate read for PUT/PATCH (SEC-W5-003): the row's current baseUrl
+ * plus whether a stored credential exists. The probe faces decrypt that
+ * credential and put it on the wire toward the row's CURRENT baseUrl, so a
+ * write that moves baseUrl while KEEPING the stored key would redirect the
+ * key to a caller-chosen target — routes refuse that combination
+ * (credential_reentry_required), forcing same-request re-entry or clear.
+ */
+export interface ProviderConfigMutationContext {
+  baseUrl: string | null;
+  hasCredential: boolean;
+}
+
+export async function getProviderConfigMutationContext(
+  env: ProviderConfigEnv,
+  id: string,
+): Promise<ProviderConfigMutationContext | null> {
+  const row = await env.DB.prepare(
+    "SELECT base_url, api_key_enc IS NOT NULL AS has_credential FROM provider_configs WHERE id = ?",
+  )
+    .bind(id)
+    .first<{ base_url: string | null; has_credential: number }>();
+  if (row === null) return null;
+  return { baseUrl: row.base_url, hasCredential: row.has_credential === 1 };
+}
+
 /** Credential-set resolution shared by POST/PUT/PATCH (the null protocol). */
 export type CredentialUpdate =
   | { kind: "keep" }
