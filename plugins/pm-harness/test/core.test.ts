@@ -33,12 +33,19 @@ import {
   resolveJeapiKey,
   slugify,
   snapshot,
+  activeWalks,
+  overdueWalks,
+  walk,
+  walkDone,
+  walkLedger,
   type CloseoutEvent,
   type JudgeAnswer,
   type JudgeReply,
   type LeaseEvent,
   type SpawnRequest,
   type Ticket,
+  type WalkDueEvent,
+  type WalkEvent,
 } from "../src/core.js";
 import {
   LABEL_IDS,
@@ -2268,5 +2275,206 @@ describe("AP.audit rule 7 — closeout evidence drift (#277)", () => {
   it("rule 7 is silent without the ledger — a missing store fabricates nothing", () => {
     const rep = audit({ tickets: [implMk({ number: 257 })] }, { now: NOW });
     expect(rep.drift).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Walk-due ledger (#391) — 走查挂账的落账面. Three faces: registration
+// (挂账登记), overdue-red (到期红), audit output (审计输出).
+// ---------------------------------------------------------------------------
+
+const WALK_PATH = "test-walks.jsonl";
+
+const walkDueEvent = (
+  over: Partial<WalkDueEvent> & Pick<WalkDueEvent, "number">,
+): WalkDueEvent => ({
+  event: "walk-due",
+  due: "2026-10-08",
+  face: `staging 走查面 #${over.number}`,
+  recordedAt: "2026-10-06T12:00:00Z",
+  ...over,
+});
+
+const walkDoneRaw = (over: { number: number; recordedAt: string }): WalkEvent => ({
+  event: "walk-done",
+  number: over.number,
+  evidence: `https://issue/${over.number}#walk-report`,
+  recordedAt: over.recordedAt,
+});
+
+describe("walk-due ledger (#391) — 挂账登记", () => {
+  const NOW = new Date("2026-10-06T12:00:00Z");
+
+  beforeEach(() => {
+    fsProbe.files.clear();
+    delete process.env.PM_WALKS_PATH;
+  });
+
+  it("walk records {ticket, due, face}; walkLedger replays events + the active set", () => {
+    const rec = walk(382, "2026-10-08", "staging 真机面板走查（cap-provider-config 两 section）", {
+      path: WALK_PATH,
+      now: NOW,
+    });
+    expect(rec).toMatchObject({
+      event: "walk-due",
+      number: 382,
+      due: "2026-10-08",
+      face: "staging 真机面板走查（cap-provider-config 两 section）",
+      recordedAt: NOW.toISOString(),
+    });
+    const view = walkLedger({ path: WALK_PATH });
+    expect(view.events).toHaveLength(1);
+    expect(view.active.map((w) => w.number)).toEqual([382]);
+  });
+
+  it("refuses anonymous tickets, empty faces and unparseable due dates with zero writes", () => {
+    expect(() => walk(0, "2026-10-08", "面")).toThrow(/ticket number is required/);
+    expect(() => walk(382, "2026-10-08", "   ")).toThrow(/face is required/);
+    expect(() => walk(382, "not-a-date", "面")).toThrow(/ISO-8601 parseable/);
+    expect(fsProbe.files.size).toBe(0); // every refusal left the store untouched
+  });
+
+  it("re-registering an active walk supersedes it (改期重登记 appends, never edits)", () => {
+    walk(364, "2026-10-07", "粘贴导入走查", { path: WALK_PATH, now: NOW });
+    walk(364, "2026-10-12", "粘贴导入走查（改期）", {
+      path: WALK_PATH,
+      now: new Date(NOW.getTime() + 1000),
+    });
+    const view = walkLedger({ path: WALK_PATH });
+    expect(view.events).toHaveLength(2);
+    expect(view.active.map((w) => [w.number, w.due])).toEqual([[364, "2026-10-12"]]);
+    expect(overdueWalks(view.events, new Date("2026-10-10T00:00:00Z"))).toHaveLength(0);
+  });
+
+  it("walkDone settles the active walk and demands an anchor; settling nothing throws", () => {
+    walk(351, "2026-10-08", "staging 部分走查面", { path: WALK_PATH, now: NOW });
+    expect(() => walkDone(351, "   ", { path: WALK_PATH })).toThrow(/evidence anchor is required/);
+    expect(() => walkDone(999, "e", { path: WALK_PATH })).toThrow(/no active walk-due for #999/);
+    const closed = walkDone(351, "walk 报告评论", { path: WALK_PATH, now: NOW });
+    expect(closed).toMatchObject({ event: "walk-done", number: 351, evidence: "walk 报告评论" });
+    const view = walkLedger({ path: WALK_PATH });
+    expect(view.active).toHaveLength(0);
+    expect(view.events).toHaveLength(2);
+  });
+
+  it("activeWalks replays register/settle pairs; overdueWalks slices by the clock", () => {
+    const past = walkDueEvent({ number: 382, due: "2026-10-02" });
+    const future = walkDueEvent({ number: 364, due: "2026-10-20" });
+    expect(activeWalks([past, future])).toHaveLength(2);
+    expect(
+      activeWalks([past, future, walkDoneRaw({ number: 382, recordedAt: "2026-10-03T00:00:00Z" })]),
+    ).toHaveLength(1);
+    expect(overdueWalks([past, future], new Date("2026-10-05T00:00:00Z"))).toEqual([past]);
+  });
+
+  it("PM_WALKS_PATH redirects the default store; a missing file reads as an empty ledger", () => {
+    process.env.PM_WALKS_PATH = "env-walks.jsonl";
+    walk(382, "2026-10-08", "面板走查");
+    expect(walkLedger().active).toHaveLength(1);
+    expect(walkLedger({ path: WALK_PATH })).toEqual({ events: [], active: [] });
+  });
+
+  it("a corrupt jsonl line names the file and line", () => {
+    fsProbe.files.set(WALK_PATH, `${JSON.stringify(walkDueEvent({ number: 382 }))}\nnot-json\n`);
+    expect(() => walkLedger({ path: WALK_PATH })).toThrow(/corrupt jsonl at test-walks\.jsonl:2/);
+  });
+});
+
+describe("AP.audit rule 8 — walk-due overdue (#391)", () => {
+  const NOW = new Date("2026-10-07T00:00:00Z"); // dues < NOW are overdue; > NOW not yet
+  const mk = (over: Partial<Ticket> & Pick<Ticket, "number">): Ticket => ({
+    id: `I${over.number}`,
+    title: `t${over.number}`,
+    body: "",
+    state: "OPEN",
+    milestone: "W5",
+    labels: [],
+    blockedBy: [],
+    updatedAt: "2026-10-06T00:00:00Z", // fresh — rule 4 stays silent
+    itemId: `I${over.number}`,
+    status: "Todo",
+    priority: null,
+    ...over,
+  });
+
+  it("到期红: an overdue walk on an open Todo ticket flips Status → Wait for user", () => {
+    const rep = audit(
+      { tickets: [mk({ number: 382 })] },
+      { walks: [walkDueEvent({ number: 382, due: "2026-10-02" })], now: NOW },
+    );
+    expect(rep.clean).toBe(false);
+    expect(rep.drift.map((d) => [d.rule, d.number, d.mutation])).toEqual([
+      ["walkDueOverdue", 382, { op: "setStatus", number: 382, value: "Wait for user" }],
+    ]);
+    expect(rep.mutations).toEqual([{ op: "setStatus", number: 382, value: "Wait for user" }]);
+  });
+
+  it("future due, settled walks and non-deferral tickets stay silent", () => {
+    const rep = audit(
+      { tickets: [mk({ number: 364 }), mk({ number: 351 })] },
+      {
+        walks: [
+          walkDueEvent({ number: 364, due: "2026-10-20" }), // not due yet
+          walkDueEvent({ number: 351, due: "2026-10-02" }), // overdue but settled below
+          walkDoneRaw({ number: 351, recordedAt: "2026-10-03T00:00:00Z" }),
+        ],
+        now: NOW,
+      },
+    );
+    expect(rep.clean).toBe(true);
+  });
+
+  it("an already-red ticket (Wait for user) is a mutation-free reminder", () => {
+    const rep = audit(
+      { tickets: [mk({ number: 382, status: "Wait for user" })] },
+      { walks: [walkDueEvent({ number: 382, due: "2026-10-02" })], now: NOW },
+    );
+    expect(rep.drift.map((d) => [d.rule, d.mutation])).toEqual([["walkDueOverdue", null]]);
+  });
+
+  it("delivered with an unsettled walk is the #382/#364 shape — backfill or reopen, no flip", () => {
+    const rep = audit(
+      { tickets: [mk({ number: 382, state: "CLOSED", status: "Done" })] },
+      { walks: [walkDueEvent({ number: 382, due: "2026-10-02" })], now: NOW },
+    );
+    expect(rep.drift.map((d) => [d.rule, d.number, d.mutation])).toEqual([
+      ["walkDueOverdue", 382, null],
+    ]);
+    expect(rep.drift[0]?.detail).toContain("AP.closeout");
+    expect(rep.drift[0]?.detail).toContain("reopen");
+  });
+
+  it("an active-lane ticket is mutation-free (rule 3 owns its Status); missing tickets report bare", () => {
+    const lane = audit(
+      { tickets: [mk({ number: 310, status: "In Progress" })] },
+      { activeLanes: [310], walks: [walkDueEvent({ number: 310, due: "2026-10-02" })], now: NOW },
+    );
+    expect(lane.drift.map((d) => [d.rule, d.mutation])).toEqual([["walkDueOverdue", null]]);
+    const ghost = audit(
+      { tickets: [] },
+      { walks: [walkDueEvent({ number: 999, due: "2026-10-02" })], now: NOW },
+    );
+    expect(ghost.drift.map((d) => [d.rule, d.title, d.mutation])).toEqual([
+      ["walkDueOverdue", "(not on board)", null],
+    ]);
+  });
+
+  it("rule 8 is silent without the ledger — a missing store fabricates nothing", () => {
+    const rep = audit({ tickets: [mk({ number: 382 })] }, { now: NOW });
+    expect(rep.drift).toHaveLength(0);
+  });
+
+  it("mutations are AP.apply-consumable: the Wait-for-user flip resolves error-free", async () => {
+    const board = new MockBoard();
+    board.addIssue({ number: 382, title: "walk overdue ticket" });
+    board.boardIssue(382, "Todo", null);
+    _inject({ gql: board.gql });
+    const rep = audit(await snapshot(), {
+      walks: [walkDueEvent({ number: 382, due: "2026-10-02" })],
+      now: NOW,
+    });
+    const res = planDiff(rep.mutations, board.planInput());
+    expect(res.errors).toEqual([]);
+    expect(res.ops.map((o) => o.kind)).toEqual(["setStatus"]);
   });
 });

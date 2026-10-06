@@ -10,6 +10,8 @@ import {
   lease,
   registerSpawn,
   registerSpawnFallback,
+  walk,
+  walkDone,
   type GqlFn,
   type SpawnRequest,
 } from "../src/core.js";
@@ -42,12 +44,13 @@ vi.mock("node:child_process", () => ({
  * core.test.ts's wholesale mock — the tools' ledger/release path exercises
  * real fs on tmp).
  *
- * Covered: factory surface (five discoverable tools), pm_apply preflight
+ * Covered: factory surface (six discoverable tools), pm_apply preflight
  * rejection of closed-state drift + guarded write + per-batch verify-drift
  * refusal, pm_audit → pm_apply reconcile loop, pm_lane dry-run/refusal/
  * confirm dispatch through the registered transport, the #270 detached-omp
  * fallback ladder (unit + factory-install + lane-level + PM_LANE_NO_DETACH
- * escape hatch), and the pm_release/pm_ledger ledger pair.
+ * escape hatch), the pm_release/pm_ledger ledger pair, and the pm_walk
+ * 走查挂账 ledger + pm_audit's always-armed rule 8 (#391).
  */
 
 // ---------------------------------------------------------------------------
@@ -62,6 +65,8 @@ function chainNode(): ZodNode {
     describe: () => node,
     optional: () => node,
     default: () => node,
+    int: () => node,
+    positive: () => node,
   };
   return node;
 }
@@ -148,7 +153,7 @@ function seedBoard(): MockBoard {
 // ---------------------------------------------------------------------------
 
 describe("pm-harness tools factory (#270)", () => {
-  it("registers exactly the five tools under stable names", () => {
+  it("registers exactly the six tools under stable names", () => {
     const tools = createPmHarnessTools(fakeApi());
     expect(tools.map((t) => t.name)).toEqual([
       "pm_lane",
@@ -156,6 +161,7 @@ describe("pm-harness tools factory (#270)", () => {
       "pm_audit",
       "pm_release",
       "pm_ledger",
+      "pm_walk",
     ]);
     for (const t of tools) {
       expect(t.label.length).toBeGreaterThan(0);
@@ -536,5 +542,127 @@ describe("pm_release + pm_ledger tools", () => {
     expect(Object.keys(LABEL_IDS)).toContain("ready-for-human");
     expect(STATUS_FIELD_ID).toBe("F_status");
     expect(PRIORITY_FIELD_ID).toBe("F_priority");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pm_walk — the 走查挂账 ledger tool + pm_audit's always-armed rule 8 (#391)
+// ---------------------------------------------------------------------------
+
+describe("pm_walk tool", () => {
+  const tmpRoot = mkdtempSync(join(tmpdir(), "pm-walks-"));
+
+  afterEach(() => {
+    _inject(null);
+  });
+
+  it("register → done → list drives the ledger; missing args throw before any write", async () => {
+    const walksPath = join(tmpRoot, "walk-drive.jsonl");
+    rmSync(walksPath, { force: true });
+    const tools = createPmHarnessTools(fakeApi());
+    const walkTool = toolByName(tools, "pm_walk");
+
+    const registered = await callTool(walkTool, {
+      action: "register",
+      number: 382,
+      due: "2026-10-08",
+      face: "staging 真机面板走查（cap-provider-config 两 section）",
+      walksPath,
+    });
+    expect(toolDetails<{ event: string; number: number; due: string }>(registered, [
+      "event",
+    ])).toMatchObject({ event: "walk-due", number: 382, due: "2026-10-08" });
+    expect(registered.content[0]?.text).toContain("registered (due 2026-10-08)");
+
+    await expect(callTool(walkTool, { action: "register", number: 364, walksPath })).rejects.toThrow(
+      /requires number, due and face/,
+    );
+    await expect(callTool(walkTool, { action: "done", number: 382, walksPath })).rejects.toThrow(
+      /requires number and evidence/,
+    );
+
+    const listed = await callTool(walkTool, { action: "list", walksPath });
+    const listDetails = toolDetails<{ events: unknown[]; active: { number: number }[] }>(listed, [
+      "events",
+    ]);
+    expect(listDetails.events).toHaveLength(1);
+    expect(listDetails.active.map((w) => w.number)).toEqual([382]);
+
+    const settled = await callTool(walkTool, {
+      action: "done",
+      number: 382,
+      evidence: "walk 报告评论",
+      walksPath,
+    });
+    expect(toolDetails<{ event: string; evidence: string }>(settled, ["event"])).toMatchObject({
+      event: "walk-done",
+      evidence: "walk 报告评论",
+    });
+
+    const after = await callTool(walkTool, { action: "list", walksPath });
+    expect(
+      toolDetails<{ events: unknown[]; active: unknown[] }>(after, ["events", "active"]).active,
+    ).toEqual([]);
+  });
+});
+
+describe("pm_audit rule 8 wiring (#391)", () => {
+  const tmpRoot = mkdtempSync(join(tmpdir(), "pm-audit-walks-"));
+
+  afterEach(() => {
+    _inject(null);
+  });
+
+  it("always arms from the repo ledger: an overdue deferral surfaces with its red-flip repair", async () => {
+    const walksPath = join(tmpRoot, "armed.jsonl");
+    rmSync(walksPath, { force: true });
+    walk(310, "2020-01-01", "长挂未走的走查面", { path: walksPath });
+
+    const board = seedBoard(); // #310: dispatchable Todo
+    _inject({ gql: board.gql satisfies GqlFn });
+    const auditTool = toolByName(createPmHarnessTools(fakeApi()), "pm_audit");
+    const apply = toolByName(createPmHarnessTools(fakeApi()), "pm_apply");
+
+    const first = await callTool(auditTool, { walksPath });
+    const details = toolDetails<{
+      clean: boolean;
+      drift: { rule: string; number: number; detail: string }[];
+      mutations: { op: string; number: number; value: string }[];
+    }>(first, ["clean"]);
+    expect(details.clean).toBe(false);
+    expect(details.drift).toContainEqual(
+      expect.objectContaining({ rule: "walkDueOverdue", number: 310 }),
+    );
+    expect(details.mutations).toContainEqual({
+      op: "setStatus",
+      number: 310,
+      value: "Wait for user",
+    });
+
+    // The repair is apply-ready: one guarded write flips the board red.
+    const repaired = await callTool(apply, { mutations: details.mutations, confirm: true });
+    expect(toolDetails<{ ok: boolean }>(repaired, ["ok"]).ok).toBe(true);
+
+    // Re-audit: already red — the finding stays (unsettled) but mutation-free.
+    const second = await callTool(auditTool, { walksPath });
+    const secondDetails = toolDetails<{
+      clean: boolean;
+      drift: { rule: string; number: number; mutation: unknown }[];
+    }>(second, ["clean", "drift"]);
+    expect(secondDetails.drift).toContainEqual(
+      expect.objectContaining({ rule: "walkDueOverdue", number: 310, mutation: null }),
+    );
+  });
+
+  it("a settled walk keeps the audit clean", async () => {
+    const walksPath = join(tmpRoot, "settled.jsonl");
+    rmSync(walksPath, { force: true });
+    walk(310, "2020-01-01", "已销账的走查面", { path: walksPath });
+    walkDone(310, "walk 报告", { path: walksPath });
+
+    _inject({ gql: seedBoard().gql satisfies GqlFn });
+    const auditTool = toolByName(createPmHarnessTools(fakeApi()), "pm_audit");
+    const result = await callTool(auditTool, { walksPath });
+    expect(toolDetails<{ clean: boolean }>(result, ["clean"]).clean).toBe(true);
   });
 });
