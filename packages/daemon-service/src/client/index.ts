@@ -17,7 +17,7 @@
  */
 
 import { runClient } from "./connection.js";
-import type { ClientConfig } from "./identity.js";
+import { hasPersistedIdentity, type ClientConfig } from "./identity.js";
 import { decodeAgentAuthConfig } from "./agent-auth.js";
 import { decodeTaskIsolationConfig } from "./task-isolation.js";
 import { homedir } from "node:os";
@@ -33,10 +33,19 @@ function argValue(flag: string): string | undefined {
  * default (the POC's "poc-dev-enroll-key") means a misconfigured daemon
  * fails at start instead of enrolling against whatever it can reach. The
  * add-a-machine path (#258) swaps the static key for a one-time join code
- * (minted by POST /hosts/join-codes); exactly one credential is required. */
+ * (minted by POST /hosts/join-codes); exactly one credential is required
+ * — but only when there is something to enroll (#378): a machine with a
+ * persisted identity (dataDir host-id + auth.json) restores it and needs
+ * no credential to come back up (systemd Restart=always, CT reboot). The
+ * gate must agree exactly with loadIdentity's restore-vs-enroll test,
+ * hence the shared hasPersistedIdentity predicate. */
 const enrollKey = process.env.DAEMON_ENROLL_KEY;
 const joinCode = argValue("--join-code") ?? process.env.DAEMON_JOIN_CODE;
-if ((enrollKey === undefined || enrollKey === "") && (joinCode === undefined || joinCode === "")) {
+const dataDir =
+  argValue("--dataDir") ?? process.env.DAEMON_DATA_DIR ?? join(homedir(), ".local", "state", "cap-daemon");
+const credentialPresent =
+  (enrollKey !== undefined && enrollKey !== "") || (joinCode !== undefined && joinCode !== "");
+if (!credentialPresent && !hasPersistedIdentity(dataDir)) {
   console.error(
     "[daemon-client] a credential is required: DAEMON_ENROLL_KEY, or a one-time join code via --join-code / DAEMON_JOIN_CODE",
   );
@@ -48,7 +57,7 @@ const config: ClientConfig = {
   // pairingCommand); --url stays for existing env files.
   baseUrl:
     argValue("--server") ?? argValue("--url") ?? process.env.DAEMON_SERVICE_URL ?? "http://127.0.0.1:8790",
-  dataDir: argValue("--dataDir") ?? process.env.DAEMON_DATA_DIR ?? join(homedir(), ".local", "state", "cap-daemon"),
+  dataDir,
   sandboxRoot: argValue("--sandbox") ?? process.env.DAEMON_SANDBOX_ROOT ?? "/tmp/cap-sandbox",
   enrollKey: enrollKey ?? "",
   joinCode: joinCode ?? null,
