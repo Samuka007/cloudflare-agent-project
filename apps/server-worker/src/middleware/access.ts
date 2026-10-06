@@ -202,7 +202,13 @@ function requireTeamDomain(env: Env): string {
       retryable: false,
     });
   }
-  return env.ACCESS_TEAM_DOMAIN;
+  // #437 事故：secret 曾存裸域名（无 scheme），fetchJwks 拼出
+  // "host/cdn-cgi/…" 非法 URL → gate 覆盖面全 500。归一化：裸域名补
+  // https://，尾斜杠剥除——两种形态都合法，一类事故关门。
+  const raw = env.ACCESS_TEAM_DOMAIN.trim().replace(/\/+$/, "");
+  return raw.startsWith("https://") || raw.startsWith("http://")
+    ? raw
+    : `https://${raw}`;
 }
 
 function unauthorized(): ApiError {
@@ -248,28 +254,46 @@ export async function accessGate(ctx: Context, next: Next) {
   }
   const token = bearerToken(ctx);
   if (token === null) {
+    // #437 live triage: which reject stage fired — token extraction, header
+    // parse, kid lookup, or verification. One line per reject; no token
+    // material logged (kid + stage only).
+    console.log("access gate reject: no-token", ctx.req.path);
     throw unauthorized();
   }
   const header = token.split(".")[0];
   if (header === undefined) {
+    console.log("access gate reject: malformed-token", ctx.req.path);
     throw unauthorized();
   }
   let kid: string;
   try {
     kid = jwtHeaderSchema.parse(decodeSegment(header)).kid;
   } catch {
+    console.log("access gate reject: header-parse", ctx.req.path);
     throw unauthorized();
   }
   const jwks = await fetchJwks(requireTeamDomain(ctx.env as Env));
   const jwk = jwks.find((candidate) => candidate.kid === kid);
   if (jwk === undefined) {
+    console.log("access gate reject: kid-miss", kid, ctx.req.path);
     throw unauthorized();
   }
-  const claims = await verifyAccessToken(token, {
-    jwks: [jwk],
-    // #412: comma-separated ACCESS_AUD — "mainAppAud[,pathAppAud…]".
-    audience: ((ctx.env as Env).ACCESS_AUD ?? "").split(",").filter(Boolean),
-  });
+  let claims: AccessClaims;
+  try {
+    claims = await verifyAccessToken(token, {
+      jwks: [jwk],
+      // #412: comma-separated ACCESS_AUD — "mainAppAud[,pathAppAud…]".
+      audience: ((ctx.env as Env).ACCESS_AUD ?? "").split(",").filter(Boolean),
+    });
+  } catch (error) {
+    console.log(
+      "access gate reject: verify",
+      kid,
+      error instanceof ApiError ? error.message : String(error),
+      ctx.req.path,
+    );
+    throw error;
+  }
   ctx.set("accessPrincipalId", claims.sub ?? claims.email ?? (await sha256Hex(token)));
   return next();
 }
