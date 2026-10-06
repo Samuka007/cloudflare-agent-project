@@ -5,6 +5,7 @@ import {
   pendingInteractionResolutionSchema,
   promptContentSchema,
 } from "@cap/protocol";
+import { relayReasoningLevelSchema } from "./provider-catalog.js";
 
 /**
  * Agent-DO internal event vocabulary (docs/design/unified-turn-state.md §1.1,
@@ -49,6 +50,30 @@ export const turnFailedReasonSchema = z.enum([
 export type TurnFailedReason = z.infer<typeof turnFailedReasonSchema>;
 
 export const dispatchOutcomeSchema = z.enum(["accepted", "completed_cached", "host_offline"]);
+
+/**
+ * #351: a thread-level execution selection as journaled on state rows
+ * (thread.created bootstrap + thread.execution_updated changes). Absent
+ * members mean "unset — resolve the deployment default"; the turn driver
+ * re-resolves through the relay registry, so replay pins the same dispatch
+ * (replay-is-truth). At least one member must be present — an empty object
+ * carries no information and would desync the "explicit selection exists"
+ * invariant.
+ */
+export const threadExecutionSelectionSchema = z
+  .object({
+    providerId: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    reasoningLevel: relayReasoningLevelSchema.optional(),
+  })
+  .refine(
+    (selection) =>
+      selection.providerId !== undefined ||
+      selection.model !== undefined ||
+      selection.reasoningLevel !== undefined,
+    { message: "execution selection must carry at least one field" },
+  );
+export type ThreadExecutionSelection = z.infer<typeof threadExecutionSelectionSchema>;
 
 const toolCallDataSchema = z.object({
   name: z.string().min(1),
@@ -128,6 +153,12 @@ export const agentEventDataSchemas = {
     title: z.string(),
     /** Machine this thread's tool executions are bound to (M0: single). */
     machineId: z.string().min(1),
+    /**
+     * #351: the create-time explicit execution selection (providerId /
+     * model / reasoningLevel). Absent = the deployment default — pre-#351
+     * journals replay unchanged into the "*" fallback dispatch.
+     */
+    execution: threadExecutionSelectionSchema.optional(),
   }),
 
   /**
@@ -143,6 +174,16 @@ export const agentEventDataSchemas = {
     /** Control-plane half (`threads.environment_id`), for log-level 对账. */
     environmentId: z.string().min(1).optional(),
   }),
+
+  /**
+   * #351: a send-time selection change (the send route classified it `live`
+   * over classifyExecutionSettingsChange before dispatching). The row
+   * REPLACES the thread's explicit selection wholesale (full triple, unset
+   * members absent) — replay re-folds the same state, so a turn driven after
+   * eviction dispatches identically (replay-is-truth). State row like
+   * thread.rebound: no UX face, context-invisible.
+   */
+  "thread.execution_updated": threadExecutionSelectionSchema,
 
   /**
    * #309 manual compact / #326 auto compact — the content-bearing checkpoint row (omp
@@ -175,6 +216,15 @@ export const agentEventDataSchemas = {
     /** Client-generated idempotency key; retries append nothing. */
     inputId: z.string().min(1),
     content: z.array(promptContentSchema).min(1),
+    /**
+     * #351: the turn's pinned execution selection — the thread's explicit
+     * selection at turn start (any send-time ride lands on
+     * thread.execution_updated BEFORE this row). The driver resolves its
+     * provider from THIS snapshot, so a mid-turn selection change rides the
+     * NEXT turn (bb "live" semantics) and replay re-pins identically.
+     * Absent = the pre-#351 shape (dispatch on the deployment default).
+     */
+    execution: threadExecutionSelectionSchema.optional(),
   }),
 
   "turn.steer": z.object({

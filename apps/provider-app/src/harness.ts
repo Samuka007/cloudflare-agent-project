@@ -71,6 +71,16 @@ export interface HarnessEnv {
    * projection faces report the decode error.
    */
   MODEL_RELAY_CATALOG?: string;
+  /**
+   * #351 per-provider credential slots (#255 ruling C — the public catalog
+   * never carries keys). Strict JSON `{[providerId]: {apiKey?, baseUrl?}}`;
+   * a provider without an entry rides the deployment's single-relay slots
+   * (MODEL_RELAY_BASE_URL_ANTHROPIC / _API_KEY). Malformed JSON fails loudly
+   * at registry construction (deployment-time input, the
+   * AGENT_DO_IMAGE_SOURCE posture) — a silent wrong-credential degradation
+   * would surface as upstream 403s instead.
+   */
+  MODEL_RELAY_PROVIDER_CREDENTIALS?: string;
   /** Host binding default (default `local`). */
   DAEMON_MACHINE_ID?: string;
   /** `accept-edits` | `auto` | `full` (default `full`). */

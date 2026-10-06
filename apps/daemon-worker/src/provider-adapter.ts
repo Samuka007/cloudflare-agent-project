@@ -31,6 +31,20 @@ import type {
   ServiceTier,
 } from "./provider-types.js";
 
+/**
+ * #351: the thread-level execution selection riding thread/start and
+ * turn/steer-start commands. Structural port of the agent-do RelaySelection
+ * vocabulary (same triple, no cross-package type dependency): unset members
+ * resolve to the deployment default on the provider-application side; the
+ * fail-closed validation against the catalog is the server bridge's
+ * contract BEFORE this vocabulary is ever emitted.
+ */
+export interface AdapterExecutionSelection {
+  providerId?: string;
+  model?: string;
+  reasoningLevel?: ReasoningLevel;
+}
+
 /** bb ProviderExecutionContext (provider-adapter.ts:115-132). */
 export type ProviderExecutionContext = {
   model?: string;
@@ -78,6 +92,8 @@ export type AdapterCommand =
       dynamicTools?: DynamicTool[];
       disallowedTools?: readonly string[];
       instructionMode: InstructionMode;
+      /** #351: the create-time explicit selection (journaled on thread.created). */
+      execution?: AdapterExecutionSelection;
     }
   | {
       type: "thread/resume";
@@ -110,6 +126,8 @@ export type AdapterCommand =
       inputGroups?: PromptInput[][];
       clientRequestId: ClientTurnRequestId;
       options: ProviderExecutionContext;
+      /** #351: a send-time selection ride (classified `live` by the bridge). */
+      execution?: AdapterExecutionSelection;
     }
   | {
       type: "turn/steer";
@@ -120,6 +138,8 @@ export type AdapterCommand =
       inputGroups?: PromptInput[][];
       clientRequestId: ClientTurnRequestId;
       options: ProviderExecutionContext;
+      /** #351: a mid-turn selection change rides the thread state, not the active turn. */
+      execution?: AdapterExecutionSelection;
     }
   | {
       type: "thread/stop";

@@ -19,6 +19,7 @@ export type {
   AgentEventInput,
   AgentEventRecord,
   AgentEventType,
+  AnyAgentEvent,
   BlobRef,
   ToolResultStatus,
   TurnFailedReason,
@@ -135,9 +136,13 @@ export {
   decodeRelayCatalog,
   deriveRelayReasoning,
   findRelayCatalogModel,
+  relayReasoningLevelSchema,
   relayCatalogSchema,
   relayReasoningLevelValues,
   relayModelEntrySchema,
+  resolveRelaySelection,
+  RelaySelectionError,
+  SYNTHETIC_RELAY_PROVIDER_ID,
 } from "./provider-catalog.js";
 export type {
   RelayCatalog,
@@ -146,4 +151,9 @@ export type {
   RelayModelEntry,
   RelayReasoningLadder,
   RelayReasoningLevel,
+  RelaySelection,
+  RelaySelectionDirectory,
+  RelaySelectionDirectoryRow,
+  RelaySelectionErrorCode,
+  ResolvedRelaySelection,
 } from "./provider-catalog.js";

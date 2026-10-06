@@ -242,6 +242,7 @@ export function estimateTurnTokens(events: readonly AnyAgentEvent[]): number {
       case "task.yield_warning":
       case "thread.created":
       case "thread.rebound":
+      case "thread.execution_updated":
       case "thread/compacted":
       case "todo_phases":
       case "tool.dispatch":

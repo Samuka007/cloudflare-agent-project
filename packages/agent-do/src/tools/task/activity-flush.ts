@@ -132,6 +132,7 @@ export function projectActivityFlush(
       case "experimental_context_notes":
       // #288: binding rows are thread-scoped state, never child-journal units.
       case "thread.rebound":
+      case "thread.execution_updated":
       // #309: the compact checkpoint is cut-fold bookkeeping, not activity.
       case "thread/compacted":
       case "interaction.interrupted":

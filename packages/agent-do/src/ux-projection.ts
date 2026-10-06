@@ -218,6 +218,9 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       // #288 rebind: binding truth is state (thread header read face), not a
       // timeline row; the SPA surface is the environments family's job.
       case "thread.rebound":
+      // #351: selection truth is dispatch state (the turn pin rides
+      // turn.input's snapshot), not a timeline row.
+      case "thread.execution_updated":
       case "model.call_retry":
       case "experimental_context_notes":
       // M1.5 T2 JobRegistry journal family: projected by tools/job-registry,
