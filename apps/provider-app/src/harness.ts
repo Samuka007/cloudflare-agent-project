@@ -22,6 +22,7 @@
 import {
   AnthropicRelayProvider,
   CompletionsRelayProvider,
+  IMAGE_SOURCE_API_FAMILY,
   ResponsesRelayProvider,
   anthropicRequestBody,
   completionsRequestBody,
@@ -214,14 +215,20 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
   const model = modelRaw !== "" ? modelRaw : (catalogDefaultModel ?? HARNESS_DEFAULTS.model);
   const row = catalog !== undefined ? findRelayCatalogModel(catalog, model)?.model : undefined;
   const locatedProvider = catalog !== undefined ? findRelayCatalogModel(catalog, model) : undefined;
+  const locatedProviderApi =
+    locatedProvider !== undefined
+      ? catalog?.providers[locatedProvider.providerId]?.api
+      : undefined;
   // #361: the running row's protocol face — model api, then its provider's,
   // then the incumbent anthropic face. The edge catalog enum-validated both
   // seats at decode, so this fold cannot meet an unspeakable family.
+  // #362: the image-source family never drives the LLM wire — a degenerate
+  // declaration whose default row is an openai-images provider falls back to
+  // the incumbent face (the projection filters image rows from the LLM
+  // directory; the harness fold stays consistent with it).
   const relayApi: RelayApi =
     row?.api ??
-    (locatedProvider !== undefined
-      ? catalog?.providers[locatedProvider.providerId]?.api
-      : undefined) ??
+    (locatedProviderApi === IMAGE_SOURCE_API_FAMILY ? undefined : locatedProviderApi) ??
     DEFAULT_RELAY_API;
   // #351 credentials JSON: the default provider's slot rides under strict
   // decode (malformed JSON fails the deployment loudly, AGENT_DO_IMAGE_SOURCE

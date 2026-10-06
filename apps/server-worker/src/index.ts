@@ -9,6 +9,9 @@ import {
   ManagerDo,
   createEdgeAgentAdapter,
   relayAgentRuntime,
+  loadProviderConfigOverlay,
+  imageGenerationSourceFromOverlay,
+  RelayProviderRegistry,
   type HarnessEnv,
   type ManagerDoBindings,
 } from "@cap/provider-app";
@@ -42,13 +45,38 @@ export { NotificationHubDO, LeaseStoreDO, ManagerDo, DaemonServiceDO };
  * the module-global injection registry, agent-do/src/injection.ts).
  */
 export class ComposedAgentDO extends AgentDO {
+  /** The registry the "*" registration dispatches through (#351, #362). */
+  private readonly relayRegistry: RelayProviderRegistry;
+  /** Last applied D1 overlay fingerprint (hot-reload gate). */
+  private appliedOverlayFingerprint: string | null = null;
+
   constructor(ctx: DurableObjectState, env: AgentDoBindings) {
     super(ctx, env);
     // #351: the default provider (harness fold, the "*" fallback posture for
     // pre-#351 journals) plus the providerId-keyed registry resolver every
     // journal-selection dispatch goes through — one registration shape
     // shared with the manager and the dev rigs.
-    setAgentRuntime("*", relayAgentRuntime(env as AgentDoBindings & HarnessEnv));
+    const harnessEnv = env as AgentDoBindings & HarnessEnv;
+    const registry = RelayProviderRegistry.fromEnv(harnessEnv);
+    this.relayRegistry = registry;
+    setAgentRuntime("*", {
+      ...relayAgentRuntime(harnessEnv, registry),
+      // #362 hot-reload: every driveTurn re-reads the D1 provider overlay
+      // behind a content fingerprint, so panel-side provider edits reach
+      // warm DO isolates without a redeploy.
+      refreshRuntime: () => this.refreshProviderOverlay(),
+    });
+  }
+
+  private async refreshProviderOverlay(): Promise<void> {
+    const overlay = await loadProviderConfigOverlay(this.env);
+    if (overlay === null || overlay.fingerprint === this.appliedOverlayFingerprint) return;
+    this.relayRegistry.applyOverlay(overlay);
+    // #362 scope absorption ②: an api=openai-images row is the generate_image
+    // switch + source — refresh the DO-side override alongside the catalog so
+    // a panel edit lands on the next turn (null = env posture resumes).
+    this.applyImageGenerationSource(imageGenerationSourceFromOverlay(overlay));
+    this.appliedOverlayFingerprint = overlay.fingerprint;
   }
 }
 

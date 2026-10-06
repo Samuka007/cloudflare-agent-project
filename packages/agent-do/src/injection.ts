@@ -28,6 +28,14 @@ export interface AgentRuntime {
    * never silently re-route onto another row.
    */
   resolveExecutionProvider?: (selection: RelaySelection) => ModelProvider;
+  /**
+   * #362 hot-reload seam: the deploying worker may re-read mutable provider
+   * configuration (the D1 provider overlay) at the turn boundary — the DO
+   * awaits it once per driveTurn before the first dispatch. Optional and
+   * best-effort: a failed refresh leaves the last-known registration in
+   * place (a config read must never kill a turn).
+   */
+  refreshRuntime?: () => Promise<void>;
 }
 
 const runtimes = new Map<string, AgentRuntime>();
