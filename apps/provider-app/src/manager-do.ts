@@ -278,6 +278,8 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
                 ? "Fixed-reply mock (relay key not configured)"
                 : harness.relay.api === "openai-responses"
                   ? "OpenAI Responses-protocol relay model (#361 adaptor)"
+                  : harness.relay.api === "openai-completions"
+                    ? "OpenAI Chat Completions-protocol relay model (#363 adaptor)"
                   : "Anthropic-protocol relay model (GLM coding plan)",
             supportedReasoningEfforts: [
               {

@@ -127,10 +127,12 @@ export { projectToUxEvents } from "./ux-projection.js";
 export { ProjectionError, modelRequestFromEvents } from "./translate.js";
 export {
   AnthropicRelayProvider,
+  CompletionsRelayProvider,
   ResponsesRelayProvider,
   anthropicRequestBody,
   estimateWireRequestTokens,
   type RelayConfig,
+  completionsRequestBody,
   responsesRequestBody,
 } from "./relay/index.js";
 export {
@@ -147,6 +149,7 @@ export {
   resolveRelayApi,
   resolveRelaySelection,
   resolveResponsesEffort,
+  relayApiConsumesEffortMap,
   RelaySelectionError,
   RelayEffortMapError,
   DEFAULT_RELAY_API,

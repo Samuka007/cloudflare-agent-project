@@ -4,9 +4,12 @@ import {
   decodeRelayCatalog,
   deriveRelayReasoning,
   findRelayCatalogModel,
+  relayApiConsumesEffortMap,
   relayCatalogSchema,
   relayModelEntrySchema,
+  resolveRelaySelection,
   resolveResponsesEffort,
+  RelaySelectionError,
   RelayEffortMapError,
 } from "../src/provider-catalog.js";
 
@@ -211,10 +214,14 @@ describe("#361 relay api face + effort mapping", () => {
     // api families); the EDGE face only accepts what the relay dials.
     const freeForm = relayModelEntrySchema.safeParse({ id: "m", api: "openai-completions" });
     expect(freeForm.success).toBe(true);
-    const unspeakable = JSON.stringify({
+    // #363: openai-completions is a speakable edge face now (the second
+    // protocol family — a completions row drives the chat.completions wire).
+    const speakable = JSON.stringify({
       providers: { omp: { api: "openai-completions", models: [{ id: "m" }] } },
     });
-    expect(() => relayCatalogSchema.parse(JSON.parse(unspeakable))).toThrow();
+    expect(relayCatalogSchema.parse(JSON.parse(speakable)).providers.omp?.api).toBe(
+      "openai-completions",
+    );
     const modelLevel = JSON.stringify({
       providers: { omp: { models: [{ id: "m", api: "google-generative-ai" }] } },
     });
@@ -265,5 +272,35 @@ describe("#361 relay api face + effort mapping", () => {
     // Relay-only rungs without a map entry are honest errors, never clamps.
     expect(() => resolveResponsesEffort("ultra")).toThrow(RelayEffortMapError);
     expect(() => resolveResponsesEffort("ultracode")).toThrow(RelayEffortMapError);
+  });
+
+  test("#363 relayApiConsumesEffortMap: both openai faces fold, anthropic does not", () => {
+    expect(relayApiConsumesEffortMap("openai-responses")).toBe(true);
+    expect(relayApiConsumesEffortMap("openai-completions")).toBe(true);
+    expect(relayApiConsumesEffortMap("anthropic-messages")).toBe(false);
+  });
+
+  test("#363 an effort-unmappable rung fails closed on a completions row at selection", () => {
+    const directory = {
+      rows: [
+        {
+          providerId: "omp",
+          id: "ultra-row",
+          reasoningLevels: ["none", "ultra"] as const,
+          defaultReasoningLevel: "none" as const,
+          api: "openai-completions" as const,
+        },
+      ],
+      defaultProviderId: "omp",
+      defaultModelId: "ultra-row",
+      thinkingEnabled: true,
+    };
+    try {
+      resolveRelaySelection(directory, { reasoningLevel: "ultra" });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(RelaySelectionError);
+      expect((error as RelaySelectionError).code).toBe("reasoning_level_unknown");
+    }
   });
 });

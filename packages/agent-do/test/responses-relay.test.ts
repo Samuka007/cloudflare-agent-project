@@ -328,11 +328,8 @@ describe("responses client: stream mapping", () => {
     expect(toolCalls).toEqual([[{ name: "bash", arguments: { command: "echo hi" } }]]);
     // The wire recorded the exact body (replay proof artifact).
     expect(provider.bodies).toHaveLength(1);
-    const parsed: unknown = JSON.parse(provider.bodies[0] ?? "{}");
-    const model = typeof parsed === "object" && parsed !== null && "model" in parsed && typeof parsed.model === "string"
-      ? parsed.model
-      : undefined;
-    expect(model).toBe("glm-5.3-flash");
+    const firstWire: unknown = JSON.parse(provider.bodies[0] ?? "{}");
+    expect(firstWire).toMatchObject({ model: "glm-5.3-flash" });
   });
 
   test("refusal deltas surface as answer text (pi-ai anchor)", async () => {

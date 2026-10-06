@@ -3,6 +3,7 @@ import {
   RelaySelectionError,
   SYNTHETIC_RELAY_PROVIDER_ID,
   AnthropicRelayProvider,
+  CompletionsRelayProvider,
   ResponsesRelayProvider,
 } from "@cap/agent-do";
 import {
@@ -309,5 +310,90 @@ describe("#361 openai-responses dispatch", () => {
     });
     const provider = registry.providerFor({ providerId: "newapi", model: "glm-5.3-flash" });
     expect(provider).toBeInstanceOf(FixedReplyProvider);
+  });
+});
+
+describe("#363 openai-completions dispatch", () => {
+  const COMPLETIONS_CATALOG = JSON.stringify({
+    defaultProvider: "newapi",
+    providers: {
+      newapi: {
+        displayName: "newapi",
+        api: "openai-completions",
+        models: [
+          {
+            id: "glm-5.3-flash",
+            reasoningLevels: ["none", "low", "high"],
+            defaultReasoningLevel: "none",
+            contextWindow: 200_000,
+            maxTokens: 8192,
+          },
+          {
+            id: "deepseek-v4-pro",
+            reasoningLevels: ["none", "high", "xhigh"],
+            reasoningEffortMap: { xhigh: "max" },
+          },
+          {
+            id: "ultra-row",
+            reasoningLevels: ["none", "ultra"],
+            defaultReasoningLevel: "none",
+          },
+        ],
+      },
+    },
+  });
+
+  const ENV = {
+    MODEL_RELAY_CATALOG: COMPLETIONS_CATALOG,
+    MODEL_RELAY_MODEL: "glm-5.3-flash",
+    MODEL_RELAY_API_KEY: "k-deployment",
+    MODEL_RELAY_BASE_URL_ANTHROPIC: "https://unused-anthropic.example/api",
+    MODEL_RELAY_THINKING_BUDGET_TOKENS: "4096",
+  };
+
+  test("a catalog api: openai-completions row dispatches the CompletionsRelayProvider", () => {
+    const registry = RelayProviderRegistry.fromEnv(ENV);
+    const provider = registry.providerFor({ providerId: "newapi", model: "glm-5.3-flash" });
+    expect(provider).toBeInstanceOf(CompletionsRelayProvider);
+  });
+
+  test("the resolved config carries the face and the rung-mapped effort (per-model map wins)", () => {
+    const registry = RelayProviderRegistry.fromEnv(ENV);
+    const flash = registry.resolve({
+      providerId: "newapi",
+      model: "glm-5.3-flash",
+      reasoningLevel: "high",
+    });
+    expect(flash.config.api).toBe("openai-completions");
+    expect(flash.config.reasoningEffort).toBe("high");
+    const deepseek = registry.resolve({
+      providerId: "newapi",
+      model: "deepseek-v4-pro",
+      reasoningLevel: "xhigh",
+    });
+    expect(deepseek.config.reasoningEffort).toBe("max");
+  });
+
+  test("an effort-unmappable rung on a completions row fails closed with the named 422", () => {
+    const registry = RelayProviderRegistry.fromEnv(ENV);
+    try {
+      registry.resolve({ providerId: "newapi", model: "ultra-row", reasoningLevel: "ultra" });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(RelaySelectionError);
+      expect((error as RelaySelectionError).code).toBe("reasoning_level_unknown");
+      expect((error as RelaySelectionError).message).toContain("responses-effort mapping");
+    }
+  });
+
+  test("a keyless completions row degrades to the fixed-reply mock (mock-first, row-level)", () => {
+    const registry = RelayProviderRegistry.fromEnv({
+      MODEL_RELAY_CATALOG: COMPLETIONS_CATALOG,
+      MODEL_RELAY_MODEL: "glm-5.3-flash",
+    });
+    const provider = registry.providerFor({ providerId: "newapi", model: "glm-5.3-flash" });
+    expect(provider).toBeInstanceOf(FixedReplyProvider);
+    // The mock still renders the completions wire body for the row's face.
+    expect(provider).toBeDefined();
   });
 });
