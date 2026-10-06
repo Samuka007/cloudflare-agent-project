@@ -18,6 +18,7 @@
 
 import { runClient } from "./connection.js";
 import { hasPersistedIdentity, type ClientConfig } from "./identity.js";
+import { decodeCfAccessConfig } from "./cf-access.js";
 import { decodeAgentAuthConfig } from "./agent-auth.js";
 import { decodeTaskIsolationConfig } from "./task-isolation.js";
 import { homedir } from "node:os";
@@ -42,7 +43,9 @@ function argValue(flag: string): string | undefined {
 const enrollKey = process.env.DAEMON_ENROLL_KEY;
 const joinCode = argValue("--join-code") ?? process.env.DAEMON_JOIN_CODE;
 const dataDir =
-  argValue("--dataDir") ?? process.env.DAEMON_DATA_DIR ?? join(homedir(), ".local", "state", "cap-daemon");
+  argValue("--dataDir") ??
+  process.env.DAEMON_DATA_DIR ??
+  join(homedir(), ".local", "state", "cap-daemon");
 const credentialPresent =
   (enrollKey !== undefined && enrollKey !== "") || (joinCode !== undefined && joinCode !== "");
 if (!credentialPresent && !hasPersistedIdentity(dataDir)) {
@@ -56,13 +59,22 @@ const config: ClientConfig = {
   // --server is the bb installer contract flag (AddMachineDialog
   // pairingCommand); --url stays for existing env files.
   baseUrl:
-    argValue("--server") ?? argValue("--url") ?? process.env.DAEMON_SERVICE_URL ?? "http://127.0.0.1:8790",
+    argValue("--server") ??
+    argValue("--url") ??
+    process.env.DAEMON_SERVICE_URL ??
+    "http://127.0.0.1:8790",
   dataDir,
   sandboxRoot: argValue("--sandbox") ?? process.env.DAEMON_SANDBOX_ROOT ?? "/tmp/cap-sandbox",
   enrollKey: enrollKey ?? "",
   joinCode: joinCode ?? null,
   taskIsolation: decodeTaskIsolationConfig(process.env.DAEMON_TASK_ISOLATION),
   agentAuth: decodeAgentAuthConfig(process.env.DAEMON_AGENT_AUTH),
+  // #420: --cf-client-id/--cf-client-secret mirror the env pair (arg wins,
+  // the --server/--join-code convention); decode enforces both-or-neither.
+  cfAccess: decodeCfAccessConfig(
+    argValue("--cf-client-id") ?? process.env.DAEMON_CF_ACCESS_CLIENT_ID,
+    argValue("--cf-client-secret") ?? process.env.DAEMON_CF_ACCESS_CLIENT_SECRET,
+  ),
 };
 
 await runClient(config);

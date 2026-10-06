@@ -12,6 +12,7 @@ import { log } from "./log.js";
 import { runSessionLoop } from "./session-loop.js";
 import { serviceFrameSchema, type ObservedExecution, type ServiceFrame } from "../protocol.js";
 import { loadIdentity, type ClientConfig, type ClientIdentity } from "./identity.js";
+import { cfAccessHeaders } from "./cf-access.js";
 import { Executor, scanMarkerProcesses } from "./executor.js";
 import { HostRpcCommandError, browseHostDirectory } from "./host-directory.js";
 import { readHostFile, writeThreadFile } from "./host-files.js";
@@ -116,7 +117,10 @@ export async function runClient(config: ClientConfig): Promise<void> {
 // Session establishment (bb §2.1 handshake, client side).
 // ---------------------------------------------------------------------------
 
-async function establishSession(
+/** Exported as the client face of the bb §2.1 handshake — the L1 lane
+ * (l1-cf-access-headers) drives it against a recording fetch/socket, like
+ * the dispatch* exports below serve the RPC suites. */
+export async function establishSession(
   config: ClientConfig,
   identity: ClientIdentity,
   runtime: ClientRuntime,
@@ -126,6 +130,9 @@ async function establishSession(
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${identity.hostKey}`,
+      // #420: Access service-token headers when configured — the wall to
+      // hostKey's door lock, sent in parallel on every daemon seam.
+      ...cfAccessHeaders(config.cfAccess),
     },
     // hostName is the SPA's machine-name source (bb session/open
     // hostDaemonSessionOpenRequestSchema:100 → upsertHost, internal/session.ts:93).
@@ -164,7 +171,12 @@ async function establishSession(
   // Bun extends the WHATWG constructor with per-socket headers (bb Bearer
   // auth shape); DOM types only know the protocols overload.
   const BUN_WS_HEADERS = {
-    headers: { authorization: `Bearer ${identity.hostKey}` },
+    headers: {
+      authorization: `Bearer ${identity.hostKey}`,
+      // #420: same wall/lock pairing on the upgrade request — Access
+      // evaluates upgrade headers like any other HTTP request.
+      ...cfAccessHeaders(config.cfAccess),
+    },
   } as unknown as string[];
   const socket = new WebSocket(wsUrl, BUN_WS_HEADERS);
 

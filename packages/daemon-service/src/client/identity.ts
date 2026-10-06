@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync } from "n
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { negotiationFailure } from "./backoff.js";
+import { cfAccessHeaders, type CfAccessConfig } from "./cf-access.js";
 import { log } from "./log.js";
 import type { AgentAuthConfig } from "./agent-auth.js";
 import type { TaskIsolationConfig } from "./task-isolation.js";
@@ -28,6 +29,9 @@ export interface ClientConfig {
   taskIsolation: TaskIsolationConfig;
   /** #145 provider channel — decoded from DAEMON_AGENT_AUTH. */
   agentAuth: AgentAuthConfig;
+  /** #420 CF Access service-token pair (the wall; hostKey is the door
+   * lock) — undefined when the daemon dials an Access-free face. */
+  cfAccess?: CfAccessConfig;
 }
 
 export interface ClientIdentity {
@@ -70,7 +74,12 @@ async function enroll(
 ): Promise<ClientIdentity> {
   const response = await fetch(`${config.baseUrl}/enroll`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      // #420: Access service-token headers when configured — the only
+      // credential this path can carry (enroll mints the hostKey).
+      ...cfAccessHeaders(config.cfAccess),
+    },
     // hostName rides the first registry insert (bb /hosts/enroll upserts the
     // daemon's self-reported name, internal/hosts.ts:110).
     body: JSON.stringify({
