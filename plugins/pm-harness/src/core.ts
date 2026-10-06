@@ -1977,17 +1977,36 @@ const PRODUCT_FACE_TYPE_VALUES: Record<string, true> = {
  *  acceptance talks ABOUT UI tickets while shipping tests). */
 const PRODUCT_FACE_PATTERN = /走查|真机|手验|截图|面板|界面|浏览器|\bCDP\b|screenshot|\bUI\b(?!\s*票)/i;
 
-/** The 票面验收字段: the markdown section headed 验收 (验收标准/验收判据
- *  prefix-match), through the next heading of any level. A ticket without
- *  one has no acceptance fields to read — the DoR gate already flags that
- *  as advisory. */
-const ACCEPTANCE_SECTION_PATTERN = /^#{1,6}\s*验收[^\n]*$/m;
+/** Section-head vocabulary — the words real tickets head sections with
+ *  (live #362/#382/#386/#387/#390/#391 bodies; prefix-match, so 参考类预测
+ *  ends a section the way 参考 does). Prefix words first so the alternation
+ *  names the longest form. */
+const SECTION_HEAD_WORDS = "验收标准|验收判据|验收|任务|修法|方案|非目标|证据|参考";
+
+/** The gate reads GraphQL bodyText — markdown RENDERED TO TEXT, where
+ *  `## 验收` arrives as the bare line `验收` (#402 probe: every markdown-
+ *  anchored L1 fixture was green while AP.closeout(#387) sailed through).
+ *  Head/section matchers therefore accept both the `#{1,6}` form and the
+ *  bare-line form bodyText actually delivers. */
+const SECTION_HEAD_PATTERN = new RegExp(
+  `^(?:#{1,6}[^\\S\\n]*)?(?:${SECTION_HEAD_WORDS})[^\\n]*$`,
+  "m",
+);
+
+/** The 票面验收字段: the section headed 验收 (验收标准/验收判据 prefix-match),
+ *  through the next section head (vocabulary above, same bare-or-markdown
+ *  form) or EOF. A ticket without one has no acceptance fields to read —
+ *  the DoR gate already flags that as advisory. */
+const ACCEPTANCE_SECTION_PATTERN = new RegExp(
+  `^(?:#{1,6}[^\\S\\n]*)?(?:验收标准|验收判据|验收)[^\\n]*$`,
+  "m",
+);
 
 export function acceptanceSectionOf(body: string): string | null {
   const head = ACCEPTANCE_SECTION_PATTERN.exec(body);
   if (head === null) return null;
   const rest = body.slice(head.index + head[0].length);
-  const next = /^#{1,6}\s/m.exec(rest);
+  const next = SECTION_HEAD_PATTERN.exec(rest);
   return (next === null ? rest : rest.slice(0, next.index)).trim();
 }
 
