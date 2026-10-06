@@ -202,6 +202,7 @@ export function projectLifecycle(events: readonly AnyAgentEvent[]): LifecycleVie
       case "experimental_context_notes":
       // #288: binding rows are thread-scoped state, never lifecycle units.
       case "thread.rebound":
+      case "thread.execution_updated":
       case "thread/compacted":
       case "interaction.interrupted":
       case "interaction.registered":

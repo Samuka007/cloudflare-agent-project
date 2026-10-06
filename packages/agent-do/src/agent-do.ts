@@ -65,6 +65,7 @@ import type {
 } from "./daemon.js";
 import {
   ModelProviderError,
+  type ModelProvider,
   type ModelRequest,
   type ModelStreamChunk,
   type ModelUsageReceipt,
@@ -72,6 +73,8 @@ import {
 import { projectToUxEvents } from "./ux-projection.js";
 import { getAgentRuntime } from "./injection.js";
 import { modelRequestFromEvents } from "./translate.js";
+import type { RelaySelection } from "./provider-catalog.js";
+import { normalizeRelaySelection, relaySelectionEquals } from "./turn-state.js";
 import { toolRegistryRow, type ToolRegistryRow } from "./tools/registry.js";
 import { resolveHostPathOverride, type HostPathResolution } from "./tools/host-path.js";
 import { scheduleBatch, type BatchScheduleItem } from "./tools/batch-scheduler.js";
@@ -351,6 +354,13 @@ export interface CreateThreadRequest {
   threadId: string;
   title: string;
   machineId?: string;
+  /**
+   * #351: the create-time explicit execution selection — journaled on
+   * thread.created and resolved against the providerId-keyed relay registry
+   * at dispatch. Validation is the server bridge's contract; the DO journals
+   * verbatim and fails loudly at dispatch if the catalog drifted.
+   */
+  execution?: RelaySelection;
 }
 
 export interface CreateThreadResult {
@@ -364,6 +374,15 @@ export interface SendMessageRequest {
   /** #317: the full journal prompt-content union (text/image/localImage/localFile). */
   content: PromptContent[];
   mode: "auto" | "start" | "steer";
+  /**
+   * #351: a send-time selection ride — the server classified it `live`
+   * (classifyExecutionSettingsChange) before dispatching. Applied BEFORE the
+   * turn rows (thread.execution_updated) so the new turn's pin and any
+   * replay re-fold the same selection. A steer still applies the thread
+   * state change; the active turn keeps its own pin (live rides the NEXT
+   * turn).
+   */
+  execution?: RelaySelection;
 }
 
 export interface SendMessageResult {
@@ -531,6 +550,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     await this.appendEvent("thread.created", {
       title: request.title,
       machineId: request.machineId ?? "local",
+      ...(request.execution !== undefined
+        ? { execution: normalizeRelaySelection(request.execution) ?? undefined }
+        : {}),
     });
     this.armWatchdog();
     return { threadId: request.threadId, duplicated: false };
@@ -565,6 +587,18 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     if (existing !== undefined) {
       return { turnId: existing.turnId, steer: existing.kind === "steer", duplicated: true };
     }
+    // #351: apply a send-time selection ride before the turn rows so the
+    // new turn's pin (and any replay) folds the same explicit selection.
+    // Unchanged rides append nothing (send idempotence covers retries, but
+    // an equal triple must not manufacture journal rows either).
+    let pinned: RelaySelection | null = this.state.execution;
+    if (request.execution !== undefined) {
+      const next = normalizeRelaySelection(request.execution);
+      if (next !== null && !relaySelectionEquals(this.state.execution, next)) {
+        await this.appendEvent("thread.execution_updated", next);
+        pinned = next;
+      }
+    }
     const active = this.activeTurn();
     const wantSteer = request.mode === "steer" || (request.mode === "auto" && active !== undefined);
     if (wantSteer) {
@@ -595,6 +629,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       turnId,
       inputId: request.clientRequestId,
       content: request.content,
+      ...(pinned !== null ? { execution: pinned } : {}),
     });
     this.armWatchdog();
     this.ctx.waitUntil(this.driveTurn(record.data.turnId));
@@ -2456,7 +2491,14 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         });
       const guarded: Effect.Effect<ModelCallOutcome, ProviderPullFailure> = Effect.gen(
         function* () {
-          const provider = getAgentRuntime(self.requireThread()).provider;
+          // #351: registry resolution (fail-closed) joins the pull-failure
+          // channel — a drifted journaled selection retries and lands the
+          // model.call_failed/turn.failed ladder like any provider error,
+          // instead of killing the driver as a defect.
+          const provider = yield* Effect.try({
+            try: () => self.resolveTurnProvider(turnId),
+            catch: (error: unknown) => new ProviderPullFailure(error),
+          });
           const request = yield* Effect.promise(() => self.buildModelRequest(turnId, modelCallId));
           const iterator = provider
             .streamTurn(request, {
@@ -4090,7 +4132,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * Both ride the per-machine service DO stub synchronously — the B2 twins
    * of the B1 host-file read face. The unwrapped outcome kinds map 1:1.
    */
-  private generateImageToolContext(threadId: string, signal: AbortSignal): GenerateImageToolContext {
+  private generateImageToolContext(
+    threadId: string,
+    signal: AbortSignal,
+  ): GenerateImageToolContext {
     const machineId = this.state.machineId ?? "local";
     return {
       config: this.generateImageConfig,
@@ -4533,6 +4578,24 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   private activeTurn() {
     if (this.state.activeTurnId === null) return undefined;
     return this.state.turns.get(this.state.activeTurnId);
+  }
+
+  /**
+   * #351 dispatch resolution (the per-turn half of the providerId-keyed
+   * relay registry). Order: an exact per-thread registration wins (test and
+   * mocked rigs pin their provider — selection then resolves nowhere); a
+   * journaled selection resolves through the registry the deploying worker
+   * installed — fail-closed on catalog drift (RelaySelectionError surfaces
+   * as a turn failure, never a silent re-route); no selection dispatches the
+   * deployment default ("*") provider, the pre-#351 posture verbatim.
+   */
+  private resolveTurnProvider(turnId: string): ModelProvider {
+    const runtime = getAgentRuntime(this.requireThread());
+    const selection = this.state.turns.get(turnId)?.execution ?? null;
+    if (selection !== null && runtime.resolveExecutionProvider !== undefined) {
+      return runtime.resolveExecutionProvider(selection);
+    }
+    return runtime.provider;
   }
 
   /** Test/config seam: persist a watchdog config patch. */

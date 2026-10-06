@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import type { HostRpcCommand } from "@cap/daemon-service";
-import { activeTurnIdFromEvents } from "@cap/agent-do";
+import { activeTurnIdFromEvents, type RelaySelection } from "@cap/agent-do";
+import {
+  classifyThreadSelectionChange,
+  resolveStoredThreadExecution,
+  validateThreadExecutionSelection,
+} from "../services/execution-selection.js";
 import {
   createThreadRequestSchema,
   deleteThreadRequestSchema,
@@ -302,9 +307,13 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // attachment references — verify containment + presence in the sending
     // project's family before any write lands (a 4xx leaves no orphan row).
     await validatePromptAttachmentReferences(ctx.env.BLOBS, payload.projectId, payload.input);
-    // M0 harness minimum: single provider (spec #17 ruling #10; provider
-    // selection surfaces are daemon-lane faces).
-    const providerId = payload.providerId ?? "omp";
+    // #351: fail-closed selection validation over the catalog directory —
+    // unknown provider/model/reasoning 422 with a named error before any
+    // write lands (ROADMAP red line: never silently relax). No selection
+    // fields → the legacy M0 path: provider "omp" (the synthetic default),
+    // null overrides.
+    const selection = validateThreadExecutionSelection(ctx.env, payload);
+    const providerId = selection?.resolved.providerId ?? "omp";
     // #288: the binding source chain resolves once, here — explicit choice >
     // project default source > deployment single machine — and feeds BOTH
     // halves: the environments row / threads.environment_id (control plane)
@@ -324,6 +333,8 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       projectId: payload.projectId,
       environmentId: binding.environmentId,
       providerId,
+      modelOverride: payload.model ?? null,
+      reasoningLevelOverride: payload.reasoningLevel ?? null,
       title: payload.title ?? null,
       // bb derives the sidebar title fallback from the create input at the
       // create boundary (thread-create.ts:770-775 → title-generation.ts:53-68).
@@ -340,6 +351,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       threadId,
       title: payload.title ?? "",
       machineId: binding.machineId,
+      ...(selection !== null ? { execution: selection.explicit } : {}),
     });
     // bb createThread broadcasts (packages/db/src/data/threads.ts:337-340).
     await hub(ctx).notifyThread(threadId, ["thread-created"], { projectId: payload.projectId });
@@ -522,6 +534,31 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
     // family; absolute/URI-like paths pass through to the runtime untouched.
     await validatePromptAttachmentReferences(ctx.env.BLOBS, row.projectId, payload.input);
     const mode = resolveSendMode(row.status, payload.mode);
+    // #351: a send carrying model/reasoningLevel is a selection change —
+    // validate fail-closed against the catalog (422 named errors), classify
+    // the drift (bb unchanged/live/session), and on `live` persist the
+    // overrides AND ride the resolved explicit selection on the dispatch so
+    // the turn (and any replay) pins the new row.
+    let executionRide: RelaySelection | undefined;
+    if (payload.model !== undefined || payload.reasoningLevel !== undefined) {
+      const next = validateThreadExecutionSelection(ctx.env, {
+        providerId: row.providerId,
+        ...(payload.model !== undefined ? { model: payload.model } : {}),
+        ...(payload.reasoningLevel !== undefined ? { reasoningLevel: payload.reasoningLevel } : {}),
+      });
+      if (next !== null) {
+        const current = resolveStoredThreadExecution(ctx.env, row);
+        if (classifyThreadSelectionChange(current, next.resolved) === "live") {
+          await updateThreadRecord(ctx.env, row.id, {
+            ...(payload.model !== undefined ? { modelOverride: payload.model } : {}),
+            ...(payload.reasoningLevel !== undefined
+              ? { reasoningLevelOverride: payload.reasoningLevel }
+              : {}),
+          });
+          executionRide = next.explicit;
+        }
+      }
+    }
     // bb generates the client turn request id server-side when appending the
     // client/turn/requested event (thread-send.ts:346-356); the HTTP schema
     // has no clientRequestId field.
@@ -537,6 +574,7 @@ export function registerThreadRoutes(app: Hono<{ Bindings: HonoBindings }>): voi
       clientRequestId,
       content,
       mode,
+      ...(executionRide !== undefined ? { execution: executionRide } : {}),
     });
     if (!result.duplicated) {
       // Coarse M0 status transition: the daemon lifecycle (#30) owns the real

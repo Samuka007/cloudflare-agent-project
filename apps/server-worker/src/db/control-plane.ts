@@ -172,10 +172,7 @@ export interface ThreadListRow extends ThreadDbRow {
  * block → createdAt desc, id desc). Pending-interaction existence is joined as
  * a boolean like listThreadsWithPendingInteractionState.
  */
-export async function listThreads(
-  env: Env,
-  filters: ThreadListFilters,
-): Promise<ThreadListRow[]> {
+export async function listThreads(env: Env, filters: ThreadListFilters): Promise<ThreadListRow[]> {
   const where: string[] = ["t.deleted_at IS NULL"];
   const binds: unknown[] = [];
   if (filters.visibility !== undefined) {
@@ -228,9 +225,7 @@ export async function listThreads(
   // (environmentHostId/Name/BranchName + display kind) per thread.
   let sql = `SELECT ${THREAD_COLUMN_SQL.split(", ")
     .map((c) => `t.${c}`)
-    .join(
-      ", ",
-    )}, e.host_id AS environment_host_id, e.name AS environment_name,
+    .join(", ")}, e.host_id AS environment_host_id, e.name AS environment_name,
        e.branch_name AS environment_branch_name, e.is_worktree AS environment_is_worktree,
        e.workspace_provision_type AS environment_workspace_provision_type,
        EXISTS(SELECT 1 FROM pending_interactions pi WHERE pi.thread_id = t.id AND pi.status IN ('pending','resolving')) AS has_pending_interaction
@@ -256,10 +251,8 @@ export async function listThreads(
     environmentWorkspaceDisplayKind: resolveEnvironmentWorkspaceDisplayKind({
       environment: {
         isWorktree: row.environment_is_worktree === null ? null : row.environment_is_worktree === 1,
-        workspaceProvisionType:
-          (strOrNull(row, "environment_workspace_provision_type") as
-            | EnvironmentDbRow["workspaceProvisionType"]
-            | null),
+        workspaceProvisionType: strOrNull(row, "environment_workspace_provision_type") as
+          EnvironmentDbRow["workspaceProvisionType"] | null,
       },
     }),
     hasPendingInteraction: row.has_pending_interaction === 1,
@@ -323,6 +316,9 @@ export interface CreateThreadRecordArgs {
   /** #288 binding row resolved at creation; null = deployment default. */
   environmentId: string | null;
   providerId: string;
+  /** #351: the explicit create-time selection overrides (null = unset). */
+  modelOverride: string | null;
+  reasoningLevelOverride: string | null;
   title: string | null;
   titleFallback: string | null;
   sectionId: string | null;
@@ -349,8 +345,8 @@ export async function createThreadRecord(
       args.projectId,
       args.environmentId,
       args.providerId,
-      null,
-      null,
+      args.modelOverride,
+      args.reasoningLevelOverride,
       args.title,
       args.titleFallback,
       args.sectionId,
@@ -387,6 +383,9 @@ export interface ThreadMetadataUpdate {
   parentThreadId?: string | null;
   /** #288 rebind: the new binding row (change kind "environment-changed"). */
   environmentId?: string | null;
+  /** #351: explicit selection overrides (change kind "execution-changed"). */
+  modelOverride?: string | null;
+  reasoningLevelOverride?: string | null;
   visibility?: ThreadDbRow["visibility"];
   lastReadAt?: number | null;
   status?: ThreadDbRow["status"];
@@ -438,6 +437,16 @@ export async function updateThreadRecord(
     sets.push("environment_id = ?");
     binds.push(update.environmentId);
     changedKinds.push("environment-changed");
+  }
+  if (update.modelOverride !== undefined) {
+    sets.push("model_override = ?");
+    binds.push(update.modelOverride);
+    changedKinds.push("execution-changed");
+  }
+  if (update.reasoningLevelOverride !== undefined) {
+    sets.push("reasoning_level_override = ?");
+    binds.push(update.reasoningLevelOverride);
+    changedKinds.push("execution-changed");
   }
   if (update.lastReadAt !== undefined) {
     sets.push("last_read_at = ?");

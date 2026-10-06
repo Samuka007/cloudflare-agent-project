@@ -8,8 +8,7 @@ import { HostOrchestratorDO, setProviderAdapter } from "@cap/daemon-worker";
 import {
   ManagerDo,
   createEdgeAgentAdapter,
-  relayProviderFrom,
-  resolveHarness,
+  relayAgentRuntime,
   type HarnessEnv,
   type ManagerDoBindings,
 } from "@cap/provider-app";
@@ -45,9 +44,11 @@ export { NotificationHubDO, LeaseStoreDO, ManagerDo, DaemonServiceDO };
 export class ComposedAgentDO extends AgentDO {
   constructor(ctx: DurableObjectState, env: AgentDoBindings) {
     super(ctx, env);
-    setAgentRuntime("*", {
-      provider: relayProviderFrom(resolveHarness(env as AgentDoBindings & HarnessEnv)),
-    });
+    // #351: the default provider (harness fold, the "*" fallback posture for
+    // pre-#351 journals) plus the providerId-keyed registry resolver every
+    // journal-selection dispatch goes through — one registration shape
+    // shared with the manager and the dev rigs.
+    setAgentRuntime("*", relayAgentRuntime(env as AgentDoBindings & HarnessEnv));
   }
 }
 

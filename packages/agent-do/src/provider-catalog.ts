@@ -247,3 +247,136 @@ export function findRelayCatalogModel(
   }
   return undefined;
 }
+
+// ---------------------------------------------------------------------------
+// Thread-level selection resolution (#351 — the L4 consumption chain)
+// ---------------------------------------------------------------------------
+
+/**
+ * The synthetic provider seam id (routes/threads.ts create: the pre-#351
+ * `payload.providerId ?? "omp"` sentinel). It names "the deployment default
+ * provider" rather than a concrete catalog key, so it resolves to whatever
+ * the declaration's default is — pre-#351 threads keep dispatching on
+ * catalog deployments instead of failing on an undeclared key.
+ */
+export const SYNTHETIC_RELAY_PROVIDER_ID = "omp";
+
+/** A thread-level execution selection (threads row overrides / create/send payloads). */
+export interface RelaySelection {
+  providerId?: string;
+  model?: string;
+  reasoningLevel?: RelayReasoningLevel;
+}
+
+export type RelaySelectionErrorCode =
+  "provider_unknown" | "model_unknown" | "reasoning_level_unknown";
+
+/**
+ * Fail-closed selection rejection (ROADMAP red line: unknown values 422 with
+ * a named error — never silently relax onto another provider/model row).
+ */
+export class RelaySelectionError extends Error {
+  constructor(
+    readonly code: RelaySelectionErrorCode,
+    readonly field: "providerId" | "model" | "reasoningLevel",
+    message: string,
+  ) {
+    super(message);
+    this.name = "RelaySelectionError";
+  }
+}
+
+/**
+ * The directory slice the resolver reads. Structural by design: the
+ * provider-app catalog projection rows (`RelayCatalogModelRow`) satisfy it,
+ * so validation (#350 projection face) and dispatch (registry) read ONE
+ * resolution — the picker face and the turns-actually-run dispatch cannot
+ * disagree on what a selection means.
+ */
+export interface RelaySelectionDirectoryRow {
+  providerId: string;
+  id: string;
+  reasoningLevels: readonly RelayReasoningLevel[];
+  defaultReasoningLevel: RelayReasoningLevel;
+}
+
+export interface RelaySelectionDirectory {
+  rows: readonly RelaySelectionDirectoryRow[];
+  /** The seam default provider (catalog defaultProvider ?? first key ?? omp). */
+  defaultProviderId: string;
+  /** The model turns actually run (harness model) — a provider's default fill. */
+  defaultModelId: string;
+  /** Deployment thinking flag (MODEL_RELAY_THINKING_BUDGET_TOKENS > 0). */
+  thinkingEnabled: boolean;
+}
+
+export interface ResolvedRelaySelection {
+  providerId: string;
+  modelId: string;
+  reasoningLevel: RelayReasoningLevel;
+}
+
+/**
+ * Resolve one thread-level selection against the catalog directory:
+ *
+ * - provider: explicit ?? default ("omp" maps to the default — sentinel);
+ * - model: explicit (must sit in the resolved provider's rows) ?? the
+ *   running model when the provider declares it — a provider without the
+ *   running row has NO default and demands an explicit model (named error,
+ *   not a guessed first row);
+ * - reasoning level: explicit (must sit in the row's runnable ladder) ?? the
+ *   row's derived default. The ladder is budget-collapsed exactly like the
+ *   picker face (deriveRelayReasoning) — budget off admits only "none",
+ *   so a stored non-none rung from a budget-on era fails loudly on replay
+ *   instead of silently downgrading (contradiction-2 discipline).
+ */
+export function resolveRelaySelection(
+  directory: RelaySelectionDirectory,
+  selection: RelaySelection,
+): ResolvedRelaySelection {
+  const providerId =
+    selection.providerId === SYNTHETIC_RELAY_PROVIDER_ID
+      ? directory.defaultProviderId
+      : (selection.providerId ?? directory.defaultProviderId);
+  const providerRows = directory.rows.filter((row) => row.providerId === providerId);
+  if (providerRows.length === 0) {
+    const declared = [...new Set(directory.rows.map((row) => row.providerId))].sort();
+    throw new RelaySelectionError(
+      "provider_unknown",
+      "providerId",
+      `unknown provider "${selection.providerId}" — declared providers: ${JSON.stringify(declared)}`,
+    );
+  }
+  const row =
+    selection.model !== undefined
+      ? providerRows.find((candidate) => candidate.id === selection.model)
+      : providerRows.find((candidate) => candidate.id === directory.defaultModelId);
+  if (row === undefined) {
+    const declared = providerRows.map((candidate) => candidate.id);
+    throw new RelaySelectionError(
+      "model_unknown",
+      "model",
+      selection.model === undefined
+        ? `provider "${providerId}" has no resolvable default model ` +
+            `(the running model "${directory.defaultModelId}" is not one of its rows: ` +
+            `${JSON.stringify(declared)}) — pass model explicitly`
+        : `unknown model "${selection.model}" for provider "${providerId}" — ` +
+            `declared models: ${JSON.stringify(declared)}`,
+    );
+  }
+  const ladder = deriveRelayReasoning({
+    thinkingEnabled: directory.thinkingEnabled,
+    declaredLevels: row.reasoningLevels,
+    declaredDefault: row.defaultReasoningLevel,
+  });
+  const reasoningLevel = selection.reasoningLevel ?? ladder.defaultLevel;
+  if (!ladder.levels.includes(reasoningLevel)) {
+    throw new RelaySelectionError(
+      "reasoning_level_unknown",
+      "reasoningLevel",
+      `reasoning level "${reasoningLevel}" is not in the runnable ladder ` +
+        `${JSON.stringify(ladder.levels)} for ${providerId}/${row.id}`,
+    );
+  }
+  return { providerId, modelId: row.id, reasoningLevel };
+}

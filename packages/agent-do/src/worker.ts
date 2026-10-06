@@ -1,6 +1,14 @@
 import { AgentDO, AgentRpcError, type AgentDoBindings } from "./agent-do.js";
 import { setAgentRuntime } from "./injection.js";
 import { AnthropicRelayProvider } from "./relay/anthropic-provider.js";
+import {
+  deriveRelayReasoning,
+  resolveRelaySelection,
+  RelaySelectionError,
+  SYNTHETIC_RELAY_PROVIDER_ID,
+  type ModelProvider,
+  type RelaySelection,
+} from "./index.js";
 import { TestDaemonServiceDO } from "./testing/test-daemon-do.js";
 import { RecordingHubDO } from "./testing/recording-hub.js";
 import { envFlag } from "./config.js";
@@ -31,6 +39,41 @@ export interface PocDriveEnv {
 /** Register-once runtime seam: module state is shared with the DOs' isolate. */
 let runtimeRegistered = false;
 
+/**
+ * The rig's single-row directory ("omp" = the synthetic provider, thinking
+ * disabled → the only runnable reasoning rung is "none"). Shared verbatim by
+ * the runtime resolver and the drive-surface validation so the two can never
+ * disagree on what a selection means.
+ */
+function rigRelayDirectory(model: string) {
+  const ladder = deriveRelayReasoning({ thinkingEnabled: false });
+  return {
+    rows: [
+      {
+        providerId: SYNTHETIC_RELAY_PROVIDER_ID,
+        id: model,
+        reasoningLevels: ladder.levels,
+        defaultReasoningLevel: ladder.defaultLevel,
+      },
+    ],
+    defaultProviderId: SYNTHETIC_RELAY_PROVIDER_ID,
+    defaultModelId: model,
+    thinkingEnabled: false,
+  };
+}
+
+/** Registry validation for the drive surface (fail-closed 422 before dispatch). */
+function validateDriveSelection(model: string, selection: RelaySelection): void {
+  try {
+    resolveRelaySelection(rigRelayDirectory(model), selection);
+  } catch (error) {
+    if (error instanceof RelaySelectionError) {
+      throw new AgentRpcError("invalid", `${error.code}: ${error.message}`);
+    }
+    throw error;
+  }
+}
+
 function ensureRuntime(env: PocDriveEnv): void {
   if (runtimeRegistered) return;
   const baseUrl = env.MODEL_RELAY_BASE_URL_ANTHROPIC;
@@ -43,16 +86,27 @@ function ensureRuntime(env: PocDriveEnv): void {
   const contextWindowParsed = Number.parseInt(env.MODEL_RELAY_CONTEXT_WINDOW ?? "", 10);
   const contextWindow =
     Number.isFinite(contextWindowParsed) && contextWindowParsed > 0 ? contextWindowParsed : null;
+  const model = env.MODEL_RELAY_MODEL ?? "glm-5.3";
+  const provider: ModelProvider = new AnthropicRelayProvider({
+    baseUrl,
+    apiKey,
+    model,
+    maxTokens: 8192,
+    ...(contextWindow !== null ? { contextWindow } : {}),
+    thinking: { type: "disabled" },
+    supportsImageInput: envFlag(env.MODEL_RELAY_IMAGE_INPUT),
+  });
+  // #351: the single-line relay registration became a providerId-keyed
+  // registry — the rig declares one synthetic "omp" row and every selection
+  // resolves through the same fail-closed grammar the composed deployment
+  // runs (dispatch never silently re-routes). The rig runs thinking
+  // disabled, so the only runnable reasoning rung is "none".
   setAgentRuntime("*", {
-    provider: new AnthropicRelayProvider({
-      baseUrl,
-      apiKey,
-      model: env.MODEL_RELAY_MODEL ?? "glm-5.3",
-      maxTokens: 8192,
-      ...(contextWindow !== null ? { contextWindow } : {}),
-      thinking: { type: "disabled" },
-      supportsImageInput: envFlag(env.MODEL_RELAY_IMAGE_INPUT),
-    }),
+    provider,
+    resolveExecutionProvider: (selection: RelaySelection): ModelProvider => {
+      resolveRelaySelection(rigRelayDirectory(model), selection);
+      return provider;
+    },
   });
   runtimeRegistered = true;
 }
@@ -101,10 +155,36 @@ async function handleDriveRoute(
     }
     let text: string | undefined;
     let clientRequestId: string | undefined;
+    let selection: RelaySelection | undefined;
     if (typeof raw === "object" && raw !== null) {
       if ("text" in raw && typeof raw.text === "string") text = raw.text;
       if ("clientRequestId" in raw && typeof raw.clientRequestId === "string") {
         clientRequestId = raw.clientRequestId;
+      }
+      // #351: the drive surface exercises the selection seam verbatim —
+      // unknown values fail closed here (422 named code), never dispatch.
+      const model = env.MODEL_RELAY_MODEL ?? "glm-5.3";
+      const candidate: RelaySelection = {};
+      if ("providerId" in raw && typeof raw.providerId === "string") {
+        candidate.providerId = raw.providerId;
+      }
+      if ("model" in raw && typeof raw.model === "string") candidate.model = raw.model;
+      if ("reasoningLevel" in raw && typeof raw.reasoningLevel === "string") {
+        candidate.reasoningLevel = raw.reasoningLevel as RelaySelection["reasoningLevel"];
+      }
+      if (Object.keys(candidate).length > 0) {
+        try {
+          validateDriveSelection(model, candidate);
+        } catch (error) {
+          if (error instanceof AgentRpcError) {
+            return Response.json(
+              { code: "invalid", message: error.message },
+              { status: DRIVE_ERROR_STATUS.invalid },
+            );
+          }
+          throw error;
+        }
+        selection = candidate;
       }
     }
     if (text === undefined || text === "") {
@@ -118,6 +198,7 @@ async function handleDriveRoute(
       threadId,
       title: text.slice(0, 60),
       machineId: env.DAEMON_MACHINE_ID ?? env.DAEMON_HOST_ID ?? "local",
+      ...(selection !== undefined ? { execution: selection } : {}),
     });
     const result = await stub.sendMessage({
       clientRequestId:

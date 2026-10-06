@@ -5,7 +5,11 @@
  */
 
 export { ManagerDo, type ManagerDoBindings } from "./manager-do.js";
-export { EdgeAgentProviderAdapter, type ManagerFacade } from "./adapter.js";
+export {
+  EdgeAgentProviderAdapter,
+  classifyExecutionSettingsChange,
+  type ManagerFacade,
+} from "./adapter.js";
 export {
   FixedReplyProvider,
   HARNESS_DEFAULTS,
@@ -23,6 +27,14 @@ export {
   type RelayCatalogProviderRow,
   type RelayCatalogResolution,
 } from "./catalog.js";
+export {
+  RelayProviderRegistry,
+  decodeRelayProviderCredentials,
+  relayAgentRuntime,
+  type RelayProviderCredential,
+  type RelayProviderCredentialMap,
+  type RelayProviderRegistryResolution,
+} from "./relay-registry.js";
 export { flattenPromptInputGroups } from "./flatten-input.js";
 
 import type { ManagerDoBindings } from "./manager-do.js";
