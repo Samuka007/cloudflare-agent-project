@@ -194,6 +194,45 @@ describe("criterion 5: Access gate", () => {
     ).rejects.toMatchObject({ status: 401 });
   });
 
+  it("accepts service-token claims — empty-string sub passes claims-parse (#441)", async () => {
+    const keyPair = (await crypto.subtle.generateKey(
+      {
+        name: "RSASSA-PKCS1-v1_5",
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: "SHA-256",
+      },
+      true,
+      ["sign", "verify"],
+    )) as CryptoKeyPair;
+    const jwk = (await crypto.subtle.exportKey("jwk", keyPair.publicKey)) as JsonWebKey;
+    const kid = "svc-empty-sub";
+    // The real service-token shape (staging tail #439/#440): identity claims
+    // present-but-empty — the old .min(1) schema rejected this at
+    // claims-parse while the browser (identity-bearing) tokens passed.
+    const claims = { aud: "app-aud", exp: Math.floor(Date.now() / 1000) + 300, sub: "", iss: "https://team.example.com" };
+    const encode = (value: object): string =>
+      btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+    const signingInput = `${encode({ alg: "RS256", kid })}.${encode(claims)}`;
+    const signature = await crypto.subtle.sign(
+      "RSASSA-PKCS1-v1_5",
+      keyPair.privateKey,
+      new TextEncoder().encode(signingInput),
+    );
+    const token = `${signingInput}.${btoa(String.fromCharCode(...new Uint8Array(signature)))
+      .replaceAll("+", "-")
+      .replaceAll("/", "_")
+      .replaceAll("=", "")}`;
+    if (jwk.n === undefined || jwk.e === undefined) {
+      throw new Error("generated RSA JWK is missing modulus/exponent");
+    }
+    const jwks = [{ kid, kty: "RSA", n: jwk.n, e: jwk.e }];
+
+    const verified = await verifyAccessToken(token, { jwks, audience: "app-aud" });
+    expect(verified.aud).toBe("app-aud");
+    expect(verified.sub).toBe("");
+  });
+
   it("accepts the token from the CF_Authorization cookie (browser path)", async () => {
     const keyPair = (await crypto.subtle.generateKey(
       {
