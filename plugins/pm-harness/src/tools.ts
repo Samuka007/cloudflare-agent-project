@@ -9,11 +9,13 @@
  *
  *   pm_lane    — gate → worktree provision → spawn (transport ladder:
  *                registerSpawn override → eval-kernel globalThis.agent →
- *                #270 detached `omp -p` fallback) → guarded board flip
+ *                #270 detached `omp -p` fallback) → blockedBy edges
+ *                materialized with the dispatch (#393) → guarded board flip
  *   pm_apply   — the ONLY write path: preflight diff (dry-run default) →
  *                batched guarded writes with per-batch re-verify (drift →
  *                remaining batches withheld)
- *   pm_audit   — board-vs-reality drift reconcile; returns pm_apply-ready
+ *   pm_audit   — board-vs-reality drift reconcile (incl. #393
+ *                proseDependencyWithoutEdge); returns pm_apply-ready
  *                mutations (read-only: nothing writes here)
  *   pm_release — browser-lease release (ledger close-out)
  *   pm_ledger  — browser-lease ledger read (events + active set)
@@ -107,6 +109,9 @@ export interface LaneArgs {
   ticket: number | number[];
   agent?: string;
   model?: string;
+  /** #393: dependency edges materialized with the dispatch (same addBlockedBy
+   *  primitive + preflight as pm_apply). */
+  blockedBy?: number[];
   /** false/omitted → dry-run plan (DoR table + spawn plan, zero writes). */
   confirm?: boolean;
   base?: string;
@@ -161,6 +166,7 @@ function laneDetails(r: LaneDispatchReport): Record<string, unknown> {
     worktree: r.worktree,
     worktreeCreated: r.worktreeCreated,
     lease: r.lease,
+    blockedBy: r.blockedBy,
     spawned: r.spawned,
     transport: r.transport,
     agentId: r.agentId,
@@ -218,6 +224,20 @@ function renderLane(reports: LaneDispatchReport[]): string {
           `  lease: ${r.lease.lane} tab=${r.lease.tabName} prefix=${r.lease.threadPrefix}` +
             (r.lease.registered ? " (registered)" : ""),
         );
+      }
+      if (r.blockedBy !== null) {
+        const e = r.blockedBy;
+        const refs = (bs: readonly number[]): string => bs.map((b) => `#${b}`).join(", ");
+        if (e.applied.length > 0) {
+          lines.push(`  edges: materialized ${refs(e.applied)}`);
+        } else {
+          lines.push(
+            `  edges: ${refs(e.requested)}` +
+              (r.dryRun ? " (plan — materialize on confirm)" : " (NOT applied)"),
+          );
+        }
+        if (e.already.length > 0) lines.push(`  edges: already ${refs(e.already)} (no-op)`);
+        for (const err of e.errors) lines.push(`  ERROR ${err}`);
       }
       if (!r.dryRun) {
         lines.push(
@@ -319,6 +339,14 @@ export const createPmHarnessTools = (pi: CustomToolAPI): CustomTool[] => {
         .describe("Ticket number(s) to dispatch"),
       agent: z.string().optional().describe("omp agent type (default 'task')"),
       model: z.string().optional().describe("Model selector override for the lane"),
+      blockedBy: z
+        .array(z.number())
+        .optional()
+        .describe(
+          "Dependency edges materialized with the dispatch (#393): each number becomes a " +
+            "blockedBy edge of the dispatched ticket — same addBlockedBy primitive + " +
+            "preflight as pm_apply; written after a successful spawn, before the board flip",
+        ),
       confirm: confirmNode,
       base: z.string().optional().describe("Worktree base ref (default origin/main)"),
       leasesPath: z.string().optional().describe("Browser-lease ledger path override"),
@@ -332,6 +360,7 @@ export const createPmHarnessTools = (pi: CustomToolAPI): CustomTool[] => {
         confirm: params.confirm === true,
         ...(params.base !== undefined ? { base: params.base } : {}),
         ...(params.leasesPath !== undefined ? { leasesPath: params.leasesPath } : {}),
+        ...(params.blockedBy !== undefined ? { blockedBy: params.blockedBy } : {}),
       };
       // Overload narrowing: single number | Ticket vs the batch array form.
       const list =
@@ -371,8 +400,9 @@ export const createPmHarnessTools = (pi: CustomToolAPI): CustomTool[] => {
     label: "PM Drift Audit",
     description:
       "Reconcile the project board against reality (read-only): closed-status convergence, dead-lane " +
-      "In Progress, active-lane status mismatch, frontier aging, and (with withLeases) browser-lease " +
-      "ledger drift. Returns pm_apply-ready repair mutations — one-shot reconcile is " +
+      "In Progress, active-lane status mismatch, frontier aging, prose dependencies without a " +
+      "blockedBy edge (#393, advisory), and (with withLeases) browser-lease ledger drift. " +
+      "Returns pm_apply-ready repair mutations — one-shot reconcile is " +
       "pm_audit → pm_apply(mutations, confirm).",
     parameters: z.object({
       activeLanes: z.array(z.number()).optional().describe("Ticket numbers with live lanes"),
