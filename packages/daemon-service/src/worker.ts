@@ -1,4 +1,4 @@
-import { apiError, createHostId, httpStatusForCode } from "@cap/protocol";
+import { apiError, CLOUD_PLACEHOLDER_HOST_ID, createHostId, httpStatusForCode } from "@cap/protocol";
 import { DAEMON_PROTOCOL_VERSION } from "./constants.js";
 import {
   armNegativeCache,
@@ -257,6 +257,12 @@ async function handleEnroll(request: Request, env: WorkerEnv): Promise<Response>
     // No KV binding → no mint surface exists → nothing to redeem.
     return unauthorized();
   }
+  // #386: the id belongs to the seeded cloud placeholder row — a machine can
+  // never claim it (that would fabricate a connected "cloud" and defeat the
+  // empty-machine semantics the removal guard anchors on).
+  if (hostId === CLOUD_PLACEHOLDER_HOST_ID) {
+    return errorResponse("validation_failed", "host id is reserved for the cloud placeholder");
+  }
   const hostName = readString(parsed, "hostName");
   // Auth-ladder order (#36): DO mirror first (the authority), KV cache
   // second. The mirror lands in the deployment auth-mirror DO — the one the
@@ -305,6 +311,11 @@ async function handleSessionOpen(
     typeof parsed?.protocolVersion === "number" ? parsed.protocolVersion : null;
   if (hostId === null || bootId === null || protocolVersion === null) {
     return errorResponse("validation_failed", "hostId, bootId and protocolVersion are required");
+  }
+  // #386: same reservation as /enroll — the placeholder id never opens a
+  // session, so the row stays permanently disconnected with no heartbeat.
+  if (hostId === CLOUD_PLACEHOLDER_HOST_ID) {
+    return errorResponse("validation_failed", "host id is reserved for the cloud placeholder");
   }
   // Edge gates (#36): negative cache first (doomed requests must not drain
   // bucket tokens), then the per-hostId bucket, then the DO.

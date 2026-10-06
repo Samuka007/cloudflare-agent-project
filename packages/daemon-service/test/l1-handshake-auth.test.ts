@@ -114,4 +114,32 @@ describe("L1 handshake + auth", () => {
     await first.close();
     await second.close();
   });
+
+  test("the cloud placeholder id is reserved on enroll and session/open (#386)", async () => {
+    // A machine claiming "cloud" would fabricate a connected placeholder and
+    // defeat the empty-machine semantics the removal guard anchors on.
+    const enrollAttempt = await workerFetch(
+      new Request("https://daemon-service.test/enroll", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enrollKey: testEnv.ENROLL_KEY, hostId: "cloud" }),
+      }),
+    );
+    expect(enrollAttempt.status).toBe(422);
+    const openAttempt = await workerFetch(
+      new Request("https://daemon-service.test/session/open", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${testEnv.DAEMON_HOST_KEY}`,
+        },
+        body: JSON.stringify({
+          hostId: "cloud",
+          bootId: "boot_cloud_reserved",
+          protocolVersion: DAEMON_PROTOCOL_VERSION,
+        }),
+      }),
+    );
+    expect(openAttempt.status).toBe(422);
+  });
 });
