@@ -24,9 +24,14 @@ import {
   anthropicRequestBody,
   estimateWireRequestTokens,
   envFlag,
+  decodeRelayCatalog,
+  deriveRelayReasoning,
+  findRelayCatalogModel,
   type ModelProvider,
   type ModelRequest,
   type ModelStreamChunk,
+  type RelayCatalog,
+  type RelayCatalogModel,
   type RelayConfig,
 } from "@cap/agent-do";
 import type { RuntimeThreadExecutionOptions } from "../../daemon-worker/src/provider-types.js";
@@ -56,6 +61,16 @@ export interface HarnessEnv {
    * upstream 400 on the first image turn, so the deployment opts in).
    */
   MODEL_RELAY_IMAGE_INPUT?: string;
+  /**
+   * #350 catalog declaration (public, zero-secret JSON;
+   * packages/agent-do/src/provider-catalog.ts): the multi-provider/multi-model
+   * directory the deployment bought. The row for the running model feeds the
+   * declared scalars (contextWindow/maxTokens/imageInput/reasoning default)
+   * with explicit env scalars keeping precedence; a broken declaration
+   * degrades to the env-only synthesis (resolveHarness stays total) and the
+   * projection faces report the decode error.
+   */
+  MODEL_RELAY_CATALOG?: string;
   /** Host binding default (default `local`). */
   DAEMON_MACHINE_ID?: string;
   /** `accept-edits` | `auto` | `full` (default `full`). */
@@ -91,11 +106,22 @@ export const HARNESS_DEFAULTS = {
 function executionOptionsOf(
   mode: string | undefined,
   model: string,
+  thinkingEnabled: boolean,
+  row: RelayCatalogModel | undefined,
 ): RuntimeThreadExecutionOptions {
   const base = {
     model,
     serviceTier: "default" as const,
-    reasoningLevel: "none" as const,
+    // #350: the declared reasoning default follows the same derivation the
+    // directory rows use (deriveRelayReasoning over the budget flag) — the
+    // harness face and the picker face can no longer disagree (roadmap
+    // §2.3 contradiction 1). Budget off → "none"; budget on → the declared
+    // default or bb's medium rung.
+    reasoningLevel: deriveRelayReasoning({
+      thinkingEnabled,
+      declaredLevels: row?.reasoningLevels,
+      declaredDefault: row?.defaultReasoningLevel,
+    }).defaultLevel,
     workflowsEnabled: false,
   };
   if (mode === "accept-edits") {
@@ -125,29 +151,60 @@ function executionOptionsOf(
   };
 }
 
+/**
+ * The decoded MODEL_RELAY_CATALOG declaration, or undefined when absent or
+ * unusable. Totality seam for resolveHarness (never throws on env content):
+ * a broken catalog degrades to the env-only synthesis while the projection
+ * faces (routes/system.ts) surface the decode error separately.
+ */
+export function catalogFromEnv(
+  env: Pick<HarnessEnv, "MODEL_RELAY_CATALOG">,
+): RelayCatalog | undefined {
+  try {
+    return decodeRelayCatalog(env.MODEL_RELAY_CATALOG) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Key 1+2+3 in one total resolution. Never throws on env content. */
 export function resolveHarness(env: HarnessEnv): ResolvedHarness {
+  // #350 catalog declaration: locate the row for the model turns actually
+  // run (env MODEL_RELAY_MODEL, else the catalog's default model, else the
+  // ruled default) and fold its declared scalars under the explicit-env
+  // precedence that predates the catalog (#308/#319 contracts unchanged).
+  const catalog = catalogFromEnv(env);
+  const firstProviderKey = Object.keys(catalog?.providers ?? {})[0];
+  const defaultProviderKey = catalog?.defaultProvider ?? firstProviderKey;
+  const catalogDefaultModel =
+    defaultProviderKey !== undefined
+      ? catalog?.providers[defaultProviderKey]?.models[0]?.id
+      : undefined;
   // Empty-after-trim counts as unset (same fallback `||` gave, kept explicit
   // because `??` alone would let an empty string through).
   const modelRaw = env.MODEL_RELAY_MODEL?.trim() ?? "";
-  const model = modelRaw === "" ? HARNESS_DEFAULTS.model : modelRaw;
+  const model = modelRaw !== "" ? modelRaw : (catalogDefaultModel ?? HARNESS_DEFAULTS.model);
+  const row = catalog !== undefined ? findRelayCatalogModel(catalog, model)?.model : undefined;
   const baseUrlRaw = env.MODEL_RELAY_BASE_URL_ANTHROPIC?.trim() ?? "";
   const baseUrl = baseUrlRaw === "" ? HARNESS_DEFAULTS.baseUrl : baseUrlRaw;
   const apiKey = env.MODEL_RELAY_API_KEY?.trim() ?? "";
   const maxTokensRaw = Number.parseInt(env.MODEL_RELAY_MAX_TOKENS ?? "", 10);
   const maxTokens =
-    Number.isFinite(maxTokensRaw) && maxTokensRaw > 0 ? maxTokensRaw : HARNESS_DEFAULTS.maxTokens;
+    Number.isFinite(maxTokensRaw) && maxTokensRaw > 0
+      ? maxTokensRaw
+      : (row?.maxTokens ?? HARNESS_DEFAULTS.maxTokens);
   const contextWindowRaw = Number.parseInt(env.MODEL_RELAY_CONTEXT_WINDOW ?? "", 10);
   const contextWindow =
     Number.isFinite(contextWindowRaw) && contextWindowRaw > 0
       ? contextWindowRaw
-      : HARNESS_DEFAULTS.contextWindow;
+      : (row?.contextWindow ?? HARNESS_DEFAULTS.contextWindow);
   const budgetRaw = Number.parseInt(env.MODEL_RELAY_THINKING_BUDGET_TOKENS ?? "", 10);
   const machineIdRaw = env.DAEMON_MACHINE_ID?.trim() ?? "";
   const thinking: ThinkingConfig =
     Number.isFinite(budgetRaw) && budgetRaw > 0
       ? { type: "enabled", budget_tokens: budgetRaw }
       : { type: "disabled" };
+  const thinkingEnabled = thinking.type === "enabled";
   return {
     relay: {
       mode: apiKey === "" ? "mock" : "anthropic",
@@ -157,14 +214,17 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
       maxTokens,
       contextWindow,
       thinking,
-      supportsImageInput: envFlag(env.MODEL_RELAY_IMAGE_INPUT),
+      // Capability union (#350): either declaration turns it on — the #319
+      // env flag or the catalog row's `input` carrying "image".
+      supportsImageInput:
+        envFlag(env.MODEL_RELAY_IMAGE_INPUT) || row?.input?.includes("image") === true,
     },
     hostBinding: {
       machineId: machineIdRaw === "" ? HARNESS_DEFAULTS.machineId : machineIdRaw,
     },
     // M0 deterministic budget (relay thinking defaults off — glm-5.3 burns
     // completion budget on reasoning; re-enable via the thinking env only).
-    execution: executionOptionsOf(env.HARNESS_PERMISSION_MODE, model),
+    execution: executionOptionsOf(env.HARNESS_PERMISSION_MODE, model, thinkingEnabled, row),
   };
 }
 

@@ -4,17 +4,17 @@ import {
   BROWSER_BACKED_ENGINES,
   DEFAULT_WEB_SEARCH_CONFIG,
   decodeWebSearchConfig,
-  envFlag,
   projectWebSearchConfig,
 } from "@cap/agent-do";
 import type { WebSearchEngineProjection } from "@cap/agent-do";
-import { projectHarness, resolveHarness, type HarnessEnv } from "@cap/provider-app";
+import { projectHarness, resolveRelayCatalog, type HarnessEnv } from "@cap/provider-app";
 import {
   systemProviderProjectionsResponseSchema,
   systemConfigResponseSchema,
   systemExecutionOptionsQuerySchema,
   systemExecutionOptionsResponseSchema,
   systemVersionResponseSchema,
+  type SystemExecutionOptionsResponse,
 } from "../contract/api/system.js";
 import { appSettingsSchema } from "../contract/domain/app-settings.js";
 import { appKeybindingOverridesSchema } from "../contract/domain/app-keybindings.js";
@@ -86,61 +86,62 @@ export function buildSystemConfig(env: Env, requestUrl: URL) {
  * apps/server/src/routes/system.ts:347-349). bb resolves the catalog by
  * probing installed agents on the routed host
  * (services/system/execution-options.ts:395-491); the Worker port has no host
- * to probe, so M0 serves the static staging truth instead: one provider "omp"
- * whose only model is the relay model turns actually run
- * (MODEL_RELAY_MODEL, the same var packages/agent-do/src/worker.ts:41 reads).
- * The response shape is bb-verbatim (server-contract/src/api/system.ts:35-58)
- * so the SPA picker consumes it unmodified (shape fixture:
- * apps/app/src/hooks/useThreadCreationOptions.test.tsx:44-114).
+ * to probe, so the catalog is a deployment declaration instead (#350):
+ * MODEL_RELAY_CATALOG (public, zero-secret JSON —
+ * packages/agent-do/src/provider-catalog.ts) projected through ONE
+ * resolution shared with the harness (provider-app resolveRelayCatalog —
+ * the #319 dual-face pattern generalized to the catalog layer, roadmap
+ * §0.1/§2.3). No declaration → the M0 synthesis: one provider "omp" whose
+ * only model is the relay model turns actually run. The response shape is
+ * bb-verbatim (server-contract/src/api/system.ts:35-58) so the SPA picker
+ * consumes it unmodified (shape fixture:
+ * apps/app/src/hooks/useThreadCreationOptions.test.tsx:44-114); the typed
+ * return is the compile-time parity guard pinning the catalog ladder
+ * vocabulary to bb's ReasoningLevel enum (shared-types.ts:18-27).
  */
-export function buildExecutionOptions(
-  env: Pick<Env, "MODEL_RELAY_MODEL" | "MODEL_RELAY_IMAGE_INPUT">,
-) {
-  const model = env.MODEL_RELAY_MODEL ?? "glm-5.3-anth";
-  // A4 (#319): the projected capability is the SAME deployment declaration
-  // the provider-app harness reads (same 1/true/on convention, one owner:
-  // @cap/agent-do config.envFlag) — both faces of the relay verdict.
-  const supportsImageInput = envFlag(env.MODEL_RELAY_IMAGE_INPUT);
+export function buildExecutionOptions(env: HarnessEnv): SystemExecutionOptionsResponse {
+  const catalog = resolveRelayCatalog(env);
   return {
-    providers: [
-      {
-        id: "omp",
-        displayName: "omp",
-        logoUrl: null,
-        capabilities: {
-          supportsArchive: false,
-          supportsRename: false,
-          supportsServiceTier: false,
-          supportsUserQuestion: false,
-          supportsFork: false,
-          supportsImageInput,
-          // min(1) required (domain/provider-types.ts:72); the harness turns
-          // run at the "full" default (env.ts HARNESS_PERMISSION_MODE).
-          supportedPermissionModes: ["full"],
-        },
-        composerActions: [],
-        available: true,
+    providers: catalog.providers.map((provider) => ({
+      id: provider.id,
+      displayName: provider.displayName,
+      logoUrl: null,
+      capabilities: {
+        supportsArchive: false,
+        supportsRename: false,
+        supportsServiceTier: provider.serviceTier,
+        supportsUserQuestion: false,
+        supportsFork: false,
+        supportsImageInput: provider.imageInput,
+        // min(1) required (domain/provider-types.ts:72); the harness turns
+        // run at the "full" default (env.ts HARNESS_PERMISSION_MODE).
+        supportedPermissionModes: ["full"],
       },
-    ],
+      composerActions: [],
+      available: true,
+    })),
     // "full" is bb's value when the machine is uncapped or none routed
     // (server-contract/src/api/system.ts:37-41) — the Worker has no machine
     // permission cap.
     permissionCeiling: "full",
-    models: [
-      {
-        id: model,
-        model,
-        displayName: model,
+    models: catalog.models.map((model) => ({
+      id: model.id,
+      model: model.model,
+      displayName: model.displayName,
+      description: model.description,
+      // The ladder is budget-derived (deriveRelayReasoning over
+      // MODEL_RELAY_THINKING_BUDGET_TOKENS, declared overrides folded):
+      // budget off → exactly "none" (bb's level for no extended thinking,
+      // domain/shared-types.ts:13-20); budget on → the runnable rungs the
+      // declaration carries. The default rung equals the harness
+      // execution.reasoningLevel by construction (same resolution).
+      supportedReasoningEfforts: model.reasoningLevels.map((level) => ({
+        reasoningEffort: level,
         description: "",
-        // The glm relay runs thinking { type: "disabled" }
-        // (packages/agent-do/src/worker.ts:43); "none" is bb's level for no
-        // extended thinking (domain/shared-types.ts:13-20), so the picker
-        // offers exactly that.
-        supportedReasoningEfforts: [{ reasoningEffort: "none", description: "" }],
-        defaultReasoningEffort: "none",
-        isDefault: true,
-      },
-    ],
+      })),
+      defaultReasoningEffort: model.defaultReasoningLevel,
+      isDefault: model.isDefault,
+    })),
     selectedOnlyModels: [],
     modelLoadError: null,
   };
@@ -158,7 +159,10 @@ export function buildExecutionOptions(
  * in daemon env, a different trust domain (#255 §6.2, ticket #56).
  */
 export function buildProviderProjections(env: Pick<Env, "AGENT_DO_WEB_SEARCH"> & HarnessEnv) {
-  const harness = projectHarness(resolveHarness(env));
+  // One resolution for both rows: the harness projection and the catalog
+  // status project the same evaluation (same-source, #350).
+  const resolution = resolveRelayCatalog(env);
+  const harness = projectHarness(resolution.harness);
   // Total over env content: a malformed relay URL degrades to a null host
   // instead of failing the whole read-only face.
   let relayBaseUrlHost: string | null = null;
@@ -198,7 +202,22 @@ export function buildProviderProjections(env: Pick<Env, "AGENT_DO_WEB_SEARCH"> &
       };
     }
   }
-  return { harness: { ...harness, relayBaseUrlHost }, webSearch };
+  return {
+    harness: { ...harness, relayBaseUrlHost },
+    webSearch,
+    // Catalog declaration status (#350): ids and decode state only — the
+    // full declared values live on GET /system/execution-options. The
+    // decodeError flag is the loud signal when the strict catalog decode
+    // failed and the env-only synthesis is being served instead.
+    catalog: {
+      configured: resolution.configured,
+      decodeError: resolution.decodeError,
+      defaultProviderId: resolution.defaultProviderId,
+      defaultModel: resolution.harness.relay.model,
+      providers: resolution.providers.map((provider) => provider.id),
+      models: resolution.models.map((model) => model.id),
+    },
+  };
 }
 
 export function registerSystemRoutes(app: Hono<{ Bindings: HonoBindings }>): void {

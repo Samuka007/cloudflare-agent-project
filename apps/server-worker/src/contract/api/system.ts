@@ -315,6 +315,23 @@ export const systemProviderProjectionsResponseSchema = z.object({
     timeoutSeconds: z.number().nullable(),
     browserBackedEngines: z.array(z.string()),
   }),
+  /**
+   * Catalog declaration status (#350): the MODEL_RELAY_CATALOG ledger is a
+   * public zero-secret declaration, so unlike the credential faces this row
+   * may name ids — but the full declared values (ladders, windows, display
+   * names) live on GET /system/execution-options, the same resolution.
+   * decodeError mirrors the webSearch precedent: the strict decode failed,
+   * the env-only synthesis is served, and the error text is dropped (zod
+   * messages can quote raw env content — zero-secret discipline).
+   */
+  catalog: z.object({
+    configured: z.boolean(),
+    decodeError: z.boolean(),
+    defaultProviderId: z.string(),
+    defaultModel: z.string(),
+    providers: z.array(z.string()),
+    models: z.array(z.string()),
+  }),
 });
 export type SystemProviderProjectionsResponse = z.infer<
   typeof systemProviderProjectionsResponseSchema

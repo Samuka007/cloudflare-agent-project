@@ -86,7 +86,11 @@ describe("criterion 8: composer companion routes", () => {
     // fallback (same expression as packages/agent-do/src/worker.ts:41).
     expect(parsed.model).toBe("glm-5.3");
     expect(parsed.serviceTier).toBe("default");
-    expect(parsed.reasoningLevel).toBe("medium");
+    // #350 three-face convergence: with the thinking budget unset the relay
+    // runs thinking disabled, so the defaults face reports "none" — the same
+    // derivation the execution-options ladder and the harness execution use
+    // (the old hardcoded "medium" ran nowhere).
+    expect(parsed.reasoningLevel).toBe("none");
     expect(parsed.permissionMode).toBe("full");
     // bb contract (public-api.ts:384-385) validates the (empty) query schema.
     expect(projectDefaultExecutionOptionsQuerySchema.parse({})).toEqual({});

@@ -7,6 +7,26 @@
 
 ### Added
 
+- **#350 (W5) provider 目录声明层——`MODEL_RELAY_CATALOG` env JSON 单源 + 三面投影同源化（#305 roadmap §2.2/§3 落地）**：
+  ① 声明正本：`packages/agent-do/src/provider-catalog.ts`——公开非秘密的部署目录 JSON（providers × models ×
+  capabilities × flags：id/name/api/reasoning/input/contextWindow/maxTokens/cost + description/
+  reasoningLevels/defaultReasoningLevel + provider 级 displayName/baseUrl/serviceTier + defaultProvider），
+  **model 级字段词典与 daemon `DAEMON_AGENT_AUTH.providers` 共用同一 zod 实例**（agent-auth.ts 改 import，
+  roadmap §4.4「两边一份字段词典防第二正本漂移」）；schema strict——拼错字段/credential 字段（apiKey）
+  直接拒绝，永不静默欠声明。② 同源解析：`apps/provider-app/src/catalog.ts` `resolveRelayCatalog`——内部跑
+  `resolveHarness`，运行中模型的目录行由 harness 输出折叠（model/maxTokens/contextWindow/imageInput/
+  thinking 阶梯默认档），三面（execution-options 投影 / provider-projections `catalog` 状态行 /
+  projects default-execution-options）读同一解析，#319 双面模式推广成目录层；harness 三键总解析吃进目录行
+  （env 标量显式覆盖仍优先，#308/#319 契约不变）。③ 三面矛盾修复（roadmap §2.3 矛盾 1/2）：thinking budget
+  开启 → 目录/harness/default-execution-options 同报声明默认档（缺省 bb medium 档，声明 `reasoningLevels`
+  可覆盖）；关闭 → 三面同报 `none`（声明的阶梯休眠——wire 只有一个 budget 旋钮，多档如实不报）；退休
+  execution-options 的 "glm-5.3-anth" 孤例硬编码与 projects.ts 的 "medium" 恒报。④ 缺省回退：无声明/坏声明
+  → env-only M0 合成（单 omp 单模型）+ `decodeError` 打点（web_search 先例），turns 不中断。测试：agent-do
+  `provider-catalog.test.ts` 12 例（schema/strict/阶梯推导/查找序）、provider-app `catalog.test.ts` 5 例
+  （多行投影/同源矩阵/缺行补前/坏声明回退）+ `harness.test.ts` 4 例（声明折叠/预算阶梯/totality/能力并集）、
+  server-worker `system-execution-options.test.ts` 4 例 + `system-provider-projections.test.ts` 3 例
+  （目录状态/零秘密/decodeError）+ c8 收敛钉。
+
 - **#321 (W5) 图片 B1——imageView 事件链 + host-file content face（依赖 A3 通道，独立于 A4）**：
   ① journal additive `imageView` 事件（`fsm-events.ts`，G9 载体补齐）：`ingestResult`
   在 tool.result 落行前按结果载荷的 `images`（`ToolResultPayload.images` additive，
