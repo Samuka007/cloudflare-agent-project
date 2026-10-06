@@ -35,11 +35,12 @@ jobs:
 
             const { issue } = context.payload;
 
-            // Lifecycle: closed+wontfix → Canceled, closed → Done,
+            // Lifecycle: closed not-planned (state_reason) or +wontfix →
+            // Canceled, closed-as-completed → Done,
             // open+ready-for-human → Wait for user (user decision queue),
             // milestoned+open → Todo, milestone-less open → Backlog (Linear default).
             const desiredState = issue.state === 'closed'
-              ? (issue.labels?.some((l) => l.name === 'wontfix') ? 'Canceled' : 'Done')
+              ? (issue.state_reason === 'not_planned' || issue.labels?.some((l) => l.name === 'wontfix') ? 'Canceled' : 'Done')
               : (issue.labels?.some((l) => l.name === 'ready-for-human')
                 ? 'Wait for user'
                 : (issue.milestone ? 'Todo' : 'Backlog'));
