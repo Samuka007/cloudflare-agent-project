@@ -14,12 +14,15 @@ import {
 import type { WebSearchEngineProjection } from "@cap/agent-do";
 import {
   isValidProviderConfigId,
+  ModelsYmlImportError,
   loadProviderConfigCatalogOverlay,
   loadProviderConfigOverlay,
+  parseModelsYml,
   projectHarness,
   resolveRelayCatalog,
   resolveRelayCatalogWithOverlay,
   type HarnessEnv,
+  type ModelsYmlImportParse,
 } from "@cap/provider-app";
 import {
   systemProviderProjectionsResponseSchema,
@@ -31,11 +34,14 @@ import {
   providerConfigDiscoverRequestSchema,
   providerConfigDiscoverResponseSchema,
   providerConfigIdSchema,
+  providerConfigImportRequestSchema,
+  providerConfigImportResponseSchema,
   providerConfigPatchRequestSchema,
   providerConfigReplaceRequestSchema,
   providerConfigRowSchema,
   providerConfigTestResponseSchema,
   providerConfigsListResponseSchema,
+  type ProviderConfigImportEntry,
   type ProviderConfigRow,
   type SystemExecutionOptionsResponse,
 } from "../contract/api/system.js";
@@ -693,6 +699,108 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
             apiKey: payload.apiKey ?? null,
           });
     return ctx.json(providerConfigDiscoverResponseSchema.parse(verdict));
+  });
+
+  // #364 the omp models.yml import: parse + map (@cap/provider-app), then
+  // every candidate rides the SAME gates and insert/encryption path as the
+  // manual CRUD face. Refusals are per-provider HTTP-grade verdicts (the
+  // batch keeps applying the rest); one config-changed broadcast covers the
+  // whole batch when at least one row landed.
+  routes.post("/system/providers/import-models-yml", async (ctx) => {
+    const payload = await requireJsonBody(ctx, providerConfigImportRequestSchema);
+    let parsed: ModelsYmlImportParse;
+    try {
+      parsed = parseModelsYml(payload.yaml);
+    } catch (error) {
+      if (error instanceof ModelsYmlImportError) {
+        throw new ApiError({ status: 422, code: error.code, message: error.message });
+      }
+      throw error;
+    }
+    const entries: ProviderConfigImportEntry[] = parsed.skips.map((skip) => ({
+      id: skip.id,
+      verdict: "skipped",
+      status: skip.status,
+      code: skip.code,
+      message: skip.message,
+      modelCount: 0,
+      hasApiKey: false,
+      warnings: [],
+    }));
+    for (const candidate of parsed.providers) {
+      const entryBase = {
+        id: candidate.id,
+        modelCount: candidate.models.length,
+        hasApiKey: candidate.apiKey !== null,
+        warnings: candidate.warnings,
+      };
+      if (candidate.id === SYNTHETIC_RELAY_PROVIDER_ID) {
+        entries.push({
+          ...entryBase,
+          verdict: "skipped",
+          status: 409,
+          code: "reserved_id",
+          message: `"${SYNTHETIC_RELAY_PROVIDER_ID}" is the deployment-default seam id and cannot be configured`,
+        });
+        continue;
+      }
+      if ((await getProviderConfigTarget(ctx.env, candidate.id)) !== null) {
+        entries.push({
+          ...entryBase,
+          verdict: "skipped",
+          status: 409,
+          code: "already_exists",
+          message: `provider "${candidate.id}" already exists — edit or remove the row first`,
+        });
+        continue;
+      }
+      const credential = credentialOf(candidate.apiKey);
+      if (
+        credential.kind === "set" &&
+        (ctx.env.PROVIDER_CONFIG_MASTER_KEY === undefined || ctx.env.PROVIDER_CONFIG_MASTER_KEY === "")
+      ) {
+        entries.push({
+          ...entryBase,
+          verdict: "skipped",
+          status: 422,
+          code: "master_key_missing",
+          message:
+            "PROVIDER_CONFIG_MASTER_KEY is not configured — refusing to store a plaintext API key " +
+            "(set the Worker secret first, then re-import; rows without keys still work in mock mode)",
+        });
+        continue;
+      }
+      await insertProviderConfig(
+        ctx.env,
+        candidate.id,
+        {
+          displayName: null,
+          baseUrl: candidate.baseUrl,
+          api: candidate.api,
+          serviceTier: false,
+          models: candidate.models,
+        },
+        credential,
+      );
+      entries.push({
+        ...entryBase,
+        verdict: "created",
+        status: 201,
+        code: "created",
+        message: `provider "${candidate.id}" created with ${String(candidate.models.length)} model rows`,
+      });
+    }
+    if (entries.some((entry) => entry.verdict === "created")) {
+      await hub(ctx.env).notifySystem(["config-changed"]);
+    }
+    const created = entries.filter((entry) => entry.verdict === "created").length;
+    return ctx.json(
+      providerConfigImportResponseSchema.parse({
+        providers: entries,
+        created,
+        skipped: entries.length - created,
+      }),
+    );
   });
 }
 

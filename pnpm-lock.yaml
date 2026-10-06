@@ -32,7 +32,7 @@ importers:
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: ^1.3.6
-        version: 1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))
+        version: 1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))
       '@cloudflare/workers-types':
         specifier: ^5.20261003.1
         version: 5.20261003.1
@@ -44,7 +44,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
       wrangler:
         specifier: ^4.147.0
         version: 4.147.0(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)
@@ -60,10 +60,13 @@ importers:
       '@cap/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      yaml:
+        specifier: ^2.8.2
+        version: 2.9.1
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: ^1.3.6
-        version: 1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))
+        version: 1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))
       '@cloudflare/workers-types':
         specifier: ^5.20261001.1
         version: 5.20261003.1
@@ -75,7 +78,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
       wrangler:
         specifier: ^4.147.0
         version: 4.147.0(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)
@@ -106,7 +109,7 @@ importers:
         version: link:../../packages/protocol
       '@cloudflare/vitest-plugin':
         specifier: ^1.3.6
-        version: 1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))
+        version: 1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))
       '@cloudflare/workers-types':
         specifier: ^5.20261003.1
         version: 5.20261003.1
@@ -115,7 +118,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
       wrangler:
         specifier: ^4.147.0
         version: 4.147.0(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)
@@ -143,25 +146,25 @@ importers:
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: ^1.3.6
-        version: 1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))
+        version: 1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))
       '@cloudflare/workers-types':
         specifier: ^5.20261001.1
         version: 5.20261003.1
       '@msw/cloudflare':
         specifier: ^0.2.0
-        version: 0.2.0(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))
+        version: 0.2.0(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.5
       msw:
         specifier: ^3.0.2
-        version: 3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+        version: 3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
       typescript:
         specifier: ~5.9.0
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
       wrangler:
         specifier: ^4.147.0
         version: 4.147.0(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)
@@ -189,7 +192,7 @@ importers:
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: ^1.3.6
-        version: 1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))
+        version: 1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))
       '@cloudflare/workers-types':
         specifier: ^5.20261001.1
         version: 5.20261003.1
@@ -201,7 +204,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
       wrangler:
         specifier: ^4.147.0
         version: 4.147.0(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)
@@ -223,7 +226,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
 
   packages/protocol:
     dependencies:
@@ -239,7 +242,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
 
   plugins/pm-harness:
     devDependencies:
@@ -251,7 +254,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
 
   scripts:
     devDependencies:
@@ -263,7 +266,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
 
 packages:
 
@@ -2295,6 +2298,11 @@ packages:
     resolution: {integrity: sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==}
     engines: {node: '>=10'}
 
+  yaml@2.9.1:
+    resolution: {integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   yargs-parser@21.1.1:
     resolution: {integrity: sha512-tVpsJW7DdjecAiFpbIB1e3qxIQsE6NoPc5/eTdrbbIC4h0LVsWhnoa3g+m2HclBIujHzsxZ4VJVA+GUuc2/LBw==}
     engines: {node: '>=12'}
@@ -2359,14 +2367,14 @@ snapshots:
     optionalDependencies:
       workerd: 1.20261001.1
 
-  '@cloudflare/vitest-plugin@1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))':
+  '@cloudflare/vitest-plugin@1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))':
     dependencies:
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
       cjs-module-lexer: 1.2.3
       esbuild: 0.28.1
       miniflare: 5.20261001.0-alpha(@types/node@22.20.5)
-      vitest: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
       wrangler: 4.147.0(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)
       zod: 4.4.3
     transitivePeerDependencies:
@@ -2375,14 +2383,14 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@cloudflare/vitest-plugin@1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))':
+  '@cloudflare/vitest-plugin@1.3.6(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))':
     dependencies:
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
       cjs-module-lexer: 1.2.3
       esbuild: 0.28.1
       miniflare: 5.20261001.0-alpha(@types/node@22.20.5)
-      vitest: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
       wrangler: 4.147.0(@cloudflare/workers-types@5.20261003.1)(@types/node@22.20.5)
       zod: 4.4.3
     transitivePeerDependencies:
@@ -2716,10 +2724,10 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@msw/cloudflare@0.2.0(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))':
+  '@msw/cloudflare@0.2.0(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))':
     dependencies:
       '@mswjs/interceptors': 0.45.7
-      msw: 3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+      msw: 3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
     transitivePeerDependencies:
       - supports-color
 
@@ -3265,23 +3273,23 @@ snapshots:
       chai: 6.3.0
       tinyrainbow: 3.2.0
 
-  '@vitest/mocker@4.1.11(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))':
+  '@vitest/mocker@4.1.11(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))':
     dependencies:
       '@vitest/spy': 4.1.11
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
       msw: 2.15.0(@types/node@22.20.5)(typescript@5.9.3)
-      vite: 8.3.2(@types/node@22.20.5)(esbuild@0.28.1)
+      vite: 8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)
 
-  '@vitest/mocker@4.1.11(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))':
+  '@vitest/mocker@4.1.11(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))':
     dependencies:
       '@vitest/spy': 4.1.11
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      msw: 3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
-      vite: 8.3.2(@types/node@22.20.5)(esbuild@0.28.1)
+      msw: 3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
+      vite: 8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)
 
   '@vitest/pretty-format@4.1.11':
     dependencies:
@@ -3823,7 +3831,7 @@ snapshots:
       - '@types/node'
     optional: true
 
-  msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)):
+  msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)):
     dependencies:
       '@inquirer/confirm': 6.3.2(@types/node@22.20.5)
       '@msw/url': 0.1.2
@@ -3840,7 +3848,7 @@ snapshots:
     optionalDependencies:
       graphql: 16.14.2
       typescript: 5.9.3
-      vite: 8.3.2(@types/node@22.20.5)(esbuild@0.28.1)
+      vite: 8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)
     transitivePeerDependencies:
       - '@types/node'
       - supports-color
@@ -4192,7 +4200,7 @@ snapshots:
     dependencies:
       punycode: 2.3.1
 
-  vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1):
+  vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
@@ -4203,11 +4211,12 @@ snapshots:
       '@types/node': 22.20.5
       esbuild: 0.28.1
       fsevents: 2.3.3
+      yaml: 2.9.1
 
-  vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)):
+  vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)):
     dependencies:
       '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+      '@vitest/mocker': 4.1.11(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
       '@vitest/pretty-format': 4.1.11
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
@@ -4224,7 +4233,7 @@ snapshots:
       tinyexec: 1.3.1
       tinyglobby: 0.2.17
       tinyrainbow: 3.2.0
-      vite: 8.3.2(@types/node@22.20.5)(esbuild@0.28.1)
+      vite: 8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
@@ -4232,10 +4241,10 @@ snapshots:
     transitivePeerDependencies:
       - msw
 
-  vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)):
+  vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)):
     dependencies:
       '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1))
+      '@vitest/mocker': 4.1.11(msw@3.0.2(@types/node@22.20.5)(graphql@16.14.2)(typescript@5.9.3)(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
       '@vitest/pretty-format': 4.1.11
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
@@ -4252,7 +4261,7 @@ snapshots:
       tinyexec: 1.3.1
       tinyglobby: 0.2.17
       tinyrainbow: 3.2.0
-      vite: 8.3.2(@types/node@22.20.5)(esbuild@0.28.1)
+      vite: 8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
@@ -4315,6 +4324,8 @@ snapshots:
   ws@8.21.0: {}
 
   y18n@5.0.8: {}
+
+  yaml@2.9.1: {}
 
   yargs-parser@21.1.1:
     optional: true
