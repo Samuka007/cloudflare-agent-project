@@ -368,9 +368,59 @@ export const providerConfigIdSchema = z
   .max(64)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "id must match ^[A-Za-z0-9][A-Za-z0-9._-]*$");
 
+/**
+ * SEC-W5-003: a provider row is a credential-decryption face — the stored
+ * key rides probe headers to the row's baseUrl (services/provider-config-test.ts),
+ * so a baseUrl is only legal when it names a PUBLIC https origin the operator
+ * deliberately chose. Everything else (http, IP literals, single-label or
+ * reserved-suffix hosts, userinfo tricks) is rejected at the write faces
+ * (422) instead of becoming an exfil/SSRF seam. The same rule guards the
+ * raw-anchored discovery payload and the models-yml import candidates; the
+ * env deployment seed stays redeploy-managed (deployment-time input).
+ */
+const RESERVED_URL_HOST_SUFFIXES = [
+  ".localhost",
+  ".local",
+  ".internal",
+  ".home.arpa",
+  ".test",
+  ".invalid",
+  ".example",
+  ".lan",
+  ".intranet",
+  ".corp",
+  ".private",
+];
+
+export function isPublicHttpsBaseUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "") return false;
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  if (host === "" || host === "localhost" || host.includes(":")) return false;
+  // Dotted domain names only: IP literals (WHATWG-normalized decimal forms
+  // included) are never public domains.
+  if (/^[\d.]+$/.test(host)) return false;
+  if (!host.includes(".")) return false;
+  if (RESERVED_URL_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix))) return false;
+  return host.split(".").every((label) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
+}
+
+export const publicHttpsBaseUrlSchema = z
+  .string()
+  .min(1)
+  .max(2000)
+  .refine(isPublicHttpsBaseUrl, {
+    message: "baseUrl must be an https URL naming a public domain (no http, IPs, or intranet hosts)",
+  });
+
 export const providerConfigWriteSchema = z.strictObject({
   displayName: z.string().min(1).max(200).optional(),
-  baseUrl: z.string().min(1).max(2000).optional(),
+  baseUrl: publicHttpsBaseUrlSchema.optional(),
   api: z.string().min(1).max(64).optional(),
   serviceTier: z.boolean().optional(),
   models: z.array(relayCatalogModelSchema).optional(),
@@ -391,7 +441,7 @@ export type ProviderConfigReplaceRequest = z.infer<typeof providerConfigReplaceR
 
 export const providerConfigPatchRequestSchema = z.strictObject({
   displayName: z.string().min(1).max(200).nullish(),
-  baseUrl: z.string().min(1).max(2000).nullish(),
+  baseUrl: publicHttpsBaseUrlSchema.nullish(),
   api: z.string().min(1).max(64).nullish(),
   serviceTier: z.boolean().optional(),
   models: z.array(relayCatalogModelSchema).optional(),
@@ -455,7 +505,7 @@ const providerConfigDiscoverByRowSchema = z.strictObject({
   apiKey: z.string().min(1).optional(),
 });
 const providerConfigDiscoverByBaseUrlSchema = z.strictObject({
-  baseUrl: z.string().min(1).max(2000),
+  baseUrl: publicHttpsBaseUrlSchema,
   apiKey: z.string().min(1).optional(),
 });
 /** The union IS the exactly-one-anchor rule: strict members reject mixed

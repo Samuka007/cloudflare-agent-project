@@ -31,6 +31,7 @@ import {
   systemExecutionOptionsQuerySchema,
   systemExecutionOptionsResponseSchema,
   systemVersionResponseSchema,
+  isPublicHttpsBaseUrl,
   providerConfigCreateRequestSchema,
   providerConfigDiscoverRequestSchema,
   providerConfigDiscoverResponseSchema,
@@ -766,6 +767,18 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
           status: 409,
           code: "already_exists",
           message: `provider "${candidate.id}" already exists — edit or remove the row first`,
+        });
+        continue;
+      }
+      // SEC-W5-003: import candidates ride the SAME baseUrl rule as the CRUD
+      // faces — an http/intranet target must not become a probe seam.
+      if (candidate.baseUrl !== null && !isPublicHttpsBaseUrl(candidate.baseUrl)) {
+        entries.push({
+          ...entryBase,
+          verdict: "skipped",
+          status: 422,
+          code: "invalid_base_url",
+          message: `provider "${candidate.id}": baseUrl must be an https URL naming a public domain — row skipped`,
         });
         continue;
       }
