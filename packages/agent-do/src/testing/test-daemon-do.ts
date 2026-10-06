@@ -4,6 +4,8 @@ import type {
   DaemonServiceClient,
   DispatchOutcome,
   ExecutionUpdate,
+  HostThreadFileReadOutcome,
+  HostThreadFileWriteOutcome,
   IsolationOpOutcome,
   ToolDispatchRequest,
   ToolResultPayload,
@@ -114,6 +116,18 @@ export class TestDaemonServiceDO extends DurableObject<TestDaemonEnv> {
     request: Parameters<DaemonServiceClient["isolationOp"]>[0],
   ): Promise<IsolationOpOutcome> {
     return this.service.isolationOp(request);
+  }
+
+  hostThreadFileWrite(
+    request: Parameters<DaemonServiceClient["hostThreadFileWrite"]>[0],
+  ): Promise<HostThreadFileWriteOutcome> {
+    return this.service.hostThreadFileWrite(request);
+  }
+
+  hostThreadFileRead(
+    request: Parameters<DaemonServiceClient["hostThreadFileRead"]>[0],
+  ): Promise<HostThreadFileReadOutcome> {
+    return this.service.hostThreadFileRead(request);
   }
 
   // -- client simulation (tests drive the machine side through here) --------

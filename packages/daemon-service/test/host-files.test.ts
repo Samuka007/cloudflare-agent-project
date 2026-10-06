@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { HostRpcRequestFrame } from "../src/protocol.js";
-import { readHostFile } from "../src/client/host-files.js";
+import { readHostFile, writeThreadFile } from "../src/client/host-files.js";
 import { dispatchHostRpc } from "../src/client/connection.js";
 
 /**
@@ -119,6 +119,7 @@ describe("dispatchHostRpc read_file glue (bb command-router.ts:160-191)", () => 
   test("a read answers one ok response carrying the file result", async () => {
     const socket = new CapturingSocket();
     await dispatchHostRpc(
+      tmpReal,
       socket as unknown as WebSocket,
       rpcFrame({ type: "host.read_file", path: path.join(tmpReal, "notes.txt") }, "req-b1"),
     );
@@ -136,6 +137,7 @@ describe("dispatchHostRpc read_file glue (bb command-router.ts:160-191)", () => 
   test("a failed read answers one failure carrying the dispatch code", async () => {
     const socket = new CapturingSocket();
     await dispatchHostRpc(
+      tmpReal,
       socket as unknown as WebSocket,
       rpcFrame({ type: "host.read_file", path: path.join(tmpReal, "gone.txt") }, "req-b2"),
     );
@@ -147,6 +149,110 @@ describe("dispatchHostRpc read_file glue (bb command-router.ts:160-191)", () => 
         ok: false,
         errorCode: "ENOENT",
         errorMessage: expect.stringContaining("does not exist"),
+      },
+    ]);
+  });
+});
+
+describe("writeThreadFile (B2 #322 thread file write)", () => {
+  test("lands the decoded bytes under <sandbox>/<threadId>/Generated at 0600 and answers the absolute path", async () => {
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const result = await writeThreadFile(
+      { type: "host.write_file", threadId: "thr-1", filename: "agent-image-1.png", contentBase64: bytes.toString("base64") },
+      tmpRoot,
+    );
+    const expectedDir = path.join(tmpReal, "thr-1", "Generated");
+    expect(result).toEqual({ path: path.join(expectedDir, "agent-image-1.png"), sizeBytes: bytes.length });
+    const written = await fs.stat(result.path);
+    expect(written.mode & 0o777).toBe(0o600);
+    expect(await fs.readFile(result.path)).toEqual(bytes);
+  });
+
+  test("a filename collision dedups with a -2 suffix instead of overwriting", async () => {
+    const first = await writeThreadFile(
+      { type: "host.write_file", threadId: "thr-dedup", filename: "pic.png", contentBase64: Buffer.from("one").toString("base64") },
+      tmpRoot,
+    );
+    const second = await writeThreadFile(
+      { type: "host.write_file", threadId: "thr-dedup", filename: "pic.png", contentBase64: Buffer.from("two").toString("base64") },
+      tmpRoot,
+    );
+    expect(path.basename(first.path)).toBe("pic.png");
+    expect(path.basename(second.path)).toBe("pic-2.png");
+    expect(await fs.readFile(second.path, "utf8")).toBe("two");
+    expect(await fs.readFile(first.path, "utf8")).toBe("one");
+  });
+
+  test("a separator-smuggling or escaping threadId is refused, never written outside the root", async () => {
+    await expect(
+      writeThreadFile(
+        { type: "host.write_file", threadId: "../escape", filename: "x.png", contentBase64: "aGk=" },
+        tmpRoot,
+      ),
+    ).rejects.toMatchObject({
+      errorCode: "invalid_path",
+      message: expect.stringContaining("single path segment"),
+    });
+    await expect(
+      writeThreadFile(
+        { type: "host.write_file", threadId: "a/b", filename: "x.png", contentBase64: "aGk=" },
+        tmpRoot,
+      ),
+    ).rejects.toMatchObject({ errorCode: "invalid_path" });
+    await expect(fs.access(path.join(tmpReal, "escape"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("filename sanitation strips separators and hostile runs; empty sanitizes to the fallback", async () => {
+    const smuggle = await writeThreadFile(
+      { type: "host.write_file", threadId: "thr-s", filename: "../../etc/passwd", contentBase64: Buffer.from("x").toString("base64") },
+      tmpRoot,
+    );
+    expect(smuggle.path.startsWith(path.join(tmpReal, "thr-s", "Generated"))).toBe(true);
+    expect(path.basename(smuggle.path)).toBe("passwd");
+
+    const dots = await writeThreadFile(
+      { type: "host.write_file", threadId: "thr-s", filename: "..", contentBase64: Buffer.from("x").toString("base64") },
+      tmpRoot,
+    );
+    expect(path.basename(dots.path)).toBe("generated-image");
+  });
+
+  test("an oversize payload refuses at the write with the read face's code", async () => {
+    const big = Buffer.alloc(10 * 1024 * 1024 + 1, 0x89);
+    await expect(
+      writeThreadFile(
+        { type: "host.write_file", threadId: "thr-big", filename: "big.png", contentBase64: big.toString("base64") },
+        tmpRoot,
+      ),
+    ).rejects.toMatchObject({ errorCode: "file_too_large", message: expect.stringContaining("10 MB") });
+  });
+
+  test("malformed base64 refuses instead of writing truncated bytes", async () => {
+    await expect(
+      writeThreadFile(
+        { type: "host.write_file", threadId: "thr-b64", filename: "x.png", contentBase64: "@@@@" },
+        tmpRoot,
+      ),
+    ).rejects.toMatchObject({ errorCode: "invalid_path", message: expect.stringContaining("malformed base64") });
+  });
+
+  test("the command rides the live socket and the write result resolves the caller", async () => {
+    const socket = new CapturingSocket();
+    await dispatchHostRpc(
+      tmpReal,
+      socket as unknown as WebSocket,
+      rpcFrame(
+        { type: "host.write_file", threadId: "thr-glue", filename: "glue.png", contentBase64: Buffer.from("glue").toString("base64") },
+        "req-w1",
+      ),
+    );
+    expect(socket.sent).toEqual([
+      {
+        type: "host-rpc.response",
+        requestId: "req-w1",
+        commandType: "host.write_file",
+        ok: true,
+        result: expect.objectContaining({ path: expect.stringContaining(path.join("thr-glue", "Generated")), sizeBytes: 4 }),
       },
     ]);
   });

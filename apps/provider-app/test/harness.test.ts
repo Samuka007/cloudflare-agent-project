@@ -230,6 +230,7 @@ describe("#308 fixed-reply usage estimate", () => {
           externalThinking: false,
           contextNotes: false,
           checkpoint: false,
+          generateImage: false,
         },
       },
       { signal: new AbortController().signal },

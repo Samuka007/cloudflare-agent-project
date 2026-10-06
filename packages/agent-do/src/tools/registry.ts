@@ -308,6 +308,31 @@ const webSearchSchema = type({
   num_search_results: "number?",
 });
 
+// omp packages/coding-agent/src/tools/image-gen.ts:28-49 (imageGenSchema,
+// 18.6.0 verbatim). The per-request `model` rides the body verbatim; omp's
+// catalog resolution (role chains, hosted carriers) collapses to the
+// configured `AGENT_DO_IMAGE_SOURCE` model — see tools/generate-image.ts.
+const generateImageSchema = type({
+  subject: type("string").describe("main subject"),
+  "action?": type("string").describe("what subject is doing"),
+  "scene?": type("string").describe("location or environment"),
+  "composition?": type("string").describe("camera angle and framing"),
+  "lighting?": type("string").describe("lighting setup"),
+  "style?": type("string").describe("artistic style"),
+  "text?": type("string").describe("text to render"),
+  "changes?": type("string[]").describe("edits to make"),
+  "aspect_ratio?": type("'1:1' | '3:4' | '4:3' | '9:16' | '16:9' | '3:2' | '2:3'"),
+  "image_size?": type("'1024x1024' | '1536x1024' | '1024x1536'"),
+  "input?": type({
+    "path?": type("string").describe("input image path"),
+    "data?": type("string").describe("base64 image data"),
+    "mime_type?": type("string").describe("mime type"),
+  })
+    .array()
+    .describe("input images"),
+  "model?": type("string").describe("image model selector for this request"),
+});
+
 // ---------------------------------------------------------------------------
 // Description templates — omp prompts/tools/*.md verbatim
 // ---------------------------------------------------------------------------
@@ -559,6 +584,17 @@ Pass \`type: "result"\` to finalize; when \`data\` is omitted, your last assista
 
 // omp packages/coding-agent/src/prompts/tools/web-search.md verbatim.
 const WEB_SEARCH_DESCRIPTION_TEMPLATE = `Known URLs/programmatic data → \`read\`. Query: site: or -site:, after: or before: YYYY-MM-DD, inurl:, intitle:, filetype:, "phrase", -term, OR. Prefer primary sources; MUST link citations.`;
+
+// omp packages/coding-agent/src/prompts/tools/image-gen.md verbatim (18.6.0;
+// static prose, no render conditionals).
+const GENERATE_IMAGE_DESCRIPTION = `Generates or edits images with the configured image-model role.
+
+<instruction>
+- Write one detailed \`subject\` for generation or editing.
+- Multiple \`input\`: identify each image's role in \`subject\` (for example, \`Image 1\` composition; \`Image 2\` lighting).
+- Specific catalog model required? Set \`model\`; otherwise omit it.
+- Text: request "sharp, legible, correctly spelled"; keep it short.
+</instruction>`;
 
 /** Conditional flags the bash template resolves against (omp render context). */
 export interface ToolRenderFlags {
@@ -913,11 +949,35 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     schedule: "exclusive",
   },
   {
+    // B2 #322: omp imageGenTool (image-gen.ts:225-236) — custom tool
+    // appended after the last builtin, before the hidden tail (omp sdk.ts
+    // custom-tool injection order). omp registers it only when the
+    // `generate_image.enabled` setting is on (default false) — the
+    // EXPERIMENTAL_TOOL_GATE `generateImage` entry below is that gate, so
+    // the row renders only when the deployment env admits it. Class edge:
+    // the image API call is DO-local outbound fetch (classification §2);
+    // the product save rides the daemon-service thread-file write RPC
+    // (tools/generate-image.ts) — a bounded host seam, not host execution
+    // (the tool never runs on the daemon). omp's CustomTool declares no
+    // `intent` member → resolveIntentMode default "require", same rule as
+    // todo/web_search.
+    name: "generate_image",
+    schema: generateImageSchema,
+    descriptionTemplate: GENERATE_IMAGE_DESCRIPTION,
+    class: "edge",
+    backend: { kind: "do-local" },
+    intent: "require",
+    // C3 #328 taxonomy: the call is an upstream image-model query whose
+    // product lands through the thread-file RPC seam — no workspace file
+    // surface, no wake channel: the web_search "detached" class.
+    schedule: "detached",
+  },
+  {
     // omp tools/yield.ts:289-293 — the subagent terminal channel (M1.5 T16
     // minimal gate: one terminal yield per child run; ladder/supersession/
     // artifacts are T17). Hidden tool: never on the main wire (omp
-    // builtin-names.ts HIDDEN_TOOL_NAMES); after the last builtin
-    // (manage_skill, #30), closing the wire order.
+    // builtin-names.ts HIDDEN_TOOL_NAMES); after the last builtin and the
+    // appended custom tools, closing the wire order.
     name: "yield",
     schema: yieldSchema,
     descriptionTemplate: YIELD_DESCRIPTION_TEMPLATE,
@@ -1041,13 +1101,16 @@ export const SUBAGENT_ONLY_TOOLS: readonly string[] = ["yield"];
  * the wire assemblies consult (enabledToolNames below).
  */
 export const EXPERIMENTAL_TOOL_GATE: Readonly<
-  Partial<Record<string, "externalThinking" | "contextNotes" | "checkpoint">>
+  Partial<Record<string, "externalThinking" | "contextNotes" | "checkpoint" | "generateImage">>
 > = {
   think: "externalThinking",
   context_notes: "contextNotes",
   new_context: "contextNotes",
   checkpoint: "checkpoint",
   rewind: "checkpoint",
+  // B2 #322: omp gates the custom tool behind `generate_image.enabled`
+  // (default false, docs/tools/generate_image.md) — this is that posture.
+  generate_image: "generateImage",
 };
 
 /**
@@ -1056,7 +1119,7 @@ export const EXPERIMENTAL_TOOL_GATE: Readonly<
  */
 export function enabledToolNames(
   surface: readonly string[],
-  gates: { externalThinking: boolean; contextNotes: boolean; checkpoint: boolean },
+  gates: { externalThinking: boolean; contextNotes: boolean; checkpoint: boolean; generateImage: boolean },
 ): readonly string[] {
   return surface.filter((name) => {
     const gate = EXPERIMENTAL_TOOL_GATE[name];

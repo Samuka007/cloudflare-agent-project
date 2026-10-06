@@ -136,6 +136,9 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
       // T6 #96 — omp builtin wire order #30 (last builtin); the T16 hidden
       // yield closes the wire after it (HIDDEN_TOOL_NAMES tail).
       "manage_skill",
+      // B2 #322 — omp custom tools append after the last builtin
+      // (image-gen.ts sdk injection); the hidden yield still closes.
+      "generate_image",
       "yield",
     ]);
 
@@ -245,9 +248,12 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
     // then the T10' eval row (kept after write — append-only: existing rows
     // never move), then manage_skill (T6 #96, last builtin #30); the T16
     // hidden `yield` closes the wire.
-    expect(order.indexOf("write")).toBe(order.length - 4);
-    expect(order.indexOf("eval")).toBe(order.length - 3);
-    expect(order[order.length - 2]).toBe("manage_skill");
+    // B2 #322: generate_image (the omp custom-tool row) appends after
+    // manage_skill; yield stays the hidden tail.
+    expect(order.indexOf("write")).toBe(order.length - 5);
+    expect(order.indexOf("eval")).toBe(order.length - 4);
+    expect(order[order.length - 3]).toBe("manage_skill");
+    expect(order[order.length - 2]).toBe("generate_image");
     expect(order[order.length - 1]).toBe("yield");
   });
 
@@ -257,8 +263,9 @@ describe("M1.5 T1 — compile-time registry rows (control-plane §1.1)", () => {
     expect(row?.backend).toEqual({ kind: "daemon-dispatch" });
     expect(row?.intent).toBe("require");
     // omp builtin-names.ts: manage_skill is the last builtin (index 30); the
-    // only row after it is the T16 hidden `yield` (HIDDEN_TOOL_NAMES tail).
-    expect(TOOL_REGISTRY[TOOL_REGISTRY.length - 2]?.name).toBe("manage_skill");
+    // rows after it are the B2 custom tool and the T16 hidden `yield`
+    // (HIDDEN_TOOL_NAMES tail).
+    expect(TOOL_REGISTRY[TOOL_REGISTRY.length - 3]?.name).toBe("manage_skill");
     const tools = wireToolSet(M0_RENDER_FLAGS);
     const manageSkill = tools.find((tool) => tool.name === "manage_skill");
     expect(manageSkill?.input_schema).toEqual({

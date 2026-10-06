@@ -3,7 +3,12 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import type { HostFileReadResult, HostReadFileCommand } from "../protocol.js";
+import type {
+  HostFileReadResult,
+  HostFileWriteResult,
+  HostReadFileCommand,
+  HostWriteFileCommand,
+} from "../protocol.js";
 import { HostRpcCommandError } from "./host-directory.js";
 
 /**
@@ -30,6 +35,20 @@ import { HostRpcCommandError } from "./host-directory.js";
 
 export const IMAGE_FILE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
 export const NON_IMAGE_FILE_SIZE_LIMIT_BYTES = 25 * 1024 * 1024;
+
+/**
+ * B2 (#322): the write face serves agent-produced images only — the same
+ * 10 MB image cap the read face enforces (a write over the cap could never
+ * render through GET /threads/:id/host-files/content, so it fails closed
+ * at the write, with the read face's own code and message shape).
+ */
+const THREAD_FILE_WRITE_LIMIT_BYTES = IMAGE_FILE_SIZE_LIMIT_BYTES;
+/** bb STAGED_ATTACHMENT_MODE (prompt-attachments.ts:17) — daemon-private files. */
+const WRITTEN_FILE_MODE = 0o600;
+/** Thread-scoped file home under the sandbox root (bb threadStorageRootPath
+ * posture: `<root>/<threadId>/…`; `Generated` separates agent-produced files
+ * from the A3 user-attachment staging dir). */
+const GENERATED_DIR_NAME = "Generated";
 
 /**
  * bb `isBinaryImageMimeType` (file-read.ts:78-82) on the local table: every
@@ -126,4 +145,111 @@ export async function readHostFile(command: HostReadFileCommand): Promise<HostFi
     sha256: createHash("sha256").update(contents).digest("hex"),
     sizeBytes: stat.size,
   };
+}
+
+/**
+ * B2 (#322): the daemon side of `host.write_file`. bb has no upstream
+ * anchor for this command (agent-produced images are an omp edge-device
+ * face, docs/tools/generate_image.md §Side Effects — omp writes the OS
+ * tempdir because its edge IS the machine); the semantics port bb's
+ * staging discipline instead (prompt-attachments.ts): a sanitized
+ * filename, a containment-checked thread-scoped directory, `-2`-style
+ * dedup on collision, mode 0600. The response's absolute path is what
+ * the imageView row and the content face address — nothing else about
+ * the location is caller-visible.
+ */
+export async function writeThreadFile(
+  command: HostWriteFileCommand,
+  sandboxRoot: string,
+): Promise<HostFileWriteResult> {
+  const root = path.resolve(sandboxRoot);
+  const threadId = requirePathLeg(command.threadId);
+  const generatedDir = requireContainedDir(root, path.join(threadId, GENERATED_DIR_NAME));
+
+  const filename = sanitizeFilename(command.filename);
+  const bytes = decodeBase64(command.contentBase64, filename);
+  if (bytes.byteLength > THREAD_FILE_WRITE_LIMIT_BYTES) {
+    throw new HostRpcCommandError(
+      "file_too_large",
+      `File size ${bytes.byteLength} bytes exceeds the ${Math.floor(THREAD_FILE_WRITE_LIMIT_BYTES / (1024 * 1024))} MB limit`,
+    );
+  }
+
+  await fs.mkdir(generatedDir, { recursive: true });
+  const target = await uniquePath(generatedDir, filename);
+  await fs.writeFile(target, bytes, { mode: WRITTEN_FILE_MODE });
+  return { path: target, sizeBytes: bytes.byteLength };
+}
+
+/** The threadId leg is remote input: it must be one plain path segment —
+ * no separators, no dot legs — before any resolve happens. */
+function requirePathLeg(leg: string): string {
+  if (leg === "" || leg === "." || leg === ".." || leg.includes("/") || leg.includes("\\")) {
+    throw new HostRpcCommandError("invalid_path", "Thread id must be a single path segment");
+  }
+  return leg;
+}
+
+/** Resolve a join under the sandbox root and reject anything that escapes
+ * it (bb requireContainedPath, prompt-attachments.ts:134-146). */
+function requireContainedDir(root: string, leg: string): string {
+  const resolved = path.resolve(root, leg);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    throw new HostRpcCommandError("invalid_path", "Thread file path escapes the sandbox root");
+  }
+  return resolved;
+}
+
+/** bb attachmentFilename (:72-81) sanitize: posix basename, non-name
+ * runs to `-`, non-empty fallback. Empty-after-sanitize input can never
+ * smuggle separators or `..`. */
+function sanitizeFilename(raw: string): string {
+  const basename = path.posix.basename(raw.replaceAll("\\", "/"));
+  const sanitized = basename.replace(/[^a-zA-Z0-9._-]+/gu, "-");
+  return sanitized.length > 0 && sanitized !== "." && sanitized !== ".."
+    ? sanitized
+    : "generated-image";
+}
+
+/** Strict base64 → bytes: whitespace-padded JSON strings tolerated, any
+ * other corruption is a bad_request-class dispatch error, not a silent
+ * truncation. */
+function decodeBase64(contentBase64: string, filename: string): Buffer {
+  const decoded = Buffer.from(contentBase64, "base64");
+  // Node/bun ignore invalid characters silently; round-trip length is the
+  // cheap integrity check (4 chars → 3 bytes, modulo padding).
+  const expectedLength = Math.floor(contentBase64.trim().length * 0.75);
+  if (decoded.length === 0 || decoded.length < expectedLength - 2) {
+    throw new HostRpcCommandError(
+      "invalid_path",
+      `File ${filename} carries malformed base64 content`,
+    );
+  }
+  return decoded;
+}
+
+/** bb uniqueStagedPath (:167-182) shape, existence-based: first
+ * collision-free candidate on disk, `-2`, `-3`, … (cross-call writes to
+ * the same second must not overwrite each other). */
+async function uniquePath(dir: string, filename: string): Promise<string> {
+  let candidate = path.join(dir, filename);
+  let suffix = 2;
+  for (;;) {
+    const exists = await fs
+      .access(candidate)
+      .then(() => true)
+      .catch(() => false);
+    if (!exists) return candidate;
+    candidate = path.join(dir, appendFilenameSuffix(filename, `-${suffix}`));
+    suffix += 1;
+  }
+}
+
+/** bb appendFilenameSuffix (:159-165): suffix before the extension. */
+function appendFilenameSuffix(filename: string, suffix: string): string {
+  const extension = path.extname(filename);
+  if (!extension) {
+    return `${filename}${suffix}`;
+  }
+  return `${filename.slice(0, -extension.length)}${suffix}${extension}`;
 }

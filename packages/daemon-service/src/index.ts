@@ -30,10 +30,12 @@ export {
   type HostDirectoryEntry,
   type HostDirectoryListing,
   type HostFileReadResult,
+  type HostFileWriteResult,
   type HostReadFileCommand,
   type HostRpcCommand,
   type HostRpcRequestFrame,
   type HostRpcResponseFrame,
+  type HostWriteFileCommand,
   type KillListServiceFrame,
   type ObservedExecution,
   type ObservedState,
@@ -48,7 +50,13 @@ export {
   type JoinCodeRecord,
   type MintedJoinCode,
 } from "./join-codes.js";
-export { DaemonServiceDO, type DaemonServiceEnv, type HostRpcOutcome } from "./service-do.js";
+export {
+  DaemonServiceDO,
+  type DaemonServiceEnv,
+  type HostRpcOutcome,
+  type HostThreadFileReadOutcome,
+  type HostThreadFileWriteOutcome,
+} from "./service-do.js";
 export {
   default as daemonServiceWorker,
   type ProjectAttachmentContentResult,

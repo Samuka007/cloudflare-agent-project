@@ -14,7 +14,7 @@ import { serviceFrameSchema, type ObservedExecution, type ServiceFrame } from ".
 import { loadIdentity, type ClientConfig, type ClientIdentity } from "./identity.js";
 import { Executor, scanMarkerProcesses } from "./executor.js";
 import { HostRpcCommandError, browseHostDirectory } from "./host-directory.js";
-import { readHostFile } from "./host-files.js";
+import { readHostFile, writeThreadFile } from "./host-files.js";
 import { ExecutionBuffer } from "./buffers.js";
 import {
   stagePromptAttachments,
@@ -431,7 +431,7 @@ function dispatchFrame(
       log(`service error frame: ${frame.code} ${frame.message}`);
       return;
     case "host-rpc.request":
-      void dispatchHostRpc(socket, frame);
+      void dispatchHostRpc(config.sandboxRoot, socket, frame);
       return;
   }
 }
@@ -446,6 +446,7 @@ function dispatchFrame(
  * the SPA re-asks.
  */
 export function dispatchHostRpc(
+  sandboxRoot: string,
   socket: WebSocket,
   frame: Extract<ServiceFrame, { type: "host-rpc.request" }>,
 ): Promise<void> {
@@ -464,7 +465,9 @@ export function dispatchHostRpc(
   const executed =
     command.type === "host.browse_directory"
       ? browseHostDirectory(command)
-      : readHostFile(command);
+      : command.type === "host.write_file"
+        ? writeThreadFile(command, sandboxRoot)
+        : readHostFile(command);
   return executed.then(
     (result) => {
       respond({ type: "host-rpc.response", ok: true, result });
