@@ -108,23 +108,45 @@ export function deriveRelayReasoning(input: RelayReasoningDerivationInput): Rela
 }
 
 // ---------------------------------------------------------------------------
-// Relay API family + Responses effort mapping (#361 adaptor seam)
+// Relay API family + OpenAI effort mapping (#361/#363 adaptor seam)
 // ---------------------------------------------------------------------------
 
 /**
  * The relay's protocol-face vocabulary — exactly the api families the edge
  * relay speaks (omp models.yml field dictionary subset: `anthropic-messages`
- * is the #34 incumbent face, `openai-responses` the #361 adaptor). The EDGE
+ * is the #34 incumbent face, `openai-responses` the #361 adaptor and
+ * `openai-completions` the #363 adaptor). The EDGE
  * catalog validates this enum at decode (strict: an api label the relay
  * cannot speak fails the deployment loudly, never silently rides the
  * anthropic wire); the shared model dictionary and the daemon
  * `DAEMON_AGENT_AUTH` face keep the free-form omp vocabulary (judge/security
  * models may declare families this relay never dials).
  */
-export const relayApiValues = ["anthropic-messages", "openai-responses"] as const;
+export const relayApiValues = [
+  "anthropic-messages",
+  "openai-responses",
+  "openai-completions",
+] as const;
 export type RelayApi = (typeof relayApiValues)[number];
 export const relayApiSchema = z.enum(relayApiValues);
 export const DEFAULT_RELAY_API: RelayApi = "anthropic-messages";
+
+/**
+ * The faces that consume a reasoning rung → OpenAI effort fold (both openai
+ * wire shapes carry an official effort field — `reasoning.effort` on
+ * responses, `reasoning_effort` on chat completions — with the SAME value
+ * vocabulary; the anthropic face keeps its budget semantics). #363: one
+ * predicate so the three fold sites (resolveRelaySelection, the harness
+ * resolution, the registry resolve) cannot grow a second opinion.
+ */
+export const OPENAI_EFFORT_API_FACES: readonly RelayApi[] = [
+  "openai-responses",
+  "openai-completions",
+];
+
+export function relayApiConsumesEffortMap(api: RelayApi): boolean {
+  return OPENAI_EFFORT_API_FACES.includes(api);
+}
 
 /**
  * Resolve a deployment-grade api label (env scalar, credential slot row)
@@ -145,9 +167,10 @@ export function resolveRelayApi(raw: string | undefined | null): RelayApi {
 }
 
 /**
- * The OpenAI Responses `reasoning.effort` target vocabulary (official
- * current schema: none, minimal, low, medium, high, xhigh, max — the #361
- * protocol canon, not memory).
+ * The OpenAI effort target vocabulary (official current schema: none,
+ * minimal, low, medium, high, xhigh, max — the #361 protocol canon, not
+ * memory; #363 grounded the chat-completions `reasoning_effort` field
+ * against the same list, so one type serves both openai faces).
  */
 export const responsesEffortValues = [
   "none",
@@ -424,7 +447,7 @@ export interface RelaySelectionDirectoryRow {
   /**
    * #361: the row's protocol face (model api ?? provider api ?? default).
    * The effort-mapping fail-closed check below applies only to
-   * openai-responses rows — the anthropic face keeps its budget semantics.
+   * openai-effort faces — the anthropic face keeps its budget semantics.
    */
   api?: RelayApi;
   /** The row's per-model effort map (RelayCatalogModel.reasoningEffortMap). */
@@ -509,11 +532,11 @@ export function resolveRelaySelection(
         `${JSON.stringify(ladder.levels)} for ${providerId}/${row.id}`,
     );
   }
-  // #361 fail-closed effort mapping: on the openai-responses face a rung
+  // #361/#363 fail-closed effort mapping: on the openai-effort faces a rung
   // the wire cannot honestly express (no default identity mapping and no
   // per-model reasoningEffortMap entry) is a named 422 — never a silent
   // clamp onto another effort value.
-  if (row.api === "openai-responses") {
+  if (row.api !== undefined && relayApiConsumesEffortMap(row.api)) {
     try {
       resolveResponsesEffort(reasoningLevel, row.reasoningEffortMap);
     } catch (error) {

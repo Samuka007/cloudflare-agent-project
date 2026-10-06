@@ -1,6 +1,4 @@
-import type {
-  ModelRequest,
-} from "../provider.js";
+import type { ModelRequest } from "../provider.js";
 import {
   enabledToolNames,
   MAIN_WIRE_TOOLS,

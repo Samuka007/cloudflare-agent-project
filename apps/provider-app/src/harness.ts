@@ -21,8 +21,10 @@
 
 import {
   AnthropicRelayProvider,
+  CompletionsRelayProvider,
   ResponsesRelayProvider,
   anthropicRequestBody,
+  completionsRequestBody,
   responsesRequestBody,
   estimateWireRequestTokens,
   envFlag,
@@ -30,6 +32,7 @@ import {
   deriveRelayReasoning,
   findRelayCatalogModel,
   resolveResponsesEffort,
+  relayApiConsumesEffortMap,
   DEFAULT_RELAY_API,
   type RelayApi,
   type ResponsesEffort,
@@ -263,14 +266,14 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
     declaredLevels: row?.reasoningLevels,
     declaredDefault: row?.defaultReasoningLevel,
   });
-  // #361: the deployment default rung mapped onto the Responses effort —
-  // only the openai-responses face carries a rung (the anthropic face pins
-  // "none" here; its knob is the thinking budget above). A responses row
-  // whose default rung has no effort mapping throws HERE, at resolution:
-  // a broken declaration fails the deployment loudly (catalog doctrine),
-  // never silently clamps onto another effort.
+  // #361/#363: the deployment default rung mapped onto the OpenAI effort —
+  // the openai-effort faces carry a rung (the anthropic face pins "none"
+  // here; its knob is the thinking budget above). An openai row whose
+  // default rung has no effort mapping throws HERE, at resolution: a broken
+  // declaration fails the deployment loudly (catalog doctrine), never
+  // silently clamps onto another effort.
   const reasoningEffort = resolveResponsesEffort(
-    relayApi === "openai-responses" ? derivedLadder.defaultLevel : "none",
+    relayApiConsumesEffortMap(relayApi) ? derivedLadder.defaultLevel : "none",
     row?.reasoningEffortMap,
   );
   return {
@@ -363,6 +366,15 @@ export class FixedReplyProvider implements ModelProvider {
               supportsImageInput: this.relay.supportsImageInput,
             }),
           )
+      : this.relay.api === "openai-completions"
+        ? JSON.stringify(
+            completionsRequestBody(request, {
+              model: this.relay.model,
+              maxTokens: this.relay.maxTokens,
+              reasoningEffort: this.relay.reasoningEffort,
+              supportsImageInput: this.relay.supportsImageInput,
+            }),
+          )
         : JSON.stringify(anthropicRequestBody(request, this.relay));
     const usage = {
       inputTokens: estimateWireRequestTokens(body),
@@ -399,6 +411,18 @@ export function relayProviderFrom(harness: ResolvedHarness): ModelProvider {
   if (harness.relay.mode === "anthropic") {
     if (harness.relay.api === "openai-responses") {
       return new ResponsesRelayProvider({
+        baseUrl: harness.relay.baseUrl,
+        apiKey: harness.relay.apiKey,
+        model: harness.relay.model,
+        maxTokens: harness.relay.maxTokens,
+        contextWindow: harness.relay.contextWindow,
+        reasoningEffort: harness.relay.reasoningEffort,
+        supportsImageInput: harness.relay.supportsImageInput,
+        api: harness.relay.api,
+      });
+    }
+    if (harness.relay.api === "openai-completions") {
+      return new CompletionsRelayProvider({
         baseUrl: harness.relay.baseUrl,
         apiKey: harness.relay.apiKey,
         model: harness.relay.model,

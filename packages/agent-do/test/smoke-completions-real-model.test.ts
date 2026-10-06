@@ -1,31 +1,31 @@
 import { expect, test } from "vitest";
-import { ResponsesRelayProvider, modelRequestFromEvents } from "../src/index.js";
-import { responsesRequestBody } from "../src/relay/responses-wire.js";
+import { CompletionsRelayProvider, modelRequestFromEvents } from "../src/index.js";
+import { completionsRequestBody } from "../src/relay/completions-wire.js";
 import { createRig, typeList, type Rig } from "./helpers.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";
 
 /**
- * #361 real-upstream smoke: newapi glm-5.3-flash via the openai-responses
+ * #363 real-upstream smoke: newapi glm-5.3-flash via the openai-completions
  * adaptor induces a bash tool roundtrip; the daemon seam is the reference
- * fake (same posture as the anthropic-face smoke-real-model). The type-58
- * lesson is the gate: the SSE stream must terminate explicitly — the
- * provider throws "stream ended without response.completed" otherwise, and
- * a completed turn here PROVES the terminal frame arrived.
+ * fake (same posture as the anthropic/responses-face smokes). The type-58
+ * lesson is the gate: the chat-completions SSE stream must terminate
+ * explicitly at `data: [DONE]` — the provider throws "stream ended without
+ * [DONE]" otherwise, and a completed turn here PROVES the terminal frame
+ * arrived on this wire too.
  *
- * Skips itself when `.dev.vars` (gitignored) carries no responses-face
+ * Skips itself when `.dev.vars` (gitignored) carries no completions-face
  * creds — CI stays green without secrets. The deployment supplies the same
  * values through MODEL_RELAY_PROVIDER_CREDENTIALS + the catalog row's
- * api: "openai-responses" (the deployment-side face of this file's local
- * .dev.vars slots).
+ * api: "openai-completions".
  */
 
-const responsesKey = __RELAY_ENV__.MODEL_RELAY_RESPONSES_API_KEY;
-const responsesBase = __RELAY_ENV__.MODEL_RELAY_RESPONSES_BASE_URL;
-const responsesModel = __RELAY_ENV__.MODEL_RELAY_RESPONSES_MODEL ?? "glm-5.3-flash";
+const completionsKey = __RELAY_ENV__.MODEL_RELAY_COMPLETIONS_API_KEY;
+const completionsBase = __RELAY_ENV__.MODEL_RELAY_COMPLETIONS_BASE_URL;
+const completionsModel = __RELAY_ENV__.MODEL_RELAY_COMPLETIONS_MODEL ?? "glm-5.3-flash";
 
 function transcriptOf(
   rig: Rig,
-  provider: ResponsesRelayProvider,
+  provider: CompletionsRelayProvider,
   events: AnyAgentEvent[],
 ): string {
   return JSON.stringify(
@@ -42,29 +42,35 @@ function transcriptOf(
   );
 }
 
-test.skipIf(
-  responsesKey === undefined || responsesKey === "" || responsesBase === undefined,
-)("responses smoke: newapi glm-5.3-flash tool roundtrip terminates with response.completed",
+test.skipIf(completionsKey === undefined || completionsKey === "" || completionsBase === undefined)(
+  "completions smoke: newapi glm-5.3-flash tool roundtrip terminates with [DONE]",
   { timeout: 240_000 },
   async () => {
-    if (responsesBase === undefined || responsesBase === "" || responsesKey === undefined || responsesKey === "") {
-      throw new Error("live responses relay env missing (MODEL_RELAY_RESPONSES_* in .dev.vars)");
+    if (
+      completionsBase === undefined ||
+      completionsBase === "" ||
+      completionsKey === undefined ||
+      completionsKey === ""
+    ) {
+      throw new Error(
+        "live completions relay env missing (MODEL_RELAY_COMPLETIONS_* in .dev.vars)",
+      );
     }
-    const provider = new ResponsesRelayProvider({
-      baseUrl: responsesBase,
-      apiKey: responsesKey,
-      model: responsesModel,
+    const provider = new CompletionsRelayProvider({
+      baseUrl: completionsBase,
+      apiKey: completionsKey,
+      model: completionsModel,
       maxTokens: 8192,
-      // The M0 deterministic budget: effort "none" is the explicit off —
-      // this smoke doubles as the upstream-accepts-effort-none probe.
-      reasoningEffort: "none",
-      api: "openai-responses",
+      // The chat face has no required effort seat: no pin rides the wire —
+      // the model's own default reasoning budget applies (the smoke proves
+      // the adaptor speaks upstream shapes it did not choose itself).
+      api: "openai-completions",
     });
     const rig = await createRig({ provider });
     const marker = `poc-${Date.now()}`;
 
     const sent = await rig.stub.sendMessage({
-      clientRequestId: "poc-smoke-responses-1",
+      clientRequestId: "poc-smoke-completions-1",
       content: [{ type: "text", text: `用 bash 执行 echo ${marker} 并把输出原样告诉我。` }],
       mode: "start",
     });
@@ -82,7 +88,7 @@ test.skipIf(
 
     const events = await rig.waitTurnComplete(sent.turnId);
     const transcript = transcriptOf(rig, provider, events);
-    console.log("POC-RESPONSES-SMOKE-TRANSCRIPT\n" + transcript);
+    console.log("POC-COMPLETIONS-SMOKE-TRANSCRIPT\n" + transcript);
 
     expect(typeList(events)).not.toContain("turn.failed");
     expect(typeList(events)).not.toContain("turn.cancelled");
@@ -112,12 +118,18 @@ test.skipIf(
     // the provider saw exactly the two attempts, each with a recorded body
     expect(provider.requests).toHaveLength(2);
     expect(provider.bodies).toHaveLength(2);
-    // Both calls completed: turn.completed + receipts prove the terminal
-    // response.completed frame rode every stream (the type-58 gate).
     for (const body of provider.bodies) {
       const wire: unknown = JSON.parse(body);
-      expect(wire).toMatchObject({ model: responsesModel });
+      expect(wire).toMatchObject({ model: completionsModel });
     }
+
+    // Both calls completed: turn.completed + receipts prove the terminal
+    // [DONE] frame rode every stream (the type-58 gate, chat-wire analog).
+    const receipts = events.filter((event) => event.type === "model.usage_receipt");
+    expect(receipts.length).toBeGreaterThanOrEqual(2);
+    const firstReceipt = receipts[0];
+    if (firstReceipt === undefined) throw new Error("missing usage receipt");
+    expect(firstReceipt.data.usage.estimated).toBe(false);
 
     // replay-identical assembly: the log replays byte-identically to BOTH
     // recorded wire bodies (live DO path ≡ pure projection, twice over)
@@ -127,10 +139,10 @@ test.skipIf(
       throw new Error("missing model.call_started events");
     }
     const opts = {
-      model: responsesModel,
+      model: completionsModel,
       maxTokens: 8192,
-      reasoningEffort: "none" as const,
-      api: "openai-responses" as const,
+      reasoningEffort: undefined,
+      api: "openai-completions" as const,
     };
     const gates = {
       externalThinking: false,
@@ -139,14 +151,14 @@ test.skipIf(
       generateImage: false,
     } as const;
     const replay1 = JSON.stringify(
-      responsesRequestBody(
+      completionsRequestBody(
         { ...modelRequestFromEvents(events, sent.turnId, call1.seq), experimentalGates: gates },
         opts,
       ),
     );
     expect(replay1).toBe(provider.bodies[0]);
     const replay2 = JSON.stringify(
-      responsesRequestBody(
+      completionsRequestBody(
         { ...modelRequestFromEvents(events, sent.turnId, call2.seq), experimentalGates: gates },
         opts,
       ),
