@@ -32,6 +32,7 @@ import {
   planCascade,
   planFile,
   planDiff,
+  proseDependencies,
   registerSpawn,
   resolveJeapiKey,
   slugify,
@@ -2536,6 +2537,209 @@ describe("AP.audit rule 7 — closeout evidence drift (#277)", () => {
   it("rule 7 is silent without the ledger — a missing store fabricates nothing", () => {
     const rep = audit({ tickets: [implMk({ number: 257 })] }, { now: NOW });
     expect(rep.drift).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #393 — dependency edges ride the dispatch (AP.lane blockedBy) and the
+// audit arm that catches prose dependencies that never became edges.
+// ---------------------------------------------------------------------------
+
+describe("proseDependencies (pure, #393)", () => {
+  it("line-scoped: only #n on a dependency-keyword line count; deduped, first-seen order", () => {
+    expect(
+      proseDependencies("倒查依赖 #387 修复\n见 #365 注记\n前置 #310 与 #387（重复后到）"),
+    ).toEqual([387, 310]);
+    expect(proseDependencies("blocked by #240 until its merge")).toEqual([240]);
+    expect(proseDependencies("须先合入 #300 的分支")).toEqual([300]);
+    expect(proseDependencies("随手提 #123 与 #456")).toEqual([]);
+  });
+});
+
+describe("AP.lane blockedBy edges (#393)", () => {
+  afterEach(() => {
+    _inject(null);
+    registerSpawn(null);
+  });
+
+  it("dry-run: plans the edges purely (dedup + already + self-edge), zero writes", async () => {
+    const rep = await lane(
+      laneTicket({ blockedBy: [{ number: 240, state: "OPEN", title: "lease arm" }] }),
+      {},
+      { blockedBy: [387, 240, 200, 387] },
+    );
+    expect(rep.blockedBy).toEqual({
+      requested: [387, 240, 200],
+      already: [240],
+      applied: [],
+      errors: ["#200: self-blocking edge rejected"],
+    });
+    expect(rep.dryRun).toBe(true);
+    expect(rep.worktreeCreated).toBe(false);
+  });
+
+  it("no blockedBy arg → blockedBy stays null (dispatch shape unchanged)", async () => {
+    const rep = await lane(laneTicket());
+    expect(rep.blockedBy).toBeNull();
+  });
+
+  it("confirm: materializes the edges after the spawn, before the flip — one dispatch, no second apply", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const board = laneBoard(200, 387, 390);
+    _inject({ gql: board.gql, runGit: () => "" });
+    registerSpawn(() => "L200edge");
+    const rep = await lane(200, {}, { confirm: true, blockedBy: [387, 390] });
+    logSpy.mockRestore();
+    expect(rep.spawned).toBe(true);
+    expect(rep.blockedBy).toEqual({
+      requested: [387, 390],
+      already: [],
+      applied: [387, 390],
+      errors: [],
+    });
+    const issue = board.issues.find((i) => i.number === 200);
+    expect(issue?.blockedBy.nodes.map((b) => b.number).sort()).toEqual([387, 390]);
+    expect(rep.statusFlipped).toBe(true);
+    expect(board.items.find((i) => i.issueNumber === 200)?.status).toBe("In Progress");
+    // edge write lands before the flip write (same dispatch, ordered pipeline)
+    const edgeAt = board.mutations.findIndex((m) => m.query.includes("addBlockedBy"));
+    const flipAt = board.mutations.findIndex((m) =>
+      m.query.includes("updateProjectV2ItemFieldValue"),
+    );
+    expect(edgeAt).toBeGreaterThanOrEqual(0);
+    expect(flipAt).toBeGreaterThan(edgeAt);
+  });
+
+  it("confirm: an already-materialized edge is a preflight no-op, not a rewrite", async () => {
+    // An OPEN blocker would refuse the dispatch at the gate — the "already"
+    // case reaches the confirm path when the existing edge points at a
+    // CLOSED blocker (dispatchable ignores closed blockers) or via a race
+    // between lane's snapshot and the edge preflight.
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const board = new MockBoard();
+    board.addIssue({
+      number: 200,
+      title: "feat: demo lane",
+      bodyText: FULL_DOR_BODY,
+      milestone: { title: "M1" },
+      blockedBy: { nodes: [{ number: 387, state: "CLOSED", title: "dep" }] },
+    });
+    board.addIssue({ number: 387, title: "dep", state: "CLOSED" });
+    board.boardIssue(200, "Todo", "P1");
+    _inject({ gql: board.gql, runGit: () => "" });
+    registerSpawn(() => "L200dup");
+    const rep = await lane(200, {}, { confirm: true, blockedBy: [387] });
+    logSpy.mockRestore();
+    expect(rep.blockedBy).toEqual({
+      requested: [387],
+      already: [387],
+      applied: [],
+      errors: [],
+    });
+    expect(board.mutations.some((m) => m.query.includes("addBlockedBy"))).toBe(false);
+    expect(rep.statusFlipped).toBe(true);
+  });
+
+  it("confirm: a bad blocker surfaces as an edge error and never blocks the flip", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const board = laneBoard(200);
+    _inject({ gql: board.gql, runGit: () => "" });
+    registerSpawn(() => "L200bad");
+    const rep = await lane(200, {}, { confirm: true, blockedBy: [999] });
+    logSpy.mockRestore();
+    expect(rep.spawned).toBe(true);
+    expect(rep.blockedBy?.applied).toEqual([]);
+    expect(rep.blockedBy?.errors.join(" ")).toContain("not found");
+    expect(board.mutations.some((m) => m.query.includes("addBlockedBy"))).toBe(false);
+    expect(rep.statusFlipped).toBe(true);
+    expect(board.items.find((i) => i.issueNumber === 200)?.status).toBe("In Progress");
+  });
+
+  it("a failed spawn never writes edges — the board reflects reality", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const board = laneBoard(200, 387);
+    _inject({ gql: board.gql, runGit: () => "" });
+    // no registerSpawn, no kernel agent → transport-missing stops the dispatch
+    const rep = await lane(200, {}, { confirm: true, blockedBy: [387] });
+    logSpy.mockRestore();
+    expect(rep.spawned).toBe(false);
+    expect(rep.statusFlipped).toBe(false);
+    expect(rep.blockedBy?.applied).toEqual([]);
+    expect(board.mutations.some((m) => m.query.includes("addBlockedBy"))).toBe(false);
+    expect(board.items.find((i) => i.issueNumber === 200)?.status).toBe("Todo");
+  });
+});
+
+describe("AP.audit rule 8 — proseDependencyWithoutEdge (#393)", () => {
+  const mk = (over: Partial<Ticket> & Pick<Ticket, "number">): Ticket => ({
+    id: `I${over.number}`,
+    title: `t${over.number}`,
+    body: "",
+    state: "OPEN",
+    updatedAt: "2026-10-01T00:00:00Z",
+    milestone: null,
+    labels: [],
+    blockedBy: [],
+    itemId: null,
+    status: "Todo",
+    priority: null,
+    ...over,
+  });
+
+  it("prose names an on-board dependency with no edge → advisory finding naming the repair", () => {
+    const rep = audit({
+      tickets: [
+        mk({ number: 390, body: "## 修法\n倒查依赖 #387 修复后再动注册表。" }),
+        mk({ number: 387 }),
+      ],
+    });
+    expect(rep.drift).toHaveLength(1);
+    expect(rep.drift[0]).toMatchObject({
+      rule: "proseDependencyWithoutEdge",
+      number: 390,
+      mutation: null,
+    });
+    expect(rep.drift[0]?.detail).toContain("#387");
+    expect(rep.drift[0]?.detail).toContain("addBlockedBy");
+    // advisory: nothing apply-ready — observe before any refusal upgrade
+    expect(rep.mutations).toEqual([]);
+  });
+
+  it("materialized edge → silent (已物化票不报)", () => {
+    const rep = audit({
+      tickets: [
+        mk({
+          number: 390,
+          body: "依赖 #387 修复",
+          blockedBy: [{ number: 387, state: "OPEN", title: "x" }],
+        }),
+        mk({ number: 387 }),
+      ],
+    });
+    expect(rep.clean).toBe(true);
+  });
+
+  it("silent: off-board ref, self-ref, keywordless ref, closed-ticket prose", () => {
+    const rep = audit({
+      tickets: [
+        mk({ number: 391, body: "依赖 #999（不在板上）\n本票 #391 自查\n随手提 #387 无关键字" }),
+        mk({ number: 387 }),
+        mk({ number: 392, state: "CLOSED", status: "Done", body: "依赖 #387" }),
+      ],
+    });
+    expect(rep.clean).toBe(true);
+  });
+
+  it("multiple narrated deps aggregate into one finding per ticket", () => {
+    const rep = audit({
+      tickets: [
+        mk({ number: 393, body: "前置 #387\nblocked by #390" }),
+        mk({ number: 387 }),
+        mk({ number: 390 }),
+      ],
+    });
+    expect(rep.drift).toHaveLength(1);
+    expect(rep.drift[0]?.detail).toContain("#387, #390");
   });
 });
 
