@@ -1,5 +1,9 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+// Subpath import, not the barrel: the daemon client runs in Node — the
+// barrel would transitively load agent-do.ts (cloudflare:workers). The
+// dictionary module is zod-only by design.
+import { relayModelEntrySchema } from "@cap/agent-do/provider-catalog";
 import { z } from "zod";
 
 /**
@@ -29,23 +33,13 @@ import { z } from "zod";
  *   "Security scan preflight requires an active model" error.
  */
 
-const providerModelSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1).optional(),
-  api: z.string().min(1).optional(),
-  reasoning: z.boolean().optional(),
-  input: z.array(z.enum(["text", "image"])).optional(),
-  contextWindow: z.number().int().positive().optional(),
-  maxTokens: z.number().int().positive().optional(),
-  cost: z
-    .object({
-      input: z.number().nonnegative(),
-      output: z.number().nonnegative(),
-      cacheRead: z.number().nonnegative(),
-      cacheWrite: z.number().nonnegative(),
-    })
-    .optional(),
-});
+/**
+ * The shared model-entry field dictionary (#350): the SAME zod vocabulary
+ * the edge MODEL_RELAY_CATALOG declaration uses
+ * (packages/agent-do/src/provider-catalog.ts) — one dictionary across the
+ * two trust domains so the field sets cannot drift apart (roadmap §4.4).
+ */
+const providerModelSchema = relayModelEntrySchema;
 
 const providerSchema = z.object({
   baseUrl: z.string().min(1),
@@ -56,16 +50,7 @@ const providerSchema = z.object({
   models: z.array(providerModelSchema).min(1),
 });
 
-export interface AgentAuthModelConfig {
-  id: string;
-  name?: string;
-  api?: string;
-  reasoning?: boolean;
-  input?: ("text" | "image")[];
-  contextWindow?: number;
-  maxTokens?: number;
-  cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
-}
+export type AgentAuthModelConfig = z.infer<typeof providerModelSchema>;
 
 export interface AgentAuthProviderConfig {
   baseUrl: string;

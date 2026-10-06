@@ -76,7 +76,7 @@ bb 的 provider 认证**全部由 CLI 自持**（各自 OAuth/登录态），服
 
 | 资产 | 内容 | 锚 |
 | --- | --- | --- |
-| 静态目录 face | `GET /system/execution-options`，单 provider `omp`、单模型 `MODEL_RELAY_MODEL`、reasoning 仅 `none`、`supportsImageInput` 同源投影、`permissionCeiling: "full"`；响应 schema bb-verbatim | apps/server-worker/src/routes/system.ts:96-147 |
+| 目录 face | `GET /system/execution-options`——#350 后为 `MODEL_RELAY_CATALOG` 声明正本的多 provider/多模型/阶梯投影；无声明时回退单 provider `omp`、单模型 `MODEL_RELAY_MODEL`、`permissionCeiling: "full"`；响应 schema bb-verbatim | apps/server-worker/src/routes/system.ts（buildExecutionOptions） |
 | relay env 三键+flags | `MODEL_RELAY_BASE_URL_ANTHROPIC / _API_KEY / _MODEL / _MAX_TOKENS / _THINKING_BUDGET_TOKENS / _CONTEXT_WINDOW(#308) / _IMAGE_INPUT(#319)` | apps/provider-app/src/harness.ts:34-63, 82-89 |
 | 只读投影 | `GET /system/provider-projections`：harness（模式/host/model/key 存在性/thinking/权限/machine）+ web_search；零秘密值 L1 钉死 | routes/system.ts:149-202；test/compat/system-provider-projections.test.ts「never emits secret values」 |
 | layer-4 存储 | threads 行 `provider_id / model_override / reasoning_level_override` 列已建；create/send 契约字段已进 | apps/server-worker/src/db/rows.ts:90-93；contract/api/threads.ts:103-127, 226-228 |
@@ -88,9 +88,9 @@ bb 的 provider 认证**全部由 CLI 自持**（各自 OAuth/登录态），服
 
 | bb 字段面 | 我方现状 | 缺口定级 |
 | --- | --- | --- |
-| 多模型目录（AvailableModel 行 + 精确/粗阶梯） | 单模型单行硬编码 | **核心缺口**（票1）：目录无声明正本，投影无源可读 |
-| capability 位（serviceTier/fork/userQuestion/archive/rename…） | 除 `supportsImageInput`（#319）外全静态 false | 随票1目录化：位的正本从代码搬到部署声明 |
-| flags（max_tokens / thinking budget / 上下文窗） | env 已有、harness 已解析 | **投影缺口**：目录不反映它们（thinking budget 开了目录仍只报 `none`——能力欠声明）；见 §2.3 矛盾 2 |
+| 多模型目录（AvailableModel 行 + 精确/粗阶梯） | `MODEL_RELAY_CATALOG` 声明正本（公开册，零秘密 strict schema）+ execution-options 多行投影 + provider-projections 目录状态行（#350） | **已落（#350）**：目录有声明正本，投影同源可读；thread 级选择消费仍属票2 |
+| capability 位（serviceTier/fork/userQuestion/archive/rename…） | `serviceTier`（provider 级声明）与 `supportsImageInput`（#319 env flag ∪ #350 目录 `input` 并集）已进声明正本 | **已随 #350 目录化**（有声明语义的位）；fork/userQuestion/archive/rename 仍静态 false——它们是 bb agent-provider（CLI 后端）语义，relay 无此语义，真值随需求出现再进声明 |
+| flags（max_tokens / thinking budget / 上下文窗） | thinking budget/image input/model/maxTokens/contextWindow 全部进 harness+目录同源投影（#350）；env 标量显式覆盖仍优先 | **已修（#350）**：budget 开启 → 目录如实开阶梯（缺省 medium 档，声明 `reasoningLevels` 可覆盖）；budget 关 → 仅 `none`，声明的阶梯休眠 |
 | per-thread providerId/model/reasoningLevel | 列与契约字段在，**值不消费、不校验** | **消费缺口**（票2）：picker 写入是 silent no-op |
 | 多 provider 并存 | edge 单 provider；daemon 词汇已在 | edge 注册表化随票2（同 schema 多行）；**协议级多 API 形状分派**（OpenAI Responses vs Anthropic Messages）不在本路线图——relay wire 是 Anthropic 形状单实现，多协议另立 |
 | 自定义模型注册（bb customModels） | 无 | 并入票1目录 JSON（我方部署者=用户，「声明即目录」，无需独立注册面） |
@@ -103,6 +103,8 @@ bb 的 provider 认证**全部由 CLI 自持**（各自 OAuth/登录态），服
 1. **reasoning 三面不一**：default-execution-options 报 `medium`（routes/projects.ts:365）vs 目录仅 `none`（routes/system.ts:139-140）vs harness 实跑 `none`（harness.ts:98）。
 2. **能力欠声明**：`MODEL_RELAY_THINKING_BUDGET_TOKENS` 开启时目录仍只开 `none`——#319 的「同一部署声明、两面同源」纪律（routes/system.ts:100-103 注释）只推广到了 image input。
 3. **写路径无校验**：`payload.providerId ?? "omp"` 直落 DB（routes/threads.ts:307），未知 model/reasoning 值无 422 具名错误。
+
+> **修复记录（#350，2026-10-06）**：矛盾 1/2 已消除——default-execution-options / 目录 / harness 三面改读同一 `resolveRelayCatalog` 解析（provider-app catalog.ts，内部调 resolveHarness，默认行由 harness 输出折叠）；budget 关 → 三面同报 `none`，budget 开 → 三面同报声明默认档（缺省 medium）。矛盾 3（写路径无校验）归属票2。
 
 ---
 
