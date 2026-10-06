@@ -279,4 +279,31 @@ describe("task isolation backend (T20 #110)", () => {
     expect(bad.status).toBe("error");
     expect(bad.output).toContain("invalid task.isolation.prepare arguments");
   });
+
+  // --- #419 landing guard integration (keep last: mutates the shared
+  // workspace with a submodule; every earlier test has settled by now) ---
+
+  test("patch mode: a `*:conflicts` sidecar in the delta is refused with cleanup guidance (#419)", async () => {
+    const runtime = runtimeWith();
+    const prepared = await prepare(runtime, "th-child-sidecar", "Task-Sidecar");
+    const info = JSON.parse(prepared.output) as { workspaceDir: string };
+    // The spill the #398/#399 lanes shipped: an untracked read-selector
+    // artifact enters the delta (no .gitignore gap closure in the lane).
+    await runtime.execute(
+      frameOf("bash", "th-child-sidecar", 3, {
+        command: "printf '3: spill\\n' > 'leak.ts:conflicts'",
+      }),
+    );
+    const released = await release(runtime, "th-child-sidecar");
+    expect(released.status).toBe("error");
+    expect(released.output).toContain("Landing refused by the task-apply precheck (#419)");
+    expect(released.output).toContain("rm -- 'leak.ts:conflicts'");
+    expect(released.output).toContain("*:conflicts");
+    expect(released.output).toContain(".gitignore");
+    // The source checkout is untouched and the workspace torn down cleanly —
+    // the patch artifact holds the delta (retention is for capture losses,
+    // not refusals).
+    expect(existsSync(join(workspace, "leak.ts:conflicts"))).toBe(false);
+    expect(existsSync(info.workspaceDir)).toBe(false);
+  }, 240_000);
 });

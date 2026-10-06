@@ -8,6 +8,14 @@ import type {
   WorktreeBaseline,
 } from "@oh-my-pi/pi-coding-agent/task/worktree";
 import { log } from "./log.js";
+import {
+  cherryPickRangeWithGitlinkResolution,
+  defaultGitRunner,
+  LandingRefusalError,
+  precheckLandingPatch,
+  renderLandingRefusal,
+  type GitRunner,
+} from "./task-apply-guard.js";
 import type { ToolDispatchFrame, ToolExecutionResult, ToolHost } from "./tool-runtime.js";
 
 /**
@@ -274,12 +282,38 @@ function okResult(output: string): ToolExecutionResult {
 const writeFileAsync = promisify(writeFile);
 
 /**
+ * Per-repo landing mutex (#419): omp's mergeTaskBranches serializes only its
+ * own critical section, and the gitlink retry runs BETWEEN omp locks — a
+ * concurrent release of another thread would interleave stash/cherry-pick
+ * against the same working tree (the corruption class omp's repo lock exists
+ * to prevent). The whole capture→land section is serialized per repoRoot.
+ */
+const landingLocks = new Map<string, Promise<void>>();
+
+async function withLandingLock<T>(repoRoot: string, fn: () => Promise<T>): Promise<T> {
+  const previous = landingLocks.get(repoRoot) ?? Promise.resolve();
+  const result = previous.then(() => fn());
+  const tail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  landingLocks.set(repoRoot, tail);
+  try {
+    return await result;
+  } finally {
+    if (landingLocks.get(repoRoot) === tail) landingLocks.delete(repoRoot);
+  }
+}
+
+/**
  * Per-daemon isolation registry. Sessions key by the CHILD thread id — the
  * thread its host-tool frames arrive under — and persist in client-process
  * memory across parks (§3.4: disconnect never kills work).
  */
 export class IsolationManager {
   private readonly sessions = new Map<string, IsolationSession>();
+  /** The raw-git seam of the landing guard (#419); real execFile at runtime. */
+  private readonly gitRunner: GitRunner = defaultGitRunner();
 
   constructor(
     private readonly base: ToolHost,
@@ -394,8 +428,19 @@ export class IsolationManager {
     const lines: string[] = [];
     let outcome: string;
     try {
-      outcome = await this.captureAndMerge(session, apply ?? session.applyGate, lines);
+      outcome = await withLandingLock(this.base.workspaceRoot, () =>
+        this.captureAndMerge(session, apply ?? session.applyGate, lines),
+      );
     } catch (error) {
+      if (error instanceof LandingRefusalError) {
+        // #419 precheck refusal: the delta was captured to the patch artifact
+        // and must NOT land. Nothing needs retaining — the refusal text
+        // carries the cleanup actions and names the rescue patch.
+        this.sessions.delete(threadId);
+        await omp.cleanupIsolation(session.handle).catch(() => undefined);
+        log(`isolation release ${session.agentId} REFUSED by the landing precheck`);
+        return errorResult(error.message);
+      }
       // Capture failed — the workspace is the only other copy of the delta.
       // Retain it under a unique sibling and name the path (omp
       // isolation-runner.ts:414-425).
@@ -461,20 +506,50 @@ export class IsolationManager {
       if (!apply) {
         return `Captured branch ${commit.branchName} (apply gate closed — not applied).`;
       }
+      const refusal = await precheckLandingPatch(this.gitRunner, repoRoot, delta.rootPatch);
+      if (refusal !== null) {
+        throw new LandingRefusalError(
+          `${renderLandingRefusal(refusal)}\nRescue patch: ${patchPath}`,
+        );
+      }
       const merge = await omp.mergeTaskBranches(repoRoot, [
         { branchName: commit.branchName, taskId: session.agentId, baseSha: commit.baseSha },
       ]);
       if (merge.failed.length > 0) {
-        lines.push(`Rescue patch: ${patchPath}`);
-        throw new Error(
-          `branch merge failed, branch kept for manual resolution: ${merge.conflict ?? merge.failed.join(", ")}`,
-        );
+        // #419: a gitlink-only cherry-pick conflict ("merge conflict in 0
+        // file(s)") is a fake conflict when the two submodule pins are
+        // ordered in the submodule's commit graph — the descendant pointer
+        // contains the ancestor and wins. Only a genuinely divergent or
+        // unverifiable pin still reports the merge as failed.
+        const resolution =
+          commit.baseSha === undefined
+            ? null
+            : await cherryPickRangeWithGitlinkResolution(
+                this.gitRunner,
+                repoRoot,
+                commit.baseSha,
+                commit.branchName,
+              );
+        if (resolution?.ok !== true) {
+          lines.push(`Rescue patch: ${patchPath}`);
+          if (resolution?.error !== undefined) {
+            lines.push(`Gitlink resolution attempt: ${resolution.error}`);
+          }
+          throw new Error(
+            `branch merge failed, branch kept for manual resolution: ${merge.conflict ?? merge.failed.join(", ")}`,
+          );
+        }
+        lines.push(`Gitlink fake-conflict resolved by ancestry (#419):`);
+        for (const note of resolution.notes) lines.push(`  · ${note}`);
+        lines.push(`Merged by the gitlink retry engine (branch ${commit.branchName}).`);
       }
       await omp.cleanupTaskBranches(repoRoot, [commit.branchName]);
       if (commit.nestedPatches.length > 0) {
         lines.push(...(await omp.applyNestedPatches(repoRoot, commit.nestedPatches)));
       }
-      return `Merged branch: ${commit.branchName}`;
+      return merge.failed.length > 0
+        ? `Merged branch (gitlink ancestry resolution): ${commit.branchName}`
+        : `Merged branch: ${commit.branchName}`;
     }
 
     // Patch mode: capture, then the reverse/forward canApplyPatch precheck
@@ -498,6 +573,10 @@ export class IsolationManager {
     }
     if (!delta.rootPatch.trim()) {
       return "No root changes to apply; nested repository patches captured.";
+    }
+    const refusal = await precheckLandingPatch(this.gitRunner, repoRoot, delta.rootPatch);
+    if (refusal !== null) {
+      throw new LandingRefusalError(`${renderLandingRefusal(refusal)}\nRescue patch: ${patchPath}`);
     }
     const normalized = delta.rootPatch.endsWith("\n") ? delta.rootPatch : `${delta.rootPatch}\n`;
     const repo = omp.requireGit(repoRoot);

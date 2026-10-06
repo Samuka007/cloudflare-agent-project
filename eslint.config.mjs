@@ -46,6 +46,7 @@ export default tseslint.config(
       "packages/daemon-service/test/l1-edit-semantics.test.ts",
       "packages/daemon-service/test/l1-find-semantics.test.ts",
       "packages/daemon-service/test/l1-task-isolation.test.ts",
+      "packages/daemon-service/test/l1-task-apply-guard.test.ts",
       "packages/daemon-service/test/l1-security-scan.test.ts",
       "packages/daemon-service/test/l1-workspace-semantics.test.ts",
       "packages/daemon-service/test/l1-prompt-attachments.test.ts",

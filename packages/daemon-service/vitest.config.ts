@@ -33,6 +33,7 @@ export default defineConfig({
       "test/l1-edit-semantics.test.ts",
       "test/l1-find-semantics.test.ts",
       "test/l1-task-isolation.test.ts",
+      "test/l1-task-apply-guard.test.ts",
       "test/l1-security-scan.test.ts",
       "test/l1-workspace-semantics.test.ts",
       // #318 staging lane: node:fs + the omp runtime — Bun-only.
