@@ -244,18 +244,6 @@ importers:
         specifier: ^4.1.0
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
 
-  plugins/pm-harness:
-    devDependencies:
-      '@types/node':
-        specifier: ^22.20.5
-        version: 22.20.5
-      typescript:
-        specifier: ~5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.0
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.2(@types/node@22.20.5)(esbuild@0.28.1)(yaml@2.9.1))
-
   scripts:
     devDependencies:
       '@types/node':

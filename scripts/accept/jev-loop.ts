@@ -30,22 +30,22 @@
  *   PM. Metrics carry write-step / upgraded-write-step counters so the K3
  *   upgrade-rate kill criterion is computable from any report.
  *
- * Transport reference: plugins/pm-harness/src/core.ts (resolveJeapiKey / JEV_URL /
- * JEV_MODEL / JudgeAnswer shapes are reused, not redefined).
+ * Transport reference: pm-autopilot/src/core.ts (#396; resolveJeapiKey /
+ * JEV_URL / JEV_MODEL / JudgeAnswer shapes are reused, not redefined).
  */
 
-import type { JudgeAnswer } from "../../plugins/pm-harness/src/core.js";
+import type { JudgeAnswer } from "../../pm-autopilot/src/core.js";
 
 // Endpoint constants are aliased to locals rather than re-exported directly:
 // Bun ≤1.3.x can mis-lower bare `export { X } from "..."` bindings when the
 // module graph is loaded through certain dynamic-import shapes (observed as
 // spurious ReferenceError in omp eval cells), while a local named const is
-// stable everywhere. Values remain the pm-harness core's single source of truth.
+// stable everywhere. Values remain the pm-autopilot core's single source of truth.
 import {
   JEV_MODEL as PM_JEV_MODEL,
   JEV_URL as PM_JEV_URL,
   resolveJeapiKey,
-} from "../../plugins/pm-harness/src/core.js";
+} from "../../pm-autopilot/src/core.js";
 
 export const JEV_URL = PM_JEV_URL;
 export const JEV_MODEL = PM_JEV_MODEL;

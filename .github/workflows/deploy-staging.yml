@@ -29,6 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # pm-autopilot is a PRIVATE submodule (#396): the workflow
+          # GITHUB_TOKEN only covers this repo, so submodule fetches
+          # authenticate with the user PAT.
+          token: ${{ secrets.PROJECT_TOKEN }}
           submodules: recursive
       - uses: pnpm/action-setup@v4
         with:

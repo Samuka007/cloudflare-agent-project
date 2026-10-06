@@ -2,6 +2,7 @@ node_modules/
 dist/
 .wrangler/
 bb/
+pm-autopilot/
 packages/mcp/src/
 packages/mcp/test/
 packages/mcp/conformance/baseline.json

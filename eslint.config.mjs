@@ -17,6 +17,10 @@ export default tseslint.config(
       "**/.wrangler/**",
       "**/worker-configuration.d.ts",
       "bb/**",
+      // pm-autopilot (#396): the extracted PM-harness product repo, consumed
+      // as a pinned submodule with its own CI (typecheck + vitest) — same
+      // submodule exemption as bb/.
+      "pm-autopilot/**",
       // Tool configs, not product source: adding vitest.config.ts to a
       // package tsconfig program merges @cloudflare/vitest-plugin's bundled
       // workers-types with the package's own and breaks typecheck of real
