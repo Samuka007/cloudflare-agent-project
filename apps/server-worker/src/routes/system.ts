@@ -61,6 +61,7 @@ import { defaultFeatureFlags } from "../contract/domain/feature-flags.js";
 import { ApiError, parseOr422, requireJsonBody } from "../shared/route-utils.js";
 import {
   deleteProviderConfig,
+  getProviderConfigMutationContext,
   getProviderConfigTarget,
   insertProviderConfig,
   patchProviderConfig,
@@ -528,6 +529,30 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
     }
   };
 
+  /**
+   * SEC-W5-003 rebinding gate: /test and /discover-models decrypt the stored
+   * credential onto the wire toward the row's CURRENT baseUrl, so a write
+   * that moves baseUrl while KEEPING the stored key would hand that key to a
+   * caller-chosen endpoint. Moving baseUrl therefore requires re-entering the
+   * credential for the new target in the same request, or clearing it — the
+   * keep protocol alone is not enough to re-anchor a credential.
+   */
+  const refuseCredentialReplayAcrossBaseUrl = (
+    current: { baseUrl: string | null; hasCredential: boolean },
+    nextBaseUrl: string | null,
+    credential: CredentialUpdate,
+  ): void => {
+    if (credential.kind !== "keep" || !current.hasCredential) return;
+    if ((nextBaseUrl ?? null) === (current.baseUrl ?? null)) return;
+    throw new ApiError({
+      status: 422,
+      code: "credential_reentry_required",
+      message:
+        "changing baseUrl would send the stored credential to a new endpoint — " +
+        "re-enter apiKey for the new baseUrl in the same request, or clear the credential (apiKey: null)",
+    });
+  };
+
   routes.get("/system/providers", async (ctx) => {
     const load = await loadProviderConfigOverlay(ctx.env);
     // #388: the display face IS the merged directory truth. Env-seed rows no
@@ -598,7 +623,8 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
   routes.put("/system/providers/:id", async (ctx) => {
     const id = requireValidId(ctx.req.param("id"));
     const payload = await requireJsonBody(ctx, providerConfigReplaceRequestSchema);
-    if ((await getProviderConfigTarget(ctx.env, id)) === null) {
+    const current = await getProviderConfigMutationContext(ctx.env, id);
+    if (current === null) {
       throw new ApiError({
         status: 404,
         code: "provider_config_not_found",
@@ -607,6 +633,9 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
     }
     const credential = credentialOf(payload.apiKey);
     refuseKeyWithoutMasterKey(ctx.env, credential);
+    // PUT writes the visible face wholesale (writeFieldsOf): an absent
+    // baseUrl IS the next value (null), so the gate compares that target.
+    refuseCredentialReplayAcrossBaseUrl(current, payload.baseUrl ?? null, credential);
     await replaceProviderConfig(ctx.env, id, writeFieldsOf(payload), credential);
     await hub(ctx.env).notifySystem(["config-changed"]);
     return ctx.json(await rowAfterWrite(ctx.env, id));
@@ -615,7 +644,8 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
   routes.patch("/system/providers/:id", async (ctx) => {
     const id = requireValidId(ctx.req.param("id"));
     const payload = await requireJsonBody(ctx, providerConfigPatchRequestSchema);
-    if ((await getProviderConfigTarget(ctx.env, id)) === null) {
+    const current = await getProviderConfigMutationContext(ctx.env, id);
+    if (current === null) {
       throw new ApiError({
         status: 404,
         code: "provider_config_not_found",
@@ -624,6 +654,13 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
     }
     const credential = credentialOf(payload.apiKey);
     refuseKeyWithoutMasterKey(ctx.env, credential);
+    // Omitted baseUrl means "not moving" (PATCH semantics): the gate only
+    // fires when the payload re-anchors the row somewhere else.
+    refuseCredentialReplayAcrossBaseUrl(
+      current,
+      payload.baseUrl !== undefined ? (payload.baseUrl ?? null) : current.baseUrl,
+      credential,
+    );
     await patchProviderConfig(
       ctx.env,
       id,
