@@ -89,7 +89,7 @@ describe("cloud placeholder host row (#386)", () => {
   it("the fleet's primary is the cloud placeholder (/system/config, #436)", async () => {
     const response = await apiGet("/api/v1/system/config");
     expect(response.status).toBe(200);
-    const body = (await response.json()) as { primaryHostId: string | null };
+    const body = await response.json<{ primaryHostId: string | null }>();
     expect(body.primaryHostId).toBe(CLOUD_PLACEHOLDER_HOST_ID);
   });
 
