@@ -31,6 +31,7 @@ export {
 export {
   RelayProviderRegistry,
   decodeRelayProviderCredentials,
+  imageGenerationSourceFromOverlay,
   relayAgentRuntime,
   type RelayProviderOverlay,
   type RelayProviderCredential,

@@ -3,8 +3,11 @@ import { z } from "zod";
 import {
   BROWSER_BACKED_ENGINES,
   DEFAULT_WEB_SEARCH_CONFIG,
+  decodeGenerateImageConfig,
   decodeWebSearchConfig,
+  envFlag,
   projectWebSearchConfig,
+  IMAGE_SOURCE_API_FAMILY,
   SYNTHETIC_RELAY_PROVIDER_ID,
   type RelayCatalogProvider,
 } from "@cap/agent-do";
@@ -199,7 +202,12 @@ export function buildExecutionOptions(
  * in daemon env, a different trust domain (#255 §6.2, ticket #56).
  */
 export function buildProviderProjections(
-  env: Pick<Env, "AGENT_DO_WEB_SEARCH"> & HarnessEnv,
+  env: Pick<Env, "AGENT_DO_WEB_SEARCH"> & {
+    /** #362 scope absorption ②: the fallback image gate + source (optional —
+     * a dispatchable openai-images ROW outranks both). */
+    AGENT_DO_GENERATE_IMAGE?: string;
+    AGENT_DO_IMAGE_SOURCE?: string;
+  } & HarnessEnv,
   overlayProviders?: Record<string, RelayCatalogProvider>,
 ) {
   // One resolution for both rows: the harness projection and the catalog
@@ -248,6 +256,20 @@ export function buildProviderProjections(
       };
     }
   }
+  // #362 scope absorption ②: generate_image availability, presence-only.
+  // A dispatchable api=openai-images row (panel, hot) wins; the env gate +
+  // decodable source is the fallback posture.
+  const imageRowPresent =
+    overlayProviders !== undefined &&
+    Object.values(overlayProviders).some(
+      (provider) =>
+        provider.api === IMAGE_SOURCE_API_FAMILY && provider.models.length > 0,
+    );
+  const imageGeneration = {
+    configured:
+      imageRowPresent ||
+      (envFlag(env.AGENT_DO_GENERATE_IMAGE) && decodeGenerateImageConfigSafely(env)),
+  };
   return {
     harness: { ...harness, relayBaseUrlHost },
     webSearch,
@@ -262,8 +284,24 @@ export function buildProviderProjections(
       defaultModel: resolution.harness.relay.model,
       providers: resolution.providers.map((provider) => provider.id),
       models: resolution.models.map((model) => model.id),
+      imageGeneration,
     },
   };
+}
+
+/** Env image-source decode check that never throws on the read-only face. */
+function decodeGenerateImageConfigSafely(
+  env: Pick<Env, "AGENT_DO_WEB_SEARCH"> & {
+    AGENT_DO_GENERATE_IMAGE?: string;
+    AGENT_DO_IMAGE_SOURCE?: string;
+  } & HarnessEnv,
+): boolean {
+  try {
+    decodeGenerateImageConfig(env.AGENT_DO_IMAGE_SOURCE);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function registerSystemRoutes(app: Hono<{ Bindings: HonoBindings }>): void {

@@ -13,6 +13,7 @@ import {
   providerConfigRowSchema,
   providerConfigsListResponseSchema,
   providerConfigTestResponseSchema,
+  systemProviderProjectionsResponseSchema,
   systemExecutionOptionsResponseSchema,
 } from "../../src/contract/api/system.js";
 
@@ -610,5 +611,69 @@ describe("#362 test-connection and /models discovery faces", () => {
     expect(verdict.ok).toBe(false);
     expect(verdict.status).toBeNull();
     expect(verdict.models).toEqual([]);
+  });
+});
+
+describe("#362 scope absorption: per-model thinking budget + openai-images rows", () => {
+  it("a row budget opens the declared ladder without the env scalar, and hot-collapses when removed", async () => {
+    await postProvider({
+      id: "budgeted",
+      api: "anthropic",
+      models: [
+        {
+          id: "budget-model",
+          reasoningLevels: ["none", "high"],
+          defaultReasoningLevel: "high",
+          thinkingBudgetTokens: 4096,
+        },
+      ],
+    });
+    const ladder = (await executionOptions()).models.find(
+      (model) => model.id === "budget-model",
+    );
+    expect(ladder?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)).toContain(
+      "high",
+    );
+
+    // Hot: rewriting the row without the budget collapses the ladder on the
+    // next request (env scalar unset — the deprecated fallback is absent).
+    await request("PUT", "/api/v1/system/providers/budgeted", {
+      models: [{ id: "budget-model", reasoningLevels: ["none", "high"] }],
+    });
+    const collapsed = (await executionOptions()).models.find(
+      (model) => model.id === "budget-model",
+    );
+    expect(collapsed?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)).toEqual([
+      "none",
+    ]);
+  });
+
+  it("openai-images rows are image sources: off the LLM directory, on the projections presence bit, hot", async () => {
+    await postProvider({
+      id: "imagey",
+      displayName: "Image Source",
+      baseUrl: "https://images.example.com/v1",
+      api: "openai-images",
+      models: [{ id: "image-model" }],
+      apiKey: PANEL_KEY,
+    });
+    // Off the selectable LLM directory…
+    expect(
+      (await executionOptions()).providers.map((provider) => provider.id),
+    ).not.toContain("imagey");
+    // …on the CRUD face…
+    expect((await listProviders()).map((entry) => entry.id)).toContain("imagey");
+    // …and gating the projections presence bit (hot; zero-secret).
+    const projectionsPath = "/api/v1/system/provider-projections";
+    let projections = systemProviderProjectionsResponseSchema.parse(
+      await (await request("GET", projectionsPath)).json(),
+    );
+    expect(projections.catalog.imageGeneration.configured).toBe(true);
+    expect(JSON.stringify(projections)).not.toContain(PANEL_KEY);
+    await deleteRow("imagey");
+    projections = systemProviderProjectionsResponseSchema.parse(
+      await (await request("GET", projectionsPath)).json(),
+    );
+    expect(projections.catalog.imageGeneration.configured).toBe(false);
   });
 });

@@ -1,11 +1,13 @@
 import { describe, expect, test } from "vitest";
 import {
   decryptProviderSecret,
+  imageGenerationSourceFromOverlay,
   encryptProviderSecret,
   loadProviderConfigCatalogOverlay,
   RelayProviderRegistry,
   resolveRelayCatalogWithOverlay,
 } from "../src/index.js";
+import { DEFAULT_IMAGE_TIMEOUT_SECONDS } from "@cap/agent-do";
 import { FixedReplyProvider } from "../src/harness.js";
 
 /**
@@ -169,5 +171,27 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
     // No DB binding → null (the loader is a no-op without D1), which is the
     // zero-secret-by-construction contract for pure catalog faces.
     await expect(loadProviderConfigCatalogOverlay({})).resolves.toBeNull();
+  });
+
+  test("imageGenerationSourceFromOverlay resolves the openai-images row's source", () => {
+    expect(imageGenerationSourceFromOverlay(null)).toBeNull();
+    expect(imageGenerationSourceFromOverlay({ providers: {}, credentials: {}, standaloneProviders: new Set() })).toBeNull();
+    const source = imageGenerationSourceFromOverlay({
+      providers: {
+        imagey: {
+          api: "openai-images",
+          baseUrl: "https://images.example.com/v1/",
+          models: [{ id: "image-model" }, { id: "spare" }],
+        },
+      },
+      credentials: { imagey: { apiKey: "sk-image-362" } },
+      standaloneProviders: new Set(["imagey"]),
+    });
+    expect(source).toEqual({
+      baseUrl: "https://images.example.com/v1",
+      apiKey: "sk-image-362",
+      model: "image-model",
+      timeoutSeconds: DEFAULT_IMAGE_TIMEOUT_SECONDS,
+    });
   });
 });

@@ -464,9 +464,26 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   /** Decoded once from `AGENT_DO_IMAGE_SOURCE` (B2 #322); deployment-time
    * input — the model-facing wire schema carries no endpoint field. */
   private readonly generateImageConfig: GenerateImageConfig;
+  /**
+   * #362 scope absorption ②: the panel-resolved image source (a provider
+   * row with api=openai-images). Non-null gates generate_image ON with the
+   * row's source regardless of the env gate; null = the env posture. The
+   * deploying worker's ComposedAgentDO refreshes it at the turn boundary
+   * (refreshRuntime seam), so a panel edit takes effect on the next real
+   * turn with zero redeploy.
+   */
+  private imageSourceOverride: GenerateImageConfig | null = null;
   /** Decoded once from the #150 experimental-gate envs; deployment-time
    * input, all default OFF (omp tools/index.ts:766-772 posture). */
   private readonly experimentalGates: ExperimentalToolConfig;
+  /**
+   * The panel-resolved image source wins over the deployment env: row
+   * presence is the user opt-in, so the gate opens and the source rides the
+   * row; null falls back to the env-decoded posture verbatim.
+   */
+  applyImageGenerationSource(source: GenerateImageConfig | null): void {
+    this.imageSourceOverride = source;
+  }
   private state: ReplayState = emptyReplayState();
   private threadId: string | null = null;
   private readyPromise: Promise<void> | null = null;
@@ -2741,7 +2758,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     // native CoT pathway for native-reasoning models like glm-5.3).
     const gated: ModelRequest = {
       ...request,
-      experimentalGates: this.experimentalGates,
+      // #362: an image-source ROW gates generate_image on regardless of the
+      // env gate (row presence is the user opt-in) — read per request so a
+      // panel edit lands on the next turn without a redeploy.
+      experimentalGates:
+        this.imageSourceOverride !== null
+          ? { ...this.experimentalGates, generateImage: true }
+          : this.experimentalGates,
     };
     // Matrix C2 (#327): the discovered MCP surface rides every call — the
     // TTL cache inside McpToolSurface bounds the tools/list round-trips, a
@@ -4155,7 +4178,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   ): GenerateImageToolContext {
     const machineId = this.state.machineId ?? "local";
     return {
-      config: this.generateImageConfig,
+      config: this.imageSourceOverride ?? this.generateImageConfig,
       signal,
       fetchImpl: (input, init) => fetch(input, init),
       writeThreadFile: async ({ filename, contentBase64 }) => {

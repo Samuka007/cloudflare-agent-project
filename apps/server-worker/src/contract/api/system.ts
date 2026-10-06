@@ -332,6 +332,13 @@ export const systemProviderProjectionsResponseSchema = z.object({
     defaultModel: z.string(),
     providers: z.array(z.string()),
     models: z.array(z.string()),
+    /**
+     * #362 scope absorption ②: generate_image availability, presence-only
+     * (zero-secret). True when an api=openai-images provider row is
+     * dispatchable (panel, hot) or the deployment env gate + source decode
+     * cleanly (the fallback posture).
+     */
+    imageGeneration: z.object({ configured: z.boolean() }),
   }),
 });
 export type SystemProviderProjectionsResponse = z.infer<

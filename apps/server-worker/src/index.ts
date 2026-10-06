@@ -10,6 +10,7 @@ import {
   createEdgeAgentAdapter,
   relayAgentRuntime,
   loadProviderConfigOverlay,
+  imageGenerationSourceFromOverlay,
   RelayProviderRegistry,
   type HarnessEnv,
   type ManagerDoBindings,
@@ -71,6 +72,10 @@ export class ComposedAgentDO extends AgentDO {
     const overlay = await loadProviderConfigOverlay(this.env);
     if (overlay === null || overlay.fingerprint === this.appliedOverlayFingerprint) return;
     this.relayRegistry.applyOverlay(overlay);
+    // #362 scope absorption ②: an api=openai-images row is the generate_image
+    // switch + source — refresh the DO-side override alongside the catalog so
+    // a panel edit lands on the next turn (null = env posture resumes).
+    this.applyImageGenerationSource(imageGenerationSourceFromOverlay(overlay));
     this.appliedOverlayFingerprint = overlay.fingerprint;
   }
 }
