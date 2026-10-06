@@ -20,13 +20,13 @@
 
 bb 把 provider 字段劈成两套，纪律是「client 可读的进 wire 契约，backend 私有的永不进 `ProviderInfo`」：
 
-| 面 | schema | 字段 | 锚 |
-| --- | --- | --- | --- |
-| wire `ProviderInfo` | `providerInfoSchema` | `id / displayName / logoUrl / capabilities / composerActions / available` | bb/packages/domain/src/provider-types.ts:65-73 |
-| wire `ProviderCapabilities` | `providerCapabilitiesSchema` | `supportsArchive / supportsRename / supportsServiceTier / supportsUserQuestion / supportsFork / supportedPermissionModes[](min 1)` | 同上 :28-36 |
-| wire `AvailableModel` | `availableModelSchema` | `id / model / displayName / routeProviderId? / description / supportedReasoningEfforts[{reasoningEffort, description}] / defaultReasoningEffort / isDefault` | 同上 :14-26 |
-| wire composer 动作 | `providerComposerActionSchema` | discriminated `skills / plan / goal`（slash 命令 trigger + 名字） | 同上 :38-63 |
-| 服务端 `ProviderServerCapabilities` | interface（**无 zod，不出后端**） | `supportsSessionRestore / supportsWorkflows / backsHostDaemonAiServices / reasoningLevels[]`（粗粒度回退阶梯） | bb/packages/agent-providers/src/catalog.ts:36-67 |
+| 面                                  | schema                            | 字段                                                                                                                                                         | 锚                                               |
+| ----------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| wire `ProviderInfo`                 | `providerInfoSchema`              | `id / displayName / logoUrl / capabilities / composerActions / available`                                                                                    | bb/packages/domain/src/provider-types.ts:65-73   |
+| wire `ProviderCapabilities`         | `providerCapabilitiesSchema`      | `supportsArchive / supportsRename / supportsServiceTier / supportsUserQuestion / supportsFork / supportedPermissionModes[](min 1)`                           | 同上 :28-36                                      |
+| wire `AvailableModel`               | `availableModelSchema`            | `id / model / displayName / routeProviderId? / description / supportedReasoningEfforts[{reasoningEffort, description}] / defaultReasoningEffort / isDefault` | 同上 :14-26                                      |
+| wire composer 动作                  | `providerComposerActionSchema`    | discriminated `skills / plan / goal`（slash 命令 trigger + 名字）                                                                                            | 同上 :38-63                                      |
+| 服务端 `ProviderServerCapabilities` | interface（**无 zod，不出后端**） | `supportsSessionRestore / supportsWorkflows / backsHostDaemonAiServices / reasoningLevels[]`（粗粒度回退阶梯）                                               | bb/packages/agent-providers/src/catalog.ts:36-67 |
 
 `reasoningLevels` 的定位值得抄：它是「per-model 精确集合不可得时的粗阶梯回退」——Codex 的 app-server 才是权威，目录里的阶梯只为 custom models 与缺失 catalog 兜底（catalog.ts:169-174 注释）。pi 侧无中列；`routeProviderId` 解决「模型挂在 A provider 名下但走 B 通道」（pi 内嵌 provider 场景，provider-types.ts:18-20）。
 
@@ -50,13 +50,13 @@ bb 把 provider 字段劈成两套，纪律是「client 可读的进 wire 契约
 
 ### 1.4 config.json 字段集（`~/.bb/config.json`，managed config）
 
-| 字段 | schema | 说明 | 锚（bb/packages/config/src/bb-app-managed-config.ts） |
-| --- | --- | --- | --- |
-| `config` 值 | strict 五键 | `BB_APP_URL / BB_INFERENCE / BB_INFERENCE_FALLBACK / BB_LOG_LEVEL / BB_TRANSCRIPTION` | :40-48 |
-| `customModels[]` | strict `{providerId: 内建枚举 ∪ acp-* 正则, model(min1), displayName?}` | 用户注册 picker 模型；坏条目**跳过+警告**，永不因重写文件被静默删除（写流程携带 raw JSON 穿透） | :53-69；:233-255；bb-app/src/launcher.ts:172-181 |
-| `customAcpAgents[]` | strict `{id(slug), displayName, command, logo?(svg/png/webp), args[], env{}, cwd?, modelCli?{listArgs, selectFlag, primaryModels}, reasoningCli?, nativeReasoning?, nativeSkillRoots?}` | 用户注册 ACP agent，id 派生 `acp-<id>`，禁撞内建枚举，禁重复 | :84-148 |
-| 其余 | `sharedSkillRoots / machineCredential / connectMachineId / serverUrl` | 机器凭据与连接指向 | :150-160 |
-| 合并语义 | `managedConfig ?? baseConfig` 逐字段 | bb-app 托管配置覆盖基础配置 | apps/server/src/services/system/bb-app-managed-config.ts:106-111 |
+| 字段                | schema                                                                                                                                                                                  | 说明                                                                                            | 锚（bb/packages/config/src/bb-app-managed-config.ts）            |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `config` 值         | strict 五键                                                                                                                                                                             | `BB_APP_URL / BB_INFERENCE / BB_INFERENCE_FALLBACK / BB_LOG_LEVEL / BB_TRANSCRIPTION`           | :40-48                                                           |
+| `customModels[]`    | strict `{providerId: 内建枚举 ∪ acp-* 正则, model(min1), displayName?}`                                                                                                                 | 用户注册 picker 模型；坏条目**跳过+警告**，永不因重写文件被静默删除（写流程携带 raw JSON 穿透） | :53-69；:233-255；bb-app/src/launcher.ts:172-181                 |
+| `customAcpAgents[]` | strict `{id(slug), displayName, command, logo?(svg/png/webp), args[], env{}, cwd?, modelCli?{listArgs, selectFlag, primaryModels}, reasoningCli?, nativeReasoning?, nativeSkillRoots?}` | 用户注册 ACP agent，id 派生 `acp-<id>`，禁撞内建枚举，禁重复                                    | :84-148                                                          |
+| 其余                | `sharedSkillRoots / machineCredential / connectMachineId / serverUrl`                                                                                                                   | 机器凭据与连接指向                                                                              | :150-160                                                         |
+| 合并语义            | `managedConfig ?? baseConfig` 逐字段                                                                                                                                                    | bb-app 托管配置覆盖基础配置                                                                     | apps/server/src/services/system/bb-app-managed-config.ts:106-111 |
 
 `BB_INFERENCE / BB_INFERENCE_FALLBACK` 是宿主 AI 服务（语音转写/结构化推理 `*.voice.transcribe` / `*.inference.complete`）的 provider/model 指向——bb 服务端另一处「多 provider 并存」的活体，消费面是 `backsHostDaemonAiServices` 能力位（catalog.ts:52-60）。
 
@@ -74,29 +74,29 @@ bb 的 provider 认证**全部由 CLI 自持**（各自 OAuth/登录态），服
 
 ### 2.1 已在的（复用，不重建）
 
-| 资产 | 内容 | 锚 |
-| --- | --- | --- |
-| 目录 face | `GET /system/execution-options`——#350 后为 `MODEL_RELAY_CATALOG` 声明正本的多 provider/多模型/阶梯投影；无声明时回退单 provider `omp`、单模型 `MODEL_RELAY_MODEL`、`permissionCeiling: "full"`；响应 schema bb-verbatim | apps/server-worker/src/routes/system.ts（buildExecutionOptions） |
-| relay env 三键+flags | `MODEL_RELAY_BASE_URL_ANTHROPIC / _API_KEY / _MODEL / _MAX_TOKENS / _THINKING_BUDGET_TOKENS / _CONTEXT_WINDOW(#308) / _IMAGE_INPUT(#319)` | apps/provider-app/src/harness.ts:34-63, 82-89 |
-| 只读投影 | `GET /system/provider-projections`：harness（模式/host/model/key 存在性/thinking/权限/machine）+ web_search；零秘密值 L1 钉死 | routes/system.ts:149-202；test/compat/system-provider-projections.test.ts「never emits secret values」 |
-| layer-4 存储 | threads 行 `provider_id / model_override / reasoning_level_override` 列已建；create/send 契约字段已进 | apps/server-worker/src/db/rows.ts:90-93；contract/api/threads.ts:103-127, 226-228 |
-| daemon 侧多 provider 元数据词汇 | `DAEMON_AGENT_AUTH.providers{name → {baseUrl, api?, apiKey?, auth?(apiKey\|none), headers?, models[{id, name?, api?, reasoning?, input(text\|image)?, contextWindow?, maxTokens?, cost{...}}]}}` + `runtimeKeys` + `judgeRole` + `securityModel`——omp models.yml 全字段，部署期输入、模型不可达 | packages/daemon-service/src/client/agent-auth.ts:11-30, 32-57 |
-| OAuth 引擎（edge 可用） | `packages/mcp/src/oauth`：PKCE（WebCrypto）、发现、动态注册、client metadata document、回调校验、discovery state——`OAuthClientProvider` 接口存储无关 | packages/mcp/src/oauth/flow.ts:47-68（+ discovery/callback/errors/types） |
-| 宿主 OAuth 先例 | security_scan cloud 半：Codex Security OAuth 凭据宿主保管，plan fingerprint 钉凭据，**派发帧零 auth 面** | packages/agent-do/src/tools/registry.ts:790-806；daemon-service/test/l1-security-scan.test.ts:419-430 |
+| 资产                            | 内容                                                                                                                                                                                                                                                                                            | 锚                                                                                                     |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 目录 face                       | `GET /system/execution-options`——#350 后为 `MODEL_RELAY_CATALOG` 声明正本的多 provider/多模型/阶梯投影；无声明时回退单 provider `omp`、单模型 `MODEL_RELAY_MODEL`、`permissionCeiling: "full"`；响应 schema bb-verbatim                                                                         | apps/server-worker/src/routes/system.ts（buildExecutionOptions）                                       |
+| relay env 三键+flags            | `MODEL_RELAY_BASE_URL_ANTHROPIC / _API_KEY / _MODEL / _MAX_TOKENS / _THINKING_BUDGET_TOKENS / _CONTEXT_WINDOW(#308) / _IMAGE_INPUT(#319)`                                                                                                                                                       | apps/provider-app/src/harness.ts:34-63, 82-89                                                          |
+| 只读投影                        | `GET /system/provider-projections`：harness（模式/host/model/key 存在性/thinking/权限/machine）+ web_search；零秘密值 L1 钉死                                                                                                                                                                   | routes/system.ts:149-202；test/compat/system-provider-projections.test.ts「never emits secret values」 |
+| layer-4 存储                    | threads 行 `provider_id / model_override / reasoning_level_override` 列已建；create/send 契约字段已进                                                                                                                                                                                           | apps/server-worker/src/db/rows.ts:90-93；contract/api/threads.ts:103-127, 226-228                      |
+| daemon 侧多 provider 元数据词汇 | `DAEMON_AGENT_AUTH.providers{name → {baseUrl, api?, apiKey?, auth?(apiKey\|none), headers?, models[{id, name?, api?, reasoning?, input(text\|image)?, contextWindow?, maxTokens?, cost{...}}]}}` + `runtimeKeys` + `judgeRole` + `securityModel`——omp models.yml 全字段，部署期输入、模型不可达 | packages/daemon-service/src/client/agent-auth.ts:11-30, 32-57                                          |
+| OAuth 引擎（edge 可用）         | `packages/mcp/src/oauth`：PKCE（WebCrypto）、发现、动态注册、client metadata document、回调校验、discovery state——`OAuthClientProvider` 接口存储无关                                                                                                                                            | packages/mcp/src/oauth/flow.ts:47-68（+ discovery/callback/errors/types）                              |
+| 宿主 OAuth 先例                 | security_scan cloud 半：Codex Security OAuth 凭据宿主保管，plan fingerprint 钉凭据，**派发帧零 auth 面**                                                                                                                                                                                        | packages/agent-do/src/tools/registry.ts:790-806；daemon-service/test/l1-security-scan.test.ts:419-430  |
 
 ### 2.2 缺口（对照 §1 逐字段）
 
-| bb 字段面 | 我方现状 | 缺口定级 |
-| --- | --- | --- |
-| 多模型目录（AvailableModel 行 + 精确/粗阶梯） | `MODEL_RELAY_CATALOG` 声明正本（公开册，零秘密 strict schema）+ execution-options 多行投影 + provider-projections 目录状态行（#350） | **已落（#350）**：目录有声明正本，投影同源可读；thread 级选择消费仍属票2 |
-| capability 位（serviceTier/fork/userQuestion/archive/rename…） | `serviceTier`（provider 级声明）与 `supportsImageInput`（#319 env flag ∪ #350 目录 `input` 并集）已进声明正本 | **已随 #350 目录化**（有声明语义的位）；fork/userQuestion/archive/rename 仍静态 false——它们是 bb agent-provider（CLI 后端）语义，relay 无此语义，真值随需求出现再进声明 |
-| flags（max_tokens / thinking budget / 上下文窗） | thinking budget/image input/model/maxTokens/contextWindow 全部进 harness+目录同源投影（#350）；env 标量显式覆盖仍优先 | **已修（#350）**：budget 开启 → 目录如实开阶梯（缺省 medium 档，声明 `reasoningLevels` 可覆盖）；budget 关 → 仅 `none`，声明的阶梯休眠 |
-| per-thread providerId/model/reasoningLevel | 列与契约字段在，**值不消费、不校验** | **消费缺口**（票2）：picker 写入是 silent no-op |
-| 多 provider 并存 | edge 单 provider；daemon 词汇已在 | edge 注册表化随票2（同 schema 多行）；**协议级多 API 形状分派**（OpenAI Responses vs Anthropic Messages）不在本路线图——relay wire 是 Anthropic 形状单实现，多协议另立 |
-| 自定义模型注册（bb customModels） | 无 | 并入票1目录 JSON（我方部署者=用户，「声明即目录」，无需独立注册面） |
-| auth 状态面（auth_required / signed_out / usage windows） | key 存在性 boolean（#266） | edge 单 key 无「登录态」语义；OAuth 订阅通道引入后才需要——随票3 裁 |
-| key 轮换 | 单 key env，换 key = 改 env 重部署 | ops 级即可（见 §4.3），不单独立票 |
-| modelLoadError / usage 订阅窗 | 无（无宿主可探、无订阅通道） | 有意收窄：探测的前提（宿主上装着 CLI）在我方不成立，目录改为部署自声明 |
+| bb 字段面                                                      | 我方现状                                                                                                                                                                                            | 缺口定级                                                                                                                                                                |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 多模型目录（AvailableModel 行 + 精确/粗阶梯）                  | `MODEL_RELAY_CATALOG` 声明正本（公开册，零秘密 strict schema）+ execution-options 多行投影 + provider-projections 目录状态行（#350）                                                                | **已落（#350）**：目录有声明正本，投影同源可读；thread 级选择消费仍属票2                                                                                                |
+| capability 位（serviceTier/fork/userQuestion/archive/rename…） | `serviceTier`（provider 级声明）与 `supportsImageInput`（#319 env flag ∪ #350 目录 `input` 并集）已进声明正本                                                                                       | **已随 #350 目录化**（有声明语义的位）；fork/userQuestion/archive/rename 仍静态 false——它们是 bb agent-provider（CLI 后端）语义，relay 无此语义，真值随需求出现再进声明 |
+| flags（max_tokens / thinking budget / 上下文窗）               | thinking budget/image input/model/maxTokens/contextWindow 全部进 harness+目录同源投影（#350）；env 标量显式覆盖仍优先                                                                               | **已修（#350）**：budget 开启 → 目录如实开阶梯（缺省 medium 档，声明 `reasoningLevels` 可覆盖）；budget 关 → 仅 `none`，声明的阶梯休眠                                  |
+| per-thread providerId/model/reasoningLevel                     | create/send fail-closed 校验（422 具名）+ threads 行 override 列真消费 + journal 三态（thread.created / thread.execution_updated / turn.input pin）+ providerId 键控 RelayConfig 注册表分派（#351） | **已落（#351）**：选择语义 = 显式值严格命中目录行；未设成员解析部署默认（"omp" 哨兵 = 默认 provider）；重放（驱逐重放）经 journal pin 与现投递一致                      |
+| 多 provider 并存                                               | edge 注册表化（providerId 键控，同 schema 多行）+ `MODEL_RELAY_PROVIDER_CREDENTIALS` 每 provider 秘密槽（#255 C；无槽行落部署单 relay 槽，key 缺席行级 mock 降级）                                  | **已落（#351）**；**协议级多 API 形状分派**（OpenAI Responses vs Anthropic Messages）不在本路线图——relay wire 是 Anthropic 形状单实现，多协议另立                       |
+| 自定义模型注册（bb customModels）                              | 无                                                                                                                                                                                                  | 并入票1目录 JSON（我方部署者=用户，「声明即目录」，无需独立注册面）                                                                                                     |
+| auth 状态面（auth_required / signed_out / usage windows）      | key 存在性 boolean（#266）                                                                                                                                                                          | edge 单 key 无「登录态」语义；OAuth 订阅通道引入后才需要——随票3 裁                                                                                                      |
+| key 轮换                                                       | 单 key env，换 key = 改 env 重部署                                                                                                                                                                  | ops 级即可（见 §4.3），不单独立票                                                                                                                                       |
+| modelLoadError / usage 订阅窗                                  | 无（无宿主可探、无订阅通道）                                                                                                                                                                        | 有意收窄：探测的前提（宿主上装着 CLI）在我方不成立，目录改为部署自声明                                                                                                  |
 
 ### 2.3 现存矛盾（修复归属票1）
 
@@ -104,7 +104,9 @@ bb 的 provider 认证**全部由 CLI 自持**（各自 OAuth/登录态），服
 2. **能力欠声明**：`MODEL_RELAY_THINKING_BUDGET_TOKENS` 开启时目录仍只开 `none`——#319 的「同一部署声明、两面同源」纪律（routes/system.ts:100-103 注释）只推广到了 image input。
 3. **写路径无校验**：`payload.providerId ?? "omp"` 直落 DB（routes/threads.ts:307），未知 model/reasoning 值无 422 具名错误。
 
-> **修复记录（#350，2026-10-06）**：矛盾 1/2 已消除——default-execution-options / 目录 / harness 三面改读同一 `resolveRelayCatalog` 解析（provider-app catalog.ts，内部调 resolveHarness，默认行由 harness 输出折叠）；budget 关 → 三面同报 `none`，budget 开 → 三面同报声明默认档（缺省 medium）。矛盾 3（写路径无校验）归属票2。
+> **修复记录（#350，2026-10-06）**：矛盾 1/2 已消除——default-execution-options / 目录 / harness 三面改读同一 `resolveRelayCatalog` 解析（provider-app catalog.ts，内部调 resolveHarness，默认行由 harness 输出折叠）；budget 关 → 三面同报 `none`，budget 开 → 三面同报声明默认档（缺省 medium）。
+>
+> **修复记录（#351，2026-10-06）**：矛盾 3 已消除——create/send 携带的 providerId/model/reasoningLevel 对目录投影 fail-closed 校验（`resolveRelaySelection`，agent-do provider-catalog.ts），未知值 422 具名错误（provider_unknown / model_unknown / reasoning_level_unknown），目录为空态（omp 合成）同样关闭；选择进 threads 行 override 列 + `thread.created`/`thread.execution_updated`/`turn.input` journal 三态，分派经 providerId 键控的 RelayConfig 注册表（provider-app relay-registry.ts），漂移走 `classifyExecutionSettingsChange` 三值（live 骑下一 turn，session 不因选择触发）。
 
 ---
 
@@ -112,17 +114,17 @@ bb 的 provider 认证**全部由 CLI 自持**（各自 OAuth/登录态），服
 
 四层链正本：`部署 env → app 单行 → host ceiling → thread 选项 → 单次参数`（docs/design/control-plane-layer.md:128-137）。逐字段落层：
 
-| 字段组 | 建议层 | 载体与理由 | 新存储？ |
-| --- | --- | --- | --- |
-| 凭据（API key / OAuth token / refresh token） | **L1 env/secret 正本** | #255 C 不动摇：秘密只存 env，投影只出存在性 boolean | 否（OAuth token cache 见票3，唯一例外） |
-| capability 声明（image input / thinking / serviceTier / fork / compaction…） | **L1 env 正本（公开 JSON）→ 投影** | 目录是「部署买了什么」的声明，部署期已知、运行时不变；公开非秘密，与 key 不同册。bb 放代码是因为 bb 的目录跟产品走；我方目录跟部署走（哪家中转、哪个模型） | **否**——声明非状态，投影两读面即可 |
-| 模型目录行（model 列表 / reasoning 阶梯 / contextWindow / maxTokens / displayName） | **L1 env 正本（同一 JSON）→ 投影** | bb 的 daemon 探测形态前提不成立（无宿主 CLI），改为部署自声明 + 上游文档对账（人工，一次性）；「探针对账」语义留待真宿主探测需求出现再议 | 否 |
-| flags（max_tokens / thinking budget / 上下文窗） | **L1 env 正本 → 投影** | 已在 env；缺的只是目录/投影同源化（§2.3 矛盾 2） | 否 |
-| per-thread providerId / model / reasoningLevel / serviceTier | **L4 thread 选项** | 链上第 4 层已裁（control-plane-layer.md:135-136）；列与契约已在，票2补校验+消费；漂移分类复用 `classifyExecutionSettingsChange` 三值语义 | 否（列已在） |
-| 权限 | **L3 host ceiling 不动** | 操作上限语义，向下收敛；`supportedPermissionModes` 随目录投影 | 否 |
-| app 级偏好（默认 provider/model） | **L2 app 单行（M3 后可选）** | #255 §6.4 既有建议：非秘密偏好过判据表再立票；default-execution-options 现以 env 硬编码兜底（projects.ts:361-367） | （app 单行已存在，非新存储） |
-| OAuth 会话态（state/verifier/token cache） | **新存储：Workers KV（TTL）** | 运行时状态，env 存不了；仅 edge-native 通道需要（票3 裁决） | **是（唯一）** |
-| 多 provider 注册表 | **L1 env 正本（同目录 JSON 多行）** | daemon 侧 `DAEMON_AGENT_AUTH.providers` 已示范「env JSON 多 provider」形状；edge 对齐同构，秘密仍在各自 key 槽 | 否 |
+| 字段组                                                                              | 建议层                              | 载体与理由                                                                                                                                                 | 新存储？                                |
+| ----------------------------------------------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| 凭据（API key / OAuth token / refresh token）                                       | **L1 env/secret 正本**              | #255 C 不动摇：秘密只存 env，投影只出存在性 boolean                                                                                                        | 否（OAuth token cache 见票3，唯一例外） |
+| capability 声明（image input / thinking / serviceTier / fork / compaction…）        | **L1 env 正本（公开 JSON）→ 投影**  | 目录是「部署买了什么」的声明，部署期已知、运行时不变；公开非秘密，与 key 不同册。bb 放代码是因为 bb 的目录跟产品走；我方目录跟部署走（哪家中转、哪个模型） | **否**——声明非状态，投影两读面即可      |
+| 模型目录行（model 列表 / reasoning 阶梯 / contextWindow / maxTokens / displayName） | **L1 env 正本（同一 JSON）→ 投影**  | bb 的 daemon 探测形态前提不成立（无宿主 CLI），改为部署自声明 + 上游文档对账（人工，一次性）；「探针对账」语义留待真宿主探测需求出现再议                   | 否                                      |
+| flags（max_tokens / thinking budget / 上下文窗）                                    | **L1 env 正本 → 投影**              | 已在 env；缺的只是目录/投影同源化（§2.3 矛盾 2）                                                                                                           | 否                                      |
+| per-thread providerId / model / reasoningLevel / serviceTier                        | **L4 thread 选项**                  | 链上第 4 层已裁（control-plane-layer.md:135-136）；列与契约已在，票2补校验+消费；漂移分类复用 `classifyExecutionSettingsChange` 三值语义                   | 否（列已在）                            |
+| 权限                                                                                | **L3 host ceiling 不动**            | 操作上限语义，向下收敛；`supportedPermissionModes` 随目录投影                                                                                              | 否                                      |
+| app 级偏好（默认 provider/model）                                                   | **L2 app 单行（M3 后可选）**        | #255 §6.4 既有建议：非秘密偏好过判据表再立票；default-execution-options 现以 env 硬编码兜底（projects.ts:361-367）                                         | （app 单行已存在，非新存储）            |
+| OAuth 会话态（state/verifier/token cache）                                          | **新存储：Workers KV（TTL）**       | 运行时状态，env 存不了；仅 edge-native 通道需要（票3 裁决）                                                                                                | **是（唯一）**                          |
+| 多 provider 注册表                                                                  | **L1 env 正本（同目录 JSON 多行）** | daemon 侧 `DAEMON_AGENT_AUTH.providers` 已示范「env JSON 多 provider」形状；edge 对齐同构，秘密仍在各自 key 槽                                             | 否                                      |
 
 **判据复述**（#255 §3.2 沿用）：秘密 → env/secret，投影出 boolean；公开声明 → env 公开册，投影出全值；运行时状态 → KV/DO；人对 app 的偏好 → app 单行。**本路线图新增存储仅一处**（OAuth 会话态 KV），capabilities 明确不进 D1——它没有运行时写入者，进库只会制造第二正本。
 
@@ -132,10 +134,10 @@ bb 的 provider 认证**全部由 CLI 自持**（各自 OAuth/登录态），服
 
 ### 4.1 两个信任域，分开裁决
 
-| 域 | 现状 | 裁决方向 |
-| --- | --- | --- |
-| 宿主执行的 OAuth（security_scan → Codex Security） | T15/#221 已裁「凭据宿主保管，整体归 daemon」；派发帧零 auth 面有 L1 钉死（l1-security-scan.test.ts:419-430） | **不迁移**。bb 同构（§1.5「we never refresh another tool's tokens」）——服务端不碰工具的凭据是两仓共同红线 |
-| edge-native 通道的 OAuth（relay 上游是 OAuth 订阅服务，如 Codex 订阅当 relay） | 无 | 票3 设计裁决；若裁做，形态见 §4.2 |
+| 域                                                                             | 现状                                                                                                         | 裁决方向                                                                                                  |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| 宿主执行的 OAuth（security_scan → Codex Security）                             | T15/#221 已裁「凭据宿主保管，整体归 daemon」；派发帧零 auth 面有 L1 钉死（l1-security-scan.test.ts:419-430） | **不迁移**。bb 同构（§1.5「we never refresh another tool's tokens」）——服务端不碰工具的凭据是两仓共同红线 |
+| edge-native 通道的 OAuth（relay 上游是 OAuth 订阅服务，如 Codex 订阅当 relay） | 无                                                                                                           | 票3 设计裁决；若裁做，形态见 §4.2                                                                         |
 
 ### 4.2 edge OAuth 回调形态（若票3 裁「做」）
 
@@ -158,11 +160,11 @@ bb 无此面（CLI 自轮）。我方最小形态：轮换 = 换 env 重部署�
 
 ## 5. 切票（2026-10-05 已切：#350 / #351 / #349，milestone W5）
 
-| 票 | 标题 | 类型 | 依赖 | 验收要点 |
-| --- | --- | --- | --- | --- |
-| #350 | provider 目录声明层——`MODEL_RELAY_CATALOG` env JSON 单源，execution-options/投影多模型多能力化（#305 延续） | type:implementation, block:agent-harness | 无 | 目录 schema（providers×models×capabilities×flags，零秘密）；harness 与 execution-options 同源解析（#319 模式推广）；thinking budget 开启→目录反映；修复 §2.3 三面矛盾；目录 JSON 进 provider-config-points.md 配置点索引表 |
-| #351 | thread 级 provider/model/reasoningLevel 选择真消费——目录校验 + relay 注册表多模型分派（#305 延续） | type:implementation, block:agent-harness | blocking 边 ← #350 | 未知 provider/model/reasoning → 422 具名错误（fail-closed）；RelayConfig 注册表化（worker.ts 单行注册 → 按 thread 选择解析）；DB 既有 override 列消费；漂移分类 unchanged/live/session 贯通；多 provider = 注册表多行同 schema |
-| #349 | edge OAuth 回调形态与凭据信任域裁决——订阅类 relay 上游的 Workers 落法（#305 延续） | type:decision, block:agent-harness | 无 | ADR 成档：§4.1 两域边界（security_scan 红线不迁移）+ KV 会话态/加密/token cache 形态 + mcp/oauth 引擎复用面 + 投影三态 + 刷新 Cron；裁「做」后另切实现票，裁「不做」记录触发条件 |
+| 票   | 标题                                                                                                        | 类型                                     | 依赖               | 验收要点                                                                                                                                                                                                                       |
+| ---- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| #350 | provider 目录声明层——`MODEL_RELAY_CATALOG` env JSON 单源，execution-options/投影多模型多能力化（#305 延续） | type:implementation, block:agent-harness | 无                 | 目录 schema（providers×models×capabilities×flags，零秘密）；harness 与 execution-options 同源解析（#319 模式推广）；thinking budget 开启→目录反映；修复 §2.3 三面矛盾；目录 JSON 进 provider-config-points.md 配置点索引表     |
+| #351 | thread 级 provider/model/reasoningLevel 选择真消费——目录校验 + relay 注册表多模型分派（#305 延续）          | type:implementation, block:agent-harness | blocking 边 ← #350 | 未知 provider/model/reasoning → 422 具名错误（fail-closed）；RelayConfig 注册表化（worker.ts 单行注册 → 按 thread 选择解析）；DB 既有 override 列消费；漂移分类 unchanged/live/session 贯通；多 provider = 注册表多行同 schema |
+| #349 | edge OAuth 回调形态与凭据信任域裁决——订阅类 relay 上游的 Workers 落法（#305 延续）                          | type:decision, block:agent-harness       | 无                 | ADR 成档：§4.1 两域边界（security_scan 红线不迁移）+ KV 会话态/加密/token cache 形态 + mcp/oauth 引擎复用面 + 投影三态 + 刷新 Cron；裁「做」后另切实现票，裁「不做」记录触发条件                                               |
 
 已在账不新立：#308（usage receipt）、#306（idle session release）、pi 矩阵 C5 的 per-thread thinking 级别切换（=#351 的 reasoningLevel 消费面）、#24/#25（relay 重试/中断政策，M1 决策票）。
 

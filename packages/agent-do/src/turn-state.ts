@@ -1,7 +1,8 @@
-import type { AnyAgentEvent } from "./fsm-events.js";
+import type { AnyAgentEvent, ThreadExecutionSelection } from "./fsm-events.js";
 import { executionIdFor } from "./ids.js";
 import type { WatchdogConfig } from "./config.js";
 import type { TurnPhase } from "@cap/protocol";
+import type { RelaySelection } from "./provider-catalog.js";
 
 /**
  * Turn/execution FSM state, derived exclusively by replaying the event log
@@ -15,6 +16,35 @@ export class FsmViolationError extends Error {
     super(`FSM violation: ${message}`);
     this.name = "FsmViolationError";
   }
+}
+
+/**
+ * Normalize a journaled selection onto a fresh plain object with only the
+ * present members (RPC payloads must not alias caller objects; `undefined`
+ * members must not survive as own keys). null = no explicit selection.
+ */
+export function normalizeRelaySelection(
+  selection: ThreadExecutionSelection | undefined,
+): RelaySelection | null {
+  if (selection === undefined) return null;
+  const normalized: RelaySelection = {};
+  if (selection.providerId !== undefined) normalized.providerId = selection.providerId;
+  if (selection.model !== undefined) normalized.model = selection.model;
+  if (selection.reasoningLevel !== undefined) normalized.reasoningLevel = selection.reasoningLevel;
+  return normalized;
+}
+
+/** Value equality over the explicit selection triple (undefined == absent). */
+export function relaySelectionEquals(
+  left: RelaySelection | null,
+  right: RelaySelection | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.providerId === right.providerId &&
+    left.model === right.model &&
+    left.reasoningLevel === right.reasoningLevel
+  );
 }
 
 export type TurnFsmStatus =
@@ -49,6 +79,11 @@ export interface TurnRuntime {
   inputSeq: number;
   inputCreatedAt: number;
   inputId: string;
+  /**
+   * #351: the turn's pinned execution selection (turn.input snapshot).
+   * null = no explicit selection — dispatch rides the deployment default.
+   */
+  execution: RelaySelection | null;
   status: TurnFsmStatus;
   /** #197 D3: folded turn.phase markers, journal order (fold participates
    * in replay, so a resumed driver never re-appends first_token/settled). */
@@ -101,6 +136,12 @@ export interface ReplayState {
   threadId: string | null;
   title: string | null;
   machineId: string | null;
+  /**
+   * #351: the thread's explicit execution selection (thread.created
+   * bootstrap, replaced wholesale by thread.execution_updated). null = the
+   * deployment default (pre-#351 journals replay into the "*" fallback).
+   */
+  execution: RelaySelection | null;
   threadCreatedAt: number | null;
   latestSeq: number;
   eventCount: number;
@@ -150,6 +191,7 @@ export function emptyReplayState(): ReplayState {
     threadId: null,
     title: null,
     machineId: null,
+    execution: null,
     threadCreatedAt: null,
     latestSeq: 0,
     eventCount: 0,
@@ -214,13 +256,14 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
   state.eventCount += 1;
   switch (event.type) {
     case "thread.created": {
-      const { title, machineId } = event.data;
+      const { title, machineId, execution } = event.data;
       if (state.threadId !== null) {
         throw new FsmViolationError("duplicate thread.created");
       }
       state.threadId = event.threadId;
       state.title = title;
       state.machineId = machineId;
+      state.execution = normalizeRelaySelection(execution);
       state.threadCreatedAt = event.createdAt;
       return;
     }
@@ -230,6 +273,13 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
         throw new FsmViolationError("thread.rebound before thread.created");
       }
       state.machineId = machineId;
+      return;
+    }
+    case "thread.execution_updated": {
+      if (state.threadId === null) {
+        throw new FsmViolationError("thread.execution_updated before thread.created");
+      }
+      state.execution = normalizeRelaySelection(event.data);
       return;
     }
     case "turn.input": {
@@ -244,6 +294,7 @@ export function applyEvent(state: ReplayState, event: AnyAgentEvent): void {
         inputSeq: event.seq,
         inputCreatedAt: event.createdAt,
         inputId,
+        execution: normalizeRelaySelection(event.data.execution),
         status: "queued",
         phases: [],
         steerSeqs: [],

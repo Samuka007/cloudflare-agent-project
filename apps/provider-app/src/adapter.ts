@@ -28,6 +28,33 @@ import type {
 import { classifyHarnessProjection, projectHarness } from "./harness.js";
 import type { ResolvedHarness } from "./harness.js";
 
+/**
+ * bb classification semantics (provider-adapter.ts:292-299, fake parity):
+ * route-affecting execution settings ride the next turn (`live`); the
+ * permission policy needs a rebuilt provider session (`session`). Module
+ * function so every consumer shares the one vocabulary — the adapter
+ * command face AND the #351 server bridge's thread-selection drift both
+ * classify here.
+ */
+export function classifyExecutionSettingsChange(
+  current: RuntimeThreadExecutionOptions,
+  next: RuntimeThreadExecutionOptions,
+): ProviderExecutionSettingsChange {
+  const policyChanged =
+    current.permissionMode !== next.permissionMode ||
+    current.permissionScope !== next.permissionScope ||
+    current.approvalReviewer !== next.approvalReviewer ||
+    current.permissionEscalation !== next.permissionEscalation;
+  if (policyChanged) {
+    return "session";
+  }
+  const liveChanged =
+    current.model !== next.model ||
+    current.serviceTier !== next.serviceTier ||
+    current.reasoningLevel !== next.reasoningLevel;
+  return liveChanged ? "live" : "unchanged";
+}
+
 /** The manager surface the adapter delegates to (a MANAGER binding stub). */
 export interface ManagerFacade {
   handleAdapterCommand(command: AdapterCommand): Promise<AdapterCommandOutcome>;
@@ -76,27 +103,13 @@ export class EdgeAgentProviderAdapter implements ProviderAdapter {
   }
 
   /**
-   * bb classification semantics (provider-adapter.ts:292-299, fake parity):
-   * route-affecting execution settings ride the next turn (`live`); the
-   * permission policy needs a rebuilt provider session (`session`).
+   * Adapter-face delegate — the module classifier is the single vocabulary
+   * (see classifyExecutionSettingsChange above).
    */
   classifyExecutionSettingsChange(
     args: ClassifyProviderExecutionSettingsChangeArgs,
   ): ProviderExecutionSettingsChange {
-    const { current, next } = args;
-    const policyChanged =
-      current.permissionMode !== next.permissionMode ||
-      current.permissionScope !== next.permissionScope ||
-      current.approvalReviewer !== next.approvalReviewer ||
-      current.permissionEscalation !== next.permissionEscalation;
-    if (policyChanged) {
-      return "session";
-    }
-    const liveChanged =
-      current.model !== next.model ||
-      current.serviceTier !== next.serviceTier ||
-      current.reasoningLevel !== next.reasoningLevel;
-    return liveChanged ? "live" : "unchanged";
+    return classifyExecutionSettingsChange(args.current, args.next);
   }
 
   /**

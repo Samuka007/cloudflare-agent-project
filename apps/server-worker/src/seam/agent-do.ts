@@ -1,5 +1,6 @@
 import type { Env } from "../env.js";
 import type { PendingInteractionRow, PromptContent } from "@cap/protocol";
+import type { RelaySelection } from "@cap/agent-do";
 import type {
   AdapterCommand,
   AdapterCommandOutcome,
@@ -37,6 +38,12 @@ export interface AgentDoRpc {
      * host IS the composition machine; multi-host execution routing is #14).
      */
     machineId?: string;
+    /**
+     * #351: the create-time explicit selection (server-validated against the
+     * catalog; journaled on thread.created and resolved through the
+     * providerId-keyed relay registry at dispatch).
+     */
+    execution?: RelaySelection;
   }): Promise<{ threadId: string; duplicated: boolean }>;
   /**
    * #288 explicit rebind: appends `thread.rebound` (the trajectory half; the
@@ -53,6 +60,13 @@ export interface AgentDoRpc {
     /** #317: the full journal prompt-content union rides the seam verbatim. */
     content: PromptContent[];
     mode: "auto" | "start" | "steer";
+    /**
+     * #351: a send-time selection ride — the route classified it `live`
+     * (classifyThreadSelectionChange) before dispatching; the DO applies it
+     * to the thread state BEFORE the turn rows so the new turn's pin and any
+     * replay fold the same selection.
+     */
+    execution?: RelaySelection;
   }): Promise<{ turnId: string; steer: boolean; duplicated: boolean }>;
   getEvents(args: {
     sinceSeq: number;
@@ -235,6 +249,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
         threadId,
         cwd: env.DATA_DIR ?? "/data",
         ...(args.machineId !== undefined ? { machineId: args.machineId } : {}),
+        ...(args.execution !== undefined ? { execution: args.execution } : {}),
         ...(args.title ? { input: [{ type: "text", text: args.title, mentions: [] }] } : {}),
         options: bridgeContext(env),
         instructionMode: "append",
@@ -261,9 +276,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
       // image members forward verbatim for the provider application layer.
       const input: Extract<AdapterCommand, { type: "turn/start" }>["input"] = args.content.map(
         (part) =>
-          part.type === "text"
-            ? { type: "text" as const, text: part.text, mentions: [] }
-            : part,
+          part.type === "text" ? { type: "text" as const, text: part.text, mentions: [] } : part,
       );
 
       const steerTurn = async (): Promise<AdapterCommandOutcome | null> => {
@@ -279,6 +292,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
           input,
           clientRequestId: args.clientRequestId,
           options: bridgeContext(env),
+          ...(args.execution !== undefined ? { execution: args.execution } : {}),
         });
       };
 
@@ -305,6 +319,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
         input,
         clientRequestId: args.clientRequestId,
         options: bridgeContext(env),
+        ...(args.execution !== undefined ? { execution: args.execution } : {}),
       });
       if (!outcome.ok) bridgeFailure("turn/start", outcome);
       const result = outcome.result as { turnId?: string; duplicated?: boolean };

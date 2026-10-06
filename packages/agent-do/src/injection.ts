@@ -1,5 +1,6 @@
 import type { ModelProvider } from "./provider.js";
 import type { DaemonServiceClient } from "./daemon.js";
+import type { RelaySelection } from "./provider-catalog.js";
 
 /**
  * Runtime injection point for the two outbound seams (model relay, daemon
@@ -17,6 +18,16 @@ export interface AgentRuntime {
   provider: ModelProvider;
   /** Optional when the DO resolves the service via a binding instead. */
   daemon?: DaemonServiceClient;
+  /**
+   * #351 journal-selection dispatch: resolves a thread/turn's explicit
+   * execution selection (providerId/model/reasoningLevel) onto the
+   * providerId-keyed relay registry the deploying worker built. Absent
+   * (single-provider deployments, test rigs) → every turn dispatches
+   * `provider`, exactly the pre-#351 single-line registration posture.
+   * Resolvers MUST fail closed (RelaySelectionError) on catalog drift —
+   * never silently re-route onto another row.
+   */
+  resolveExecutionProvider?: (selection: RelaySelection) => ModelProvider;
 }
 
 const runtimes = new Map<string, AgentRuntime>();

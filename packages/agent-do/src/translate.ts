@@ -204,6 +204,8 @@ export function modelRequestFromEvents(
       case "experimental_context_notes":
       // #288: binding rows are thread-scoped state, not turn content.
       case "thread.rebound":
+      // #351: selection rows are thread-scoped state, not turn content.
+      case "thread.execution_updated":
       // #309: the compact checkpoint is consumed by the cut fold above, not
       // as turn content.
       case "thread/compacted":

@@ -1,7 +1,6 @@
 import {
   setAgentRuntime,
   type AgentDO,
-  type ModelProvider,
   type SendMessageResult,
 } from "@cap/agent-do";
 import type { PromptContent } from "@cap/protocol";
@@ -14,11 +13,11 @@ import {
   classifyHarnessProjection,
   harnessFromSnapshot,
   projectHarness,
-  relayProviderFrom,
   resolveHarness,
   snapshotHarness,
 } from "./harness.js";
 import type { HarnessEnv } from "./harness.js";
+import { relayAgentRuntime } from "./relay-registry.js";
 import { flattenPromptInputGroups } from "./flatten-input.js";
 
 /**
@@ -332,6 +331,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       threadId: command.threadId,
       title,
       machineId,
+      ...(command.execution !== undefined ? { execution: command.execution } : {}),
     });
     const harness = resolveHarness(this.env);
     this.ctx.storage.sql.exec(
@@ -483,6 +483,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
         clientRequestId: command.clientRequestId,
         content,
         mode: "start",
+        ...(command.execution !== undefined ? { execution: command.execution } : {}),
       });
     } catch (error) {
       return mapAgentError(error);
@@ -526,6 +527,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
         clientRequestId: command.clientRequestId,
         content,
         mode: "steer",
+        ...(command.execution !== undefined ? { execution: command.execution } : {}),
       });
       return { ok: true, result: { steered: true, turnId: sent.turnId } };
     } catch (error) {
@@ -613,10 +615,13 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       harness.relay.contextWindow,
       harness.relay.thinking.type,
       harness.relay.supportsImageInput,
+      // #351: the catalog + credential declarations are registry identity —
+      // a declaration change re-registers the providerId-keyed rows.
+      this.env.MODEL_RELAY_CATALOG ?? "",
+      this.env.MODEL_RELAY_PROVIDER_CREDENTIALS === undefined ? "unset" : "set",
     ].join("|");
     if (this.registeredRelayFingerprint === fingerprint) return;
-    const provider: ModelProvider = relayProviderFrom(harness);
-    setAgentRuntime("*", { provider });
+    setAgentRuntime("*", relayAgentRuntime(this.env));
     this.registeredRelayFingerprint = fingerprint;
   }
 
