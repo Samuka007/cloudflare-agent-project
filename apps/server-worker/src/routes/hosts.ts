@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import {
   DAEMON_PROTOCOL_VERSION,
   mintJoinCode,
@@ -17,7 +18,7 @@ import { createHostId } from "../shared/ids.js";
 import { ApiError } from "../shared/api-error.js";
 import { parseOr422, requireJsonBody } from "../shared/route-utils.js";
 import { getHostRow, listNonDestroyedHostRows, updateHostRow } from "../db/hosts.js";
-import { daemonConnected, toHostRecord } from "../services/host-records.js";
+import { toHostRecord } from "../services/host-records.js";
 import type { Env, HonoBindings } from "../app-types.js";
 
 /** bb COMMAND_TIMEOUT_MS (apps/server/src/constants.ts:1) — the host online
@@ -33,6 +34,11 @@ const HOST_COMMAND_TIMEOUT_MS = 30_000;
  * Rows land via the daemon attach bridge (#49); daemon heartbeats keep
  * last_seen_at advancing through the DO's registry projection (#62).
  * Enrollment itself is the daemon service's /enroll, not served here.
+ * Since #386 the fleet is never empty: migration 0004 seeds the cloud
+ * placeholder row (`cloud`, type "placeholder") — the removal guard anchors
+ * bb's "must have one machine" invariant there, so every REAL machine stays
+ * deletable and the row itself carries the empty-machine semantics (never
+ * connected, never heartbeats).
  */
 export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void {
   const routes = new Hono<{ Bindings: HonoBindings }>();
@@ -240,14 +246,21 @@ export function registerHostRoutes(app: Hono<{ Bindings: HonoBindings }>): void 
   routes.delete("/hosts/:id", async (ctx) => {
     const hostId = ctx.req.param("id");
     await requireMutableHost(ctx.env, hostId);
-    // bb routes/hosts.ts:192-198: the primary host (here: the bb cascade
-    // minus the server dataDir term — the only connected host, else the only
-    // remaining host) cannot be removed.
-    if ((await resolvePrimaryHostId(ctx.env)) === hostId) {
+    // #386: bb's "must have one machine" invariant anchors on the seeded
+    // cloud placeholder row, not on a real machine. bb's guard lives at
+    // routes/hosts.ts:192-198 against resolvePrimaryHostId
+    // (services/hosts/primary-host.ts:70-76, cascade dataDir → only connected
+    // → only remaining); the composed port re-anchors the SAME protection on
+    // the placeholder: this row is refused with the empty-machine judgment,
+    // and every real machine is removable even as the lone/only-connected
+    // host — a zero-real-machine fleet falls back to the placeholder with
+    // its semantics intact (threads re-bind to `cloud`, host tools answer
+    // the honest host_offline).
+    if (hostId === CLOUD_PLACEHOLDER_HOST_ID) {
       throw new ApiError({
         status: 400,
-        code: "primary_host_removal_refused",
-        message: "The primary host cannot be removed",
+        code: "placeholder_host_removal_refused",
+        message: "placeholder holds empty-machine semantics",
       });
     }
     // bb routes/hosts.ts:200-203 also revokes the host's auth keys here. The
@@ -329,21 +342,6 @@ async function requireMutableHost(env: Env, hostId: string) {
     throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
   }
   return row;
-}
-
-/**
- * bb resolvePrimaryHostId (services/hosts/primary-host.ts:70-76) minus the
- * server dataDir term the composed port does not have: the only connected
- * host, else the only public (non-destroyed) host; null with neither.
- */
-async function resolvePrimaryHostId(env: Env): Promise<string | null> {
-  const rows = await listNonDestroyedHostRows(env);
-  if (rows.length === 0) return null;
-  const connected = await Promise.all(rows.map((row) => daemonConnected(env, row.id)));
-  const connectedIds = rows.filter((_, index) => connected[index]).map((row) => row.id);
-  if (connectedIds.length === 1) return connectedIds[0] ?? null;
-  if (rows.length === 1) return rows[0]?.id ?? null;
-  return null;
 }
 
 function daemonStubOrNull(env: Env, hostId: string): (DurableObjectStub & DaemonServiceDO) | null {

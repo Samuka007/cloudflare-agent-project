@@ -171,7 +171,7 @@ export function toThreadDbRow(row: Row): ThreadDbRow {
 export interface HostDbRow {
   id: string;
   name: string;
-  type: "persistent";
+  type: "persistent" | "placeholder";
   connectMachineId: string | null;
   maxPermissionMode: "accept-edits" | "auto" | "full";
   destroyedAt: number | null;

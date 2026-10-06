@@ -1,3 +1,4 @@
+import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import type { Env } from "../env.js";
 import { toHostDbRow, type HostDbRow } from "./rows.js";
 
@@ -33,6 +34,11 @@ export async function upsertAttachedHost(
   hostId: string,
   info?: { hostName?: string | null; clearRejected?: boolean },
 ): Promise<void> {
+  // #386 defense in depth: the placeholder row is born once (migration 0004)
+  // and never becomes a machine — enroll/session-open reserve the id
+  // (daemon-service worker), so the attach bridge must never refresh its
+  // last_seen_at, clear a rejection, or (re)insert it.
+  if (hostId === CLOUD_PLACEHOLDER_HOST_ID) return;
   const now = Date.now();
   // bb inserts the daemon's self-reported name on first sight only
   // (internal/session.ts:93); with no name reported (raw-rig handshakes) the

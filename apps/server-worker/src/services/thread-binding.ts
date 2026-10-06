@@ -119,9 +119,10 @@ export async function resolveThreadBinding(
     }
     // Personal with no explicit host = the cloud placeholder (#377): no
     // composition machine exists to own bb's host-dataDir scratch. §2.3
-    // zero-D1 default: no registry validation, no row; a real host arrives
-    // only through an explicit hostId claim (the attach bridge lands the
-    // fleet row when its daemon connects).
+    // zero-D1 default on the BINDING face: no registry validation, no
+    // environments row — the machineId names the seeded placeholder hosts row
+    // itself (#386), and a real host arrives only through an explicit hostId
+    // claim (the attach bridge lands the fleet row when its daemon connects).
     if (requested.workspace.type === "personal" && requested.hostId === undefined) {
       return { machineId: CLOUD_PLACEHOLDER_HOST_ID, environmentId: null, environment: null };
     }
@@ -144,7 +145,8 @@ export async function resolveThreadBinding(
   }
 
   // `project-default` or omitted: the project's default source checkout, then
-  // the cloud placeholder (zero D1 on the deployment default, #377).
+  // the cloud placeholder row (zero D1 on the deployment default, #377;
+  // the row itself seeded by #386).
   const source = await getDefaultProjectSource(env, args.projectId);
   if (source === null) {
     return { machineId: CLOUD_PLACEHOLDER_HOST_ID, environmentId: null, environment: null };
