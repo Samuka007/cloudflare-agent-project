@@ -43,7 +43,7 @@ describe("GET /api/v1/system/execution-options", () => {
     }
   });
 
-  it("serves a contract-valid single-provider catalog from the declaration", async () => {
+  it("serves a contract-valid single-provider catalog from the declaration", () => {
     const catalog = JSON.stringify({
       defaultProvider: "declared",
       providers: {

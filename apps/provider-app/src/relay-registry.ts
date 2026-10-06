@@ -42,7 +42,6 @@ import {
 import type { RelayCatalogResolution } from "./catalog.js";
 import { resolveRelayCatalog, resolveRelayCatalogWithOverlay } from "./catalog.js";
 import {
-  FixedReplyProvider,
   relayProviderFrom,
   resolveHarness,
   type HarnessEnv,
