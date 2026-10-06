@@ -1,8 +1,5 @@
 import type {
-  ImageContribution,
   ModelRequest,
-  PriorModelCall,
-  SteerContribution,
 } from "../provider.js";
 import {
   enabledToolNames,
@@ -11,13 +8,33 @@ import {
   subagentWireTools,
   wireToolSet,
 } from "../tools/registry.js";
-import type { AsyncResultContribution } from "../provider.js";
+import {
+  EMPTY_OUTPUT_SENTINEL,
+  WireAssemblyError,
+  degradedImageText,
+  toolUseIdFor,
+  walkModelRequestContext,
+  type ContextSegment,
+  type WalkUserPart,
+} from "./context-walk.js";
+
+// Walk-level identities re-exported: the public wire API keeps naming them
+// (relay/index.ts and tests import from here; #361 moved the definitions to
+// the protocol-neutral walk so both protocol faces share them).
+export { WireAssemblyError, toolUseIdFor };
+export { EMPTY_OUTPUT_SENTINEL, degradedImageText };
 
 /**
  * Anthropic Message wire assembly (#28 ruling ③ translation layer, omp §1.5
  * shapes). Pure and deterministic: the same ModelRequest always serializes to
  * byte-identical JSON — ids derive from the log (executionId), never from the
  * wire; no timestamps, no randomness, fixed key insertion order.
+ *
+ * #361: the history walk itself is protocol-neutral (context-walk.ts) — this
+ * module renders the walked segments into the Anthropic Messages shape and
+ * owns the Anthropic-specific frame (system blocks, thinking config, tool
+ * surface). The openai-responses face (responses-wire.ts) renders the same
+ * segments into Response input items.
  */
 
 export interface AnthropicTextBlock {
@@ -85,13 +102,6 @@ export interface AnthropicToolChoiceTool {
   name: string;
 }
 
-export class WireAssemblyError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "WireAssemblyError";
-  }
-}
-
 // ---------------------------------------------------------------------------
 // System prompt — minimal M0 placeholder (#28 ruling 1: content is a future
 // decision; this is identity + tool orientation + sandbox constraints only).
@@ -115,16 +125,10 @@ export const SYSTEM_PROMPT_BLOCKS: readonly string[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Request assembly — append-only build (omp append-only-context semantics:
-// the log folds into messages in seq order; nothing is reordered or
-// re-serialized per call). Roles strictly alternate: consecutive user-side
-// material (input, steers, tool results) merges into one user message.
+// Request assembly — append-only build over the shared protocol-neutral walk
+// (context-walk.ts). Roles strictly alternate: consecutive user-side material
+// (input, steers, tool results) merges into one user message.
 // ---------------------------------------------------------------------------
-
-/** Deterministic tool_use id derived from the log — never the wire's id. */
-export function toolUseIdFor(executionId: string): string {
-  return `toolu_${executionId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`;
-}
 
 /**
  * omp sdk.ts:4275-4282 supportsExternalThinking: the `think` gate is
@@ -138,21 +142,6 @@ const NATIVE_REASONING_MODEL_PATTERN = /^(glm|deepseek-r|o[13](?:-|$)|.*thinking
 export function supportsExternalThinking(model: string | undefined): boolean {
   if (model === undefined || model === "") return true;
   return !NATIVE_REASONING_MODEL_PATTERN.test(model);
-}
-
-/** Anthropic rejects empty tool_result content — omp fills a sentinel. */
-const EMPTY_OUTPUT_SENTINEL = "(empty output)";
-
-/** acp degradation anchor (bridge/bridge.ts:1131-1153) for on-disk images. */
-function degradedImageText(image: ImageContribution): string {
-  switch (image.kind) {
-    case "path":
-      return `[image attachment on disk: ${image.path}]`;
-    case "url":
-      return `[image attachment: ${image.url}]`;
-    case "data":
-      return `[image attachment: inline ${image.mediaType}]`;
-  }
 }
 
 export interface WireCallOptions {
@@ -169,157 +158,36 @@ export interface WireCallOptions {
   supportsImageInput?: boolean;
 }
 
+/**
+ * The gated tool-surface names for one call (both protocol faces): surface
+ * selection (main/subagent/compaction), experimental gates (#150), and the
+ * omp sdk.ts:4275-4282 native-reasoning `think` filter. Exported so the
+ * responses wire cannot grow a second gating opinion.
+ */
+export function resolveWireToolNames(
+  request: ModelRequest,
+  model: string,
+): readonly string[] {
+  const surface =
+    request.toolSurface === "subagent"
+      ? subagentWireTools(request.spawnPolicyBlocked === true)
+      : request.toolSurface === "compaction"
+        ? []
+        : MAIN_WIRE_TOOLS;
+  const gated =
+    request.experimentalGates === undefined
+      ? surface
+      : enabledToolNames(surface, request.experimentalGates);
+  return supportsExternalThinking(model) ? gated : gated.filter((name) => name !== "think");
+}
+
 export function anthropicRequestBody(
   request: ModelRequest,
   options: WireCallOptions,
 ): AnthropicRequestBody {
-  const messages: AnthropicMessage[] = [];
-  /** User-side blocks accumulated since the last assistant message. */
-  let pendingUserBlocks: AnthropicUserBlock[] = [];
-
-  const flushUser = (): void => {
-    if (pendingUserBlocks.length === 0) return;
-    messages.push({ role: "user", content: pendingUserBlocks });
-    pendingUserBlocks = [];
-  };
-
-  const appendSteers = (steers: readonly SteerContribution[]): void => {
-    for (const steer of steers) {
-      // An image-only steer carries no text — an empty text block would be
-      // rejected upstream, so the images render alone.
-      if (steer.text !== "") pendingUserBlocks.push({ type: "text", text: steer.text });
-      appendImages(steer.images);
-    }
-  };
-
-  /**
-   * A4 consumption dispatch (supportsImageInput): a capable relay receives
-   * real Anthropic image blocks for every contribution it can express
-   * (url/data kinds); path-kind contributions and every image of a
-   * non-capable relay render as the acp degradation text instead.
-   */
-  function appendImages(images: readonly ImageContribution[]): void {
-    for (const image of images) {
-      if (options.supportsImageInput !== true || image.kind === "path") {
-        pendingUserBlocks.push({ type: "text", text: degradedImageText(image) });
-        continue;
-      }
-      pendingUserBlocks.push(
-        image.kind === "url"
-          ? { type: "image", source: { type: "url", url: image.url } }
-          : {
-              type: "image",
-              source: { type: "base64", media_type: image.mediaType, data: image.base64 },
-            },
-      );
-    }
-  }
-
-  /**
-   * M1.5 T16 async-result follow-ups ride the same boundary position as
-   * steers — the user-side material of the call they attribute to (omp
-   * injects them as follow-up messages into the run; the boundary merge is
-   * our alternation-safe shape). Each result renders as one tagged text
-   * block, prefixed `[async-result]` for model-side recognition.
-   */
-  const appendAsyncResults = (results: readonly AsyncResultContribution[]): void => {
-    for (const result of results) {
-      pendingUserBlocks.push({ type: "text", text: `[async-result] ${result.text}` });
-    }
-  };
-
-  const assistantOf = (call: PriorModelCall): AnthropicMessage => {
-    const content: AnthropicAssistantBlock[] = [];
-    if (call.text !== "") {
-      content.push({ type: "text", text: call.text });
-    }
-    call.toolCalls.forEach((call_, index) => {
-      const executionId = call.toolResults[index]?.executionId;
-      if (executionId === undefined) {
-        throw new WireAssemblyError(
-          `call ${call.modelCallId}: toolCall #${index} has no paired result executionId`,
-        );
-      }
-      content.push({
-        type: "tool_use",
-        id: toolUseIdFor(executionId),
-        name: call_.name,
-        input: call_.arguments,
-      });
-    });
-    if (content.length === 0) {
-      throw new WireAssemblyError(`call ${call.modelCallId}: assistant message has no content`);
-    }
-    return { role: "assistant", content };
-  };
-
-  // #147 completed-rewind branch cut: the summary replaces the hidden
-  // exploration span — omp session-context.ts:339-343 emits the summary
-  // first ("entry = compaction"), then the kept tail. It opens the request
-  // as user-side material of the first user message ([async-result] tag
-  // family: model-side recognition without a second message role).
-  if (request.branchCut !== undefined) {
-    pendingUserBlocks.push({
-      type: "text",
-      text: `[branch-summary] ${request.branchCut.summary}`,
-    });
-  }
-  // Completed prior turns of the session (#228), oldest first: each turn's
-  // input is the user-side material before its first call slice; trailing
-  // tool results merge with whatever follows (roles strictly alternate).
-  for (const turn of request.priorTurns ?? []) {
-    if (turn.input !== "") pendingUserBlocks.push({ type: "text", text: turn.input });
-    appendImages(turn.images);
-    for (const call of turn.calls) {
-      appendAsyncResults(call.asyncResults);
-      // This call's boundary steers merge into the user message that the API
-      // positionally places right before its assistant response.
-      appendSteers(call.steers);
-      flushUser();
-      messages.push(assistantOf(call));
-      // Terminal results answer this assistant's tool_use blocks; they open
-      // the next user message.
-      for (const result of call.toolResults) {
-        pendingUserBlocks.push({
-          type: "tool_result",
-          tool_use_id: toolUseIdFor(result.executionId),
-          content: result.output === "" ? EMPTY_OUTPUT_SENTINEL : result.output,
-          is_error: result.status !== "ok",
-        });
-      }
-    }
-  }
-  // The current turn's input follows the session history (merging into the
-  // trailing user-side material when the last prior call ended with results).
-  // Image-only turns render image blocks (or their degradations) alone — an
-  // empty text block is an upstream 400.
-  if (request.input !== "") pendingUserBlocks.push({ type: "text", text: request.input });
-  appendImages(request.inputImages);
-
-  for (const call of request.priorCalls) {
-    appendAsyncResults(call.asyncResults);
-    // This call's boundary steers merge into the user message that the API
-    // positionally places right before its assistant response.
-    appendSteers(call.steers);
-    flushUser();
-    messages.push(assistantOf(call));
-    // Terminal results answer this assistant's tool_use blocks; they open
-    // the next user message.
-    for (const result of call.toolResults) {
-      pendingUserBlocks.push({
-        type: "tool_result",
-        tool_use_id: toolUseIdFor(result.executionId),
-        content: result.output === "" ? EMPTY_OUTPUT_SENTINEL : result.output,
-        is_error: result.status !== "ok",
-      });
-    }
-  }
-  // The current call's boundary steers ride the trailing user message — the
-  // positionally-last user turn the model reads before this response (a
-  // steer placed earlier would retroactively re-context prior turns).
-  appendSteers(request.steers);
-  appendAsyncResults(request.asyncResults);
-  flushUser();
+  const messages: AnthropicMessage[] = walkModelRequestContext(request, {
+    supportsImageInput: options.supportsImageInput,
+  }).map(renderSegment);
 
   const firstMessage = messages[0];
   if (firstMessage?.role !== "user") {
@@ -340,26 +208,12 @@ export function anthropicRequestBody(
 
   // The tool surface renders from the compile-time registry only — the
   // single schema authority (control-plane-layer.md §1.1, M1.5 T1). The
-  // surface (M1.5 T16) picks main vs subagent names; the subagent surface
-  // carries the hidden `yield` and strips `task` past the depth cap. The
-  // omp sdk.ts:4275-4282 model verdict then gates the `think` tool itself:
-  // the gate is cfgExternalThinking ∧ supports(model) — a native-reasoning
+  // omp sdk.ts:4275-4282 model verdict gates the `think` tool itself (the
+  // gate is cfgExternalThinking ∧ supports(model) — a native-reasoning
   // family (glm, deepseek-r, o1/o3, *thinking*) never renders the
   // external-CoT tool, leaving its native thinking pathway to the harness
-  // budget.
-  const surface =
-    request.toolSurface === "subagent"
-      ? subagentWireTools(request.spawnPolicyBlocked === true)
-      : request.toolSurface === "compaction"
-        ? []
-        : MAIN_WIRE_TOOLS;
-  const gated =
-    request.experimentalGates === undefined
-      ? surface
-      : enabledToolNames(surface, request.experimentalGates);
-  const finalNames = supportsExternalThinking(options.model)
-    ? gated
-    : gated.filter((name) => name !== "think");
+  // budget).
+  const finalNames = resolveWireToolNames(request, options.model);
   // #150 forceReasoningOff pairing, derived where the surface is known:
   // when the `think` tool actually renders, native reasoning is pinned OFF
   // regardless of the caller's thinking config — external CoT and native
@@ -396,6 +250,41 @@ export function anthropicRequestBody(
       : { tool_choice: { type: "tool", name: request.toolChoice.name } }),
     messages,
   };
+}
+
+/** One walked segment → one Anthropic message (block order = part order). */
+function renderSegment(segment: ContextSegment): AnthropicMessage {
+  if (segment.kind === "assistant") {
+    const content: AnthropicAssistantBlock[] = [];
+    if (segment.text !== "") content.push({ type: "text", text: segment.text });
+    for (const call of segment.toolCalls) {
+      content.push({ type: "tool_use", id: call.callId, name: call.name, input: call.arguments });
+    }
+    return { role: "assistant", content };
+  }
+  return { role: "user", content: segment.parts.map(renderUserBlock) };
+}
+
+function renderUserBlock(part: WalkUserPart): AnthropicUserBlock {
+  switch (part.kind) {
+    case "text":
+      return { type: "text", text: part.text };
+    case "image":
+      if (part.image.kind === "degraded") return { type: "text", text: part.image.text };
+      return part.image.kind === "url"
+        ? { type: "image", source: { type: "url", url: part.image.url } }
+        : {
+            type: "image",
+            source: { type: "base64", media_type: part.image.mediaType, data: part.image.data },
+          };
+    case "tool-result":
+      return {
+        type: "tool_result",
+        tool_use_id: part.callId,
+        content: part.output,
+        is_error: part.isError,
+      };
+  }
 }
 
 /**

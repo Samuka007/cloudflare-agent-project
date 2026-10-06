@@ -127,24 +127,36 @@ export { projectToUxEvents } from "./ux-projection.js";
 export { ProjectionError, modelRequestFromEvents } from "./translate.js";
 export {
   AnthropicRelayProvider,
+  ResponsesRelayProvider,
   anthropicRequestBody,
   estimateWireRequestTokens,
   type RelayConfig,
+  responsesRequestBody,
 } from "./relay/index.js";
 export {
   DEFAULT_THINKING_REASONING_LEVEL,
   decodeRelayCatalog,
   deriveRelayReasoning,
   findRelayCatalogModel,
+  relayApiSchema,
+  relayApiValues,
   relayReasoningLevelSchema,
   relayCatalogSchema,
   relayReasoningLevelValues,
   relayModelEntrySchema,
+  resolveRelayApi,
   resolveRelaySelection,
+  resolveResponsesEffort,
   RelaySelectionError,
+  RelayEffortMapError,
+  DEFAULT_RELAY_API,
+  DEFAULT_REASONING_EFFORT_BY_RUNG,
+  responsesEffortSchema,
+  responsesEffortValues,
   SYNTHETIC_RELAY_PROVIDER_ID,
 } from "./provider-catalog.js";
 export type {
+  RelayApi,
   RelayCatalog,
   RelayCatalogModel,
   RelayCatalogProvider,
@@ -155,5 +167,6 @@ export type {
   RelaySelectionDirectory,
   RelaySelectionDirectoryRow,
   RelaySelectionErrorCode,
+  ResponsesEffort,
   ResolvedRelaySelection,
 } from "./provider-catalog.js";
