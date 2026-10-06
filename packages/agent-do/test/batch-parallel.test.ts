@@ -174,9 +174,17 @@ test("a read-only batch dispatches as one wave and beats the serial schedule", a
   // Timing (the ticket's L1 assertion): a serial schedule pays
   // (k−1) × FAKE_TOOL_MS of pure dispatch stall — the wave's dispatch AND
   // settlement each spread across ≥ 300 ms — while the parallel wave pays
-  // the fake latency once and both spreads collapse into one tick. The
-  // bound is one fake latency; cross-DO ingestion overhead cancels out of
-  // a spread, so the margin is ~3× either way.
+  // the fake latency once and both spreads collapse into one tick.
+  //
+  // The bound is two fake latencies, not one (#359): this is the
+  // workers-pool scheduling domain, where fake timers cannot reach
+  // workerd's isolate scheduling, and on a loaded CI runner a single
+  // dispatch tick can stretch past one fake latency (observed 101–103 ms
+  // spreads — same-commit push run green, PR-sync run red). One fake
+  // latency left no headroom for that jitter; two absorbs it with ~2×
+  // margin while keeping the discrimination clean — the serial floor is
+  // ≥ 3× FAKE_TOOL_MS, still 1.5× above the bound.
+  const WAVE_SPREAD_BOUND_MS = 2 * FAKE_TOOL_MS;
   const createdAts = (type: "tool.dispatch" | "tool.result"): number[] =>
     events
       .filter(
@@ -186,8 +194,12 @@ test("a read-only batch dispatches as one wave and beats the serial schedule", a
       .map((event) => event.createdAt);
   const dispatchCreated = createdAts("tool.dispatch");
   const resultCreated = createdAts("tool.result");
-  expect(Math.max(...dispatchCreated) - Math.min(...dispatchCreated)).toBeLessThan(FAKE_TOOL_MS);
-  expect(Math.max(...resultCreated) - Math.min(...resultCreated)).toBeLessThan(FAKE_TOOL_MS);
+  expect(Math.max(...dispatchCreated) - Math.min(...dispatchCreated)).toBeLessThan(
+    WAVE_SPREAD_BOUND_MS,
+  );
+  expect(Math.max(...resultCreated) - Math.min(...resultCreated)).toBeLessThan(
+    WAVE_SPREAD_BOUND_MS,
+  );
 });
 
 test("same-file writes serialize: the second dispatch is journaled after the first result", async () => {
