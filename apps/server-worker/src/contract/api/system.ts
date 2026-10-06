@@ -399,6 +399,10 @@ export const providerConfigPatchRequestSchema = z.strictObject({
 });
 export type ProviderConfigPatchRequest = z.infer<typeof providerConfigPatchRequestSchema>;
 
+/** #388 row provenance on the CRUD display face. */
+export const providerConfigSourceSchema = z.enum(["user", "deployment-seed"]);
+export type ProviderConfigSource = z.infer<typeof providerConfigSourceSchema>;
+
 export const providerConfigRowSchema = z.object({
   id: z.string().min(1),
   displayName: z.string().nullable(),
@@ -413,6 +417,13 @@ export const providerConfigRowSchema = z.object({
   dispatchable: z.boolean(),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
+  /**
+   * #388: the display face IS the merged execution-options truth — "user"
+   * rows are stored provider_configs (CRUD-editable), "deployment-seed"
+   * rows are env MODEL_RELAY_CATALOG providers not overridden (read-only,
+   * redeploy-managed).
+   */
+  source: providerConfigSourceSchema,
 });
 export type ProviderConfigRow = z.infer<typeof providerConfigRowSchema>;
 

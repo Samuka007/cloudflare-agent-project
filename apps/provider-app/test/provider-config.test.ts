@@ -7,6 +7,7 @@ import {
   loadProviderConfigCatalogOverlay,
   RelayProviderRegistry,
   resolveRelayCatalogWithOverlay,
+  seedProviderConfigRows,
 } from "../src/index.js";
 import { DEFAULT_IMAGE_TIMEOUT_SECONDS } from "@cap/agent-do";
 import { FixedReplyProvider } from "../src/harness.js";
@@ -107,6 +108,125 @@ describe("#362 resolveRelayCatalogWithOverlay (merge resolution)", () => {
   });
 });
 
+describe("#388 seedProviderConfigRows (the merged display face's seed half)", () => {
+  const SEED = JSON.stringify({
+    defaultProvider: "envp",
+    providers: {
+      envp: {
+        displayName: "Env Provider",
+        baseUrl: "https://env.example.com/v1",
+        api: "openai-responses",
+        models: [{ id: "env-model", name: "Env Model", contextWindow: 131_072 }],
+      },
+      slotless: { models: [{ id: "slotless-model" }] },
+    },
+  });
+
+  test("projects declared env providers as read-only deployment-seed rows", () => {
+    const rows = seedProviderConfigRows(
+      {
+        MODEL_RELAY_CATALOG: SEED,
+        MODEL_RELAY_API_KEY: "sk-deployment-secret-388",
+        MODEL_RELAY_PROVIDER_CREDENTIALS: JSON.stringify({
+          envp: { apiKey: "k-slot" },
+        }),
+      },
+      new Set(),
+    );
+    expect(rows.map((row) => row.id)).toEqual(["envp", "slotless"]);
+    expect(rows.every((row) => row.source === "deployment-seed")).toBe(true);
+    expect(rows.every((row) => row.status === "ok" && row.warnings.length === 0)).toBe(true);
+    expect(rows[0]).toMatchObject({
+      displayName: "Env Provider",
+      baseUrl: "https://env.example.com/v1",
+      api: "openai-responses",
+      dispatchable: true,
+    });
+    expect(rows[0]?.models).toEqual([
+      { id: "env-model", name: "Env Model", contextWindow: 131_072 },
+    ]);
+    // Key presence folds the per-provider slot exactly like the registry:
+    // envp has a slot; slotless falls back to the deployment scalar. Zero
+    // secret VALUES leave the env — the face carries presence only.
+    expect(rows.map((row) => row.hasApiKey)).toEqual([true, true]);
+    const serialized = JSON.stringify(rows);
+    expect(serialized).not.toContain("sk-deployment-secret-388");
+    expect(serialized).not.toContain("k-slot");
+  });
+
+  test("a scalar-only deployment keeps every seed row keyed, a keyless one mocks", () => {
+    const withScalar = seedProviderConfigRows(
+      { MODEL_RELAY_CATALOG: SEED, MODEL_RELAY_API_KEY: "k-scalar" },
+      new Set(),
+    );
+    expect(withScalar.every((row) => row.hasApiKey)).toBe(true);
+    const keyless = seedProviderConfigRows({ MODEL_RELAY_CATALOG: SEED }, new Set());
+    expect(keyless.every((row) => !row.hasApiKey)).toBe(true);
+  });
+
+  test("an effective D1 row suppresses its seed row wholesale (same id D1 wins)", () => {
+    const rows = seedProviderConfigRows(
+      { MODEL_RELAY_CATALOG: SEED, MODEL_RELAY_API_KEY: "k-scalar" },
+      new Set(["envp"]),
+    );
+    expect(rows.map((row) => row.id)).toEqual(["slotless"]);
+  });
+
+  test("a broken D1 row (absent from the effective overlay) leaves the seed row serving", () => {
+    // The skip-with-warning discipline: a warning row never enters the
+    // overlay, so BOTH faces keep serving the env row — and both show it.
+    const rows = seedProviderConfigRows(
+      { MODEL_RELAY_CATALOG: SEED, MODEL_RELAY_API_KEY: "k-scalar" },
+      new Set(["broken-row"]),
+    );
+    expect(rows.map((row) => row.id)).toEqual(["envp", "slotless"]);
+  });
+
+  test("no usable declaration and no effective rows serves the omp synthesis row", () => {
+    const rows = seedProviderConfigRows(
+      {
+        MODEL_RELAY_MODEL: "glm-5.3-flash",
+        MODEL_RELAY_API_KEY: "k-deployment-secret-388",
+        MODEL_RELAY_BASE_URL_ANTHROPIC: "https://relay.example.net/api",
+      },
+      new Set(),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: "omp",
+      displayName: "omp",
+      api: "anthropic-messages",
+      baseUrl: "https://relay.example.net/api",
+      hasApiKey: true,
+      dispatchable: true,
+      source: "deployment-seed",
+    });
+    expect(rows[0]?.models).toEqual([{ id: "glm-5.3-flash", name: "glm-5.3-flash" }]);
+  });
+
+  test("D1 rows present (effective overlay non-empty) suppress the omp synthesis row", () => {
+    // The merged resolution rides the running model under the D1 provider —
+    // execution-options shows no omp provider, so neither may this face.
+    const rows = seedProviderConfigRows(
+      { MODEL_RELAY_MODEL: "glm-5.3-flash" },
+      new Set(["panelp"]),
+    );
+    expect(rows).toEqual([]);
+  });
+
+  test("a broken catalog keeps serving its synthesis row on the display face", () => {
+    // The decodeError posture keeps turns running on the env-only synthesis —
+    // execution-options serves the omp row, so the display face shows it too
+    // (the loud decodeError lives on the projections faces).
+    expect(
+      seedProviderConfigRows(
+        { MODEL_RELAY_CATALOG: "{not-json", MODEL_RELAY_API_KEY: "k-scalar" },
+        new Set(),
+      ),
+    ).toMatchObject([{ id: "omp", source: "deployment-seed", dispatchable: true }]);
+  });
+});
+
 describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
   test("an overlay row resolves with its OWN wire identity, never deployment slots", () => {
     const registry = RelayProviderRegistry.fromEnv({
@@ -177,7 +297,13 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
 
   test("imageGenerationSourceFromOverlay resolves the openai-images row's source", () => {
     expect(imageGenerationSourceFromOverlay(null)).toBeNull();
-    expect(imageGenerationSourceFromOverlay({ providers: {}, credentials: {}, standaloneProviders: new Set() })).toBeNull();
+    expect(
+      imageGenerationSourceFromOverlay({
+        providers: {},
+        credentials: {},
+        standaloneProviders: new Set(),
+      }),
+    ).toBeNull();
     const source = imageGenerationSourceFromOverlay({
       providers: {
         imagey: {
