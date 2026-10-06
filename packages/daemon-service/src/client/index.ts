@@ -30,6 +30,32 @@ function argValue(flag: string): string | undefined {
   return process.argv[index + 1];
 }
 
+// #425: `docker run image --help` is the container smoke arm — the image
+// entrypoint has no wrapper to answer, so the client itself carries the
+// usage surface (flag names mirror the env knobs below).
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  console.log(
+    [
+      "usage: cap-daemon [--server <url>] [--join-code <code>] [--dataDir <dir>]",
+      "                  [--sandbox <dir>] [--cf-client-id <id> --cf-client-secret <secret>]",
+      "",
+      "Runs the daemon client (WS session loop + exec executor). Configuration",
+      "comes from flags or DAEMON_* environment variables — the container image",
+      "(packages.cap-daemon-image) passes everything through docker --env-file:",
+      "",
+      "  DAEMON_SERVICE_URL                 control plane base URL (--server/--url)",
+      "  DAEMON_ENROLL_KEY | DAEMON_JOIN_CODE  one enrollment credential (#258)",
+      "  DAEMON_DATA_DIR                    identity dir (host-id + auth.json, 0600)",
+      "  DAEMON_SANDBOX_ROOT                tool sandbox root",
+      "  DAEMON_CF_ACCESS_CLIENT_ID/SECRET  Access service-token pair (#420, both or neither)",
+      "",
+      "A dataDir with a persisted identity restores on boot without any",
+      "credential (#378); a fresh machine needs exactly one.",
+    ].join("\n"),
+  );
+  process.exit(0);
+}
+
 /** Enroll credentials are deployment secrets — refusing to ship a dev
  * default (the POC's "[REDACTED-staging-secret]") means a misconfigured daemon
  * fails at start instead of enrolling against whatever it can reach. The
