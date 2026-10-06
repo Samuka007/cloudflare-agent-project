@@ -734,19 +734,44 @@ describe("#362 test-connection and /models discovery faces", () => {
     expect(verdict.models).toEqual([]);
   });
 
-  it("raw-anchored discovery reports non-list upstream responses as ok:false", async () => {
-    // A refused TCP connection (discard port) exercises the real outbound
-    // fetch path and maps the transport failure to a null-status verdict.
-    const verdict = providerConfigDiscoverResponseSchema.parse(
-      await (
-        await request("POST", "/api/v1/system/providers/discover-models", {
-          baseUrl: "http://127.0.0.1:9",
-        })
-      ).json(),
-    );
-    expect(verdict.ok).toBe(false);
-    expect(verdict.status).toBeNull();
-    expect(verdict.models).toEqual([]);
+  // The transport-failure verdict mapping stays covered at the service seam
+  // (unit/provider-config-wire.test.ts); at the route face the raw anchor now
+  // meets the same https/public-origin rule as every other baseUrl input.
+});
+
+describe("SEC-W5-003: baseUrl must name a public https origin", () => {
+  it("write and discovery faces 422 non-https, IP-literal, and intranet targets", async () => {
+    const rejected = [
+      "http://attacker.example.com",
+      "https://192.168.1.1",
+      "https://[::1]/",
+      "https://127.0.0.1:8080",
+      "https://intranet",
+      "https://foo.internal",
+      "https://panel.local",
+      "https://user@attacker.example.com",
+      "not a url",
+    ];
+    for (const bad of rejected) {
+      await expect422(
+        await request("POST", "/api/v1/system/providers", {
+          id: "badurl",
+          baseUrl: bad,
+          models: [],
+        }),
+        "validation_failed",
+      );
+      await expect422(
+        await request("POST", "/api/v1/system/providers/discover-models", { baseUrl: bad }),
+        "validation_failed",
+      );
+      await postProvider({ id: "seeded", models: [{ id: "m" }] });
+      await expect422(
+        await request("PATCH", "/api/v1/system/providers/seeded", { baseUrl: bad }),
+        "validation_failed",
+      );
+      await request("DELETE", "/api/v1/system/providers/seeded");
+    }
   });
 });
 

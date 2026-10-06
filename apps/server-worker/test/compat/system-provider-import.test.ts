@@ -170,6 +170,36 @@ providers:
     expect((await listProviders()).map((row) => row.id)).toEqual(["good-row"]);
   });
 
+  it("verdicts non-https or intranet baseUrls with an invalid_base_url skip (SEC-W5-003)", async () => {
+    const { status, body } = await importYaml(`
+providers:
+  plain-http:
+    baseUrl: http://attacker.example.com
+    api: anthropic-messages
+    models:
+      - id: intercepted
+  intranet-row:
+    baseUrl: https://gateway.internal
+    api: anthropic-messages
+    models:
+      - id: unreachable
+  public-row:
+    baseUrl: https://upstream.example.com/v1
+    api: anthropic-messages
+    models:
+      - id: reachable
+`);
+    expect(status).toBe(200);
+    expect(body.created).toBe(1);
+    expect(body.skipped).toBe(2);
+    for (const id of ["plain-http", "intranet-row"]) {
+      const skip = body.providers.find((entry) => entry.id === id);
+      expect(skip).toMatchObject({ verdict: "skipped", status: 422, code: "invalid_base_url" });
+      expect(skip?.message).toContain("https");
+    }
+    expect((await listProviders()).map((row) => row.id)).toContain("public-row");
+  });
+
   it("skips existing ids with 409 and reserved ids without touching stored rows", async () => {
     await importYaml(`
 providers:
