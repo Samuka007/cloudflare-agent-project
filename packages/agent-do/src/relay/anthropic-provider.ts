@@ -6,6 +6,7 @@ import {
   type ModelToolCall,
   type ModelUsageReceipt,
 } from "../provider.js";
+import type { RelayApi, ResponsesEffort } from "../provider-catalog.js";
 import { anthropicRequestBody, estimateWireRequestTokens, type ThinkingConfig } from "./wire.js";
 import { parseSseStream } from "./sse.js";
 
@@ -28,7 +29,13 @@ import { parseSseStream } from "./sse.js";
  */
 
 export interface RelayConfig {
-  /** Anthropic-protocol base, e.g. `https://open.bigmodel.cn/api/anthropic`. */
+  /**
+   * Protocol base. Shape is api-face-specific (#361): the anthropic face
+   * appends `/v1/messages` (base WITHOUT the version segment,
+   * `https://open.bigmodel.cn/api/anthropic`); the openai-responses face
+   * appends `/responses` (base WITH the version segment, omp models.yml
+   * posture: `https://newapi.samuka007.top/v1`).
+   */
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -46,6 +53,20 @@ export interface RelayConfig {
    * Absent = not declared → image parts degrade to text (safe default).
    */
   supportsImageInput?: boolean;
+  /**
+   * #361: the protocol face this config speaks. Consumed by the DISPATCH
+   * layer (harness relayProviderFrom / RelayProviderRegistry.providerFor —
+   * which provider class to construct); AnthropicRelayProvider itself
+   * ignores it. Absent = the incumbent anthropic face.
+   */
+  api?: RelayApi;
+  /**
+   * #361: the selection-resolved reasoning rung for the openai-responses
+   * face (registry fold through resolveResponsesEffort — already mapped to
+   * an official effort before construction). Consumed only by
+   * ResponsesRelayProvider; absent = effort "none".
+   */
+  reasoningEffort?: ResponsesEffort;
   /** Test seam; production uses global fetch. */
   fetchImpl?: typeof fetch;
 }

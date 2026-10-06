@@ -205,6 +205,56 @@ describe("#350 MODEL_RELAY_CATALOG declaration folding", () => {
         .supportsImageInput,
     ).toBe(true);
   });
+
+  test("#361 the running row's api face folds into the harness (model, then provider, then default)", () => {
+    // Provider-level declaration covers rows without their own api.
+    const providerLevel = JSON.stringify({
+      providers: { newapi: { api: "openai-responses", models: [{ id: "glm-5.3-flash" }] } },
+    });
+    const declared = resolveHarness({
+      MODEL_RELAY_CATALOG: providerLevel,
+      MODEL_RELAY_MODEL: "glm-5.3-flash",
+    });
+    expect(declared.relay.api).toBe("openai-responses");
+    // Budget off → the deployment default rung "none" maps to effort "none".
+    expect(declared.relay.reasoningEffort).toBe("none");
+    // Model-level api overrides the provider face.
+    const modelLevel = JSON.stringify({
+      providers: {
+        mixed: {
+          api: "openai-responses",
+          models: [{ id: "glm-5.3", api: "anthropic-messages" }],
+        },
+      },
+    });
+    expect(
+      resolveHarness({ MODEL_RELAY_CATALOG: modelLevel, MODEL_RELAY_MODEL: "glm-5.3" }).relay.api,
+    ).toBe("anthropic-messages");
+    // No catalog → the incumbent anthropic face.
+    expect(resolveHarness({}).relay.api).toBe("anthropic-messages");
+    // Budget on over a responses row → the declared default rung maps to its effort.
+    const effortRow = JSON.stringify({
+      providers: {
+        omp: {
+          api: "openai-responses",
+          models: [
+            {
+              id: "glm-5.3-flash",
+              reasoningLevels: ["none", "high", "xhigh"],
+              defaultReasoningLevel: "high",
+              reasoningEffortMap: { xhigh: "max" },
+            },
+          ],
+        },
+      },
+    });
+    const budgetOn = resolveHarness({
+      MODEL_RELAY_CATALOG: effortRow,
+      MODEL_RELAY_THINKING_BUDGET_TOKENS: "4096",
+    });
+    expect(budgetOn.execution.reasoningLevel).toBe("high");
+    expect(budgetOn.relay.reasoningEffort).toBe("high");
+  });
 });
 
 describe("#308 fixed-reply usage estimate", () => {

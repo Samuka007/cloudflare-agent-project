@@ -1,7 +1,10 @@
 import {
   decodeRelayCatalog,
   deriveRelayReasoning,
+  DEFAULT_RELAY_API,
+  type RelayApi,
   type RelayCatalog,
+  type ResponsesEffort,
   type RelayReasoningLevel,
 } from "@cap/agent-do";
 import { resolveHarness, type HarnessEnv, type ResolvedHarness } from "./harness.js";
@@ -38,6 +41,10 @@ export interface RelayCatalogModelRow {
   contextWindow: number | null;
   maxTokens: number | null;
   imageInput: boolean;
+  /** #361: the row's protocol face (model api ?? provider api ?? default). */
+  api: RelayApi;
+  /** #361: the row's per-model effort map (responses face consumption). */
+  reasoningEffortMap?: Partial<Record<RelayReasoningLevel, ResponsesEffort>>;
   /** Exactly the running model's row (the model turns actually run). */
   isDefault: boolean;
 }
@@ -47,6 +54,8 @@ export interface RelayCatalogProviderRow {
   displayName: string;
   /** bb ProviderCapabilities.supportsServiceTier projection. */
   serviceTier: boolean;
+  /** #361: the provider-level protocol face (model rows may override). */
+  api?: RelayApi;
   /** OR over the provider's model rows (any image-capable model). */
   imageInput: boolean;
 }
@@ -107,6 +116,8 @@ function synthesisFromHarness(
         contextWindow: harness.relay.contextWindow,
         maxTokens: harness.relay.maxTokens,
         imageInput: harness.relay.supportsImageInput,
+        api: harness.relay.api,
+        reasoningEffortMap: undefined,
         isDefault: true,
       },
     ],
@@ -162,6 +173,10 @@ export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
         imageInput: isRunning
           ? harness.relay.supportsImageInput
           : (entry.input?.includes("image") ?? false),
+        // #361: the face this row dispatches under — model declaration,
+        // then the provider's, then the incumbent anthropic face.
+        api: entry.api ?? (provider.api ?? DEFAULT_RELAY_API),
+        reasoningEffortMap: entry.reasoningEffortMap,
         isDefault: isRunning,
       };
     });
@@ -171,6 +186,7 @@ export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
       id: providerId,
       displayName: provider.displayName ?? providerId,
       serviceTier: provider.serviceTier ?? false,
+      api: provider.api,
       imageInput: rows.some((row) => row.imageInput),
     });
   }
@@ -193,6 +209,8 @@ export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
       contextWindow: harness.relay.contextWindow,
       maxTokens: harness.relay.maxTokens,
       imageInput: harness.relay.supportsImageInput,
+      api: harness.relay.api,
+      reasoningEffortMap: undefined,
       isDefault: true,
     };
     models.unshift(runningRow);
