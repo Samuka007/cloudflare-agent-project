@@ -13,7 +13,7 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 ### 派单
 
-**PM 每拍先 audit 再派发（#181）**：`const rep = AP.audit(snapshot, { activeLanes })` → `AP.apply(rep.mutations, { confirm: true })` 一键消漂移，复拍读 `clean` 才继续派发。规则：①issue CLOSED 但 Status∉{Done,Canceled}（收敛写=补落 sync 漏写，wontfix→Canceled 其余→Done）②Status=In Progress 但 CLOSED（lane 死亡未收口）③活跃 lane 票 Status≠In Progress（lane(confirm) 翻转丢失→补翻）④dispatchable Todo 超 N 天未派（frontier 老化提醒，无 mutation，动作是派发）⑤浏览器租约（#240，传 `leases: AP.ledger().events` 才武装）：涉浏览器 lane 无租约登记／租约碰撞（同 tab／同线程前缀并发）／交付后未释放，均无 mutation（动作是 AP.lease/AP.release）。正本 `plugins/pm-harness/src/core.ts`（#270 起，原 scripts/pm-autopilot.ts）；omp 会话内同款操作 = `pm_audit`/`pm_apply`/`pm_ledger`/`pm_release` 工具（#270 插件，eval 内 `await tool.pm_audit({ activeLanes })` 直呼）。
+**PM 每拍先 audit 再派发（#181）**：`const rep = AP.audit(snapshot, { activeLanes })` → `AP.apply(rep.mutations, { confirm: true })` 一键消漂移，复拍读 `clean` 才继续派发。规则：①issue CLOSED 但 Status∉{Done,Canceled}（收敛写=补落 sync 漏写，wontfix→Canceled 其余→Done）②Status=In Progress 但 CLOSED（lane 死亡未收口）③活跃 lane 票 Status≠In Progress（lane(confirm) 翻转丢失→补翻）④dispatchable Todo 超 N 天未派（frontier 老化提醒，无 mutation，动作是派发）⑤浏览器租约（#240，传 `leases: AP.ledger().events` 才武装）：涉浏览器 lane 无租约登记／租约碰撞（同 tab／同线程前缀并发）／交付后未释放，均无 mutation（动作是 AP.lease/AP.release）⑥走查挂账到期（#391，传 `walks: AP.walkLedger().events` 才武装）：到期未销的挂账走查翻红——open 票给 setStatus Wait for user mutation（板面可见），已红／活跃 lane／已关票只提示（动作是跑掉挂账 `AP.walkDone`/`AP.closeout` 或改期重登记）。正本 `plugins/pm-harness/src/core.ts`（#270 起，原 scripts/pm-autopilot.ts）；omp 会话内同款操作 = `pm_audit`/`pm_apply`/`pm_ledger`/`pm_release`/`pm_walk` 工具（#270 插件，eval 内 `await tool.pm_audit({ activeLanes })` 直呼）。
 
 票面三项齐才派（DoR 票门，#224 裁减为三项；工程纪律全定义仍见 AGENTS.md）：①复用三问字面答案（手写票含三问否定论证）②验收产品面可观察 ③bb/omp 上游锚点。预算行与参照往例不再是票门：预算仅作派单 packet 信息行（见下），往例估算（参考类预测）是人类纪律（AGENTS.md），均不进票门。
 
@@ -52,13 +52,15 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 1. 干净树复跑关键测试/命令。
 2. 七反模式过一遍：慢通道／重做／串行化／闲置占用／无账保守／轮询／retry-and-hope。
-3. 关票评论附证据（测试数、部署 URL、run 链接、file:line）；**无证据不关票**。**关账序列（#277 固化）**：实现 lane 交付 → 验收 lane 出证据（staging 面）或 CI 出证据（纯代码面）→ `AP.closeout` 入账（证据三件套：证据/日期/部署版本）→ 才可 merge/close；PM 抽验不再作为关账输入——降为 wave 终检抽样（第 8 条）。漏网兜底：`AP.audit` 规则 7 `closeoutNoEvidence`（已关无账 = `AP.closeout` 回填——#266 为首例回填——或重开票）。
+3. 关票评论附证据（测试数、部署 URL、run 链接、file:line）；**无证据不关票**。**关账序列（#277 固化）**：实现 lane 交付 → 验收 lane 出证据（staging 面）或 CI 出证据（纯代码面）→ `AP.closeout` 入账（证据三件套：证据/日期/部署版本）→ 才可 merge/close；PM 抽验不再作为关账输入——降为 wave 终检抽样（第 8 条）。漏网兜底：`AP.audit` 规则 7 `closeoutNoEvidence`（已关无账 = `AP.closeout` 回填——#266 为首例回填——或重开票）。**判面前置闸（#390）**：`AP.closeout` 入账前自读票面验收——产品面（面板/走查/真机/UI…）拒 `source: "ci"`，walk 必须附表面证据（console 错误/截图/选择器断言）；#362/#382/#364 以 ci 关 UI 票即此漏洞。
 4. 验收判据 = 用户打开能看到什么（反例 #53：字段全部"就位"但 Priority 列五个视图全不可见，验收却已通过）。
 5. staging 验证经 `scripts/deploy-staging.sh` 两条调用面（#175）：merge→main 由 GHA `deploy-staging` workflow 自动部署；任意 commit 手动经 `nix run .#staging-deploy`。
 6. **CDP 三层纪律（用户裁决 2026-10-05，#240 audit 规则 6）**：①每 lane 具名 tab（`l<票号>-<用途>`），禁默认 tab 与他人 tab；②**staging thread=抢占资源**（一 thread 一在飞 turn）——交互测试一律新建专属线程（前缀 `l<票号>-`），禁用共享线程（`thr_jk45qe4786`=PM 保留），只读观察可访现有线程但零发送；③用毕关闭——交付关账前 `AP.release("browser", { lane })` 释放租约。涉浏览器 lane 无租约登记／租约碰撞／交付后未释放 = `AP.audit` 规则 6 漂移清单。
 7. **空框不可关票（#239，用户裁决 2026-10-02；#277 起勾选权归验收 lane）**：bb-ux 面票 `staging 真机／手验` 验收框为空 = **不可关票**——验证空转（框开着但没验到行为）视同未验收；"移交后续走查"不再是合法关票态。脊柱落地后（#243/#277）：关票前**验收 lane** 真机过 staging，结果（证据+日期+部署版本）回填原票勾框与评论并入 `AP.closeout` 台账；PM 不再逐张亲操（wave 终检抽样，第 8 条）；脊柱前欠账票逐张回扫回填清偿后才算验收闭环。
 
-8. **wave 终检（#246，用户裁定 2026-10-05）**：PM 唯一亲操的 staging 面 = 每 wave 收官／阶段交付一次的整体 E2E 终检（固定清单见下节）；单票级 staging 手验由验收 lane 与第 7 条人工门承载，PM 不逐票亲操（#243 架构）。终检报告未落伞票 = 伞票 Wave 完成判据不得打勾。
+8. **wave 终检（#246，用户裁定 2026-10-05）**：PM 唯一亲操的 staging 面 = 每 wave 收官／阶段交付一次的整体 E2E 终检（固定清单见下节）；单票级 staging 手验由验收 lane 与第 7 条人工门承载，PM 不逐票亲操（#243 架构）。终检报告未落伞票 = 伞票 Wave 完成判据不得打勾。「终检批」（无票、无期限、无审计的走查缓冲桶）一词废除（#391）——延后的走查一律按第 9 条挂账，不进终检。
+
+9. **走查挂账（#391）**：走查做不完允许挂账，但挂账必须落账。挂账 = `AP.walk(票号, due, face)`（工具面 `pm_walk`）把 {票, 期限, 走查面} 三元组写进 `.pm-walks.jsonl` 台账，并在票面评论记明「挂账 #<票> walk-due <日期>：<走查面>」——无票、无期限、无走查面的挂账就是「终检批」复活，禁止；改期 = 重登记（追加，不改历史行）。到期未跑：`AP.audit` 规则 8 翻红（Status → Wait for user），`pm_audit` 工具面默认武装。销账只有一条路：把走查跑掉、证据按 #239 三件套回填（代码面票 `AP.closeout`）+ `AP.walkDone` 销账锚点；已关票上的活挂账同样是漂移（挂账未跑就关票 = #382/#364 违规本体），audit 提示回填或重开。
 
 ### wave 终检清单（#246 固定模板——每 wave 实例化进当轮走查报告）
 

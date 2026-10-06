@@ -78,6 +78,7 @@
 ## 7. 台账与兜底（#277 机制）
 
 - PM 收报告后 `AP.closeout(<票号>, "acceptance-lane"|"ci", { evidence, deploymentVersion })` 入账（`.pm-closeouts.jsonl`，gitignored；`PM_CLOSEOUTS_PATH` 可改）；三件套不全硬拒（零写入）。
+- **判面前置闸（#390）**：入账前 `AP.closeout` 自读票面验收字段（不听调用方转述）。验收节含产品面关键词（面板/走查/真机/截图/UI…）＝product 面：`source: "ci"` 直接拒（报错指向 walk 证据要求）；`source: "acceptance-lane"` 必须附表面证据（console 错误/截图/选择器断言＋目标 URL＋时间戳——证据格式约定，不指定浏览器实现）。独立 `acceptance-type: code|product` 字段双向覆盖关键词扫描。台账行带 `evidenceType`（walk|run）列；旧行由 `AP.migrateCloseoutLedger()` 按 source 回填（读路径内存归一，不迁移也不影响 audit）。
 - `AP.audit` 规则 7 `closeoutNoEvidence`（传 `closeouts: AP.closeoutLedger().events` 武装）：type:implementation/type:bug 票已交付而无 accepted 项 = 关账门被跳过 → 回填或重开。
 - CI 面票：绿 run 即证据，`source: "ci"`，evidence=run 链接，deploymentVersion=run id/ref。
 
