@@ -21,8 +21,8 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { walk } from "../../plugins/pm-harness/src/walk.js";
-import type { WalkCheck, WalkReport } from "../../plugins/pm-harness/src/walk.js";
+import { walk } from "../../pm-autopilot/src/walk.js";
+import type { WalkCheck, WalkReport } from "../../pm-autopilot/src/walk.js";
 
 function argValue(flag: string): string | undefined {
   const idx = process.argv.indexOf(flag);
