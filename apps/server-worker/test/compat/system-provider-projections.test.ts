@@ -24,6 +24,8 @@ describe("GET /api/v1/system/provider-projections", () => {
     // No MODEL_RELAY_API_KEY in the test worker env → mock mode (mock-first
     // ruling #28), key gate false, defaults from HARNESS_DEFAULTS.
     expect(parsed.harness.relayMode).toBe("mock");
+    // #361: no catalog → the incumbent anthropic face is the api default.
+    expect(parsed.harness.relayApi).toBe("anthropic-messages");
     expect(parsed.harness.relayKeyPresent).toBe(false);
     expect(parsed.harness.relayBaseUrlHost).toBe("open.bigmodel.cn");
     expect(parsed.harness.relayModel).toBe("glm-5.3");
@@ -70,6 +72,7 @@ describe("GET /api/v1/system/provider-projections", () => {
     expect(serialized).not.toContain(SEARXNG_TOKEN);
     // Presence gates survive, values never do.
     expect(wire.harness.relayMode).toBe("anthropic");
+    expect(wire.harness.relayApi).toBe("anthropic-messages");
     expect(wire.harness.relayKeyPresent).toBe(true);
     expect(wire.harness.relayBaseUrlHost).toBe("newapi.example.com");
     expect(

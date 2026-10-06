@@ -1,8 +1,11 @@
 import { AgentDO, AgentRpcError, type AgentDoBindings } from "./agent-do.js";
 import { setAgentRuntime } from "./injection.js";
 import { AnthropicRelayProvider } from "./relay/anthropic-provider.js";
+import { CompletionsRelayProvider } from "./relay/completions-provider.js";
+import { ResponsesRelayProvider } from "./relay/responses-provider.js";
 import {
   deriveRelayReasoning,
+  resolveRelayApi,
   resolveRelaySelection,
   RelaySelectionError,
   SYNTHETIC_RELAY_PROVIDER_ID,
@@ -28,6 +31,11 @@ const DAEMON_ROUTE_PREFIXES = ["/health", "/enroll", "/session/open", "/ws", "/a
 /** Relay + watchdog env the composed POC rig needs (repo-root .dev.vars shape). */
 export interface PocDriveEnv {
   MODEL_RELAY_BASE_URL_ANTHROPIC?: string;
+  /**
+   * #361/#363: relay protocol face (anthropic-messages default |
+   * openai-responses | openai-completions).
+   */
+  MODEL_RELAY_API?: string;
   MODEL_RELAY_API_KEY?: string;
   MODEL_RELAY_MODEL?: string;
   /** #308 usage-percentage denominator; unset = receipts carry no window. */
@@ -87,15 +95,44 @@ function ensureRuntime(env: PocDriveEnv): void {
   const contextWindow =
     Number.isFinite(contextWindowParsed) && contextWindowParsed > 0 ? contextWindowParsed : null;
   const model = env.MODEL_RELAY_MODEL ?? "glm-5.3";
-  const provider: ModelProvider = new AnthropicRelayProvider({
-    baseUrl,
-    apiKey,
-    model,
-    maxTokens: 8192,
-    ...(contextWindow !== null ? { contextWindow } : {}),
-    thinking: { type: "disabled" },
-    supportsImageInput: envFlag(env.MODEL_RELAY_IMAGE_INPUT),
-  });
+  // #361: the rig dials the face the deployment declares — the responses
+  // face rides the selection-default effort "none" (deterministic budget).
+  const relayApi = resolveRelayApi(env.MODEL_RELAY_API);
+  const provider: ModelProvider =
+    relayApi === "openai-responses"
+      ? new ResponsesRelayProvider({
+          baseUrl,
+          apiKey,
+          model,
+          maxTokens: 8192,
+          ...(contextWindow !== null ? { contextWindow } : {}),
+          reasoningEffort: "none",
+          supportsImageInput: envFlag(env.MODEL_RELAY_IMAGE_INPUT),
+          api: relayApi,
+        })
+      : relayApi === "openai-completions"
+        ? new CompletionsRelayProvider({
+            baseUrl,
+            apiKey,
+            model,
+            maxTokens: 8192,
+            ...(contextWindow !== null ? { contextWindow } : {}),
+            // The rig's deterministic budget: no effort pin (the chat face
+            // runs the model's default reasoning unless the row maps one).
+            reasoningEffort: undefined,
+            supportsImageInput: envFlag(env.MODEL_RELAY_IMAGE_INPUT),
+            api: relayApi,
+          })
+        : new AnthropicRelayProvider({
+            baseUrl,
+            apiKey,
+            model,
+            maxTokens: 8192,
+            ...(contextWindow !== null ? { contextWindow } : {}),
+            thinking: { type: "disabled" },
+            supportsImageInput: envFlag(env.MODEL_RELAY_IMAGE_INPUT),
+            api: relayApi,
+          });
   // #351: the single-line relay registration became a providerId-keyed
   // registry — the rig declares one synthetic "omp" row and every selection
   // resolves through the same fail-closed grammar the composed deployment

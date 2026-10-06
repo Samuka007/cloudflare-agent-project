@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import type { RelayCatalogProvider } from "@cap/agent-do";
 import {
   decryptProviderSecret,
   imageGenerationSourceFromOverlay,
@@ -60,13 +61,13 @@ const ENV_CATALOG = JSON.stringify({
 const ENV_CREDENTIALS = JSON.stringify({
   envp: { apiKey: "k-deployment", baseUrl: "https://env-relay.example.com" },
 });
-const OVERLAY_PROVIDERS = {
+const OVERLAY_PROVIDERS: Record<string, RelayCatalogProvider> = {
   envp: {
     displayName: "Panel Override",
     api: "openai-responses",
     models: [{ id: "panel-model" }],
   },
-  panelp: { api: "anthropic", models: [{ id: "panel-only" }] },
+  panelp: { api: "anthropic-messages", models: [{ id: "panel-only" }] },
 };
 
 describe("#362 resolveRelayCatalogWithOverlay (merge resolution)", () => {

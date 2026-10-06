@@ -275,9 +275,13 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
             model: harness.relay.model,
             displayName: `Edge agent (${harness.relay.model})`,
             description:
-              harness.relay.mode === "anthropic"
-                ? "Anthropic-protocol relay model (GLM coding plan)"
-                : "Fixed-reply mock (relay key not configured)",
+              harness.relay.mode === "mock"
+                ? "Fixed-reply mock (relay key not configured)"
+                : harness.relay.api === "openai-responses"
+                  ? "OpenAI Responses-protocol relay model (#361 adaptor)"
+                  : harness.relay.api === "openai-completions"
+                    ? "OpenAI Chat Completions-protocol relay model (#363 adaptor)"
+                  : "Anthropic-protocol relay model (GLM coding plan)",
             supportedReasoningEfforts: [
               {
                 reasoningEffort: "none",

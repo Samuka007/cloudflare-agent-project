@@ -4,8 +4,13 @@ import {
   decodeRelayCatalog,
   deriveRelayReasoning,
   findRelayCatalogModel,
+  relayApiConsumesEffortMap,
   relayCatalogSchema,
   relayModelEntrySchema,
+  resolveRelaySelection,
+  resolveResponsesEffort,
+  RelaySelectionError,
+  RelayEffortMapError,
 } from "../src/provider-catalog.js";
 
 /**
@@ -24,13 +29,13 @@ const FULL_CATALOG = {
     main: {
       displayName: "Main relay",
       baseUrl: "https://relay.example/anthropic",
-      api: "anthropic",
+      api: "anthropic-messages",
       serviceTier: true,
       models: [
         {
           id: "glm-5.3",
           name: "GLM-5.3",
-          api: "anthropic",
+          api: "anthropic-messages",
           reasoning: true,
           input: ["text", "image"],
           contextWindow: 200_000,
@@ -192,5 +197,110 @@ describe("#350 findRelayCatalogModel", () => {
     });
     expect(findRelayCatalogModel(catalog, "glm-5.3-flash")?.providerId).toBe("backup");
     expect(findRelayCatalogModel(catalog, "unknown")).toBeUndefined();
+  });
+
+  test("locate result exposes the provider id for the #361 api fold", () => {
+    const catalog = decodeRelayCatalog(JSON.stringify(FULL_CATALOG));
+    if (catalog === null) throw new Error("unreachable");
+    const located = findRelayCatalogModel(catalog, "glm-5.3-flash");
+    expect(located?.providerId).toBe("backup");
+    expect(located?.model.api).toBeUndefined();
+  });
+});
+
+describe("#361 relay api face + effort mapping", () => {
+  test("the edge catalog validates api against the relay-speakable enum", () => {
+    // The shared model dictionary stays free-form (daemon parity with omp's
+    // api families); the EDGE face only accepts what the relay dials.
+    const freeForm = relayModelEntrySchema.safeParse({ id: "m", api: "openai-completions" });
+    expect(freeForm.success).toBe(true);
+    // #363: openai-completions is a speakable edge face now (the second
+    // protocol family — a completions row drives the chat.completions wire).
+    const speakable = JSON.stringify({
+      providers: { omp: { api: "openai-completions", models: [{ id: "m" }] } },
+    });
+    expect(relayCatalogSchema.parse(JSON.parse(speakable)).providers.omp?.api).toBe(
+      "openai-completions",
+    );
+    const modelLevel = JSON.stringify({
+      providers: { omp: { models: [{ id: "m", api: "google-generative-ai" }] } },
+    });
+    expect(() => relayCatalogSchema.parse(JSON.parse(modelLevel))).toThrow();
+  });
+
+  test("reasoningEffortMap decodes per-model with rung keys and effort values", () => {
+    const catalog = decodeRelayCatalog(
+      JSON.stringify({
+        providers: {
+          omp: {
+            api: "openai-responses",
+            models: [
+              {
+                id: "glm-5.3-flash",
+                reasoningEffortMap: { xhigh: "max", ultra: "high" },
+              },
+            ],
+          },
+        },
+      }),
+    );
+    expect(catalog?.providers.omp?.models[0]?.reasoningEffortMap).toEqual({
+      xhigh: "max",
+      ultra: "high",
+    });
+    // An unknown rung key or an off-vocabulary effort value fails decode.
+    const badKey = JSON.stringify({
+      providers: { omp: { models: [{ id: "m", reasoningEffortMap: { megahigh: "max" } }] } },
+    });
+    expect(() => relayCatalogSchema.parse(JSON.parse(badKey))).toThrow();
+    const badValue = JSON.stringify({
+      providers: { omp: { models: [{ id: "m", reasoningEffortMap: { high: "ultra" } }] } },
+    });
+    expect(() => relayCatalogSchema.parse(JSON.parse(badValue))).toThrow();
+  });
+
+  test("resolveResponsesEffort: identity defaults, per-model map wins, unmapped errors", () => {
+    // Identity for the rungs the official effort vocabulary also names.
+    expect(resolveResponsesEffort("none")).toBe("none");
+    expect(resolveResponsesEffort("low")).toBe("low");
+    expect(resolveResponsesEffort("high")).toBe("high");
+    expect(resolveResponsesEffort("xhigh")).toBe("xhigh");
+    expect(resolveResponsesEffort("max")).toBe("max");
+    // The per-model map wins over the default (omp models.yml deepseek
+    // anchor: compat.reasoningEffortMap {high: high, xhigh: max}).
+    expect(resolveResponsesEffort("xhigh", { xhigh: "max" })).toBe("max");
+    // Relay-only rungs without a map entry are honest errors, never clamps.
+    expect(() => resolveResponsesEffort("ultra")).toThrow(RelayEffortMapError);
+    expect(() => resolveResponsesEffort("ultracode")).toThrow(RelayEffortMapError);
+  });
+
+  test("#363 relayApiConsumesEffortMap: both openai faces fold, anthropic does not", () => {
+    expect(relayApiConsumesEffortMap("openai-responses")).toBe(true);
+    expect(relayApiConsumesEffortMap("openai-completions")).toBe(true);
+    expect(relayApiConsumesEffortMap("anthropic-messages")).toBe(false);
+  });
+
+  test("#363 an effort-unmappable rung fails closed on a completions row at selection", () => {
+    const directory = {
+      rows: [
+        {
+          providerId: "omp",
+          id: "ultra-row",
+          reasoningLevels: ["none", "ultra"] as const,
+          defaultReasoningLevel: "none" as const,
+          api: "openai-completions" as const,
+        },
+      ],
+      defaultProviderId: "omp",
+      defaultModelId: "ultra-row",
+      thinkingEnabled: true,
+    };
+    try {
+      resolveRelaySelection(directory, { reasoningLevel: "ultra" });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(RelaySelectionError);
+      expect((error as RelaySelectionError).code).toBe("reasoning_level_unknown");
+    }
   });
 });

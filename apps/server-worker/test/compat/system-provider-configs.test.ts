@@ -2,7 +2,7 @@ import { beforeAll, afterEach, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import type { z } from "zod";
 import { decryptProviderSecret, resolveRelayCatalogWithOverlay } from "@cap/provider-app";
-import type { AnyAgentEvent } from "@cap/agent-do";
+import type { AnyAgentEvent, RelayCatalogProvider } from "@cap/agent-do";
 import { ensureMigrations } from "../migrate.js";
 import {
   insertProviderConfig,
@@ -159,7 +159,7 @@ describe("#362 CRUD face", () => {
   it("creates an anthropic row with a write-only key (presence only on the face)", async () => {
     const { status, row } = await postProvider({
       id: "panel-anthropic",
-      api: "anthropic",
+      api: "anthropic-messages",
       baseUrl: "https://anthropic.example.com",
       models: [{ id: "claude-panel" }],
       apiKey: PANEL_KEY,
@@ -222,7 +222,7 @@ describe("#362 CRUD face", () => {
       id: "putty",
       displayName: "Before",
       baseUrl: "https://before.example.com",
-      api: "anthropic",
+      api: "anthropic-messages",
       models: [{ id: "before-model" }],
       apiKey: PANEL_KEY,
     });
@@ -278,7 +278,7 @@ describe("#362 CRUD face", () => {
       id: "patchy",
       displayName: "Keep",
       baseUrl: "https://keep.example.com",
-      api: "anthropic",
+      api: "anthropic-messages",
       serviceTier: false,
       models: [{ id: "keep-model" }],
       apiKey: PANEL_KEY,
@@ -293,7 +293,7 @@ describe("#362 CRUD face", () => {
     );
     expect(patched.baseUrl).toBe("https://moved.example.com");
     expect(patched.displayName).toBe("Keep");
-    expect(patched.api).toBe("anthropic");
+    expect(patched.api).toBe("anthropic-messages");
     expect(patched.serviceTier).toBe(true);
     expect(patched.models).toEqual([{ id: "keep-model" }]);
     expect(patched.hasApiKey).toBe(true);
@@ -320,7 +320,7 @@ describe("#362 key encryption at rest (D1 direct read)", () => {
   it("stores only AES-GCM ciphertext — the D1 column never carries plaintext", async () => {
     await postProvider({
       id: "cryptid",
-      api: "anthropic",
+      api: "anthropic-messages",
       models: [{ id: "m" }],
       apiKey: PANEL_KEY,
     });
@@ -334,10 +334,15 @@ describe("#362 key encryption at rest (D1 direct read)", () => {
   });
 
   it("re-encrypting the same plaintext yields a different column value (fresh IV)", async () => {
-    await postProvider({ id: "iv-a", api: "anthropic", models: [{ id: "m" }], apiKey: PANEL_KEY });
+    await postProvider({
+      id: "iv-a",
+      api: "anthropic-messages",
+      models: [{ id: "m" }],
+      apiKey: PANEL_KEY,
+    });
     await postProvider({
       id: "iv-b",
-      api: "anthropic",
+      api: "anthropic-messages",
       models: [{ id: "m" }],
       apiKey: PANEL_KEY,
     });
@@ -421,9 +426,9 @@ describe("#362 merged directory: env seed ⊕ D1 rows (D1 wins)", () => {
       },
     },
   };
-  const OVERLAY = {
+  const OVERLAY: Record<string, RelayCatalogProvider> = {
     envp: { displayName: "Panel Override", api: "openai-responses", models: [{ id: "panel-model" }] },
-    panelp: { api: "anthropic", models: [{ id: "panel-only" }] },
+    panelp: { api: "anthropic-messages", models: [{ id: "panel-only" }] },
   };
 
   it("a same-id D1 row replaces the env declaration wholesale; new ids are added", () => {
@@ -451,7 +456,11 @@ describe("#362 merged directory: env seed ⊕ D1 rows (D1 wins)", () => {
   });
 
   it("hot effect: a panel write appears on the next request and a delete retracts it", async () => {
-    await postProvider({ id: "panelp", api: "anthropic", models: [{ id: "panel-only" }] });
+    await postProvider({
+      id: "panelp",
+      api: "anthropic-messages",
+      models: [{ id: "panel-only" }],
+    });
     expect(
       (await executionOptions()).providers.map((provider) => provider.id),
     ).toContain("panelp");
@@ -464,7 +473,7 @@ describe("#362 merged directory: env seed ⊕ D1 rows (D1 wins)", () => {
   it("keeps every projection face zero-secret (#266 extension)", async () => {
     await postProvider({
       id: "secretless",
-      api: "anthropic",
+      api: "anthropic-messages",
       models: [{ id: "m" }],
       apiKey: PANEL_KEY,
     });
@@ -487,7 +496,7 @@ describe("#362 thread selection consumes the merged directory (#351 chain)", () 
     await postProvider({
       id: "mockrow",
       displayName: "Mock Row",
-      api: "anthropic",
+      api: "anthropic-messages",
       models: [{ id: "mock-model" }],
     });
 
@@ -534,7 +543,11 @@ describe("#362 thread selection consumes the merged directory (#351 chain)", () 
       }),
       "provider_unknown",
     );
-    await postProvider({ id: "brief", api: "anthropic", models: [{ id: "m" }] });
+    await postProvider({
+      id: "brief",
+      api: "anthropic-messages",
+      models: [{ id: "m" }],
+    });
     await deleteRow("brief");
     await expect422(
       await request("POST", "/api/v1/threads", {
@@ -551,7 +564,11 @@ describe("#362 thread selection consumes the merged directory (#351 chain)", () 
 
 describe("#362 test-connection and /models discovery faces", () => {
   it("test-connection answers honest pre-flight verdicts without hitting the wire", async () => {
-    await postProvider({ id: "nobase", api: "anthropic", models: [{ id: "m" }] });
+    await postProvider({
+      id: "nobase",
+      api: "anthropic-messages",
+      models: [{ id: "m" }],
+    });
     const noBase = providerConfigTestResponseSchema.parse(
       await (await request("POST", "/api/v1/system/providers/nobase/test")).json(),
     );
@@ -585,7 +602,11 @@ describe("#362 test-connection and /models discovery faces", () => {
   });
 
   it("row-anchored discovery answers a no-baseUrl verdict without a wire call", async () => {
-    await postProvider({ id: "nourl", api: "anthropic", models: [{ id: "m" }] });
+    await postProvider({
+      id: "nourl",
+      api: "anthropic-messages",
+      models: [{ id: "m" }],
+    });
     const verdict = providerConfigDiscoverResponseSchema.parse(
       await (
         await request("POST", "/api/v1/system/providers/discover-models", {
@@ -618,7 +639,7 @@ describe("#362 scope absorption: per-model thinking budget + openai-images rows"
   it("a row budget opens the declared ladder without the env scalar, and hot-collapses when removed", async () => {
     await postProvider({
       id: "budgeted",
-      api: "anthropic",
+      api: "anthropic-messages",
       models: [
         {
           id: "budget-model",

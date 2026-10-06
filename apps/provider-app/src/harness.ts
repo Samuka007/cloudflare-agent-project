@@ -21,20 +21,31 @@
 
 import {
   AnthropicRelayProvider,
+  CompletionsRelayProvider,
+  IMAGE_SOURCE_API_FAMILY,
+  ResponsesRelayProvider,
   anthropicRequestBody,
+  completionsRequestBody,
+  responsesRequestBody,
   estimateWireRequestTokens,
   envFlag,
   decodeRelayCatalog,
   deriveRelayReasoning,
   findRelayCatalogModel,
+  resolveResponsesEffort,
+  relayApiConsumesEffortMap,
+  DEFAULT_RELAY_API,
+  type RelayApi,
+  type ResponsesEffort,
+  type RelayReasoningLevel,
   type ModelProvider,
   type ModelRequest,
   type ModelStreamChunk,
   type RelayCatalog,
-  type RelayCatalogModel,
   type RelayConfig,
 } from "@cap/agent-do";
 import type { RuntimeThreadExecutionOptions } from "../../daemon-worker/src/provider-types.js";
+import { decodeRelayProviderCredentials } from "./relay-registry.js";
 
 /** Environment variables this harness reads (all optional). */
 export interface HarnessEnv {
@@ -99,6 +110,18 @@ export interface ResolvedHarness {
     contextWindow: number;
     thinking: ThinkingConfig;
     supportsImageInput: boolean;
+    /**
+     * #361: the protocol face the deployment default relay speaks (the
+     * running row's api, then its provider's, then anthropic-messages).
+     * Drives relayProviderFrom construction; projected as relayMode.
+     */
+    api: RelayApi;
+    /**
+     * #361: the deployment default reasoning rung mapped to the Responses
+     * effort (execution default level through the running row's map).
+     * ResponsesRelayProvider consumes it; the anthropic face ignores it.
+     */
+    reasoningEffort: ResponsesEffort;
   };
   hostBinding: { machineId: string };
   execution: RuntimeThreadExecutionOptions;
@@ -116,8 +139,7 @@ export const HARNESS_DEFAULTS = {
 function executionOptionsOf(
   mode: string | undefined,
   model: string,
-  thinkingEnabled: boolean,
-  row: RelayCatalogModel | undefined,
+  defaultReasoningLevel: RelayReasoningLevel,
 ): RuntimeThreadExecutionOptions {
   const base = {
     model,
@@ -126,12 +148,9 @@ function executionOptionsOf(
     // directory rows use (deriveRelayReasoning over the budget flag) — the
     // harness face and the picker face can no longer disagree (roadmap
     // §2.3 contradiction 1). Budget off → "none"; budget on → the declared
-    // default or bb's medium rung.
-    reasoningLevel: deriveRelayReasoning({
-      thinkingEnabled,
-      declaredLevels: row?.reasoningLevels,
-      declaredDefault: row?.defaultReasoningLevel,
-    }).defaultLevel,
+    // default or bb's medium rung. #361: the level is derived ONCE in
+    // resolveHarness and shared with the relay's effort fold below.
+    reasoningLevel: defaultReasoningLevel,
     workflowsEnabled: false,
   };
   if (mode === "accept-edits") {
@@ -195,9 +214,43 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
   const modelRaw = env.MODEL_RELAY_MODEL?.trim() ?? "";
   const model = modelRaw !== "" ? modelRaw : (catalogDefaultModel ?? HARNESS_DEFAULTS.model);
   const row = catalog !== undefined ? findRelayCatalogModel(catalog, model)?.model : undefined;
-  const baseUrlRaw = env.MODEL_RELAY_BASE_URL_ANTHROPIC?.trim() ?? "";
+  const locatedProvider = catalog !== undefined ? findRelayCatalogModel(catalog, model) : undefined;
+  const locatedProviderApi =
+    locatedProvider !== undefined
+      ? catalog?.providers[locatedProvider.providerId]?.api
+      : undefined;
+  // #361: the running row's protocol face — model api, then its provider's,
+  // then the incumbent anthropic face. The edge catalog enum-validated both
+  // seats at decode, so this fold cannot meet an unspeakable family.
+  // #362: the image-source family never drives the LLM wire — a degenerate
+  // declaration whose default row is an openai-images provider falls back to
+  // the incumbent face (the projection filters image rows from the LLM
+  // directory; the harness fold stays consistent with it).
+  const relayApi: RelayApi =
+    row?.api ??
+    (locatedProviderApi === IMAGE_SOURCE_API_FAMILY ? undefined : locatedProviderApi) ??
+    DEFAULT_RELAY_API;
+  // #351 credentials JSON: the default provider's slot rides under strict
+  // decode (malformed JSON fails the deployment loudly, AGENT_DO_IMAGE_SOURCE
+  // posture — never a silent mock). Precedence: credentials slot → catalog
+  // provider baseUrl → legacy scalar → ruled default (#361 cutover seam).
+  const credentials = decodeRelayProviderCredentials(env.MODEL_RELAY_PROVIDER_CREDENTIALS);
+  const credentialsSlot = defaultProviderKey !== undefined ? credentials[defaultProviderKey] : undefined;
+  const catalogBaseUrl =
+    locatedProvider !== undefined
+      ? catalog?.providers[locatedProvider.providerId]?.baseUrl?.trim()
+      : defaultProviderKey !== undefined
+        ? catalog?.providers[defaultProviderKey]?.baseUrl?.trim()
+        : undefined;
+  const baseUrlRaw =
+    credentialsSlot?.baseUrl?.trim()
+    ?? (catalogBaseUrl !== undefined && catalogBaseUrl !== "" ? catalogBaseUrl : undefined)
+    ?? env.MODEL_RELAY_BASE_URL_ANTHROPIC?.trim()
+    ?? "";
   const baseUrl = baseUrlRaw === "" ? HARNESS_DEFAULTS.baseUrl : baseUrlRaw;
-  const apiKey = env.MODEL_RELAY_API_KEY?.trim() ?? "";
+  const credentialsApiKey = credentialsSlot?.apiKey?.trim() ?? "";
+  const scalarApiKey = env.MODEL_RELAY_API_KEY?.trim() ?? "";
+  const apiKey = credentialsApiKey !== "" ? credentialsApiKey : scalarApiKey;
   const maxTokensRaw = Number.parseInt(env.MODEL_RELAY_MAX_TOKENS ?? "", 10);
   const maxTokens =
     Number.isFinite(maxTokensRaw) && maxTokensRaw > 0
@@ -215,6 +268,21 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
       ? { type: "enabled", budget_tokens: budgetRaw }
       : { type: "disabled" };
   const thinkingEnabled = thinking.type === "enabled";
+  const derivedLadder = deriveRelayReasoning({
+    thinkingEnabled,
+    declaredLevels: row?.reasoningLevels,
+    declaredDefault: row?.defaultReasoningLevel,
+  });
+  // #361/#363: the deployment default rung mapped onto the OpenAI effort —
+  // the openai-effort faces carry a rung (the anthropic face pins "none"
+  // here; its knob is the thinking budget above). An openai row whose
+  // default rung has no effort mapping throws HERE, at resolution: a broken
+  // declaration fails the deployment loudly (catalog doctrine), never
+  // silently clamps onto another effort.
+  const reasoningEffort = resolveResponsesEffort(
+    relayApiConsumesEffortMap(relayApi) ? derivedLadder.defaultLevel : "none",
+    row?.reasoningEffortMap,
+  );
   return {
     relay: {
       mode: apiKey === "" ? "mock" : "anthropic",
@@ -228,13 +296,19 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
       // env flag or the catalog row's `input` carrying "image".
       supportsImageInput:
         envFlag(env.MODEL_RELAY_IMAGE_INPUT) || row?.input?.includes("image") === true,
+      api: relayApi,
+      reasoningEffort,
     },
     hostBinding: {
       machineId: machineIdRaw === "" ? HARNESS_DEFAULTS.machineId : machineIdRaw,
     },
     // M0 deterministic budget (relay thinking defaults off — glm-5.3 burns
     // completion budget on reasoning; re-enable via the thinking env only).
-    execution: executionOptionsOf(env.HARNESS_PERMISSION_MODE, model, thinkingEnabled, row),
+  execution: executionOptionsOf(
+    env.HARNESS_PERMISSION_MODE,
+    model,
+    derivedLadder.defaultLevel,
+  ),
   };
 }
 
@@ -255,6 +329,8 @@ export class FixedReplyProvider implements ModelProvider {
     thinking: ThinkingConfig;
     contextWindow: number;
     supportsImageInput?: boolean;
+    api?: RelayApi;
+    reasoningEffort?: ResponsesEffort;
   };
 
   constructor(
@@ -265,6 +341,8 @@ export class FixedReplyProvider implements ModelProvider {
       thinking: ThinkingConfig;
       contextWindow: number;
       supportsImageInput?: boolean;
+      api?: RelayApi;
+      reasoningEffort?: ResponsesEffort;
     },
   ) {
     this.reply = reply;
@@ -285,10 +363,28 @@ export class FixedReplyProvider implements ModelProvider {
     // usage estimate (bytes/4 over the exact wire body — the mock's
     // "receipt"), then the fixed reply as the terminal answer text.
     this.calls.push(request);
+    const body =
+      this.relay.api === "openai-responses"
+        ? JSON.stringify(
+            responsesRequestBody(request, {
+              model: this.relay.model,
+              maxTokens: this.relay.maxTokens,
+              reasoningEffort: this.relay.reasoningEffort ?? "none",
+              supportsImageInput: this.relay.supportsImageInput,
+            }),
+          )
+      : this.relay.api === "openai-completions"
+        ? JSON.stringify(
+            completionsRequestBody(request, {
+              model: this.relay.model,
+              maxTokens: this.relay.maxTokens,
+              reasoningEffort: this.relay.reasoningEffort,
+              supportsImageInput: this.relay.supportsImageInput,
+            }),
+          )
+        : JSON.stringify(anthropicRequestBody(request, this.relay));
     const usage = {
-      inputTokens: estimateWireRequestTokens(
-        JSON.stringify(anthropicRequestBody(request, this.relay)),
-      ),
+      inputTokens: estimateWireRequestTokens(body),
       outputTokens: 0,
       cacheReadInputTokens: 0,
       cacheCreationInputTokens: 0,
@@ -320,6 +416,30 @@ export class FixedReplyProvider implements ModelProvider {
 /** Build the ModelProvider a resolved harness stands for. */
 export function relayProviderFrom(harness: ResolvedHarness): ModelProvider {
   if (harness.relay.mode === "anthropic") {
+    if (harness.relay.api === "openai-responses") {
+      return new ResponsesRelayProvider({
+        baseUrl: harness.relay.baseUrl,
+        apiKey: harness.relay.apiKey,
+        model: harness.relay.model,
+        maxTokens: harness.relay.maxTokens,
+        contextWindow: harness.relay.contextWindow,
+        reasoningEffort: harness.relay.reasoningEffort,
+        supportsImageInput: harness.relay.supportsImageInput,
+        api: harness.relay.api,
+      });
+    }
+    if (harness.relay.api === "openai-completions") {
+      return new CompletionsRelayProvider({
+        baseUrl: harness.relay.baseUrl,
+        apiKey: harness.relay.apiKey,
+        model: harness.relay.model,
+        maxTokens: harness.relay.maxTokens,
+        contextWindow: harness.relay.contextWindow,
+        reasoningEffort: harness.relay.reasoningEffort,
+        supportsImageInput: harness.relay.supportsImageInput,
+        api: harness.relay.api,
+      });
+    }
     return new AnthropicRelayProvider({
       baseUrl: harness.relay.baseUrl,
       apiKey: harness.relay.apiKey,
@@ -328,6 +448,7 @@ export function relayProviderFrom(harness: ResolvedHarness): ModelProvider {
       contextWindow: harness.relay.contextWindow,
       thinking: harness.relay.thinking,
       supportsImageInput: harness.relay.supportsImageInput,
+      api: harness.relay.api,
     });
   }
   return new FixedReplyProvider(
@@ -346,6 +467,7 @@ export function relayProviderFrom(harness: ResolvedHarness): ModelProvider {
  */
 export interface HarnessProjection {
   relayMode: string;
+  relayApi: string;
   relayBaseUrl: string;
   relayKeyPresent: boolean;
   relayModel: string;
@@ -363,6 +485,7 @@ export interface HarnessProjection {
 export function projectHarness(harness: ResolvedHarness): HarnessProjection {
   return {
     relayMode: harness.relay.mode,
+    relayApi: harness.relay.api,
     relayBaseUrl: harness.relay.baseUrl,
     relayKeyPresent: harness.relay.apiKey !== "",
     relayModel: harness.relay.model,
@@ -423,6 +546,7 @@ export function classifyHarnessProjection(
   if (current.permissionMode !== next.permissionMode) return "session";
   const liveKeys = [
     "relayMode",
+    "relayApi",
     "relayBaseUrl",
     "relayKeyPresent",
     "relayModel",

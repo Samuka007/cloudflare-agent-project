@@ -19,6 +19,8 @@
  */
 
 import {
+  IMAGE_SOURCE_API_FAMILY,
+  relayApiValues,
   relayCatalogModelSchema,
   type RelayCatalogProvider,
 } from "@cap/agent-do";
@@ -76,6 +78,18 @@ interface ProviderConfigDbRow {
 }
 
 const PROVIDER_CONFIG_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** Type guard: the provider-level api seat admits the #361 relay families +
+ * #362's image-source family; anything else is a loud row warning, never a
+ * silent entry into the effective catalog (skip-with-warning discipline). */
+function isAdmittedProviderApi(
+  value: string,
+): value is Exclude<RelayCatalogProvider["api"], undefined> {
+  return (
+    value === IMAGE_SOURCE_API_FAMILY ||
+    relayApiValues.some((family) => family === value)
+  );
+}
 
 /** Provider-id rule shared by the CRUD routes and the loader. */
 export function isValidProviderConfigId(id: string): boolean {
@@ -184,11 +198,20 @@ async function readProviderConfigs(
         skipWarning(row.id, "declares no models — not dispatchable until a model is added"),
       );
     }
-    if (dispatchable) {
+    const declaredApi = row.api !== null && row.api !== "" ? row.api : null;
+    if (declaredApi !== null && !isAdmittedProviderApi(declaredApi)) {
+      rowWarnings.push(
+        skipWarning(
+          row.id,
+          `api "${declaredApi}" is not a known family (${[...relayApiValues, IMAGE_SOURCE_API_FAMILY].join(", ")}) — skipped`,
+        ),
+      );
+    }
+    if (dispatchable && (declaredApi === null || isAdmittedProviderApi(declaredApi))) {
       providers[row.id] = {
         ...(row.display_name !== null ? { displayName: row.display_name } : {}),
         ...(row.base_url !== null && row.base_url !== "" ? { baseUrl: row.base_url } : {}),
-        ...(row.api !== null && row.api !== "" ? { api: row.api } : {}),
+        ...(declaredApi !== null ? { api: declaredApi } : {}),
         ...(row.service_tier === 1 ? { serviceTier: true } : {}),
         models: decodedModels,
       };

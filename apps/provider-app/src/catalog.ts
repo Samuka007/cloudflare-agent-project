@@ -1,10 +1,13 @@
 import {
   decodeRelayCatalog,
   deriveRelayReasoning,
+  DEFAULT_RELAY_API,
   IMAGE_SOURCE_API_FAMILY,
+  type RelayApi,
   type RelayCatalog,
   type RelayCatalogModel,
   type RelayCatalogProvider,
+  type ResponsesEffort,
   type RelayReasoningLevel,
 } from "@cap/agent-do";
 import { resolveHarness, type HarnessEnv, type ResolvedHarness } from "./harness.js";
@@ -48,6 +51,10 @@ export interface RelayCatalogModelRow {
    */
   thinkingBudgetTokens: number | null;
   imageInput: boolean;
+  /** #361: the row's protocol face (model api ?? provider api ?? default). */
+  api: RelayApi;
+  /** #361: the row's per-model effort map (responses face consumption). */
+  reasoningEffortMap?: Partial<Record<RelayReasoningLevel, ResponsesEffort>>;
   /** Exactly the running model's row (the model turns actually run). */
   isDefault: boolean;
 }
@@ -57,6 +64,8 @@ export interface RelayCatalogProviderRow {
   displayName: string;
   /** bb ProviderCapabilities.supportsServiceTier projection. */
   serviceTier: boolean;
+  /** #361: the provider-level protocol face (model rows may override). */
+  api?: RelayApi;
   /** OR over the provider's model rows (any image-capable model). */
   imageInput: boolean;
 }
@@ -118,6 +127,8 @@ function synthesisFromHarness(
         maxTokens: harness.relay.maxTokens,
         thinkingBudgetTokens: globalBudget,
         imageInput: harness.relay.supportsImageInput,
+        api: harness.relay.api,
+        reasoningEffortMap: undefined,
         isDefault: true,
       },
     ],
@@ -219,7 +230,8 @@ function projectCatalogDirectory(
     // not LLM chat providers — they never enter the selectable LLM
     // directory (fail-closed selection vocabulary stays honest) and ride
     // the Configured panel CRUD face instead.
-    if (provider.api === IMAGE_SOURCE_API_FAMILY) continue;
+    const providerApi = provider.api;
+    if (providerApi === IMAGE_SOURCE_API_FAMILY) continue;
     const rowBudgetOf = (entry: RelayCatalogModel): number | null =>
       entry.thinkingBudgetTokens ?? globalBudget;
     const rows = provider.models.map((entry): RelayCatalogModelRow => {
@@ -247,6 +259,10 @@ function projectCatalogDirectory(
         imageInput: isRunning
           ? harness.relay.supportsImageInput
           : (entry.input?.includes("image") ?? false),
+        // #361: the face this row dispatches under — model declaration,
+        // then the provider's, then the incumbent anthropic face.
+        api: entry.api ?? (providerApi ?? DEFAULT_RELAY_API),
+        reasoningEffortMap: entry.reasoningEffortMap,
         isDefault: isRunning,
       };
     });
@@ -255,6 +271,7 @@ function projectCatalogDirectory(
     providerRows.push({
       id: providerId,
       displayName: provider.displayName ?? providerId,
+      api: providerApi,
       serviceTier: provider.serviceTier ?? false,
       imageInput: rows.some((row) => row.imageInput),
     });
@@ -278,6 +295,8 @@ function projectCatalogDirectory(
       maxTokens: harness.relay.maxTokens,
       thinkingBudgetTokens: globalBudget,
       imageInput: harness.relay.supportsImageInput,
+      api: harness.relay.api,
+      reasoningEffortMap: undefined,
       isDefault: true,
     };
     models.unshift(runningRow);

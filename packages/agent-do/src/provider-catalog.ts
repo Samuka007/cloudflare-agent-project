@@ -108,6 +108,135 @@ export function deriveRelayReasoning(input: RelayReasoningDerivationInput): Rela
 }
 
 // ---------------------------------------------------------------------------
+// Relay API family + OpenAI effort mapping (#361/#363 adaptor seam)
+// ---------------------------------------------------------------------------
+
+/**
+ * The relay's protocol-face vocabulary — exactly the api families the edge
+ * relay speaks (omp models.yml field dictionary subset: `anthropic-messages`
+ * is the #34 incumbent face, `openai-responses` the #361 adaptor and
+ * `openai-completions` the #363 adaptor). The EDGE
+ * catalog validates this enum at decode (strict: an api label the relay
+ * cannot speak fails the deployment loudly, never silently rides the
+ * anthropic wire); the shared model dictionary and the daemon
+ * `DAEMON_AGENT_AUTH` face keep the free-form omp vocabulary (judge/security
+ * models may declare families this relay never dials).
+ */
+export const relayApiValues = [
+  "anthropic-messages",
+  "openai-responses",
+  "openai-completions",
+] as const;
+export type RelayApi = (typeof relayApiValues)[number];
+export const relayApiSchema = z.enum(relayApiValues);
+export const DEFAULT_RELAY_API: RelayApi = "anthropic-messages";
+
+/**
+ * The faces that consume a reasoning rung → OpenAI effort fold (both openai
+ * wire shapes carry an official effort field — `reasoning.effort` on
+ * responses, `reasoning_effort` on chat completions — with the SAME value
+ * vocabulary; the anthropic face keeps its budget semantics). #363: one
+ * predicate so the three fold sites (resolveRelaySelection, the harness
+ * resolution, the registry resolve) cannot grow a second opinion.
+ */
+export const OPENAI_EFFORT_API_FACES: readonly RelayApi[] = [
+  "openai-responses",
+  "openai-completions",
+];
+
+export function relayApiConsumesEffortMap(api: RelayApi): boolean {
+  return OPENAI_EFFORT_API_FACES.includes(api);
+}
+
+/**
+ * Resolve a deployment-grade api label (env scalar, credential slot row)
+ * to the RelayApi face. Blank → the default; anything outside the enum is
+ * a loud construction-time failure (the AGENT_DO_IMAGE_SOURCE posture —
+ * a silent wrong-protocol fallback would surface as upstream 404s).
+ */
+export function resolveRelayApi(raw: string | undefined | null): RelayApi {
+  const trimmed = raw?.trim() ?? "";
+  if (trimmed === "") return DEFAULT_RELAY_API;
+  const parsed = relayApiSchema.safeParse(trimmed);
+  if (!parsed.success) {
+    throw new Error(
+      `unknown relay api "${trimmed}" — supported: ${JSON.stringify(relayApiValues)}`,
+    );
+  }
+  return parsed.data;
+}
+
+/**
+ * The OpenAI effort target vocabulary (official current schema: none,
+ * minimal, low, medium, high, xhigh, max — the #361 protocol canon, not
+ * memory; #363 grounded the chat-completions `reasoning_effort` field
+ * against the same list, so one type serves both openai faces).
+ */
+export const responsesEffortValues = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+export type ResponsesEffort = (typeof responsesEffortValues)[number];
+export const responsesEffortSchema = z.enum(responsesEffortValues);
+
+/**
+ * Default relay-rung → effort mapping: identity for every rung the official
+ * effort vocabulary also names. The relay-only rungs (`ultra`, `ultracode`)
+ * are deliberately unmapped — a rung the wire cannot honestly express must
+ * 422 at selection (the #351 fail-closed red line), never clamp silently.
+ */
+export const DEFAULT_REASONING_EFFORT_BY_RUNG: Partial<
+  Record<RelayReasoningLevel, ResponsesEffort>
+> = {
+  none: "none",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "xhigh",
+  max: "max",
+};
+
+/**
+ * A ladder rung the responses face cannot express (no default mapping and
+ * no per-model override). Named so the registry can translate it into the
+ * #351 selection-grammar 422 instead of a wire-time surprise.
+ */
+export class RelayEffortMapError extends Error {
+  constructor(
+    readonly rung: RelayReasoningLevel,
+    message?: string,
+  ) {
+    super(
+      message ??
+        `reasoning rung "${rung}" has no responses-effort mapping ` +
+          `(declare reasoningEffortMap["${rung}"] on the model row, ` +
+          `omp models.yml compat.reasoningEffortMap dictionary precedent)`,
+    );
+    this.name = "RelayEffortMapError";
+  }
+}
+
+/**
+ * Resolve one relay rung to the Responses reasoning.effort string: the
+ * model row's per-model map wins (omp models.yml compat.reasoningEffortMap
+ * precedent — the deepseek rows map {high: high, xhigh: max}), then the
+ * default identity mapping, then the honest RelayEffortMapError.
+ */
+export function resolveResponsesEffort(
+  rung: RelayReasoningLevel,
+  map?: Partial<Record<RelayReasoningLevel, ResponsesEffort>>,
+): ResponsesEffort {
+  const mapped = map?.[rung] ?? DEFAULT_REASONING_EFFORT_BY_RUNG[rung];
+  if (mapped === undefined) throw new RelayEffortMapError(rung);
+  return mapped;
+}
+
+// ---------------------------------------------------------------------------
 // Shared field dictionary (model entries — edge + daemon, one vocabulary)
 // ---------------------------------------------------------------------------
 
@@ -156,6 +285,22 @@ export type RelayModelEntry = z.infer<typeof relayModelEntrySchema>;
  */
 export const relayCatalogModelSchema = relayModelEntrySchema
   .extend({
+    /**
+     * #361: the protocol face this row dispatches under — the EDGE relay
+     * vocabulary (enum-validated at decode; the shared dictionary above
+     * stays free-form for daemon parity). Absent → the provider row's api,
+     * then anthropic-messages.
+     */
+    api: relayApiSchema.optional(),
+    /**
+     * Per-model reasoning-rung → Responses effort map (omp models.yml
+     * compat.reasoningEffortMap dictionary precedent, deepseek rows:
+     * {high: high, xhigh: max}). Consumed by the openai-responses face;
+     * unmapped rungs fail closed at selection (RelayEffortMapError → 422).
+     */
+    reasoningEffortMap: z
+      .partialRecord(relayReasoningLevelSchema, responsesEffortSchema)
+      .optional(),
     /** bb AvailableModel.description (picker subtitle). */
     description: z.string().optional(),
     /**
@@ -184,6 +329,14 @@ export const relayCatalogModelSchema = relayModelEntrySchema
   );
 export type RelayCatalogModel = z.infer<typeof relayCatalogModelSchema>;
 
+/**
+ * #362 scope absorption ②: the api family that marks a provider row as an
+ * IMAGE source (the generate_image tool's OpenAI-images endpoint). Such rows
+ * carry their own source config + switch (row presence is the opt-in); they
+ * are excluded from the LLM selection directory and ride the panel CRUD face.
+ */
+export const IMAGE_SOURCE_API_FAMILY = "openai-images";
+
 export const relayCatalogProviderSchema = z.strictObject({
   /** Picker display name; defaults to the provider key. */
   displayName: z.string().min(1).optional(),
@@ -194,7 +347,13 @@ export const relayCatalogProviderSchema = z.strictObject({
    * bought channel and never carries a credential.
    */
   baseUrl: z.string().min(1).optional(),
-  api: z.string().min(1).optional(),
+  /**
+   * #361: the provider-level protocol face (model rows may override).
+   * #362 scope absorption ② additionally admits `openai-images` — an
+   * IMAGE-source row (the generate_image tool's switch + source), which the
+   * catalog projection filters out of the LLM selection directory.
+   */
+  api: z.union([relayApiSchema, z.literal(IMAGE_SOURCE_API_FAMILY)]).optional(),
   /** bb ProviderCapabilities.supportsServiceTier projection. */
   serviceTier: z.boolean().optional(),
   models: z.array(relayCatalogModelSchema).min(1),
@@ -269,14 +428,6 @@ export function findRelayCatalogModel(
  */
 export const SYNTHETIC_RELAY_PROVIDER_ID = "omp";
 
-/**
- * #362 scope absorption ②: the api family that marks a provider row as an
- * IMAGE source (the generate_image tool's OpenAI-images endpoint). Such rows
- * carry their own source config + switch (row presence is the opt-in); they
- * are excluded from the LLM selection directory and ride the panel CRUD face.
- */
-export const IMAGE_SOURCE_API_FAMILY = "openai-images";
-
 /** A thread-level execution selection (threads row overrides / create/send payloads). */
 export interface RelaySelection {
   providerId?: string;
@@ -314,6 +465,14 @@ export interface RelaySelectionDirectoryRow {
   id: string;
   reasoningLevels: readonly RelayReasoningLevel[];
   defaultReasoningLevel: RelayReasoningLevel;
+  /**
+   * #361: the row's protocol face (model api ?? provider api ?? default).
+   * The effort-mapping fail-closed check below applies only to
+   * openai-effort faces — the anthropic face keeps its budget semantics.
+   */
+  api?: RelayApi;
+  /** The row's per-model effort map (RelayCatalogModel.reasoningEffortMap). */
+  reasoningEffortMap?: Partial<Record<RelayReasoningLevel, ResponsesEffort>>;
   /**
    * The row's EFFECTIVE thinking budget (#362): model-declared budget
    * winning over the deployment scalar. `undefined` = legacy row that
@@ -407,6 +566,20 @@ export function resolveRelaySelection(
       `reasoning level "${reasoningLevel}" is not in the runnable ladder ` +
         `${JSON.stringify(ladder.levels)} for ${providerId}/${row.id}`,
     );
+  }
+  // #361/#363 fail-closed effort mapping: on the openai-effort faces a rung
+  // the wire cannot honestly express (no default identity mapping and no
+  // per-model reasoningEffortMap entry) is a named 422 — never a silent
+  // clamp onto another effort value.
+  if (row.api !== undefined && relayApiConsumesEffortMap(row.api)) {
+    try {
+      resolveResponsesEffort(reasoningLevel, row.reasoningEffortMap);
+    } catch (error) {
+      if (error instanceof RelayEffortMapError) {
+        throw new RelaySelectionError("reasoning_level_unknown", "reasoningLevel", error.message);
+      }
+      throw error;
+    }
   }
   return { providerId, modelId: row.id, reasoningLevel };
 }

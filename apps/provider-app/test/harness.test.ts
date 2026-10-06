@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
+import { CompletionsRelayProvider } from "@cap/agent-do";
 import {
   classifyHarnessProjection,
   FixedReplyProvider,
   harnessFromSnapshot,
   projectHarness,
+  relayProviderFrom,
   resolveHarness,
   snapshotHarness,
 } from "../src/harness.js";
@@ -205,6 +207,79 @@ describe("#350 MODEL_RELAY_CATALOG declaration folding", () => {
         .supportsImageInput,
     ).toBe(true);
   });
+
+  test("#361 the running row's api face folds into the harness (model, then provider, then default)", () => {
+    // Provider-level declaration covers rows without their own api.
+    const providerLevel = JSON.stringify({
+      providers: { newapi: { api: "openai-responses", models: [{ id: "glm-5.3-flash" }] } },
+    });
+    const declared = resolveHarness({
+      MODEL_RELAY_CATALOG: providerLevel,
+      MODEL_RELAY_MODEL: "glm-5.3-flash",
+    });
+    expect(declared.relay.api).toBe("openai-responses");
+    // Budget off → the deployment default rung "none" maps to effort "none".
+    expect(declared.relay.reasoningEffort).toBe("none");
+    // Model-level api overrides the provider face.
+    const modelLevel = JSON.stringify({
+      providers: {
+        mixed: {
+          api: "openai-responses",
+          models: [{ id: "glm-5.3", api: "anthropic-messages" }],
+        },
+      },
+    });
+    expect(
+      resolveHarness({ MODEL_RELAY_CATALOG: modelLevel, MODEL_RELAY_MODEL: "glm-5.3" }).relay.api,
+    ).toBe("anthropic-messages");
+    // No catalog → the incumbent anthropic face.
+    expect(resolveHarness({}).relay.api).toBe("anthropic-messages");
+    // Budget on over a responses row → the declared default rung maps to its effort.
+    const effortRow = JSON.stringify({
+      providers: {
+        omp: {
+          api: "openai-responses",
+          models: [
+            {
+              id: "glm-5.3-flash",
+              reasoningLevels: ["none", "high", "xhigh"],
+              defaultReasoningLevel: "high",
+              reasoningEffortMap: { xhigh: "max" },
+            },
+          ],
+        },
+      },
+    });
+    const budgetOn = resolveHarness({
+      MODEL_RELAY_CATALOG: effortRow,
+      MODEL_RELAY_THINKING_BUDGET_TOKENS: "4096",
+    });
+    expect(budgetOn.execution.reasoningLevel).toBe("high");
+    expect(budgetOn.relay.reasoningEffort).toBe("high");
+    // #363: a completions row folds the same rung→effort mapping (one fold,
+    // both openai faces) — here a provider-level chat face with a mapped rung.
+    const completionsRow = JSON.stringify({
+      providers: {
+        omp: {
+          api: "openai-completions",
+          models: [
+            {
+              id: "glm-5.3-flash",
+              reasoningLevels: ["none", "high", "xhigh"],
+              defaultReasoningLevel: "xhigh",
+              reasoningEffortMap: { xhigh: "max" },
+            },
+          ],
+        },
+      },
+    });
+    const completions = resolveHarness({
+      MODEL_RELAY_CATALOG: completionsRow,
+      MODEL_RELAY_THINKING_BUDGET_TOKENS: "4096",
+    });
+    expect(completions.relay.api).toBe("openai-completions");
+    expect(completions.relay.reasoningEffort).toBe("max");
+  });
 });
 
 describe("#308 fixed-reply usage estimate", () => {
@@ -248,6 +323,66 @@ describe("#308 fixed-reply usage estimate", () => {
     });
     expect(usage.usage.inputTokens).toBeGreaterThan(0);
     expect(reply).toEqual({ kind: "text-delta", text: "mock reply" });
+  });
+});
+
+describe("#363 fixed-reply completions face", () => {
+  test("a completions-face mock renders the chat.completions wire body", async () => {
+    const provider = new FixedReplyProvider("mock reply", {
+      model: "glm-5.3-flash",
+      maxTokens: 4096,
+      thinking: { type: "disabled" },
+      contextWindow: 200_000,
+      api: "openai-completions",
+      reasoningEffort: "none",
+    });
+    const chunks = [];
+    for await (const chunk of provider.streamTurn(
+      {
+        threadId: "th",
+        turnId: "t1",
+        modelCallId: 1,
+        input: "hi",
+        inputImages: [],
+        steers: [],
+        priorCalls: [],
+        asyncResults: [],
+        experimentalGates: {
+          externalThinking: false,
+          contextNotes: false,
+          checkpoint: false,
+          generateImage: false,
+        },
+      },
+      { signal: new AbortController().signal },
+    )) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(2);
+    const [usage, reply] = chunks;
+    if (usage?.kind !== "usage") throw new Error("unreachable");
+    expect(usage.usage.inputTokens).toBeGreaterThan(0);
+    expect(reply).toEqual({ kind: "text-delta", text: "mock reply" });
+  });
+
+  test("relayProviderFrom constructs the CompletionsRelayProvider for a completions face", () => {
+    const provider = relayProviderFrom({
+      relay: {
+        mode: "anthropic",
+        baseUrl: "https://newapi.test/v1",
+        apiKey: "k",
+        model: "glm-5.3-flash",
+        maxTokens: 8192,
+        contextWindow: 200_000,
+        thinking: { type: "disabled" },
+        supportsImageInput: false,
+        api: "openai-completions",
+        reasoningEffort: "none",
+      },
+      hostBinding: { machineId: "local" },
+      execution: executionOptions(),
+    });
+    expect(provider).toBeInstanceOf(CompletionsRelayProvider);
   });
 });
 

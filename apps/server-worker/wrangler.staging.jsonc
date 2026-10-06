@@ -1,11 +1,14 @@
 {
   // $schema: ../node_modules/wrangler/config-schema.json
   // Staging deployment (#31): same composed entry as wrangler.jsonc, with the
-  // real staging D1 and the composition vars baked. Relay stays in harness
-  // mock mode here (no MODEL_RELAY_* secret): live glm-5.3 calls from the CF
-  // edge to open.bigmodel.cn hang with no first byte (reproduced 3×, #34) —
-  // the live-model full-chain proof runs under local wrangler dev until the
-  // owner picks the endpoint fix (api.z.ai or VPS relay).
+  // real staging D1 and the composition vars baked. Relay catalog (#361
+  // cutover, 2026-10-06): newapi openai-responses adaptor, glm-5.3-flash —
+  // replaces the direct open.bigmodel.cn anthropic secret (zhipu account
+  // quota wall 429/1310; the 10-04 "anthropic truncation" misdiagnosis was
+  // corrected same day — newapi anthropic SSE completes with message_stop).
+  // Credentials ride MODEL_RELAY_PROVIDER_CREDENTIALS (Worker secret, put
+  // by PM at cutover; scalar MODEL_RELAY_* secrets deleted so the catalog
+  // takes effect — env scalars override the catalog per #350).
   "name": "cap-server-staging",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-29",
@@ -80,5 +83,9 @@
     "ORCHESTRATOR_HOST_ID": "local",
     "DAEMON_HOST_ID": "local",
     "DAEMON_MACHINE_ID": "local",
+    "MODEL_RELAY_CATALOG": "{\"defaultProvider\":\"omp\",\"providers\":{\"omp\":{\"displayName\":\"newapi\",\"baseUrl\":\"https://newapi.samuka007.top/v1\",\"api\":\"openai-responses\",\"models\":[{\"id\":\"glm-5.3-flash\",\"name\":\"GLM 5.3 Flash\",\"reasoning\":true,\"input\":[\"text\"]}]}}}",
+    // #303 thinking walkthrough: budget on → reasoning ladder projects one
+    // rung; Responses face maps it onto reasoning.effort.
+    "MODEL_RELAY_THINKING_BUDGET_TOKENS": "4096",
   },
 }
