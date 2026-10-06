@@ -465,6 +465,48 @@ export const providerConfigDiscoverResponseSchema = z.object({
 });
 export type ProviderConfigDiscoverResponse = z.infer<typeof providerConfigDiscoverResponseSchema>;
 
+// --- #364 omp models.yml import (paste-to-panel one-click lift) --------------
+// POST /system/providers/import-models-yml: the panel pastes an omp
+// ~/.omp/agent/models.yml fragment and the server parses + maps it into
+// provider_configs rows through the SAME insert/encryption path the CRUD
+// face uses (apiKey plaintext rides this one request body exactly once,
+// then only api_key_enc ciphertext exists). Semantics live in
+// @cap/provider-app models-yml-import.ts (omp models-config-schema ground
+// truth); this face only bounds the payload and describes the verdicts.
+
+export const providerConfigImportRequestSchema = z.strictObject({
+  /** The pasted YAML text (a full models.yml or a bare fragment of it). */
+  yaml: z.string().min(1).max(524_288),
+});
+export type ProviderConfigImportRequest = z.infer<typeof providerConfigImportRequestSchema>;
+
+/**
+ * Per-provider verdict: `created` rows report HTTP-grade 201; every refusal
+ * is a named code with its HTTP-grade status (409 exists/reserved, 422
+ * unsupported api/invalid shape/master-key gate) — an out-of-family api
+ * value is an explicit 422 unsupported_api verdict, never a silent drop.
+ * `warnings` carries the migration transcript (dropped omp-only keys,
+ * unresolvable $$CREDENTIAL_ placeholders, skipped model rows).
+ */
+export const providerConfigImportEntrySchema = z.object({
+  id: z.string().min(1),
+  verdict: z.enum(["created", "skipped"]),
+  status: z.number().int(),
+  code: z.string().min(1),
+  message: z.string(),
+  modelCount: z.number().int().nonnegative(),
+  hasApiKey: z.boolean(),
+  warnings: z.array(z.string()),
+});
+export type ProviderConfigImportEntry = z.infer<typeof providerConfigImportEntrySchema>;
+
+export const providerConfigImportResponseSchema = z.object({
+  providers: z.array(providerConfigImportEntrySchema),
+  created: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+});
+export type ProviderConfigImportResponse = z.infer<typeof providerConfigImportResponseSchema>;
+
 export const systemConfigReloadResponseSchema = z.object({
   ok: z.literal(true),
 });
