@@ -38,24 +38,16 @@ const MULTI = JSON.stringify({
 });
 
 describe("#350 resolveRelayCatalog", () => {
-  test("absent catalog → the M0 omp synthesis (picker shape unchanged)", () => {
+  test("absent catalog → the empty resolution; nothing is synthesized (#434)", () => {
     const resolution = resolveRelayCatalog({});
     expect(resolution.configured).toBe(false);
     expect(resolution.decodeError).toBe(false);
-    expect(resolution.defaultProviderId).toBe("omp");
-    expect(resolution.providers).toEqual([
-      { id: "omp", displayName: "omp", serviceTier: false, imageInput: false },
-    ]);
-    expect(resolution.models).toHaveLength(1);
-    expect(resolution.models[0]).toMatchObject({
-      providerId: "omp",
-      id: "glm-5.3",
-      model: "glm-5.3",
-      displayName: "glm-5.3",
-      reasoningLevels: ["none"],
-      defaultReasoningLevel: "none",
-      isDefault: true,
-    });
+    expect(resolution.defaultProviderId).toBeNull();
+    expect(resolution.providers).toEqual([]);
+    expect(resolution.models).toEqual([]);
+    // The harness half (the deployment channel) is untouched — the catalog
+    // face going empty must not break the projections' harness row.
+    expect(resolution.harness.relay.model).toBe("glm-5.3");
   });
 
   test("declared catalog projects every provider/model row in declaration order", () => {
@@ -102,7 +94,6 @@ describe("#350 resolveRelayCatalog", () => {
 
   test("same-source matrix: the default row equals the harness resolution", () => {
     const envs: HarnessEnv[] = [
-      {},
       { MODEL_RELAY_MODEL: "glm-5.3-air", MODEL_RELAY_CATALOG: MULTI },
       { MODEL_RELAY_CATALOG: MULTI, MODEL_RELAY_THINKING_BUDGET_TOKENS: "4096" },
       {
@@ -131,35 +122,36 @@ describe("#350 resolveRelayCatalog", () => {
     }
   });
 
-  test("a running model missing from the declaration is prepended under the default provider", () => {
+  test("a running model missing from the declaration gets no default row (#434)", () => {
     const resolution = resolveRelayCatalog({
       MODEL_RELAY_CATALOG: MULTI,
       MODEL_RELAY_MODEL: "undeclared-model",
       MODEL_RELAY_IMAGE_INPUT: "1",
     });
-    expect(resolution.models[0]).toMatchObject({
-      providerId: "main",
-      id: "undeclared-model",
-      displayName: "undeclared-model",
-      isDefault: true,
-      imageInput: true,
-    });
-    // The declared rows ride alongside, none falsely flagged default.
-    expect(resolution.models).toHaveLength(4);
-    expect(resolution.models.filter((model) => model.isDefault)).toHaveLength(1);
+    // #434: the omission is configuration — exactly the declared rows are
+    // projected, and none is falsely flagged default (no prepend, no
+    // synthesized wire-truth row).
+    expect(resolution.models.map((model) => model.id)).toEqual([
+      "glm-5.3",
+      "glm-5.3-air",
+      "glm-5.3-flash",
+    ]);
+    expect(resolution.models.filter((model) => model.isDefault)).toHaveLength(0);
   });
 
-  test("broken declaration → decodeError with a functional synthesis", () => {
+  test("broken declaration → decodeError with an empty directory", () => {
     const resolution = resolveRelayCatalog({
       MODEL_RELAY_CATALOG: '{"providers":{},"defaultProvider":"omp"}',
       MODEL_RELAY_MODEL: "glm-5.3-air",
     });
     expect(resolution.configured).toBe(true);
     expect(resolution.decodeError).toBe(true);
-    // The picker stays functional: the env-only M0 synthesis is served.
-    expect(resolution.defaultProviderId).toBe("omp");
-    expect(resolution.models).toHaveLength(1);
-    expect(resolution.models[0]).toMatchObject({ id: "glm-5.3-air", isDefault: true });
+    // #434: the decode error is loud on the projections faces, but the
+    // directory serves NO rows — the picker is honestly empty.
+    expect(resolution.defaultProviderId).toBeNull();
+    expect(resolution.providers).toEqual([]);
+    expect(resolution.models).toEqual([]);
+    // The harness half keeps folding the explicit env model.
     expect(resolution.harness.relay.model).toBe("glm-5.3-air");
   });
 });

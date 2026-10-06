@@ -327,13 +327,14 @@ export const systemProviderProjectionsResponseSchema = z.object({
    * may name ids — but the full declared values (ladders, windows, display
    * names) live on GET /system/execution-options, the same resolution.
    * decodeError mirrors the webSearch precedent: the strict decode failed,
-   * the env-only synthesis is served, and the error text is dropped (zod
-   * messages can quote raw env content — zero-secret discipline).
+   * NO rows are served (#434 — nothing synthesized), and the error text is
+   * dropped (zod messages can quote raw env content — zero-secret discipline).
    */
   catalog: z.object({
     configured: z.boolean(),
     decodeError: z.boolean(),
-    defaultProviderId: z.string(),
+    /** The declaration's defaultProvider; null = declared none (or broken). */
+    defaultProviderId: z.string().nullable(),
     defaultModel: z.string(),
     providers: z.array(z.string()),
     models: z.array(z.string()),
@@ -410,13 +411,9 @@ export function isPublicHttpsBaseUrl(value: string): boolean {
   return host.split(".").every((label) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
 }
 
-export const publicHttpsBaseUrlSchema = z
-  .string()
-  .min(1)
-  .max(2000)
-  .refine(isPublicHttpsBaseUrl, {
-    message: "baseUrl must be an https URL naming a public domain (no http, IPs, or intranet hosts)",
-  });
+export const publicHttpsBaseUrlSchema = z.string().min(1).max(2000).refine(isPublicHttpsBaseUrl, {
+  message: "baseUrl must be an https URL naming a public domain (no http, IPs, or intranet hosts)",
+});
 
 export const providerConfigWriteSchema = z.strictObject({
   displayName: z.string().min(1).max(200).optional(),
@@ -449,10 +446,11 @@ export const providerConfigPatchRequestSchema = z.strictObject({
 });
 export type ProviderConfigPatchRequest = z.infer<typeof providerConfigPatchRequestSchema>;
 
-/** #388 row provenance on the CRUD display face. */
-export const providerConfigSourceSchema = z.enum(["user", "deployment-seed"]);
-export type ProviderConfigSource = z.infer<typeof providerConfigSourceSchema>;
-
+/**
+ * One user row of the D1 provider_configs 正本. #434 (point 6): the CRUD
+ * display face lists ONLY user rows — the env seed has no rows here; its
+ * read faces are provider-projections / execution-options.
+ */
 export const providerConfigRowSchema = z.object({
   id: z.string().min(1),
   displayName: z.string().nullable(),
@@ -467,13 +465,6 @@ export const providerConfigRowSchema = z.object({
   dispatchable: z.boolean(),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
-  /**
-   * #388: the display face IS the merged execution-options truth — "user"
-   * rows are stored provider_configs (CRUD-editable), "deployment-seed"
-   * rows are env MODEL_RELAY_CATALOG providers not overridden (read-only,
-   * redeploy-managed).
-   */
-  source: providerConfigSourceSchema,
 });
 export type ProviderConfigRow = z.infer<typeof providerConfigRowSchema>;
 

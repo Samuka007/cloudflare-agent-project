@@ -420,11 +420,12 @@ export function findRelayCatalogModel(
 // ---------------------------------------------------------------------------
 
 /**
- * The synthetic provider seam id (routes/threads.ts create: the pre-#351
- * `payload.providerId ?? "omp"` sentinel). It names "the deployment default
- * provider" rather than a concrete catalog key, so it resolves to whatever
- * the declaration's default is — pre-#351 threads keep dispatching on
- * catalog deployments instead of failing on an undeclared key.
+ * The reserved legacy provider id (#434 retired the sentinel semantics: a
+ * selection naming "omp" is an unknown provider like any other, and
+ * sentinel-era stored rows/threads fail loudly — point ⑧). The id stays
+ * refused on the provider-config CRUD write face so a new user row cannot
+ * silently resurrect those journals, and the agent-do compose rig keeps it
+ * as its single declared directory row.
  */
 export const SYNTHETIC_RELAY_PROVIDER_ID = "omp";
 
@@ -436,7 +437,7 @@ export interface RelaySelection {
 }
 
 export type RelaySelectionErrorCode =
-  "provider_unknown" | "model_unknown" | "reasoning_level_unknown";
+  "provider_default_undeclared" | "provider_unknown" | "model_unknown" | "reasoning_level_unknown";
 
 /**
  * Fail-closed selection rejection (ROADMAP red line: unknown values 422 with
@@ -484,8 +485,11 @@ export interface RelaySelectionDirectoryRow {
 
 export interface RelaySelectionDirectory {
   rows: readonly RelaySelectionDirectoryRow[];
-  /** The seam default provider (catalog defaultProvider ?? first key ?? omp). */
-  defaultProviderId: string;
+  /**
+   * The declaration's defaultProvider; null when the declaration names none
+   * (#434: no first-key fill — an undeclared default fails closed).
+   */
+  defaultProviderId: string | null;
   /** The model turns actually run (harness model) — a provider's default fill. */
   defaultModelId: string;
   /** Deployment thinking flag (MODEL_RELAY_THINKING_BUDGET_TOKENS > 0). */
@@ -501,7 +505,9 @@ export interface ResolvedRelaySelection {
 /**
  * Resolve one thread-level selection against the catalog directory:
  *
- * - provider: explicit ?? default ("omp" maps to the default — sentinel);
+ * - provider: explicit ?? the declaration's defaultProvider — and a
+ *   selection with neither is a named 422 (no sentinel, no first-key guess:
+ *   #434 fail-closed, the declaration is the only configuration source);
  * - model: explicit (must sit in the resolved provider's rows) ?? the
  *   running model when the provider declares it — a provider without the
  *   running row has NO default and demands an explicit model (named error,
@@ -516,10 +522,19 @@ export function resolveRelaySelection(
   directory: RelaySelectionDirectory,
   selection: RelaySelection,
 ): ResolvedRelaySelection {
-  const providerId =
-    selection.providerId === SYNTHETIC_RELAY_PROVIDER_ID
-      ? directory.defaultProviderId
-      : (selection.providerId ?? directory.defaultProviderId);
+  let providerId: string;
+  if (selection.providerId !== undefined) {
+    providerId = selection.providerId;
+  } else if (directory.defaultProviderId !== null) {
+    providerId = directory.defaultProviderId;
+  } else {
+    throw new RelaySelectionError(
+      "provider_default_undeclared",
+      "providerId",
+      "no provider selected and the declaration names no defaultProvider — " +
+        "pass providerId explicitly or declare defaultProvider in the catalog",
+    );
+  }
   const providerRows = directory.rows.filter((row) => row.providerId === providerId);
   if (providerRows.length === 0) {
     const declared = [...new Set(directory.rows.map((row) => row.providerId))].sort();

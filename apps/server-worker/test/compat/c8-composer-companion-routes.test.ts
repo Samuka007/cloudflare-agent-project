@@ -9,8 +9,8 @@ import {
   projectDefaultExecutionOptionsQuerySchema,
 } from "../../src/contract/api/projects.js";
 import { projectExecutionDefaultsSchema } from "../../src/contract/domain/index.js";
-import { createThread } from "../helpers.js";
-import { exports } from "cloudflare:workers";
+import { createThread, restoreRigRelayCatalog, unsetRigRelayCatalog } from "../helpers.js";
+import { env, exports } from "cloudflare:workers";
 
 /**
  * Criterion 8 (issue #40): the composer's startup companion reads —
@@ -38,9 +38,7 @@ describe("criterion 8: composer companion routes", () => {
     // against the bb installedPlugin schema, which is what the SPA's SDK
     // client enforces.
     const parsed = pluginListResponseSchema.parse(body);
-    expect(parsed.plugins.map((plugin) => plugin.id)).toEqual([
-      "cap-provider-config",
-    ]);
+    expect(parsed.plugins.map((plugin) => plugin.id)).toEqual(["cap-provider-config"]);
   });
 
   it("serves the bb empty /plugins/contributions metadata", async () => {
@@ -83,25 +81,52 @@ describe("criterion 8: composer companion routes", () => {
     expect(body.code).toBe("project_not_found");
   });
 
-  it("serves resolved default-execution-options in the bb ProjectExecutionDefaults shape", async () => {
-    const { projectId } = await createThread({ title: "defaults-visible" });
-    const response = await apiGet(`/api/v1/projects/${projectId}/default-execution-options`);
-    expect(response.status).toBe(200);
-    const body = await response.json();
-    const parsed = projectExecutionDefaultsSchema.parse(body);
-    expect(parsed.providerId).toBe("omp");
-    // Test wrangler vars leave MODEL_RELAY_MODEL unset → the "glm-5.3"
-    // fallback (same expression as packages/agent-do/src/worker.ts:41).
-    expect(parsed.model).toBe("glm-5.3");
-    expect(parsed.serviceTier).toBe("default");
-    // #350 three-face convergence: with the thinking budget unset the relay
-    // runs thinking disabled, so the defaults face reports "none" — the same
-    // derivation the execution-options ladder and the harness execution use
-    // (the old hardcoded "medium" ran nowhere).
-    expect(parsed.reasoningLevel).toBe("none");
-    expect(parsed.permissionMode).toBe("full");
-    // bb contract (public-api.ts:384-385) validates the (empty) query schema.
-    expect(projectDefaultExecutionOptionsQuerySchema.parse({})).toEqual({});
+  it("serves null default-execution-options when no defaultProvider is declared (#434)", async () => {
+    // The L1 rig declares a catalog (#434); the null shape is asserted with
+    // the binding locally unset (a declaration without defaultProvider).
+    unsetRigRelayCatalog();
+    try {
+      // The seeded personal project — an unconfigured deployment admits no
+      // thread create at all (the fail-closed 422), so no thread is made.
+      const response = await apiGet("/api/v1/projects/proj_personal/default-execution-options");
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      // bb's stored-defaults-absent shape: the declaration names no
+      // defaultProvider, so the face serves null — never a synthesized row
+      // (the composer falls back to the picker's explicit selection).
+      expect(body).toBeNull();
+      // bb contract (public-api.ts:384-385) validates the (empty) query schema.
+      expect(projectDefaultExecutionOptionsQuerySchema.parse({})).toEqual({});
+    } finally {
+      restoreRigRelayCatalog();
+    }
+  });
+
+  it("serves resolved default-execution-options when the declaration names a default", async () => {
+    (env as unknown as Record<string, string>).MODEL_RELAY_CATALOG = JSON.stringify({
+      defaultProvider: "declared",
+      providers: {
+        declared: { models: [{ id: "declared-model", defaultReasoningLevel: "none" }] },
+      },
+    });
+    try {
+      const { projectId } = await createThread({ title: "defaults-declared" });
+      const response = await apiGet(`/api/v1/projects/${projectId}/default-execution-options`);
+      expect(response.status).toBe(200);
+      const parsed = projectExecutionDefaultsSchema.parse(await response.json());
+      expect(parsed.providerId).toBe("declared");
+      // The harness model folds the declaration's default row (the running
+      // model), so the defaults face names exactly what turns run.
+      expect(parsed.model).toBe("declared-model");
+      expect(parsed.serviceTier).toBe("default");
+      // #350 three-face convergence: with the thinking budget unset the relay
+      // runs thinking disabled, so the defaults face reports "none" — the same
+      // derivation the execution-options ladder and the harness execution use.
+      expect(parsed.reasoningLevel).toBe("none");
+      expect(parsed.permissionMode).toBe("full");
+    } finally {
+      restoreRigRelayCatalog();
+    }
   });
 
   it("404s default-execution-options with project_not_found for an unknown project", async () => {

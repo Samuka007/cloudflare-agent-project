@@ -371,8 +371,11 @@ function askInteraction(events: readonly AnyAgentEvent[]) {
 }
 
 describe("M1.5 T4 — ask DO integration (DO↔SPA pending-interaction channel)", () => {
-  test("register → SPA-visible → ruling backflow unlocks the turn with an omp-verbatim answer", async () => {
+  test("register → SPA-visible → ruling backflow unlocks the turn with a verbatim answer", async () => {
     const rig = await createRig({
+      // A journaled execution: the interaction row names the owning provider
+      // derived from it (#434), never a constant.
+      execution: { providerId: "rig-provider", model: "rig-model", reasoningLevel: "none" },
       turns: [
         { toolCalls: [{ name: "ask", arguments: { questions: [ASK_QUESTION] } }] },
         { deltas: ["done"] },
@@ -388,7 +391,7 @@ describe("M1.5 T4 — ask DO integration (DO↔SPA pending-interaction channel)"
     expect(() =>
       userQuestionPendingInteractionPayloadSchema.parse(registered.data.payload),
     ).not.toThrow();
-    expect(registered.data.providerId).toBe("omp");
+    expect(registered.data.providerId).toBe("rig-provider");
     expect(registered.data.providerRequestId).toBe(registered.data.executionId);
     expect(registered.data.expiresAt).toBeNull();
 
@@ -429,6 +432,8 @@ describe("M1.5 T4 — ask DO integration (DO↔SPA pending-interaction channel)"
 
   test("the pending interaction is pushed over /ws as a pending-interaction change", async () => {
     const rig = await createRig({
+      // No journaled execution (the pre-#351 journal shape): the interaction
+      // row carries the honest "unknown" — never the retired "omp" sentinel.
       turns: [
         { toolCalls: [{ name: "ask", arguments: { questions: [ASK_QUESTION] } }] },
         { deltas: ["ok"] },

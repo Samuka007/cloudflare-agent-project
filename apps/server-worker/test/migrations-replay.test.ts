@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MIGRATION_FILES, ensureMigrations, splitMigrationStatements } from "./migrate.js";
 
 /**
@@ -12,10 +12,20 @@ import { MIGRATION_FILES, ensureMigrations, splitMigrationStatements } from "./m
  */
 beforeAll(ensureMigrations);
 
+afterAll(async () => {
+  // The shared worker runs one D1 for the whole suite (isolate:false): the
+  // probe rows must not leak onto later faces — /hosts parses `type` against
+  // the persistent|placeholder enum, so an uncleaned row 500s the face.
+  await env.DB.prepare("DELETE FROM environments WHERE id = 'env_replay_probe'").run();
+  await env.DB.prepare("DELETE FROM hosts WHERE id = 'host_replay_probe'").run();
+});
+
 describe("migration replay idempotency (#295)", () => {
   it("replays every migration file over a migrated DB without error or data loss", async () => {
     await env.DB.prepare(
-      "INSERT INTO hosts (id, name, type, created_at, updated_at) VALUES ('host_replay_probe', 'replay-probe', 'local', 1, 1)",
+      // A face-valid type: the row is a live probe against the replay, and
+      // the shared-worker discipline keeps every row face-parseable.
+      "INSERT INTO hosts (id, name, type, created_at, updated_at) VALUES ('host_replay_probe', 'replay-probe', 'persistent', 1, 1)",
     ).run();
     await env.DB.prepare(
       "INSERT INTO environments (id, project_id, host_id, workspace_provision_type, created_at, updated_at) VALUES ('env_replay_probe', 'proj_personal', 'host_replay_probe', 'git', 1, 1)",

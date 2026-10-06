@@ -18,6 +18,7 @@ import {
   projectExecutionDefaultsSchema,
   takeVisiblePromptHistoryEntries,
 } from "../contract/domain/index.js";
+import type { ProjectExecutionDefaults } from "../contract/domain/shared-types.js";
 import { threadListEntrySchema } from "../contract/domain/thread.js";
 import {
   copyProjectAttachments,
@@ -226,7 +227,11 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
     const formData = await ctx.req.formData();
     const fields = [...formData.keys()];
     if (fields.length === 0) {
-      throw new ApiError({ status: 400, code: "invalid_request", message: "Attachment file is required" });
+      throw new ApiError({
+        status: 400,
+        code: "invalid_request",
+        message: "Attachment file is required",
+      });
     }
     if (fields.length !== 1 || fields[0] !== "file") {
       throw new ApiError({
@@ -237,10 +242,18 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
     }
     const file = formData.get("file");
     if (!(file instanceof File)) {
-      throw new ApiError({ status: 400, code: "invalid_request", message: "Attachment file is required" });
+      throw new ApiError({
+        status: 400,
+        code: "invalid_request",
+        message: "Attachment file is required",
+      });
     }
     if (file.name.trim().length === 0) {
-      throw new ApiError({ status: 400, code: "invalid_request", message: "Attachment filename is required" });
+      throw new ApiError({
+        status: 400,
+        code: "invalid_request",
+        message: "Attachment filename is required",
+      });
     }
     return ctx.json(await storeAttachment(ctx.env.BLOBS, projectId, file), 201);
   });
@@ -252,7 +265,12 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
     await requirePublicProject(ctx.env, targetProjectId);
     const payload = await requireJsonBody(ctx, copyProjectAttachmentsRequestSchema);
     await requirePublicProject(ctx.env, payload.sourceProjectId);
-    await copyProjectAttachments(ctx.env.BLOBS, payload.sourceProjectId, targetProjectId, payload.paths);
+    await copyProjectAttachments(
+      ctx.env.BLOBS,
+      payload.sourceProjectId,
+      targetProjectId,
+      payload.paths,
+    );
     return ctx.json({ ok: true as const });
   });
 
@@ -358,20 +376,23 @@ async function toProjectWithThreads(env: Env, row: ProjectRow) {
  * port has no stored-defaults face yet, so it resolves the bb
  * ProjectExecutionDefaults shape (packages/domain shared-types.ts:639-645)
  * from the SAME catalog+harness resolution the picker faces serve (#350):
- * provider = catalog default (or the omp seam), model/tier/reasoning/
+ * provider = the declaration's defaultProvider, model/tier/reasoning/
  * permission = the harness execution resolution. This is the roadmap §2.3
  * contradiction-1 fix — the hardcoded "medium" (which nothing ran) vs the
  * directory "none" vs the harness "none" split collapses onto one source:
  * budget off → "none" everywhere, budget on → the declared default rung.
+ * #434: a deployment whose declaration names no defaultProvider serves
+ * `null` (bb's stored-defaults-absent shape) — never a synthesized row.
  */
 function resolveProjectDefaultExecutionOptions(
   env: Env,
   overlayProviders?: Record<string, RelayCatalogProvider>,
-) {
+): ProjectExecutionDefaults | null {
   const catalog =
     overlayProviders === undefined
       ? resolveRelayCatalog(env)
       : resolveRelayCatalogWithOverlay(env, overlayProviders);
+  if (catalog.defaultProviderId === null) return null;
   const harness = catalog.harness;
   return projectExecutionDefaultsSchema.parse({
     providerId: catalog.defaultProviderId,
