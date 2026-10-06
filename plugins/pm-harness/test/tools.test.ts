@@ -376,6 +376,50 @@ describe("pm_lane tool", () => {
     // The dispatch pipeline owns the board flip.
     expect(board.tickets().find((t) => t.number === 310)?.status).toBe("In Progress");
   });
+
+  it("#393: blockedBy rides the dispatch — edges materialized in the same confirm call", async () => {
+    const board = seedBoard();
+    board.addIssue({
+      number: 387,
+      title: "[infra] dependency",
+      updatedAt: new Date().toISOString(),
+    });
+    _inject({ gql: board.gql satisfies GqlFn, runGit: () => "" });
+    registerSpawn(() => ({ id: "agent-edge" }));
+    const laneTool = toolByName(createPmHarnessTools(fakeApi()), "pm_lane");
+
+    const result = await callTool(laneTool, {
+      ticket: 310,
+      confirm: true,
+      blockedBy: [387],
+    });
+    const details = toolDetails<{
+      reports: {
+        ok: boolean;
+        spawned: boolean;
+        statusFlipped: boolean;
+        blockedBy: { requested: number[]; already: number[]; applied: number[]; errors: string[] };
+      }[];
+    }>(result, ["reports"]);
+    const rep = details.reports[0];
+    expect(rep?.blockedBy).toEqual({
+      requested: [387],
+      already: [],
+      applied: [387],
+      errors: [],
+    });
+    expect(rep?.spawned).toBe(true);
+    expect(rep?.statusFlipped).toBe(true);
+    expect(
+      board
+        .tickets()
+        .find((t) => t.number === 310)
+        ?.blockedBy.map((b) => b.number),
+    ).toEqual([387]);
+    expect(result.content[0]?.type === "text" && result.content[0].text.includes("edges")).toBe(
+      true,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -392,7 +436,9 @@ describe("detached-omp spawn fallback", () => {
   });
 
   it("refuses to spawn without a provisioned worktree cwd", () => {
-    expect(() => detachedLaneSpawn({ prompt: "p", label: "l", agent: "task", context: null })).toThrow(
+    expect(() =>
+      detachedLaneSpawn({ prompt: "p", label: "l", agent: "task", context: null }),
+    ).toThrow(
       /no worktree cwd/,
     );
   });

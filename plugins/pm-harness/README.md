@@ -8,9 +8,9 @@ the omp custom-tools pipeline into the same registry as the built-ins. With
 
 | Tool | Wraps | What it does |
 | --- | --- | --- |
-| `pm_lane` | `AP.lane` | Gate check (open ∧ Todo ∧ no open blockers) → herdr worktree provision → lane spawn → guarded board flip to In Progress. Dry-run default. |
+| `pm_lane` | `AP.lane` | Gate check (open ∧ Todo ∧ no open blockers) → herdr worktree provision → lane spawn → `blockedBy` edges materialized with the dispatch (#393) → guarded board flip to In Progress. Dry-run default. |
 | `pm_apply` | `AP.apply` | The ONLY board write path: preflight diff → batched guarded writes with per-batch re-verify; drift withholds remaining batches. Dry-run default. |
-| `pm_audit` | `AP.audit` | Board-vs-reality drift reconcile (read-only); returns `pm_apply`-ready repair mutations. |
+| `pm_audit` | `AP.audit` | Board-vs-reality drift reconcile (read-only), incl. prose dependencies without a `blockedBy` edge (#393, advisory); returns `pm_apply`-ready repair mutations. |
 | `pm_release` | `AP.release` | Browser-lease release (CDP tab/thread discipline) in the append-only ledger. |
 | `pm_ledger` | `AP.ledger` | Lease ledger read: full event log + replayed active set. |
 
