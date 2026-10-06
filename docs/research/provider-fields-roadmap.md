@@ -94,7 +94,7 @@ bb 的 provider 认证**全部由 CLI 自持**（各自 OAuth/登录态），服
 | per-thread providerId/model/reasoningLevel                     | create/send fail-closed 校验（422 具名）+ threads 行 override 列真消费 + journal 三态（thread.created / thread.execution_updated / turn.input pin）+ providerId 键控 RelayConfig 注册表分派（#351） | **已落（#351）**：选择语义 = 显式值严格命中目录行；未设成员解析部署默认（"omp" 哨兵 = 默认 provider）；重放（驱逐重放）经 journal pin 与现投递一致                      |
 | 多 provider 并存                                               | edge 注册表化（providerId 键控，同 schema 多行）+ `MODEL_RELAY_PROVIDER_CREDENTIALS` 每 provider 秘密槽（#255 C；无槽行落部署单 relay 槽，key 缺席行级 mock 降级）                                  | **已落（#351）**；**协议级多 API 形状分派**（OpenAI Responses vs Anthropic Messages）不在本路线图——relay wire 是 Anthropic 形状单实现，多协议另立                       |
 | 自定义模型注册（bb customModels）                              | 无                                                                                                                                                                                                  | 并入票1目录 JSON（我方部署者=用户，「声明即目录」，无需独立注册面）                                                                                                     |
-| auth 状态面（auth_required / signed_out / usage windows）      | key 存在性 boolean（#266）                                                                                                                                                                          | edge 单 key 无「登录态」语义；OAuth 订阅通道引入后才需要——随票3 裁                                                                                                      |
+| auth 状态面（auth_required / signed_out / usage windows）      | key 存在性 boolean（#266）                                                                                                                                                                          | edge 单 key 无「登录态」语义；OAuth 订阅通道引入后才需要——**#349 已裁搁置**，通道落地时随 ADR 引入三态投影（docs/design/edge-oauth-relay-auth.md §5）                   |
 | key 轮换                                                       | 单 key env，换 key = 改 env 重部署                                                                                                                                                                  | ops 级即可（见 §4.3），不单独立票                                                                                                                                       |
 | modelLoadError / usage 订阅窗                                  | 无（无宿主可探、无订阅通道）                                                                                                                                                                        | 有意收窄：探测的前提（宿主上装着 CLI）在我方不成立，目录改为部署自声明                                                                                                  |
 
@@ -134,12 +134,14 @@ bb 的 provider 认证**全部由 CLI 自持**（各自 OAuth/登录态），服
 
 ### 4.1 两个信任域，分开裁决
 
-| 域                                                                             | 现状                                                                                                         | 裁决方向                                                                                                  |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| 宿主执行的 OAuth（security_scan → Codex Security）                             | T15/#221 已裁「凭据宿主保管，整体归 daemon」；派发帧零 auth 面有 L1 钉死（l1-security-scan.test.ts:419-430） | **不迁移**。bb 同构（§1.5「we never refresh another tool's tokens」）——服务端不碰工具的凭据是两仓共同红线 |
-| edge-native 通道的 OAuth（relay 上游是 OAuth 订阅服务，如 Codex 订阅当 relay） | 无                                                                                                           | 票3 设计裁决；若裁做，形态见 §4.2                                                                         |
+| 域                                                                             | 现状                                                                                                         | 裁决方向                                                                                                                                                      |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 宿主执行的 OAuth（security_scan → Codex Security）                             | T15/#221 已裁「凭据宿主保管，整体归 daemon」；派发帧零 auth 面有 L1 钉死（l1-security-scan.test.ts:419-430） | **不迁移**。bb 同构（§1.5「we never refresh another tool's tokens」）——服务端不碰工具的凭据是两仓共同红线                                                     |
+| edge-native 通道的 OAuth（relay 上游是 OAuth 订阅服务，如 Codex 订阅当 relay） | 无                                                                                                           | **已裁（#349，2026-10-06）：搁置不立实现票，设计定案冻结于 docs/design/edge-oauth-relay-auth.md；触发条件见其 §6（首个 OAuth 订阅上游进入 edge 目录即重开）** |
 
 ### 4.2 edge OAuth 回调形态（若票3 裁「做」）
+
+> **#349 已裁（2026-10-06）**：搁置不立实现票；本节底稿经 ADR 修订定案——token cache 落点由 KV/Secrets Store 修订为 D1 `provider_configs` 密文列（#362 先例，底稿成文早于其落地），会话态仍 KV。详见 [edge-oauth-relay-auth.md](../design/edge-oauth-relay-auth.md) §3/§6。
 
 - **路由**：`GET /api/v1/auth/providers/:id/start`（生成 state+PKCE verifier，302 到 IdP authorize 端点）→ IdP 回调 `GET /api/v1/auth/providers/:id/callback`（state 对账 + code 换 token）。redirect URI = Worker 公网 URL，需在 IdP 侧预先注册 `[INFERENCE: 各 IdP 注册流程不同，设计票逐家核对]`。
 - **会话态存储**：state + verifier 进 KV（TTL ≈10 分钟，一次性消费）；token cache 加密落 KV 或 Workers Secrets Store——密钥本体仍是 Secret（L1），KV 只存密文。
@@ -171,4 +173,4 @@ bb 无此面（CLI 自轮）。我方最小形态：轮换 = 换 env 重部署�
 ## 6. 维护
 
 - bb pin 前进后刷新 §1 行号锚（catalog.ts / provider-types.ts / bb-app-managed-config.ts 三处是漂移热点）。
-- #350/#351 交付时回填 §2.2 缺口表判定列；#349 裁决后回填 §4.1 表并增补实现票号。
+- #350/#351 交付时回填 §2.2 缺口表判定列；#349 已裁（搁置，2026-10-06）回填 §4.1——无实现票号，实现票开出后在 ADR §0 增补。
