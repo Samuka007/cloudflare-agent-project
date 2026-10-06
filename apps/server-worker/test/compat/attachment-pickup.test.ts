@@ -3,7 +3,7 @@ import { exports } from "cloudflare:workers";
 import { DAEMON_PROTOCOL_VERSION } from "@cap/daemon-service";
 import { ensureMigrations } from "../migrate.js";
 import { projectAttachmentReader } from "../../src/services/attachment-pickup.js";
-import { env } from "../helpers.js";
+import { env, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers.js";
 import type { Env } from "../../src/env.js";
 
 /**
@@ -84,12 +84,12 @@ async function enrollBoundHost(): Promise<void> {
   const enroll = await apiFetch("/enroll", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ enrollKey: "[REDACTED-staging-secret]", hostId: BOUND_HOST_ID }),
+    body: JSON.stringify({ enrollKey: TEST_ENROLL_KEY, hostId: BOUND_HOST_ID }),
   });
   expect(enroll.status).toBe(201);
   const open = await apiFetch("/session/open", {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: "Bearer [REDACTED-staging-secret]" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${TEST_HOST_KEY}` },
     body: JSON.stringify({
       hostId: BOUND_HOST_ID,
       bootId: `boot_${BOUND_HOST_ID}_${crypto.randomUUID().slice(0, 8)}`,

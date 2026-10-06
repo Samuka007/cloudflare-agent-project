@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { exports } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import {
   DAEMON_PROTOCOL_VERSION,
   serviceFrameSchema,
@@ -24,7 +24,10 @@ import type { AnyAgentEvent } from "../src/fsm-events.js";
  * transport deterministically.
  */
 
-const HOST_KEY = "[REDACTED-staging-secret]";
+// #398/SEC-W5-002: no in-repo credential literal — the hookup rig injects
+// the daemon-face secret as a test binding (vitest.hookup.config.ts).
+const rigEnv = env as unknown as { DAEMON_HOST_KEY: string };
+const HOST_KEY = rigEnv.DAEMON_HOST_KEY;
 
 /** Protocol-real simulated daemon client (drives the composed worker front). */
 class HookupClient {

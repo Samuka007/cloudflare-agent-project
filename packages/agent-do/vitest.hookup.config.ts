@@ -34,7 +34,17 @@ if (existsSync(NIX_OS_CA_BUNDLE)) {
 }
 
 export default defineConfig({
-  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.hookup.jsonc" } })],
+  plugins: [
+    cloudflareTest({
+      wrangler: { configPath: "./wrangler.hookup.jsonc" },
+      // #398/SEC-W5-002: wrangler.hookup.jsonc carries no plaintext
+      // credential vars — the hookup rig injects explicit test-only bindings
+      // (smoke-hookup.test.ts reads DAEMON_HOST_KEY from the worker env).
+      miniflare: {
+        bindings: { ENROLL_KEY: "l1-rig-enroll-key", DAEMON_HOST_KEY: "l1-rig-host-key" },
+      },
+    }),
+  ],
   define: {
     __RELAY_ENV__: JSON.stringify(relayEnvFromDevVars()),
   },

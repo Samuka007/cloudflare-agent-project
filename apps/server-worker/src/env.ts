@@ -66,8 +66,11 @@ export interface Env {
   // --- composition vars (#31, #377) -------------------------------------------
 
   /**
-   * Daemon-service front credentials (daemon client enroll/hostKey). Set as
-   * staging secrets; the hookup literals are the local-dev fallback.
+   * Daemon-service front credentials (daemon client enroll/hostKey). Required
+   * for the daemon face: unset/empty = every daemon-face request fails closed
+   * (#398/SEC-W5-002 — the repo-public POC literals are gone). Set with
+   * `wrangler secret put`, or via the staging deploy's secrets-file pass-through
+   * (scripts/deploy-staging.sh).
    */
   readonly ENROLL_KEY?: string;
   readonly DAEMON_HOST_KEY?: string;

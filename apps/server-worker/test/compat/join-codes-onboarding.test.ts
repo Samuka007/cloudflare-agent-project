@@ -3,7 +3,7 @@ import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate.js";
 import { createHostJoinCodeResponseSchema } from "../../src/contract/api/hosts.js";
 import { hostSchema } from "../../src/contract/domain/host.js";
-import { BASE, apiGet } from "../helpers.js";
+import { BASE, apiGet, TEST_ENROLL_KEY } from "../helpers.js";
 
 /**
  * #258 host-onboarding end to end: mint (POST /hosts/join-codes, the
@@ -84,7 +84,7 @@ describe("join-code onboarding end to end (#258)", () => {
   });
 
   it("the static env key path is untouched", async () => {
-    const response = await enroll("[REDACTED-staging-secret]", "host_static_join");
+    const response = await enroll(TEST_ENROLL_KEY, "host_static_join");
     expect(response.status).toBe(201);
     const body = await response.json<{ hostId: string }>();
     expect(body.hostId).toBe("host_static_join");

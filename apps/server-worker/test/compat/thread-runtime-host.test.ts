@@ -1,7 +1,7 @@
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate.js";
-import { createThread, send } from "../helpers.js";
+import { createThread, send, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers.js";
 import { threadResponseSchema } from "../../src/contract/api/threads.js";
 import type { ThreadDbRow } from "../../src/db/rows.js";
 import { resolveThreadRuntimeState } from "../../src/services/runtime-display.js";
@@ -28,14 +28,14 @@ async function enroll(hostId: string): Promise<Response> {
   return exports.default.fetch("https://example.com/enroll", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ enrollKey: "[REDACTED-staging-secret]", hostId }),
+    body: JSON.stringify({ enrollKey: TEST_ENROLL_KEY, hostId }),
   });
 }
 
 async function openSession(hostId: string): Promise<{ sessionId: string }> {
   const response = await exports.default.fetch("https://example.com/session/open", {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: "Bearer [REDACTED-staging-secret]" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${TEST_HOST_KEY}` },
     body: JSON.stringify({ hostId, bootId: `boot_${hostId}`, protocolVersion: 1 }),
   });
   expect(response.status).toBe(201);
