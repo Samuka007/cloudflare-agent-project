@@ -13,7 +13,8 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 ### 派单
 
-**PM 每拍先 audit 再派发（#181）**：`const rep = AP.audit(snapshot, { activeLanes })` → `AP.apply(rep.mutations, { confirm: true })` 一键消漂移，复拍读 `clean` 才继续派发。规则：①issue CLOSED 但 Status∉{Done,Canceled}（收敛写=补落 sync 漏写，wontfix→Canceled 其余→Done）②Status=In Progress 但 CLOSED（lane 死亡未收口）③活跃 lane 票 Status≠In Progress（lane(confirm) 翻转丢失→补翻）④dispatchable Todo 超 N 天未派（frontier 老化提醒，无 mutation，动作是派发）⑤浏览器租约（#240，传 `leases: AP.ledger().events` 才武装）：涉浏览器 lane 无租约登记／租约碰撞（同 tab／同线程前缀并发）／交付后未释放，均无 mutation（动作是 AP.lease/AP.release）⑥走查挂账到期（#391，传 `walks: AP.walkLedger().events` 才武装）：到期未销的挂账走查翻红——open 票给 setStatus Wait for user mutation（板面可见），已红／活跃 lane／已关票只提示（动作是跑掉挂账 `AP.walkDone`/`AP.closeout` 或改期重登记）。正本 `plugins/pm-harness/src/core.ts`（#270 起，原 scripts/pm-autopilot.ts）；omp 会话内同款操作 = `pm_audit`/`pm_apply`/`pm_ledger`/`pm_release`/`pm_walk` 工具（#270 插件，eval 内 `await tool.pm_audit({ activeLanes })` 直呼）。
+
+**PM 每拍先 audit 再派发（#181）**：`const rep = AP.audit(snapshot, { activeLanes })` → `AP.apply(rep.mutations, { confirm: true })` 一键消漂移，复拍读 `clean` 才继续派发。规则：①issue CLOSED 但 Status∉{Done,Canceled}（收敛写=补落 sync 漏写，wontfix→Canceled 其余→Done）②Status=In Progress 但 CLOSED（lane 死亡未收口）③活跃 lane 票 Status≠In Progress（lane(confirm) 翻转丢失→补翻）④dispatchable Todo 超 N 天未派（frontier 老化提醒，无 mutation，动作是派发）⑤浏览器租约（#240，传 `leases: AP.ledger().events` 才武装）：涉浏览器 lane 无租约登记／租约碰撞（同 tab／同线程前缀并发）／交付后未释放，均无 mutation（动作是 AP.lease/AP.release）⑥走查挂账到期（#391，传 `walks: AP.walkLedger().events` 才武装）：到期未销的挂账走查翻红——open 票给 setStatus Wait for user mutation（板面可见），已红／活跃 lane／已关票只提示（动作是跑掉挂账 `AP.walkDone`/`AP.closeout` 或改期重登记）⑦prose 依赖未物化（#393 `proseDependencyWithoutEdge`，常备）：open 票 body 依赖字样行（依赖/前置/须先/倒查/blocked）上的 #n 指向本板票而 blockedBy 无对应边 → advisory finding（无 mutation，动作是 apply 补边或派单带 `blockedBy`；观察一波再议升 refuse）。正本 `plugins/pm-harness/src/core.ts`（#270 起，原 scripts/pm-autopilot.ts）；omp 会话内同款操作 = `pm_audit`/`pm_apply`/`pm_ledger`/`pm_release`/`pm_walk` 工具（#270 插件，eval 内 `await tool.pm_audit({ activeLanes })` 直呼）。
 
 票面三项齐才派（DoR 票门，#224 裁减为三项；工程纪律全定义仍见 AGENTS.md）：①复用三问字面答案（手写票含三问否定论证）②验收产品面可观察 ③bb/omp 上游锚点。预算行与参照往例不再是票门：预算仅作派单 packet 信息行（见下），往例估算（参考类预测）是人类纪律（AGENTS.md），均不进票门。
 
@@ -23,6 +24,7 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 - **效率预算行**：预期墙钟／资源上限／等待方式（交付即回 or 脚本化监控）；超 50% 须解释。
 - **资源所有权账本**：owned files/dirs + worktree 路径 + owned 外部资源（staging 部署、secret、面板）。PM 派单前做**不相交断言**——两 lane 地盘相交 = 派单错误。
 - **浏览器租约（#240）**：票面提及浏览器／CDP／Chrome 的派单由 `AP.lane` 自动登记租约——具名 tab `l<票号>`＋专属线程前缀 `l<票号>-`＋释放义务——并随 spawn 上下文携带；手工派发同款必填。台账 `AP.lease`／`AP.release`／`AP.ledger`（仓内 `.pm-leases.jsonl`，gitignored）。
+- **依赖边随派单走（#393）**：票面叙述的依赖在派发时同批物化——`AP.lane(t, {}, { confirm: true, blockedBy: [387] })`／`pm_lane { ticket, blockedBy: [387], confirm: true }` 走既有 addBlockedBy 原语、preflight 同源（spawn 成功后才写边，坏 blocker 拒写但翻转照走，结果落 report.blockedBy）；dry-run 出纯计划。依赖不留到二次 apply——写在叙述里的机制不是机制，漏物化由 audit 规则⑥兜底。
 - **分支纪律**：lane 只推 `lane/<ticket>-<slug>`，PR 由 PM 审后 merge。**main 分支保护=一切经 PR（2026-10-04 起，repo rule 强制）**——PM 文档/热修同样走短命分支 PR；对 main 的 push 非 ff 拒绝=硬停，先 `git status --branch` 看分叉方向，force 类操作仅限事故回滚本身且须 --force-with-lease 钉基线。
 - **POMDP 条款**：根因未证实不动码；60 分钟未定位根因 → 报告而非猜改。
 - **验收 checklist**；lane 报告必带：commit hash、CI run、测试计数、file:line 根因（修 bug 票）。

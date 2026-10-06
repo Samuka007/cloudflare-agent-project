@@ -8,9 +8,9 @@ the omp custom-tools pipeline into the same registry as the built-ins. With
 
 | Tool | Wraps | What it does |
 | --- | --- | --- |
-| `pm_lane` | `AP.lane` | Gate check (open ∧ Todo ∧ no open blockers) → herdr worktree provision → lane spawn → guarded board flip to In Progress. Dry-run default. |
+| `pm_lane` | `AP.lane` | Gate check (open ∧ Todo ∧ no open blockers) → herdr worktree provision → lane spawn → `blockedBy` edges materialized with the dispatch (#393) → guarded board flip to In Progress. Dry-run default. |
 | `pm_apply` | `AP.apply` | The ONLY board write path: preflight diff → batched guarded writes with per-batch re-verify; drift withholds remaining batches. Dry-run default. |
-| `pm_audit` | `AP.audit` | Board-vs-reality drift reconcile (read-only); walk-due rule 8 always armed from the repo ledger; returns `pm_apply`-ready repair mutations. |
+| `pm_audit` | `AP.audit` | Board-vs-reality drift reconcile (read-only); walk-due rule 8 always armed from the repo ledger; prose dependencies without a `blockedBy` edge (#393, rule 9, advisory); returns `pm_apply`-ready repair mutations. |
 | `pm_release` | `AP.release` | Browser-lease release (CDP tab/thread discipline) in the append-only ledger. |
 | `pm_ledger` | `AP.ledger` | Lease ledger read: full event log + replayed active set. |
 | `pm_walk` | `AP.walk` / `AP.walkDone` / `AP.walkLedger` | 走查挂账 ledger (#391): register {ticket, due, face}, settle with evidence, read events + active set. Overdue = audit rule 8 → board flips red (Wait for user). |
