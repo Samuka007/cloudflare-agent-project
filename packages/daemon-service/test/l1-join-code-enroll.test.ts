@@ -8,7 +8,9 @@ import { consumeJoinCode, joinCodeKvKey, mintJoinCode, sha256Hex } from "../src/
  * daemon enrolls with the enrollKey and the server issues identity from the
  * key's metadata (internal/hosts.ts:83-122, machine-auth.ts:360-401) — the
  * daemon never self-assigns the hostId on this path. The static env key path
- * (#176) keeps its old semantics.
+ * (#176) claims only an EXPLICIT body hostId; without one it mints a fresh
+ * host (#377) — the old deployment-identity fallback fabricated a synthetic
+ * "local" machine every env-key enrollee collided on.
  */
 
 function enroll(credential: string, extra: Record<string, unknown> = {}): Promise<Response> {
@@ -61,10 +63,23 @@ describe("L1 enroll join codes (#258)", () => {
     expect((await enroll("")).status).toBe(401);
   });
 
-  test("static env key enrollment keeps its body/env hostId semantics", async () => {
+  test("static env key enrollment keeps its explicit body claim", async () => {
     const response = await enroll(testEnv.ENROLL_KEY, { hostId: "host_jc_static01" });
     expect(response.status).toBe(201);
     const body = await response.json<{ hostId: string }>();
     expect(body.hostId).toBe("host_jc_static01");
+  });
+
+  test("env-key enroll without a claim mints a fresh bb-shape host (#377)", async () => {
+    const first = await enroll(testEnv.ENROLL_KEY);
+    const second = await enroll(testEnv.ENROLL_KEY);
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    const mintedA = await first.json<{ hostId: string }>();
+    const mintedB = await second.json<{ hostId: string }>();
+    // bb id shape, and NEVER a shared deployment identity.
+    expect(mintedA.hostId).toMatch(/^host_[23456789abcdefghijkmnpqrstuvwxyz]{10}$/u);
+    expect(mintedB.hostId).toMatch(/^host_[23456789abcdefghijkmnpqrstuvwxyz]{10}$/u);
+    expect(mintedA.hostId).not.toBe(mintedB.hostId);
   });
 });

@@ -18,7 +18,7 @@
  * auth.json, same file the client persists 0600) — no separate credentials.
  *
  * Run: bun staging-smoke.ts --url <base> [--dataDir <dir>] [--hostKey <key>]
- *      [--command '<shell>'] — dispatch an arbitrary command instead of the
+ *      [--hostId <id>] [--command '<shell>'] — dispatch an arbitrary command instead of the
  *      default `echo <marker> $(uname -m)` probe (#254 acceptance: prove the
  *      agent tool shell resolves host tools, e.g. `nix --version`). The
  *      dispatch still rides the marker gate: the command runs as
@@ -92,9 +92,23 @@ function hostKeyFromEnvOrArgs(): string {
   return auth.hostKey;
 }
 
+/** The daemon's enrolled identity (#377): enroll mints a fresh host, so the
+ * target host is whatever the client persisted (host-id, 0600) — never a
+ * deployment-name assumption. */
+function hostIdFromEnvOrArgs(): string {
+  const explicit = argValue("--hostId");
+  if (explicit !== undefined && explicit !== "") return explicit;
+  const dataDir = argValue("--dataDir") ?? process.env.DAEMON_DATA_DIR;
+  if (dataDir === undefined || dataDir === "") {
+    throw new Error("no hostId: pass --hostId or --dataDir (reads host-id)");
+  }
+  return readFileSync(join(dataDir, "host-id"), "utf8").trim();
+}
+
 const baseUrl = (argValue("--url") ?? process.env.DAEMON_SERVICE_URL ?? "").replace(/\/$/, "");
 if (baseUrl === "") throw new Error("--url or DAEMON_SERVICE_URL required");
 const hostKey = hostKeyFromEnvOrArgs();
+const hostId = hostIdFromEnvOrArgs();
 
 const stamp = Date.now().toString(36);
 const threadId = `thr_stg_smoke_${stamp}`;
@@ -168,14 +182,17 @@ async function waitFor<T>(
 }
 
 async function sessionUp(): Promise<string | null> {
-  const body = await getJson("/agent/session", SessionResponseSchema);
+  const body = await getJson(
+    `/agent/session?hostId=${encodeURIComponent(hostId)}`,
+    SessionResponseSchema,
+  );
   if (body.session === undefined || body.session === null) return null;
   return `hostId=${body.session.hostId} bootId=${body.session.bootId}`;
 }
 
 async function journalOps(targetExecutionId: string): Promise<z.infer<typeof JournalOpSchema>[]> {
   const body = await getJson(
-    `/agent/journal?executionId=${encodeURIComponent(targetExecutionId)}`,
+    `/agent/journal?hostId=${encodeURIComponent(hostId)}&executionId=${encodeURIComponent(targetExecutionId)}`,
     JournalResponseSchema,
   );
   return body.ops;
@@ -197,6 +214,7 @@ async function main(): Promise<void> {
     {
       threadId,
       turnId: `${threadId}-turn`,
+      machineId: hostId,
       executionId,
       tool: "bash",
       arguments: { command },
