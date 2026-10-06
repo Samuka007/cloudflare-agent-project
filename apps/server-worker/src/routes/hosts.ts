@@ -37,8 +37,11 @@ const HOST_COMMAND_TIMEOUT_MS = 30_000;
  * Since #386 the fleet is never empty: migration 0004 seeds the cloud
  * placeholder row (`cloud`, type "placeholder") — the removal guard anchors
  * bb's "must have one machine" invariant there, so every REAL machine stays
- * deletable and the row itself carries the empty-machine semantics (never
- * connected, never heartbeats).
+ * deletable. Since #436 the row is also the always-online primary: the hosts
+ * projection reports it permanently connected (virtual liveness — the daemon
+ * seam keeps the id session-less, so it never heartbeats), which points the
+ * pinned SPA's primaryHostId semantics at the row (primary ⇒ no Remove,
+ * matching the removal refusal below).
  */
 export function registerHostRoutes(app: Hono<AppEnv>): void {
   const routes = new Hono<AppEnv>();

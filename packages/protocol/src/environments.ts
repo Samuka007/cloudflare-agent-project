@@ -184,17 +184,21 @@ export type HostSummary = z.infer<typeof hostSummarySchema>;
 
 /**
  * #377 semantic placeholder for "no real host", promoted to a REAL hosts row
- * by #386 (revising #377's deliberately-rowless shape): the deployment seeds
+ * by #386 (revising #377's deliberately-rowless shape) and to the fleet's
+ * always-online primary machine by #436: the deployment seeds
  * `hosts (id = 'cloud', type = 'placeholder')`, so bb's "must have one
  * machine" invariant anchors on a row that carries empty-machine semantics —
  * zero real machines is a first-class state and every real machine stays
  * deletable (the removal guard refuses THIS row, not the last real one —
- * bb resolvePrimaryHostId, services/hosts/primary-host.ts:70-76, re-anchored).
- * The row never pretends to be online: no daemon may enroll or open a session
- * under this reserved id, so it never connects and never heartbeats; the
- * deployment-default binding (personal workspace with no explicit host, or no
- * project default source) resolves here and every host-tool dispatch answers
- * the honest `host_offline` until W6 (tier-0/tier-1, #307) promotes the same
- * row to a real cloud carrier.
+ * bb resolvePrimaryHostId, services/hosts/primary-host.ts:70-76, re-anchored;
+ * the port's cascade resolves its server-body leg to this row, so
+ * /system/config serves it as primaryHostId). The row never gains a real
+ * connection: no daemon may enroll or open a session under this reserved id,
+ * so it never heartbeats — the hosts FACE projects it permanently connected
+ * (#436 virtual liveness; the pinned SPA consumes its upstream primary
+ * semantics unchanged), while the deployment-default binding (personal
+ * workspace with no explicit host, or no project default source) resolves
+ * here and every host-tool dispatch answers the honest `host_offline` until
+ * W6 (tier-0/tier-1, #307) promotes the same row to a real cloud carrier.
  */
 export const CLOUD_PLACEHOLDER_HOST_ID = "cloud";

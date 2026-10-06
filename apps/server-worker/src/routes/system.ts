@@ -75,6 +75,7 @@ import {
   probeProviderConnection,
 } from "../services/provider-config-test.js";
 import { consumeProbeSlot } from "../services/probe-rate-limit.js";
+import { resolvePrimaryHostId } from "../services/host-records.js";
 import {
   getAppSettingsRow,
   getExperiments,
@@ -121,7 +122,6 @@ export function buildSystemConfig(env: Env, requestUrl: URL) {
     featureFlags: defaultFeatureFlags,
     hostDaemonPort: env.HOST_DAEMON_PORT !== undefined ? Number(env.HOST_DAEMON_PORT) : null,
     serverUrl: origin,
-    primaryHostId: null as string | null,
     primaryHostPlatform: null,
     voiceTranscriptionEnabled: false,
     dataDir: env.DATA_DIR ?? "/data",
@@ -342,7 +342,10 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
       featureFlags: draft.featureFlags,
       hostDaemonPort: draft.hostDaemonPort,
       serverUrl: draft.serverUrl,
-      primaryHostId: draft.primaryHostId,
+      // #436: read-time resolution — the cascade's server-body leg names the
+      // cloud placeholder (services/host-records.ts resolvePrimaryHostId);
+      // buildSystemConfig stays the pure env/URL draft without D1 access.
+      primaryHostId: await resolvePrimaryHostId(ctx.env),
       primaryHostPlatform: draft.primaryHostPlatform,
       voiceTranscriptionEnabled: draft.voiceTranscriptionEnabled,
       dataDir: draft.dataDir,

@@ -7,7 +7,8 @@ import { permissionModeSchema } from "./shared-types.js";
 
 /** bb carries only "persistent" (domain/src/host.ts:4-5); #386 adds the
  * seeded cloud placeholder — a real row with empty-machine semantics (never
- * connected, never heartbeats, removal refused). */
+ * heartbeats, removal refused); #436 projects it permanently connected on
+ * the hosts face as the fleet's primary machine. */
 export const hostTypeValues = ["persistent", "placeholder"] as const;
 export const hostTypeSchema = z.enum(hostTypeValues);
 export type HostType = z.infer<typeof hostTypeSchema>;
