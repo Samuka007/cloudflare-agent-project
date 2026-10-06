@@ -21,7 +21,11 @@
 
 import {
   AnthropicRelayProvider,
+  ResponsesRelayProvider,
   resolveRelaySelection,
+  RelaySelectionError,
+  RelayEffortMapError,
+  resolveResponsesEffort,
   type AgentRuntime,
   type ModelProvider,
   type RelayConfig,
@@ -157,6 +161,26 @@ export class RelayProviderRegistry {
       (candidate) =>
         candidate.providerId === resolved.providerId && candidate.id === resolved.modelId,
     );
+    // #361: the selection's protocol face — the row's api fold (model ??
+    // provider ?? harness default), resolved with the same precedence the
+    // catalog rows were built under.
+    const api = row?.api ?? harness.relay.api;
+    // #361: the rung → Responses effort fold. resolveRelaySelection already
+    // 422s an unmappable rung on openai-responses rows (fail-closed effort
+    // mapping); this re-resolution is belt over the harness-face path whose
+    // rows may predate that grammar. An anthropic-face row keeps its budget
+    // semantics — no effort fold.
+    let reasoningEffort = harness.relay.reasoningEffort;
+    if (api === "openai-responses") {
+      try {
+        reasoningEffort = resolveResponsesEffort(resolved.reasoningLevel, row?.reasoningEffortMap);
+      } catch (error) {
+        if (error instanceof RelayEffortMapError) {
+          throw new RelaySelectionError("reasoning_level_unknown", "reasoningLevel", error.message);
+        }
+        throw error;
+      }
+    }
     const slot = this.credentials[resolved.providerId] ?? {};
     const thinking: ThinkingConfig =
       resolved.reasoningLevel === "none"
@@ -182,6 +206,8 @@ export class RelayProviderRegistry {
         supportsImageInput: isRunning
           ? harness.relay.supportsImageInput
           : (row?.imageInput ?? false),
+        api,
+        reasoningEffort,
       },
     };
   }
@@ -210,9 +236,13 @@ export class RelayProviderRegistry {
               thinking: resolution.config.thinking ?? { type: "disabled" },
               contextWindow: resolution.config.contextWindow ?? 200_000,
               supportsImageInput: resolution.config.supportsImageInput,
+              api: resolution.config.api,
+              reasoningEffort: resolution.config.reasoningEffort,
             },
           )
-        : new AnthropicRelayProvider(resolution.config);
+        : resolution.config.api === "openai-responses"
+          ? new ResponsesRelayProvider(resolution.config)
+          : new AnthropicRelayProvider(resolution.config);
     this.instances.set(key, created);
     return created;
   }

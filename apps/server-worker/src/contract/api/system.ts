@@ -288,6 +288,8 @@ export const systemProviderProjectionsResponseSchema = z.object({
   /** The relay harness projection (projectHarness + relayBaseUrlHost). */
   harness: z.object({
     relayMode: z.string(),
+    /** #361: the relay protocol face (anthropic-messages | openai-responses). */
+    relayApi: z.string(),
     relayBaseUrl: z.string(),
     /** Host component of relayBaseUrl; null when the env URL does not parse. */
     relayBaseUrlHost: z.string().nullable(),
