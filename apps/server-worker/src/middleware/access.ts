@@ -286,6 +286,20 @@ export async function accessGate(ctx: Context, next: Next) {
       audience: ((ctx.env as Env).ACCESS_AUD ?? "").split(",").filter(Boolean),
     });
   } catch (error) {
+    // Decode-only diagnostic (no signature trust): aud/exp/iss are
+ // non-sensitive claims; pinpoints aud-mismatch vs expiry vs issuer.
+    try {
+      const parts = token.split(".");
+      const payload = decodeSegment(parts[1] ?? "") as Record<string, unknown>;
+      console.log(
+        "access gate reject detail:",
+        JSON.stringify({ aud: payload.aud, exp: payload.exp, iss: payload.iss }),
+        "allowed:",
+        JSON.stringify(((ctx.env as Env).ACCESS_AUD ?? "").split(",").filter(Boolean)),
+      );
+    } catch {
+      // decoding is best-effort; the primary reject log above already fired
+    }
     console.log(
       "access gate reject: verify",
       kid,
