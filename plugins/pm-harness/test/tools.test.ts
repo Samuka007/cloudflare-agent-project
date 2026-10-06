@@ -10,13 +10,19 @@ import {
   lease,
   registerSpawn,
   registerSpawnFallback,
-  walk,
+  walkDue,
   walkDone,
   type GqlFn,
   type SpawnRequest,
 } from "../src/core.js";
 import { createPmHarnessTools, detachedLaneSpawn } from "../src/tools.js";
-import type { CustomTool, CustomToolAPI, ToolResult, ZodBuilder, ZodNode } from "../src/host-types.js";
+import type {
+  CustomTool,
+  CustomToolAPI,
+  ToolResult,
+  ZodBuilder,
+  ZodNode,
+} from "../src/host-types.js";
 import { LABEL_IDS, MockBoard, PRIORITY_FIELD_ID, STATUS_FIELD_ID } from "./fixtures/mock-board.js";
 
 // The child_process mock is hoisted so the static import of tools.js below
@@ -24,10 +30,12 @@ import { LABEL_IDS, MockBoard, PRIORITY_FIELD_ID, STATUS_FIELD_ID } from "./fixt
 // transport. core.ts's execFileSync binding is included for module integrity;
 // every core path that would call it is injected away in this file.
 const spawnMock = vi.hoisted(() =>
-  vi.fn((_command: string, _args: string[], _options: { detached?: boolean; stdio?: unknown[] }) => ({
-    pid: 4242,
-    unref: () => undefined,
-  })),
+  vi.fn(
+    (_command: string, _args: string[], _options: { detached?: boolean; stdio?: unknown[] }) => ({
+      pid: 4242,
+      unref: () => undefined,
+    }),
+  ),
 );
 vi.mock("node:child_process", () => ({
   spawn: spawnMock,
@@ -97,7 +105,6 @@ function toolByName(tools: CustomTool[], name: string): CustomTool {
   return found;
 }
 
-
 /** omp invokes execute with the full 5-arg signature; tests pass the host's
  *  no-UI shape (no update callback, inert ctx, no signal). Async bridge: a
  *  sync execute throw surfaces as a rejection, like the host's adapter. */
@@ -161,6 +168,7 @@ describe("pm-harness tools factory (#270)", () => {
       "pm_audit",
       "pm_release",
       "pm_ledger",
+      "pm_walk_ledger",
       "pm_walk",
     ]);
     for (const t of tools) {
@@ -444,9 +452,7 @@ describe("detached-omp spawn fallback", () => {
   it("refuses to spawn without a provisioned worktree cwd", () => {
     expect(() =>
       detachedLaneSpawn({ prompt: "p", label: "l", agent: "task", context: null }),
-    ).toThrow(
-      /no worktree cwd/,
-    );
+    ).toThrow(/no worktree cwd/);
   });
 
   it("spawns a detached `omp -p --cwd <worktree>` with one append fd for out+err", () => {
@@ -546,7 +552,9 @@ describe("pm_release + pm_ledger tools", () => {
       lane: "lane-310-x",
       leasesPath: ledgerPath,
     });
-    expect(toolDetails<{ releasedAt: string | null }>(released, ["releasedAt"]).releasedAt).not.toBeNull();
+    expect(
+      toolDetails<{ releasedAt: string | null }>(released, ["releasedAt"]).releasedAt,
+    ).not.toBeNull();
 
     const after = await callTool(ledgerTool, { leasesPath: ledgerPath });
     const afterDetails = toolDetails<{ events: unknown[]; active: unknown[] }>(after, ["events"]);
@@ -595,7 +603,7 @@ describe("pm_release + pm_ledger tools", () => {
 // pm_walk — the 走查挂账 ledger tool + pm_audit's always-armed rule 8 (#391)
 // ---------------------------------------------------------------------------
 
-describe("pm_walk tool", () => {
+describe("pm_walk_ledger tool", () => {
   const tmpRoot = mkdtempSync(join(tmpdir(), "pm-walks-"));
 
   afterEach(() => {
@@ -606,7 +614,7 @@ describe("pm_walk tool", () => {
     const walksPath = join(tmpRoot, "walk-drive.jsonl");
     rmSync(walksPath, { force: true });
     const tools = createPmHarnessTools(fakeApi());
-    const walkTool = toolByName(tools, "pm_walk");
+    const walkTool = toolByName(tools, "pm_walk_ledger");
 
     const registered = await callTool(walkTool, {
       action: "register",
@@ -662,7 +670,7 @@ describe("pm_audit rule 8 wiring (#391)", () => {
   it("always arms from the repo ledger: an overdue deferral surfaces with its red-flip repair", async () => {
     const walksPath = join(tmpRoot, "armed.jsonl");
     rmSync(walksPath, { force: true });
-    walk(310, "2020-01-01", "长挂未走的走查面", { path: walksPath });
+    walkDue(310, "2020-01-01", "长挂未走的走查面", { path: walksPath });
 
     const board = seedBoard(); // #310: dispatchable Todo
     _inject({ gql: board.gql satisfies GqlFn });
@@ -703,7 +711,7 @@ describe("pm_audit rule 8 wiring (#391)", () => {
   it("a settled walk keeps the audit clean", async () => {
     const walksPath = join(tmpRoot, "settled.jsonl");
     rmSync(walksPath, { force: true });
-    walk(310, "2020-01-01", "已销账的走查面", { path: walksPath });
+    walkDue(310, "2020-01-01", "已销账的走查面", { path: walksPath });
     walkDone(310, "walk 报告", { path: walksPath });
 
     _inject({ gql: seedBoard().gql satisfies GqlFn });
