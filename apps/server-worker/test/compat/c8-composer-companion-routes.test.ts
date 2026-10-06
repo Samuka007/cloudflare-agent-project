@@ -28,11 +28,19 @@ function apiGet(path: string): Promise<Response> {
 }
 
 describe("criterion 8: composer companion routes", () => {
-  it("serves the bb empty /plugins list", async () => {
+  it("serves the schema-valid /plugins list", async () => {
     const response = await apiGet("/api/v1/plugins");
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(pluginListResponseSchema.parse(body)).toEqual({ plugins: [] });
+    // #382: the static registry tracks the cap-provider-config bundle (the
+    // fixture descriptor stands in for the staged one), so the list is no
+    // longer pinned to the experiment-off empty state — but it still parses
+    // against the bb installedPlugin schema, which is what the SPA's SDK
+    // client enforces.
+    const parsed = pluginListResponseSchema.parse(body);
+    expect(parsed.plugins.map((plugin) => plugin.id)).toEqual([
+      "cap-provider-config",
+    ]);
   });
 
   it("serves the bb empty /plugins/contributions metadata", async () => {

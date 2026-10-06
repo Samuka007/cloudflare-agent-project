@@ -55,3 +55,14 @@ if (( ASSET_COUNT < 10 )); then
   exit 1
 fi
 echo "== SPA staged: $ASSET_COUNT assets, entry $ENTRY_JS =="
+
+# Stage the cap-provider-config frontend plugin (#382): build it from the
+# pinned fork, copy the dist beside the SPA assets, and write the descriptor
+# the worker's static plugin registry reads
+# (apps/server-worker/src/services/plugin-registry.ts). Hash/descriptor
+# semantics live in scripts/stage-cap-provider-config.mjs.
+echo "== building cap-provider-config plugin =="
+# tsx resolves from CWD's node_modules chain — bb owns the devDependency, so
+# run inside the submodule (the build script itself is dirname-relative).
+(cd bb && node --conditions=source --import tsx scripts/build-cap-provider-config.mjs)
+node scripts/stage-cap-provider-config.mjs

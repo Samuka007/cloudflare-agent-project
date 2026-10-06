@@ -1,0 +1,11 @@
+{
+  "id": "cap-provider-config",
+  "name": "Providers",
+  "description": "User-configurable LLM providers: CRUD onto the server's provider_configs (hot-applied) plus the read-only deployment projection.",
+  "icon": "Puzzle",
+  "version": "0.1.0-test",
+  "sdkMajor": 0,
+  "sdkVersion": "0.4.6",
+  "hash": "0123456789abcdef",
+  "files": { "js": true, "css": false }
+}

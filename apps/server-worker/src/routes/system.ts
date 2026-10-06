@@ -566,6 +566,10 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
     const credential = credentialOf(payload.apiKey);
     refuseKeyWithoutMasterKey(ctx.env, credential);
     await insertProviderConfig(ctx.env, payload.id, writeFieldsOf(payload), credential);
+    // Hot-apply broadcast (#382): the merged directory feeds execution
+    // options and the projection, so every write dirties the host's system
+    // faces exactly like a settings write (system.ts:348 precedent).
+    await hub(ctx.env).notifySystem(["config-changed"]);
     return ctx.json(await rowAfterWrite(ctx.env, payload.id), 201);
   });
 
@@ -582,6 +586,7 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
     const credential = credentialOf(payload.apiKey);
     refuseKeyWithoutMasterKey(ctx.env, credential);
     await replaceProviderConfig(ctx.env, id, writeFieldsOf(payload), credential);
+    await hub(ctx.env).notifySystem(["config-changed"]);
     return ctx.json(await rowAfterWrite(ctx.env, id));
   });
 
@@ -609,6 +614,7 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
       },
       credential,
     );
+    await hub(ctx.env).notifySystem(["config-changed"]);
     return ctx.json(await rowAfterWrite(ctx.env, id));
   });
 
@@ -622,6 +628,7 @@ function registerProviderConfigRoutes(routes: Hono<{ Bindings: HonoBindings }>):
       });
     }
     await deleteProviderConfig(ctx.env, id);
+    await hub(ctx.env).notifySystem(["config-changed"]);
     return ctx.json({ ok: true });
   });
 
