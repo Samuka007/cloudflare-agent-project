@@ -31,6 +31,8 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 派发同时把该票 board Status 置 **In Progress**——#206 起 lane(confirm) 自动承担（管道拥有状态生命周期，不靠 PM 记性）：spawn 成功后经 AP.apply 守卫写翻转（带核验，竞态下 no-op 不重写）；dry-run/拒派/spawn 失败不翻（板面反映现实），statusFlipped/statusError 落报告。
 
+**翻转完整规则 = 任何人拿起票即翻（#419 补）**：AP.lane 的自动翻转只覆盖派发半边——PM **自执行**的票（不派 lane、当拍亲手做的票）在开工当拍由 PM 直写 setStatus In Progress（`AP.apply`/`pm_apply`）；#412 于 2026-10-06 躺着被执行半天才被用户抓出，即此空档的事故来源。audit 规则③（laneStatusMismatch）只认 `activeLanes` 输入，PM 手活无 lane——自执票靠本约定自查，不扩规则③输入面。
+
 **派发谓词与自动清空（用户裁决 2026-10-04）**：dispatchable = open ∧ 无未关 blocking 边 ∧ Status=Todo ∧ ¬ready-for-human（**派生谓词，不是标签**——`ready-for-agent` 已废）。PM 每回合把 dispatchable 集清到并发预算满或空；Todo 非空且预算有余而未派 = PMGuard P1。**并发预算=文件不相交度驱动（硬上限 32，provider 无实测并发约束前不做低于此的手设墙）**：不相交包（bb-ux/agent-do/daemon-service/infra）并行；同包共享文件（registry 尾、wire-order 断言）单 lane 批量承载，防 rebase 轮数吃掉并行收益。Backlog=未排期（PM 调度），blocker 关闭的交付钩子里回调其 Backlog→Todo。语义正本见 [tracker-schema.md](tracker-schema.md)。
 
 ### 交付处理（交付钩子——同回合四步，判据在每步末尾）
@@ -42,7 +44,8 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
    ②**验收充分性（防 reward hacking）**——CI 绿≠验收：载荷测试 hunk 必亲读（抽查断言密度：关键主张有对应断言，空断言/删测过门=违规）；产品面可观察则**行为级验证**，不可验则票面记明验证边界；**auto-merge 只允许用于已亲读 hunk 的 PR**；
    ③**变动调节**——交付若改写口径（如闸控改变 essential 可见面），同回合调 ROADMAP/票面/下游边；**60% 节点不挂已关票**——另立 finalize 票或改边，半成品显式化。
 3. **解锁枚举**：列出此交付新解锁的一切；过 DoR 闸者本回合派出，gated 者注记等待条件。判据：枚举非空，或写明唯一等待条件——"转录结论+更新索引"不算推进（spawn→wait→转录→停 = PMGuard P1 违规）。
-4. **汇报**：只陈述已执行事实，收尾"在跑 N 项；待决见 board"。待决项在聊天里枚举 = 违规（二次账本必漂移）。
+
+**apply 失败恢复原语（#419）**：lane 落地失败（task-apply 报 patch/merge 错、rescue patch 落档、`omp/task/*` 分支留档）时 PM 只做 git 级动作——**立落地票 + 派新 lane**：票面携带恢复原语（rescue patch 路径／留档分支名／报错原文），新 lane 的工作严格限定 git 级（`git apply` patch、cherry-pick branch、开 PR、merge）；**PM 永不手写冲突解**（手写解=绕过 lane 交付面的偷渡，事故会以看不见的方式回流）。机械护栏已在 daemon 落地链（#419）：`*:conflicts` sidecar 撞 tracked 残留 → 预检拒绝并给出清理动作；bb pin 双侧变更且 commit-graph 可判祖先 → 后代自动胜出（0-file 假冲突自愈），不可判祖先才报冲突留档。4. **汇报**：只陈述已执行事实，收尾"在跑 N 项；待决见 board"。待决项在聊天里枚举 = 违规（二次账本必漂移）。
 
 **宣布即做**：回报文本只含已执行动作；"我即刻／下一步将派 X"写入报告 = 违规本身。确定性预裁按推荐即决并标 overridable（关账评论留翻转指引）；真口味项才挂 `ready-for-human`（决策评论含预裁与批准方式）——用户队列 = board 按 `ready-for-human`／Status `Wait for user` 过滤。
 
