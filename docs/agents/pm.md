@@ -24,7 +24,7 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 - **效率预算行**：预期墙钟／资源上限／等待方式（交付即回 or 脚本化监控）；超 50% 须解释。
 - **资源所有权账本**：owned files/dirs + worktree 路径 + owned 外部资源（staging 部署、secret、面板）。PM 派单前做**不相交断言**——两 lane 地盘相交 = 派单错误。
 - **浏览器租约（#240）**：票面提及浏览器／CDP／Chrome 的派单由 `AP.lane` 自动登记租约——具名 tab `l<票号>`＋专属线程前缀 `l<票号>-`＋释放义务——并随 spawn 上下文携带；手工派发同款必填。台账 `AP.lease`／`AP.release`／`AP.ledger`（仓内 `.pm-leases.jsonl`，gitignored）。
-- **依赖边随派单走（#393）**：票面叙述的依赖在派发时同批物化——`AP.lane(t, {}, { confirm: true, blockedBy: [387] })`／`pm_lane { ticket, blockedBy: [387], confirm: true }` 走既有 addBlockedBy 原语、preflight 同源（spawn 成功后才写边，坏 blocker 拒写但翻转照走，结果落 report.blockedBy）；dry-run 出纯计划。依赖不留到二次 apply——写在叙述里的机制不是机制，漏物化由 audit 规则⑥兜底。
+- **依赖边随派单走（#393）**：票面叙述的依赖在派发时同批物化——`AP.lane(t, {}, { confirm: true, blockedBy: [387] })`／`pm_lane { ticket, blockedBy: [387], confirm: true }` 走既有 addBlockedBy 原语、preflight 同源（spawn 成功后才写边，坏 blocker 拒写但翻转照走，结果落 report.blockedBy）；dry-run 出纯计划。依赖不留到二次 apply——写在叙述里的机制不是机制，漏物化由 audit 规则⑨兜底。**噪声守卫（#421）**：关联/参见/来源节是交叉引用不是机制——不扫；反向叙述（`#n 合并 ← 本票`／`前置=本票`）不产生本票→#n 的边（首拍把 #412 已物化的 `#397 blockedBy #412` 读反了）。
 - **分支纪律**：lane 只推 `lane/<ticket>-<slug>`，PR 由 PM 审后 merge。**main 分支保护=一切经 PR（2026-10-04 起，repo rule 强制）**——PM 文档/热修同样走短命分支 PR；对 main 的 push 非 ff 拒绝=硬停，先 `git status --branch` 看分叉方向，force 类操作仅限事故回滚本身且须 --force-with-lease 钉基线。
 - **POMDP 条款**：根因未证实不动码；60 分钟未定位根因 → 报告而非猜改。
 - **验收 checklist**；lane 报告必带：commit hash、CI run、测试计数、file:line 根因（修 bug 票）。
@@ -57,7 +57,7 @@ PM 的工作是一个循环：**立项 → 派单 → 交付处理 → 验收关
 
 1. 干净树复跑关键测试/命令。
 2. 七反模式过一遍：慢通道／重做／串行化／闲置占用／无账保守／轮询／retry-and-hope。
-3. 关票评论附证据（测试数、部署 URL、run 链接、file:line）；**无证据不关票**。**关账序列（#277 固化）**：实现 lane 交付 → 验收 lane 出证据（staging 面）或 CI 出证据（纯代码面）→ `AP.closeout` 入账（证据三件套：证据/日期/部署版本）→ 才可 merge/close；PM 抽验不再作为关账输入——降为 wave 终检抽样（第 8 条）。漏网兜底：`AP.audit` 规则 7 `closeoutNoEvidence`（已关无账 = `AP.closeout` 回填——#266 为首例回填——或重开票）。**判面前置闸（#390）**：`AP.closeout` 入账前自读票面验收——产品面（面板/走查/真机/UI…）拒 `source: "ci"`，walk 必须附表面证据（console 错误/截图/选择器断言）；#362/#382/#364 以 ci 关 UI 票即此漏洞。
+3. 关票评论附证据（测试数、部署 URL、run 链接、file:line）；**无证据不关票**。**关账序列（#277 固化）**：实现 lane 交付 → 验收 lane 出证据（staging 面）或 CI 出证据（纯代码面）→ `AP.closeout` 入账（证据三件套：证据/日期/部署版本）→ 才可 merge/close；PM 抽验不再作为关账输入——降为 wave 终检抽样（第 8 条）。漏网兜底：`AP.audit` 规则 7 `closeoutNoEvidence`（已关无账 = `AP.closeout` 回填——#266 为首例回填——或重开票）。**纪元边界（#421）**：closedAt 早于台账首行 recordedAt 的已关票静默——台账存在前的关票回填=造假证据，规则只治纪元后的真缺失。**判面前置闸（#390）**：`AP.closeout` 入账前自读票面验收——产品面（面板/走查/真机/UI…）拒 `source: "ci"`，walk 必须附表面证据（console 错误/截图/选择器断言）；#362/#382/#364 以 ci 关 UI 票即此漏洞。
 4. 验收判据 = 用户打开能看到什么（反例 #53：字段全部"就位"但 Priority 列五个视图全不可见，验收却已通过）。
 5. staging 验证经 `scripts/deploy-staging.sh` 两条调用面（#175）：merge→main 由 GHA `deploy-staging` workflow 自动部署；任意 commit 手动经 `nix run .#staging-deploy`。
 6. **CDP 三层纪律（用户裁决 2026-10-05，#240 audit 规则 6）**：①每 lane 具名 tab（`l<票号>-<用途>`），禁默认 tab 与他人 tab；②**staging thread=抢占资源**（一 thread 一在飞 turn）——交互测试一律新建专属线程（前缀 `l<票号>-`），禁用共享线程（`thr_jk45qe4786`=PM 保留），只读观察可访现有线程但零发送；③用毕关闭——交付关账前 `AP.release("browser", { lane })` 释放租约。涉浏览器 lane 无租约登记／租约碰撞／交付后未释放 = `AP.audit` 规则 6 漂移清单。
