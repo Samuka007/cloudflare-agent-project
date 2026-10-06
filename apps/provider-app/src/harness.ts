@@ -41,6 +41,7 @@ import {
   type RelayConfig,
 } from "@cap/agent-do";
 import type { RuntimeThreadExecutionOptions } from "../../daemon-worker/src/provider-types.js";
+import { decodeRelayProviderCredentials } from "./relay-registry.js";
 
 /** Environment variables this harness reads (all optional). */
 export interface HarnessEnv {
@@ -219,9 +220,27 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
       ? catalog?.providers[locatedProvider.providerId]?.api
       : undefined) ??
     DEFAULT_RELAY_API;
-  const baseUrlRaw = env.MODEL_RELAY_BASE_URL_ANTHROPIC?.trim() ?? "";
+  // #351 credentials JSON: the default provider's slot rides under strict
+  // decode (malformed JSON fails the deployment loudly, AGENT_DO_IMAGE_SOURCE
+  // posture — never a silent mock). Precedence: credentials slot → catalog
+  // provider baseUrl → legacy scalar → ruled default (#361 cutover seam).
+  const credentials = decodeRelayProviderCredentials(env.MODEL_RELAY_PROVIDER_CREDENTIALS);
+  const credentialsSlot = defaultProviderKey !== undefined ? credentials[defaultProviderKey] : undefined;
+  const catalogBaseUrl =
+    locatedProvider !== undefined
+      ? catalog?.providers[locatedProvider.providerId]?.baseUrl?.trim()
+      : defaultProviderKey !== undefined
+        ? catalog?.providers[defaultProviderKey]?.baseUrl?.trim()
+        : undefined;
+  const baseUrlRaw =
+    credentialsSlot?.baseUrl?.trim()
+    ?? (catalogBaseUrl !== undefined && catalogBaseUrl !== "" ? catalogBaseUrl : undefined)
+    ?? env.MODEL_RELAY_BASE_URL_ANTHROPIC?.trim()
+    ?? "";
   const baseUrl = baseUrlRaw === "" ? HARNESS_DEFAULTS.baseUrl : baseUrlRaw;
-  const apiKey = env.MODEL_RELAY_API_KEY?.trim() ?? "";
+  const credentialsApiKey = credentialsSlot?.apiKey?.trim() ?? "";
+  const scalarApiKey = env.MODEL_RELAY_API_KEY?.trim() ?? "";
+  const apiKey = credentialsApiKey !== "" ? credentialsApiKey : scalarApiKey;
   const maxTokensRaw = Number.parseInt(env.MODEL_RELAY_MAX_TOKENS ?? "", 10);
   const maxTokens =
     Number.isFinite(maxTokensRaw) && maxTokensRaw > 0
