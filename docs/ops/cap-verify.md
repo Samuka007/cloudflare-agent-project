@@ -4,6 +4,11 @@
 的 `nixos-rebuild --target-host` 实机。本文件是 PVE 侧无 git 面的事实版本源；
 宿主配置真身在 nix-personal-config-test 仓（见下）。
 
+> **staging 宿主迁移（#378，2026-10-06）**：staging 执行宿主已迁往专用
+> CT142 `lxc-stg-01`（docs/ops/staging-daemon-host.md 正本）；本文
+> Appendix 的「通道 A 部署」transient-unit 流程与 `hostId=local` staging
+> 身份自此作废，CT141 回归纯 verify-ladder 用途。
+
 ## 链路
 
 ```

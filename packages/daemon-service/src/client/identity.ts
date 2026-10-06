@@ -38,11 +38,23 @@ export interface ClientIdentity {
 const HOST_ID_FILE = "host-id";
 const AUTH_FILE = "auth.json";
 
+/**
+ * Whether `dataDir` carries an enrollable persisted identity — the same
+ * both-files test `loadIdentity` uses to restore instead of enroll. The CLI
+ * entry gates its credential requirement on this: an enrolled machine
+ * restarts (systemd, reboot) without any enrollment credential; only a
+ * fresh machine needs one (#378 resident-host contract, host-onboarding.md
+ * step 4).
+ */
+export function hasPersistedIdentity(dataDir: string): boolean {
+  return existsSync(join(dataDir, HOST_ID_FILE)) && existsSync(join(dataDir, AUTH_FILE));
+}
+
 export async function loadIdentity(config: ClientConfig): Promise<ClientIdentity> {
   mkdirSync(config.dataDir, { recursive: true });
   const hostIdPath = join(config.dataDir, HOST_ID_FILE);
   const authPath = join(config.dataDir, AUTH_FILE);
-  if (existsSync(hostIdPath) && existsSync(authPath)) {
+  if (hasPersistedIdentity(config.dataDir)) {
     const hostId = readFileSync(hostIdPath, "utf8").trim();
     const auth = JSON.parse(readFileSync(authPath, "utf8")) as { hostKey: string };
     log(`identity restored from ${config.dataDir} (hostId=${hostId})`);
