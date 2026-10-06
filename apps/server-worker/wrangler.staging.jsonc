@@ -84,5 +84,8 @@
     "DAEMON_HOST_ID": "local",
     "DAEMON_MACHINE_ID": "local",
     "MODEL_RELAY_CATALOG": "{\"defaultProvider\":\"omp\",\"providers\":{\"omp\":{\"displayName\":\"newapi\",\"baseUrl\":\"https://newapi.samuka007.top/v1\",\"api\":\"openai-responses\",\"models\":[{\"id\":\"glm-5.3-flash\",\"name\":\"GLM 5.3 Flash\",\"reasoning\":true,\"input\":[\"text\"]}]}}}",
+    // #303 thinking walkthrough: budget on → reasoning ladder projects one
+    // rung; Responses face maps it onto reasoning.effort.
+    "MODEL_RELAY_THINKING_BUDGET_TOKENS": "4096",
   },
 }
