@@ -100,6 +100,12 @@
  *     // transport-missing is reported on the report — never silent. Batch:
  *     await AP.lane([197, 206]);          // one report per ticket
  *
+ * Dependency edges ride the dispatch (#393): `AP.lane(t, {}, { confirm: true,
+ * blockedBy: [387] })` materializes the narrated dependency as a blockedBy
+ * edge in the same dispatch — the existing addBlockedBy primitive, the same
+ * preflight as AP.apply — so prose dependencies stop dying as prose. Dry-run
+ * plans them; a failed spawn writes nothing.
+ *
  * Board drift audit (#181) — the PM beat opens with a reconcile, then
  * dispatches. Pure rules over the snapshot; output feeds AP.apply directly:
  *
@@ -114,8 +120,12 @@
  * else Done — the one closed-ticket write apply accepts); (3) active-lane
  * tickets not reading In Progress flip back; (4) dispatchable Todos
  * untouched for more than FRONTIER_AGE_DAYS days surface as dispatch
- * reminders (mutation: null — the repair is AP.lane, not a write). Re-run
- * audit after the apply: `clean` is the beat's green light.
+ * reminders (mutation: null — the repair is AP.lane, not a write); (8)
+ * proseDependencyWithoutEdge (#393) — a ticket whose body narrates a
+ * dependency (依赖/前置/须先/倒查/blocked + #n) at a ticket on this board with
+ * no blockedBy edge to match: advisory (mutation: null), the repair is an
+ * apply edge or a blockedBy dispatch arg. Re-run audit after the apply:
+ * `clean` is the beat's green light.
  *
  * Shared-resource lease ledger (#240) — browser (CDP/thread) first. 口头纪律
  * 结构化 (#239 comment 5988466175): every browser lane holds a NAMED tab and a
@@ -840,6 +850,11 @@ export interface LaneDispatchReport {
    *  Dry-run: planned, not registered; confirm: registered in the ledger at
    *  spawn time (rolled back if the spawn throws). */
   lease: LaneLeasePlan | null;
+  /** #393 dependency-edge plan/outcome — null when the dispatch carried no
+   *  blockedBy arg. Dry-run: the pure plan; confirm: materialized after a
+   *  successful spawn via the guarded apply write (a failed spawn never
+   *  writes edges). */
+  blockedBy: LaneEdgePlan | null;
   /** #206 confirm path: the transport actually spawned. False on dry-run,
    *  refusal, transport-missing, or a spawn throw. */
   spawned: boolean;
@@ -1025,6 +1040,21 @@ function renderLaneReport(r: LaneDispatchReport): string {
             : " (NOT registered)"),
     );
   }
+  if (r.blockedBy !== null) {
+    const e = r.blockedBy;
+    const refs = (bs: readonly number[]): string => bs.map((b) => `#${b}`).join(", ");
+    if (e.applied.length > 0) {
+      lines.push(`  EDGES     applied ${refs(e.applied)}`);
+    } else if (r.dryRun) {
+      lines.push(`  EDGES     plan ${refs(e.requested)} — materialize on confirm (addBlockedBy)`);
+    } else if (e.already.length === 0 && e.errors.length === 0) {
+      lines.push(`  EDGES     plan ${refs(e.requested)} — NOT applied (dispatch failed first)`);
+    } else {
+      lines.push(`  EDGES     none written (see already/ERROR lines)`);
+    }
+    if (e.already.length > 0) lines.push(`  EDGES     already ${refs(e.already)} (no-op)`);
+    for (const err of e.errors) lines.push(`  EDGES     ERROR ${err}`);
+  }
   if (r.spawn !== null) {
     lines.push(
       `  SPAWN     agent=${r.spawn.agent} isolated=${String(r.spawn.isolated)}` +
@@ -1089,19 +1119,39 @@ function renderLaneReport(r: LaneDispatchReport): string {
 export async function lane(
   ticket: number | Ticket,
   agentSpec?: LaneAgentSpec,
-  opts?: { confirm?: boolean; base?: string; cwd?: string; leasesPath?: string },
+  opts?: {
+    confirm?: boolean;
+    base?: string;
+    cwd?: string;
+    leasesPath?: string;
+    /** #393: dependency edges materialized with the dispatch (addBlockedBy,
+     *  same preflight as apply). */
+    blockedBy?: readonly number[];
+  },
 ): Promise<LaneDispatchReport>;
 
 export async function lane(
   ticket: (number | Ticket)[],
   agentSpec?: LaneAgentSpec,
-  opts?: { confirm?: boolean; base?: string; cwd?: string; leasesPath?: string },
+  opts?: {
+    confirm?: boolean;
+    base?: string;
+    cwd?: string;
+    leasesPath?: string;
+    blockedBy?: readonly number[];
+  },
 ): Promise<LaneDispatchReport[]>;
 
 export async function lane(
   ticket: number | Ticket | (number | Ticket)[],
   agentSpec: LaneAgentSpec = {},
-  opts: { confirm?: boolean; base?: string; cwd?: string; leasesPath?: string } = {},
+  opts: {
+    confirm?: boolean;
+    base?: string;
+    cwd?: string;
+    leasesPath?: string;
+    blockedBy?: readonly number[];
+  } = {},
 ): Promise<LaneDispatchReport | LaneDispatchReport[]> {
   if (Array.isArray(ticket)) {
     return Promise.all(ticket.map((t) => laneOne(t, agentSpec, opts)));
@@ -1112,7 +1162,13 @@ export async function lane(
 async function laneOne(
   ticket: number | Ticket,
   agentSpec: LaneAgentSpec,
-  opts: { confirm?: boolean; base?: string; cwd?: string; leasesPath?: string },
+  opts: {
+    confirm?: boolean;
+    base?: string;
+    cwd?: string;
+    leasesPath?: string;
+    blockedBy?: readonly number[];
+  },
 ): Promise<LaneDispatchReport> {
   const t = typeof ticket === "number" ? await ticketOnBoard(ticket) : ticket;
   const [packet] = dispatchPackets([t]);
@@ -1130,6 +1186,22 @@ async function laneOne(
         registered: false,
       }
     : null;
+  // #393: the pure edge plan from the ticket in hand — same facts the
+  // confirm-path apply will re-derive through preflight. A duplicate
+  // requested blocker dedups here; a self-edge surfaces as a plan error
+  // (planDiff's verdict), never a silent drop.
+  const requestedBlockers = [...new Set(opts.blockedBy ?? [])];
+  const edgePlan: LaneEdgePlan | null =
+    requestedBlockers.length > 0
+      ? {
+          requested: requestedBlockers,
+          already: requestedBlockers.filter((b) => t.blockedBy.some((e) => e.number === b)),
+          applied: [],
+          errors: requestedBlockers
+            .filter((b) => b === t.number)
+            .map(() => `#${t.number}: self-blocking edge rejected`),
+        }
+      : null;
   const isDispatchable = dispatchable({ tickets: [t] }).length > 0;
   const refusalReasons: string[] = [];
   if (!isDispatchable) {
@@ -1151,6 +1223,7 @@ async function laneOne(
     worktreeCreated: false,
     spawn: null,
     lease: leasePlan,
+    blockedBy: edgePlan,
     spawned: false,
     transport: null,
     agentHandle: null,
@@ -1258,6 +1331,32 @@ async function laneOne(
     }
     console.log(renderLaneReport(report));
     return report;
+  }
+  // #393: dependency edges ride the dispatch — the PM never makes a second
+  // apply call. Same addBlockedBy primitive, same preflight as apply (its
+  // errors withhold ALL writes, so one bad blocker blocks the batch — the
+  // outcome lands on report.blockedBy, never silent). Only a successful
+  // spawn gets here: a failed dispatch leaves the board untouched.
+  if (edgePlan !== null) {
+    const edgeApply = await apply(
+      edgePlan.requested.map((blocker) => ({
+        op: "addBlockedBy" as const,
+        number: t.number,
+        blocker,
+      })),
+      { confirm: true },
+    );
+    const blockersOf = (changes: readonly PlannedChange[]): number[] =>
+      changes.flatMap((c) => (c.mutation.op === "addBlockedBy" ? [c.mutation.blocker] : []));
+    edgePlan.errors = [
+      ...edgePlan.errors,
+      ...edgeApply.preflight.errors,
+      ...(edgeApply.verifyFailure !== undefined ? [edgeApply.verifyFailure.detail] : []),
+    ];
+    if (edgeApply.ok) {
+      edgePlan.applied = blockersOf(edgeApply.preflight.willChange);
+      edgePlan.already = blockersOf(edgeApply.preflight.noOps);
+    }
   }
   // #206: the dispatch pipeline owns the board flip — the PM-recall version
   // drifted twice (forgot apply; cascade re-flip race). The guarded write
@@ -1625,6 +1724,25 @@ export interface LaneLeasePlan {
   /** True once the confirm path registered the lease (false on dry-run,
    *  refusal, and after a spawn-throw rollback). */
   registered: boolean;
+}
+
+/** #393 dependency edges riding a dispatch: the requested blockers plus the
+ *  plan (dry-run) or write outcome (confirm). Everything derives from the
+ *  SAME preflight the apply write path uses — lane adds no second resolution
+ *  truth. Dry-run: the pure plan from the ticket in hand (`applied` stays
+ *  empty — the write happens on confirm); a failed spawn/dispatch never
+ *  leaves `applied` populated (the board must reflect reality). */
+export interface LaneEdgePlan {
+  /** Blocker numbers as requested, deduped; self-edges stay visible via
+   *  `errors` (planDiff rejects them there, not silently here). */
+  requested: number[];
+  /** Blockers whose edge already existed — preflight no-ops, nothing written. */
+  already: number[];
+  /** Edges this dispatch actually wrote (confirm + successful apply only). */
+  applied: number[];
+  /** Preflight rejections, verbatim (self-edge, blocker not on board/refs,
+   *  apply verify drift). */
+  errors: string[];
 }
 
 export interface LeaseOptions {
@@ -2380,12 +2498,31 @@ export function walkLedger(opts: WalkOptions = {}): {
 // beat reconciles in one guarded apply BEFORE dispatching.
 // ---------------------------------------------------------------------------
 
-/** Drift rule ids (#181, #240, #277, #391), disjoint — one finding per (ticket, rule):
+/** #393 prose-dependency narration: a line naming a dependency keyword makes
+ *  every `#n` on that line a declared dependency. Line-scoped on purpose —
+ *  a body-wide window drags in every incidental issue mention. */
+export const PROSE_DEPENDENCY_PATTERN = /依赖|前置|须先|倒查|blocked/i;
+
+/** Declared-dependency numbers in a body, first-seen order, deduped. */
+export function proseDependencies(body: string): number[] {
+  const refs: number[] = [];
+  for (const line of body.split("\n")) {
+    if (!PROSE_DEPENDENCY_PATTERN.test(line)) continue;
+    for (const m of line.matchAll(/#(\d+)/g)) {
+      const n = Number(m[1]);
+      if (!refs.includes(n)) refs.push(n);
+    }
+  }
+  return refs;
+}
+
+/** Drift rule ids (#181, #240, #277, #391, #393), disjoint — one finding per (ticket, rule):
  *  1 staleClosedStatus · 2 inProgressOnClosed · 3 laneStatusMismatch ·
  *  4 frontierAging · 6 browserLeaseMissing / browserLeaseCollision /
  *  browserLeaseUnreleased (armed only when `opts.leases` carries the ledger) ·
  *  7 closeoutNoEvidence (armed only when `opts.closeouts` carries the ledger) ·
- *  8 walkDueOverdue (armed only when `opts.walks` carries the ledger). */
+ *  8 walkDueOverdue (armed only when `opts.walks` carries the ledger) ·
+ *  9 proseDependencyWithoutEdge (#393, always armed — pure over the snapshot). */
 export type DriftRule =
   | "staleClosedStatus"
   | "inProgressOnClosed"
@@ -2395,7 +2532,8 @@ export type DriftRule =
   | "browserLeaseCollision"
   | "browserLeaseUnreleased"
   | "closeoutNoEvidence"
-  | "walkDueOverdue";
+  | "walkDueOverdue"
+  | "proseDependencyWithoutEdge";
 
 /** Rule-4 threshold: a dispatchable Todo untouched this many days is aged
  *  (reminder class — the repair is a dispatch, not a board write). */
@@ -2420,7 +2558,7 @@ export interface AuditReport {
   /** Findings in rule order (rules 1-3 in ticket order, then rule 4, then
    *  roster contradictions, then rule 6: missing in ticket order, unreleased
    *  in ledger order, collisions last, then rule 7 in ticket order, then
-   *  rule 8 in due order). */
+   *  rule 8 in due order, rule 9 in ticket order). */
   drift: DriftFinding[];
   /** The apply-ready flat list — `AP.apply(rep.mutations, { confirm: true })`
    *  is the one-shot reconcile. */
@@ -2496,6 +2634,14 @@ export interface AuditOptions {
  *     active-lane ticket stays mutation-free (flipping it would fight rule
  *     3); a DELIVERED ticket with an unsettled walk is the #382/#364
  *     violation shape — mutation-free, backfill or reopen.
+ *  9. proseDependencyWithoutEdge (#393) — an open ticket whose body narrates
+ *     a dependency (a `#n` on a line carrying 依赖/前置/须先/倒查/blocked) at
+ *     a ticket on this board with no matching blockedBy edge: written-in-prose
+ *     mechanism is not mechanism — the edge must materialize. Advisory
+ *     (mutation: null, 观察一波 before any refusal upgrade): the repair is
+ *     `AP.apply([{ op: "addBlockedBy", ... }])` or the dispatch arg
+ *     `AP.lane(t, {}, { blockedBy: [n] })`. Self-references, off-board
+ *     numbers, and already-edged dependencies stay silent.
  */
 export function audit(snap: Pick<Snapshot, "tickets">, opts: AuditOptions = {}): AuditReport {
   const drift: DriftFinding[] = [];
@@ -2666,6 +2812,32 @@ export function audit(snap: Pick<Snapshot, "tickets">, opts: AuditOptions = {}):
 
   // Rule 8 (#391): overdue walk deferrals — 到期红.
   if (opts.walks !== undefined) auditWalks(snap, opts.walks, active, nowMs, drift);
+ 
+  // Rule 9 (#393): a dependency narrated in prose but never materialized as
+  // a blockedBy edge. Always armed (pure over the snapshot); advisory — the
+  // PM materializes via apply/lane, the audit never writes. One finding per
+  // ticket aggregating every missing edge, keeping the (ticket, rule)
+  // disjointness invariant. Closed tickets are history: their dependency
+  // ledger no longer gates anything.
+  const byNumber = new Map(snap.tickets.map((t) => [t.number, t]));
+  for (const t of snap.tickets) {
+    if (t.state === "CLOSED") continue;
+    const missing = proseDependencies(t.body).filter(
+      (dep) => dep !== t.number && byNumber.has(dep) && !t.blockedBy.some((b) => b.number === dep),
+    );
+    if (missing.length === 0) continue;
+    drift.push({
+      rule: "proseDependencyWithoutEdge",
+      number: t.number,
+      title: t.title,
+      detail:
+        `prose declares dependency on ${missing.map((n) => `#${n}`).join(", ")} ` +
+        "with no blockedBy edge — materialize via " +
+        `AP.apply([{ op: "addBlockedBy", number: ${t.number}, blocker: ${missing[0]} }], { confirm: true }) ` +
+        `or the dispatch arg AP.lane(${t.number}, {}, { blockedBy: [${missing[0]}] })`,
+      mutation: null,
+    });
+  }
 
   const mutations = drift.flatMap((d) => (d.mutation === null ? [] : [d.mutation]));
   return { drift, mutations, clean: drift.length === 0 };

@@ -1,0 +1,67 @@
+3: /** #393 prose-dependency narration: a line naming a dependency keyword makes
+ *  every `#n` on that line a declared dependency. Line-scoped on purpose —
+ *  a body-wide window drags in every incidental issue mention. */
+export const PROSE_DEPENDENCY_PATTERN = /依赖|前置|须先|倒查|blocked/i;
+
+/** Declared-dependency numbers in a body, first-seen order, deduped. */
+export function proseDependencies(body: string): number[] {
+  const refs: number[] = [];
+  for (const line of body.split("\n")) {
+    if (!PROSE_DEPENDENCY_PATTERN.test(line)) continue;
+    for (const m of line.matchAll(/#(\d+)/g)) {
+      const n = Number(m[1]);
+      if (!refs.includes(n)) refs.push(n);
+    }
+  }
+  return refs;
+}
+
+/** Drift rule ids (#181, #240, #277, #391, #393), disjoint — one finding per (ticket, rule):
+4:  *  8 walkDueOverdue (armed only when `opts.walks` carries the ledger) ·
+ *  9 proseDependencyWithoutEdge (#393, always armed — pure over the snapshot). */
+5:   | "walkDueOverdue"
+  | "proseDependencyWithoutEdge";
+6:   *  rule 8 in due order, rule 9 in ticket order). */
+7:  *  8. walkDueOverdue (#391, armed by `opts.walks`) — an active walk deferral
+ *     whose due date has passed with no settlement: 到期翻红. An open ticket
+ *     not already red gets the board write itself (Status → Wait for user);
+ *     an already-red ticket is a plain reminder (run the walk); an
+ *     active-lane ticket stays mutation-free (flipping it would fight rule
+ *     3); a DELIVERED ticket with an unsettled walk is the #382/#364
+ *     violation shape — mutation-free, backfill or reopen.
+ *  9. proseDependencyWithoutEdge (#393) — an open ticket whose body narrates
+ *     a dependency (a `#n` on a line carrying 依赖/前置/须先/倒查/blocked) at
+ *     a ticket on this board with no matching blockedBy edge: written-in-prose
+ *     mechanism is not mechanism — the edge must materialize. Advisory
+ *     (mutation: null, 观察一波 before any refusal upgrade): the repair is
+ *     `AP.apply([{ op: "addBlockedBy", ... }])` or the dispatch arg
+ *     `AP.lane(t, {}, { blockedBy: [n] })`. Self-references, off-board
+ *     numbers, and already-edged dependencies stay silent.
+8:   // Rule 8 (#391): overdue walk deferrals — 到期红.
+  if (opts.walks !== undefined) auditWalks(snap, opts.walks, active, nowMs, drift);
+
+  // Rule 9 (#393): a dependency narrated in prose but never materialized as
+  // a blockedBy edge. Always armed (pure over the snapshot); advisory — the
+  // PM materializes via apply/lane, the audit never writes. One finding per
+  // ticket aggregating every missing edge, keeping the (ticket, rule)
+  // disjointness invariant. Closed tickets are history: their dependency
+  // ledger no longer gates anything.
+  const byNumber = new Map(snap.tickets.map((t) => [t.number, t]));
+  for (const t of snap.tickets) {
+    if (t.state === "CLOSED") continue;
+    const missing = proseDependencies(t.body).filter(
+      (dep) => dep !== t.number && byNumber.has(dep) && !t.blockedBy.some((b) => b.number === dep),
+    );
+    if (missing.length === 0) continue;
+    drift.push({
+      rule: "proseDependencyWithoutEdge",
+      number: t.number,
+      title: t.title,
+      detail:
+        `prose declares dependency on ${missing.map((n) => `#${n}`).join(", ")} ` +
+        "with no blockedBy edge — materialize via " +
+        `AP.apply([{ op: "addBlockedBy", number: ${t.number}, blocker: ${missing[0]} }], { confirm: true }) ` +
+        `or the dispatch arg AP.lane(${t.number}, {}, { blockedBy: [${missing[0]}] })`,
+      mutation: null,
+    });
+  }
