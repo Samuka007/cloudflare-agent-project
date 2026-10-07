@@ -52,8 +52,10 @@ export interface AccessJwk {
 
 export interface VerifyAccessTokenOptions {
   jwks: readonly AccessJwk[];
-  /** Allowed audiences. ACCESS_AUD accepts a comma-separated list (#412):
-   * the app aud plus per-path Access apps mint JWTs with their own aud. */
+  /** Allowed audiences. Production ACCESS_AUD is the single root-app aud
+   * (#412 app consolidation, #435 secret/env cleanup); the comma-separated
+   * list form is legacy tolerance from the retired per-path-app era — a
+   * token matching any listed aud still passes. */
   audience: string | readonly string[];
   nowMs?: number;
 }
@@ -294,7 +296,8 @@ export async function accessGate(ctx: Context, next: Next) {
   try {
     claims = await verifyAccessToken(token, {
       jwks: [jwk],
-      // #412: comma-separated ACCESS_AUD — "mainAppAud[,pathAppAud…]".
+      // ACCESS_AUD is the single root-app aud in production (#435); the
+      // comma-split survives as tolerance for the retired multi-aud form.
       audience: ((ctx.env as Env).ACCESS_AUD ?? "").split(",").filter(Boolean),
     });
   } catch (error) {
