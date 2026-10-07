@@ -139,7 +139,7 @@ describe("responses wire: request shape", () => {
     ]);
   });
 
-  test("empty tool output rides the sentinel; error results keep text only (no is_error seat)", () => {
+  test("empty tool output rides the sentinel; #454 puts failure semantics in the output text", () => {
     const body = responsesRequestBody(
       {
         ...REQUEST,
@@ -167,7 +167,11 @@ describe("responses wire: request shape", () => {
         name: "bash",
         arguments: "{}",
       },
-      { type: "function_call_output", call_id: "toolu_ex-e", output: "(empty output)" },
+      {
+        type: "function_call_output",
+        call_id: "toolu_ex-e",
+        output: "[tool error] (empty output)",
+      },
     ]);
   });
 

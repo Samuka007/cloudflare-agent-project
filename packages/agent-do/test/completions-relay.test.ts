@@ -168,7 +168,7 @@ describe("completions wire: request shape", () => {
     ]);
   });
 
-  test("empty tool output rides the sentinel; empty assistant text rides null content", () => {
+  test("empty tool output rides the sentinel under the #454 marker; empty assistant text rides null", () => {
     const body = completionsRequestBody(
       {
         ...REQUEST,
@@ -197,7 +197,7 @@ describe("completions wire: request shape", () => {
           { id: "toolu_ex-e", type: "function", function: { name: "bash", arguments: "{}" } },
         ],
       },
-      { role: "tool", tool_call_id: "toolu_ex-e", content: "(empty output)" },
+      { role: "tool", tool_call_id: "toolu_ex-e", content: "[tool error] (empty output)" },
     ]);
   });
 

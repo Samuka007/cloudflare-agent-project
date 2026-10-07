@@ -1,3 +1,5 @@
+import type { ToolResultErrorCode } from "@cap/protocol";
+
 /**
  * Model relay seam. The agent DO owns when a model call happens (every call
  * attempt is a persisted `model.call_started` event — no event, no call, no
@@ -67,6 +69,8 @@ export interface ToolResultContribution {
   tool: string;
   status: "ok" | "error" | "timeout" | "cancelled" | "outcome_unknown";
   output: string;
+  /** #454: structured refusal code when the tool never executed. */
+  errorCode?: ToolResultErrorCode;
 }
 
 /**

@@ -2,6 +2,14 @@ import type {
   ProviderConfigDiscoverResponse,
   ProviderConfigTestResponse,
 } from "../contract/api/system.js";
+import {
+  hostDiscoverModelsResultSchema,
+  type DiscoveredModelEntry,
+  type HostDiscoverModelsCommand,
+} from "@cap/daemon-service";
+import { listNonDestroyedHostRows } from "../db/hosts.js";
+import { HOST_COMMAND_TIMEOUT_MS, daemonServiceStubOrNull } from "./host-files.js";
+import type { Env } from "../env.js";
 import { z } from "zod";
 
 /**
@@ -26,12 +34,6 @@ export interface ProviderProbeTarget {
   apiKey: string | null;
 }
 
-/** One discovered model row: only the catalog entry seats (id required). */
-export interface DiscoveredModelEntry {
-  id: string;
-  name?: string;
-}
-
 /** The fetch seam: real outbound fetch in production, stubbed in unit rigs. */
 export type FetchImpl = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -39,7 +41,7 @@ export type FetchImpl = (url: string, init: RequestInit) => Promise<Response>;
 // parsed, never cast: a missing `data` array or a non-string id is a
 // verdict/warning, not a trusted read.
 const modelsListEnvelopeSchema = z.object({ data: z.array(z.unknown()) });
-const discoveredModelEntrySchema = z.object({
+const upstreamModelEntrySchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).optional(),
 });
@@ -120,6 +122,11 @@ export async function probeProviderConnection(
  * dropped), and a non-list envelope is an ok:false verdict with bounded
  * error text. `apiKey` rides the Authorization header only — the response
  * never echoes credential material.
+ *
+ * #447: this edge probe is the NO-HOST fallback — it cannot enrich (the omp
+ * pi-catalog stack needs the Bun host), so every row is marked
+ * `metadataSource: "unavailable"` and carries id/name only. The enriched
+ * primary path is discoverProviderModelsEnriched below.
  */
 export async function discoverProviderModels(
   target: { baseUrl: string; apiKey: string | null },
@@ -184,14 +191,110 @@ export async function discoverProviderModels(
   const models: DiscoveredModelEntry[] = [];
   const warnings: string[] = [];
   for (const entry of envelope.data.data) {
-    const parsed = discoveredModelEntrySchema.safeParse(entry);
+    const parsed = upstreamModelEntrySchema.safeParse(entry);
     if (!parsed.success) {
       warnings.push(
         `discovered entry without a usable string id (${JSON.stringify(entry ?? null).slice(0, 80)}) — skipped, never silently dropped`,
       );
       continue;
     }
-    models.push(parsed.data);
+    models.push({ ...parsed.data, metadataSource: "unavailable" });
   }
   return { ok: true, status: response.status, latencyMs, error: null, models, warnings };
+}
+
+/**
+ * #447: the enriched primary path. Discovery delegates to a connected host
+ * over the host online-RPC seam (`host.discover_models`): the daemon runs
+ * the SAME `${baseUrl}/models` probe and enriches every entry against omp's
+ * pi-catalog stack (live models.dev hydration + bundled snapshot), which the
+ * Workers edge cannot run (Bun-only zstd hydration). `apiKey` rides the
+ * host-rpc frame to the user's OWN daemon — the same authenticated WS
+ * channel the host file faces use; the daemon is the credential's owner.
+ *
+ * Host selection: `hostId` pins the server; otherwise the first registered
+ * persistent hosts in creation order serve (capped). Every per-host failure
+ * becomes a warning note, and when NO host can serve, the face degrades to
+ * the edge's bare probe (discoverProviderModels) instead of failing — the
+ * panel still gets ids, now with an explicit unavailable marking and a
+ * degradation warning, never a silent metadata loss.
+ */
+const DISCOVERY_HOST_CANDIDATES_MAX = 3;
+
+export interface ProviderDiscoverTarget {
+  baseUrl: string;
+  apiKey: string | null;
+  /** Row api family hint ("anthropic" | "openai-responses" | …); null when undeclared. */
+  api: string | null;
+  hostId?: string;
+}
+
+export async function discoverProviderModelsEnriched(
+  env: Env,
+  target: ProviderDiscoverTarget,
+): Promise<ProviderConfigDiscoverResponse> {
+  const notes: string[] = [];
+  const hostIds =
+    target.hostId !== undefined
+      ? [target.hostId]
+      : (await listNonDestroyedHostRows(env))
+          .filter((row) => row.type !== "placeholder")
+          .slice(0, DISCOVERY_HOST_CANDIDATES_MAX)
+          .map((row) => row.id);
+  const command: HostDiscoverModelsCommand = {
+    type: "host.discover_models",
+    baseUrl: target.baseUrl,
+    ...(target.apiKey !== null ? { apiKey: target.apiKey } : {}),
+    ...(target.api !== null && target.api !== "" ? { api: target.api } : {}),
+  };
+  for (const hostId of hostIds) {
+    const stub = daemonServiceStubOrNull(env, hostId);
+    if (stub === null) {
+      notes.push(`host ${hostId}: daemon service unavailable`);
+      continue;
+    }
+    const outcome = await stub.hostOnlineRpc({
+      hostId,
+      command,
+      timeoutMs: HOST_COMMAND_TIMEOUT_MS,
+    });
+    if (outcome.kind === "host_offline") {
+      notes.push(`host ${hostId}: offline`);
+      continue;
+    }
+    if (outcome.kind === "timeout") {
+      notes.push(`host ${hostId}: timed out`);
+      continue;
+    }
+    if (!outcome.response.ok) {
+      // An old daemon answers unknown_command; a newer one can fail its own
+      // dispatch. Either way the next candidate (or the edge fallback) serves.
+      notes.push(
+        `host ${hostId}: ${outcome.response.errorCode} (${outcome.response.errorMessage})`,
+      );
+      continue;
+    }
+    if (outcome.response.commandType !== command.type) {
+      notes.push(`host ${hostId}: response type ${outcome.response.commandType}`);
+      continue;
+    }
+    const parsed = hostDiscoverModelsResultSchema.safeParse(outcome.response.result);
+    if (!parsed.success) {
+      notes.push(`host ${hostId}: malformed discovery result`);
+      continue;
+    }
+    return parsed.data;
+  }
+  const fallback = await discoverProviderModels({
+    baseUrl: target.baseUrl,
+    apiKey: target.apiKey,
+  });
+  return {
+    ...fallback,
+    warnings: [
+      ...notes,
+      "metadata enrichment unavailable (no host served discovery) — rows carry id/name only",
+      ...fallback.warnings,
+    ],
+  };
 }

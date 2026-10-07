@@ -26,6 +26,9 @@ export default defineConfig({
       "test/tool-runtime.test.ts",
       "test/eval-kernel.test.ts",
       "test/host-directory.test.ts",
+      // #447 pi-catalog enrichment lane: pi-catalog needs the Bun host
+      // (Bun.zstdDecompress hydration; models.json import) — Bun-only.
+      "test/host-discovery.test.ts",
       // B1 host-file read lane: node:fs + node:crypto real-fs suite — Bun-only.
       "test/host-files.test.ts",
       "test/l1-read-semantics.test.ts",

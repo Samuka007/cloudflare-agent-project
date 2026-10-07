@@ -4,6 +4,7 @@
 //
 import { z } from "zod";
 import { relayCatalogModelSchema } from "@cap/agent-do";
+import { discoveredModelEntrySchema } from "@cap/daemon-service";
 import {
   appSettingsSchema,
   appDefaultKeybindingsSchema,
@@ -506,21 +507,34 @@ export const providerConfigTestResponseSchema = z.object({
 export type ProviderConfigTestResponse = z.infer<typeof providerConfigTestResponseSchema>;
 
 /**
- * POST /system/providers/discover-models (PM addition ①): the /models
- * discovery face. Exactly one anchor is required — an unsaved row's
- * {baseUrl, apiKey?} (the typed key is write-only, used for the one probe)
- * or a saved row's {providerId} (uses the row's baseUrl + stored secret;
- * the plaintext never round-trips through the panel). Discovered entries
- * that cannot become a catalog model seat ride `warnings` — skip-with-
- * warning, never silently dropped.
+ * POST /system/providers/discover-models (PM addition ①; #447 enrichment):
+ * the /models discovery face. Exactly one anchor is required — an unsaved
+ * row's {baseUrl, apiKey?} (the typed key is write-only, used for the one
+ * probe) or a saved row's {providerId} (uses the row's baseUrl + stored
+ * secret; the plaintext never round-trips through the panel). Discovered
+ * entries that cannot become a catalog model seat ride `warnings` — skip-
+ * with-warning, never silently dropped.
+ *
+ * #447: discovery runs ON a connected host over the host online-RPC seam
+ * (`host.discover_models`) so omp's pi-catalog enrichment applies (Bun-only
+ * catalog hydration lives on the host). `hostId` pins the serving host;
+ * omitted, the route picks registered hosts in creation order. When no host
+ * can serve, the route falls back to its own bare probe — those rows carry
+ * id/name only, marked `metadataSource: "unavailable"`, plus a warning
+ * naming the degradation. Rows are draft-projection
+ * material: the stored catalog schema (relayCatalogModelSchema) rejects the
+ * display seats (`thinking`, `metadataSource`), so write-back goes through
+ * the panel's draft projection.
  */
 const providerConfigDiscoverByRowSchema = z.strictObject({
   providerId: providerConfigIdSchema,
   apiKey: z.string().min(1).optional(),
+  hostId: z.string().min(1).optional(),
 });
 const providerConfigDiscoverByBaseUrlSchema = z.strictObject({
   baseUrl: publicHttpsBaseUrlSchema,
   apiKey: z.string().min(1).optional(),
+  hostId: z.string().min(1).optional(),
 });
 /** The union IS the exactly-one-anchor rule: strict members reject mixed
  * or empty payloads (422), and the route narrows on the discriminant. */
@@ -535,7 +549,7 @@ export const providerConfigDiscoverResponseSchema = z.object({
   status: z.number().int().nullable(),
   latencyMs: z.number().int().nullable(),
   error: z.string().nullable(),
-  models: z.array(z.object({ id: z.string().min(1), name: z.string().optional() })),
+  models: z.array(discoveredModelEntrySchema),
   warnings: z.array(z.string()),
 });
 export type ProviderConfigDiscoverResponse = z.infer<typeof providerConfigDiscoverResponseSchema>;
