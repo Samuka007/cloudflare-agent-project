@@ -247,16 +247,39 @@ function webSearchProjectionRow(overlayRow: WebSearchOverlayRow | undefined): {
 }
 
 /**
+ * #484: did the deployment actually feed the legacy deployment channel?
+ * Any non-blank member of the channel env family counts (the vars
+ * resolveHarness reads plus its two execution pins). Zero members = the
+ * harness row is pure HARNESS_DEFAULTS synthesis — the panel hides it
+ * (#450: D1 provider_configs is the sole provider 正本, zero env fallback).
+ */
+function deploymentChannelEnvConfigured(env: HarnessEnv): boolean {
+  const channelVars: (string | undefined)[] = [
+    env.MODEL_RELAY_BASE_URL_ANTHROPIC,
+    env.MODEL_RELAY_API_KEY,
+    env.MODEL_RELAY_MODEL,
+    env.MODEL_RELAY_CONTEXT_WINDOW,
+    env.MODEL_RELAY_MAX_TOKENS,
+    env.MODEL_RELAY_THINKING_BUDGET_TOKENS,
+    env.MODEL_RELAY_IMAGE_INPUT,
+    env.DAEMON_MACHINE_ID,
+    env.HARNESS_PERMISSION_MODE,
+  ];
+  return channelVars.some((value) => value !== undefined && value.trim() !== "");
+}
+
+/**
  * GET /system/provider-projections (#266, #255 solution C): aggregate the
  * read-only provider status face. Harness row = projectHarness over
  * resolveHarness (the same total resolution thread turns run) plus the relay
- * host; web_search row = the D1 `web_search` overlay half (#449 — the
- * AGENT_DO_WEB_SEARCH env path is deleted, the row is the sole 正本):
- * chain order, credential-gate booleans, browser-backed exclusions. Zero
- * secret values leave the DB: key/token contents never enter the response,
- * and decode failures drop the error text (it can quote raw row content).
- * Daemon-side provider pins (judge/security) are NOT visible here — they live
- * in daemon env, a different trust domain (#255 §6.2, ticket #56).
+ * host and the #484 `envConfigured` gate; web_search row = the D1
+ * `web_search` overlay half (#449 — the AGENT_DO_WEB_SEARCH env path is
+ * deleted, the row is the sole 正本): chain order, credential-gate booleans,
+ * browser-backed exclusions. Zero secret values leave the DB: key/token
+ * contents never enter the response, and decode failures drop the error text
+ * (it can quote raw row content). Daemon-side provider pins (judge/security)
+ * are NOT visible here — they live in daemon env, a different trust domain
+ * (#255 §6.2, ticket #56).
  */
 export function buildProviderProjections(
   env: HarnessEnv,
@@ -292,7 +315,7 @@ export function buildProviderProjections(
     configured: imageSourceRow?.api === IMAGE_SOURCE_API_FAMILY && imageSourceRow.models.length > 0,
   };
   return {
-    harness: { ...harness, relayBaseUrlHost },
+    harness: { ...harness, relayBaseUrlHost, envConfigured: deploymentChannelEnvConfigured(env) },
     webSearch,
     // Catalog status (#350 shape, #450 semantics): ids and decode state
     // only — the full values live on GET /system/execution-options.
