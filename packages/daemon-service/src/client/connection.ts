@@ -15,6 +15,7 @@ import { loadIdentity, type ClientConfig, type ClientIdentity } from "./identity
 import { cfAccessHeaders } from "./cf-access.js";
 import { Executor, scanMarkerProcesses } from "./executor.js";
 import { HostRpcCommandError, browseHostDirectory } from "./host-directory.js";
+import { discoverHostProviderModels } from "./host-discovery.js";
 import { readHostFile, writeThreadFile } from "./host-files.js";
 import { ExecutionBuffer } from "./buffers.js";
 import {
@@ -479,7 +480,11 @@ export function dispatchHostRpc(
       ? browseHostDirectory(command)
       : command.type === "host.write_file"
         ? writeThreadFile(command, sandboxRoot)
-        : readHostFile(command);
+        : command.type === "host.discover_models"
+          ? discoverHostProviderModels(command)
+          : // The union's remaining arm (host.read_file) — an unknown
+            // commandType cannot reach here (schema-refused upstream).
+            readHostFile(command);
   return executed.then(
     (result) => {
       respond({ type: "host-rpc.response", ok: true, result });

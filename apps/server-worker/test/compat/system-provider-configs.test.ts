@@ -1,4 +1,4 @@
-import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import type { z } from "zod";
 import { decryptProviderSecret, resolveRelayCatalogWithOverlay } from "@cap/provider-app";
@@ -720,6 +720,14 @@ describe("#362 thread selection consumes the merged directory (#351 chain)", () 
 });
 
 describe("#362 test-connection and /models discovery faces", () => {
+  beforeEach(async () => {
+    // #447: discovery now delegates to registered hosts first; the exact-url
+    // assertions below need an EMPTY registry so the degraded fallback is
+    // the deterministic path (same hygiene as wipeRealHosts in
+    // cloud-placeholder-host.test.ts — the placeholder row stays).
+    await env.DB.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
+  });
+
   it("test-connection answers honest pre-flight verdicts without hitting the wire", async () => {
     await postProvider({
       id: "nobase",
@@ -781,6 +789,95 @@ describe("#362 test-connection and /models discovery faces", () => {
   // meets the same https/public-origin rule as every other baseUrl input.
 });
 
+describe("#447 discover enrichment: host delegation + degradation fallback", () => {
+  beforeEach(async () => {
+    await env.DB.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
+    resetProbeRateLimiter();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("an empty registry degrades to the bare edge probe with unavailable rows", async () => {
+    await postProvider({
+      id: "enrich-empty",
+      api: "anthropic-messages",
+      baseUrl: "https://enrich.example.com",
+      models: [{ id: "m" }],
+      apiKey: PANEL_KEY,
+    });
+    const calls: { url: string; init: RequestInit }[] = [];
+    stubProbeFetch(calls);
+    const verdict = providerConfigDiscoverResponseSchema.parse(
+      await (
+        await request("POST", "/api/v1/system/providers/discover-models", {
+          providerId: "enrich-empty",
+        })
+      ).json(),
+    );
+    expect(verdict.ok).toBe(true);
+    expect(calls.map((call) => call.url)).toEqual(["https://enrich.example.com/models"]);
+    expect(verdict.models).toHaveLength(1);
+    expect(verdict.models[0]).toMatchObject({ id: "m", metadataSource: "unavailable" });
+    expect(
+      verdict.warnings.some((warning) => warning.includes("metadata enrichment unavailable")),
+    ).toBe(true);
+  });
+
+  it("a pinned host that cannot serve falls back with a per-host note", async () => {
+    await postProvider({
+      id: "enrich-pinned",
+      api: "anthropic-messages",
+      baseUrl: "https://enrich2.example.com",
+      models: [{ id: "m" }],
+      apiKey: PANEL_KEY,
+    });
+    const calls: { url: string; init: RequestInit }[] = [];
+    stubProbeFetch(calls);
+    const verdict = providerConfigDiscoverResponseSchema.parse(
+      await (
+        await request("POST", "/api/v1/system/providers/discover-models", {
+          providerId: "enrich-pinned",
+          hostId: "local-447-offline",
+        })
+      ).json(),
+    );
+    expect(verdict.ok).toBe(true);
+    expect(calls.map((call) => call.url)).toEqual(["https://enrich2.example.com/models"]);
+    expect(verdict.warnings.some((warning) => warning.includes("host local-447-offline"))).toBe(
+      true,
+    );
+  });
+
+  it("the response schema round-trips a fully enriched host verdict", () => {
+    const verdict = providerConfigDiscoverResponseSchema.parse({
+      ok: true,
+      status: 200,
+      latencyMs: 12,
+      error: null,
+      models: [
+        {
+          id: "meta-llama-3",
+          name: "Llama 3",
+          api: "openai-completions",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 131072,
+          maxTokens: 8192,
+          cost: { input: 0.5, output: 1.5, cacheRead: 0.25, cacheWrite: 0.6 },
+          thinking: { mode: "effort", efforts: ["low", "medium", "high"] },
+          metadataSource: "models_dev",
+        },
+        { id: "bare", metadataSource: "unavailable" },
+      ],
+      warnings: [],
+    });
+    expect(verdict.models[0]?.thinking?.efforts).toEqual(["low", "medium", "high"]);
+    expect(verdict.models[1]?.metadataSource).toBe("unavailable");
+  });
+});
+
 describe("SEC-W5-003: baseUrl must name a public https origin", () => {
   it("write and discovery faces 422 non-https, IP-literal, and intranet targets", async () => {
     const rejected = [
@@ -818,6 +915,12 @@ describe("SEC-W5-003: baseUrl must name a public https origin", () => {
 });
 
 describe("SEC-W5-003: stored-credential probe binding", () => {
+  beforeEach(async () => {
+    // #447: the discovery face's exact-url assertions assume the degraded
+    // no-host path (the enrichment delegation never touches the wire).
+    await env.DB.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
