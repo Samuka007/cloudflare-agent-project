@@ -989,6 +989,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     // faces exactly like a settings write (system.ts:348 precedent).
     await hub(ctx.env).notifySystem(["config-changed"]);
     return ctx.json(systemOriginAllowlistResponseSchema.parse({ origins }));
+  });
 
   // #500 the permission-mode default face: the D1 `permission_mode`
   // single-row seat is the sole 正本 (zero env fallback — the retired env

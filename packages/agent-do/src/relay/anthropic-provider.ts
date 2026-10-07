@@ -41,9 +41,10 @@ export interface RelayConfig {
   model: string;
   maxTokens: number;
   /**
-   * #308 context window for the usage percentage (`MODEL_RELAY_CONTEXT_WINDOW`).
-   * Null when the deployment doesn't know one — the journaled receipt then
-   * carries null and the timeline omits the indicator instead of guessing.
+   * #308 context window for the usage percentage (the #500 row field /
+   * wire-safety fallback). Null when the deployment doesn't know one — the
+   * journaled receipt then carries null and the timeline omits the indicator
+   * instead of guessing.
    */
   contextWindow?: number;
   thinking?: ThinkingConfig;

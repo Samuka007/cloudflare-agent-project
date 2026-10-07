@@ -451,9 +451,9 @@ const relayCatalogProviderShellFields = {
   displayName: z.string().min(1).optional(),
   /**
    * Public endpoint declaration (projection-grade — the same trust level the
-   * provider-projections harness row already emits for the relay base URL).
-   * The wire base stays MODEL_RELAY_BASE_URL_ANTHROPIC; this documents the
-   * bought channel and never carries a credential.
+   * read faces already project). This is the wire base every dispatch dials
+   * (#500: the retired env scalar is gone — the row IS the base); it
+   * documents the bought channel and never carries a credential.
    */
   baseUrl: z.string().min(1).optional(),
   /** bb ProviderCapabilities.supportsServiceTier projection. */
