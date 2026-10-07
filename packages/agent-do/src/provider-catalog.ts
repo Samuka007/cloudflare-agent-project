@@ -341,7 +341,110 @@ export type RelayCatalogModel = z.infer<typeof relayCatalogModelSchema>;
  */
 export const IMAGE_SOURCE_API_FAMILY = "openai-images";
 
-export const relayCatalogProviderSchema = z.strictObject({
+// ---------------------------------------------------------------------------
+// #485 row/model family split (chat vs image-source)
+// ---------------------------------------------------------------------------
+
+/**
+ * #485 the row/model family vocabulary. A provider row and its model entries
+ * MUST belong to one family, and the family is the row-level api seat:
+ *
+ * - "chat": the #361 relay faces (api unset/relay) — model entries are the
+ *   chat dictionary (reasoning/input/contextWindow/maxTokens/thinking
+ *   ladder/cost-per-token).
+ * - "image": the #362/#448 image-source family (`api=openai-images`) —
+ *   model entries carry IMAGE semantics (sizes/outputFormat/per-image cost)
+ *   and none of the chat seats; the row is excluded from the LLM selection
+ *   directory and serves generate_image through the image_source seat.
+ *
+ * The family pairing is enforced structurally (the two provider branches
+ * below), at the CRUD write faces (family-paired 422s), by the loader
+ * (defensive, skip-with-warning) and by the discovery/import faces (the
+ * `family` seat + explicit warnings pointing image ids at the Image Source
+ * row).
+ */
+export const providerModelFamilyValues = ["chat", "image"] as const;
+export type ProviderModelFamily = (typeof providerModelFamilyValues)[number];
+export const providerModelFamilySchema = z.enum(providerModelFamilyValues);
+
+/**
+ * #485 the image-source row's model-entry dictionary: image semantics only.
+ * Strict by construction — the chat seats (reasoning, input, contextWindow,
+ * maxTokens, thinkingBudgetTokens, reasoningLevels, defaultReasoningLevel,
+ * reasoningEffortMap, the per-token cost object) have no seat here, so an
+ * image row can never look like a chat model on any surface.
+ */
+export const relayImageModelSchema = z.strictObject({
+  /** Model id as the images wire addresses it (e.g. `gpt-image-2`). */
+  id: z.string().min(1),
+  /** Display name; defaults to the id on the panel face. */
+  name: z.string().min(1).optional(),
+  /** Display subtitle (parity with chat entries; display-only). */
+  description: z.string().optional(),
+  /**
+   * The generation sizes this model accepts (e.g.
+   * ["1024x1024","1536x1024","1024x1536"]). Display/declaration grade — the
+   * wire size rides each generate_image request (aspect-ratio resolution).
+   */
+  sizes: z.array(z.string().min(1)).min(1).optional(),
+  /** The output format the upstream returns for this model. */
+  outputFormat: z.enum(["png", "jpeg", "webp"]).optional(),
+  /** Per-image pricing (USD per generated image). */
+  cost: z.strictObject({ perImage: z.number().nonnegative() }).optional(),
+});
+export type RelayImageModel = z.infer<typeof relayImageModelSchema>;
+
+/**
+ * The image dictionary's own key set — the write gates and the loader's
+ * strip-unknown recovery name the offending seats from it (one vocabulary,
+ * no parallel list to drift).
+ */
+export const relayImageModelKeys: string[] = Object.keys(relayImageModelSchema.shape);
+
+/**
+ * #485 curated image-generation id markers (lowercased substring match) —
+ * the import faces' guard for image ids that appear in a CHAT row/upstream
+ * list. Deliberately conservative and loud: a marker match REJECTS/WARNS
+ * with the Image Source pointer, never a silent chat import. The
+ * authoritative split stays the row-level family seat — this list only
+ * catches the well-known families when the family seat says "chat".
+ */
+const IMAGE_GENERATION_ID_MARKERS = [
+  "gpt-image", // OpenAI Images API family (gpt-image-1/2/2.5…)
+  "dall-e", // OpenAI legacy
+  "dalle", // aggregator spelling of the above
+  "imagen", // Google Imagen family
+  "flux", // Black Forest Labs FLUX family
+  "stable-diffusion", // Stability AI family
+  "sdxl", // Stability SDXL
+  "sd3", // Stability SD3.x
+  "qwen-image", // Alibaba Qwen-Image family
+  "seedream", // ByteDance Seedream family
+  "wanx", // Alibaba Tongyi Wanxiang text-to-image
+  "ideogram", // Ideogram family
+  "recraft", // Recraft family
+] as const;
+
+/** A whole `image`/`images` id segment, e.g. `gemini-2.5-flash-image`. */
+const IMAGE_ID_SEGMENT_PATTERN = /(?:^|[/._-])images?(?:[/._-]|$)/;
+
+/**
+ * #485: does this model id name an image-generation model? Used by the
+ * import faces (discovery, models.yml) and the loader to keep image ids off
+ * chat rows — a false positive refuses/warns loudly with the Image Source
+ * pointer (repairable), while the row-level family seat remains the
+ * authoritative split.
+ */
+export function isImageGenerationModelId(id: string): boolean {
+  const normalized = id.trim().toLowerCase();
+  if (normalized === "") return false;
+  return (
+    IMAGE_GENERATION_ID_MARKERS.some((marker) => normalized.includes(marker)) ||
+    IMAGE_ID_SEGMENT_PATTERN.test(normalized)
+  );
+}
+
+const relayCatalogProviderShellFields = {
   /** Picker display name; defaults to the provider key. */
   displayName: z.string().min(1).optional(),
   /**
@@ -351,18 +454,52 @@ export const relayCatalogProviderSchema = z.strictObject({
    * bought channel and never carries a credential.
    */
   baseUrl: z.string().min(1).optional(),
-  /**
-   * #361: the provider-level protocol face (model rows may override).
-   * #362 scope absorption ② additionally admits `openai-images` — an
-   * IMAGE-source row (the generate_image tool's switch + source), which the
-   * catalog projection filters out of the LLM selection directory.
-   */
-  api: z.union([relayApiSchema, z.literal(IMAGE_SOURCE_API_FAMILY)]).optional(),
   /** bb ProviderCapabilities.supportsServiceTier projection. */
   serviceTier: z.boolean().optional(),
+};
+
+/**
+ * #485 the image-source row branch: `api` is literally the image family and
+ * the models are image entries. No chat seat exists on this branch (strict).
+ */
+export const relayImageSourceProviderSchema = z.strictObject({
+  ...relayCatalogProviderShellFields,
+  api: z.literal(IMAGE_SOURCE_API_FAMILY),
+  models: z.array(relayImageModelSchema).min(1),
+});
+export type RelayImageSourceProvider = z.infer<typeof relayImageSourceProviderSchema>;
+
+/**
+ * The chat branch: the #361 relay faces (api optional — an unset seat rides
+ * the relay default face), models are chat entries. `openai-images` is NOT
+ * admitted here — an image model id or image semantics on this branch is a
+ * family mismatch, rejected with the named 422s.
+ */
+export const relayChatCatalogProviderSchema = z.strictObject({
+  ...relayCatalogProviderShellFields,
+  api: relayApiSchema.optional(),
   models: z.array(relayCatalogModelSchema).min(1),
 });
+export type RelayChatCatalogProvider = z.infer<typeof relayChatCatalogProviderSchema>;
+
+/**
+ * #485: the family-discriminated provider schema. The branch IS the family —
+ * `api: "openai-images"` admits only image entries; every other (or unset)
+ * api admits only chat entries. Downstream narrowing
+ * (`provider.api === IMAGE_SOURCE_API_FAMILY`) resolves the model type.
+ */
+export const relayCatalogProviderSchema = z.union([
+  relayImageSourceProviderSchema,
+  relayChatCatalogProviderSchema,
+]);
 export type RelayCatalogProvider = z.infer<typeof relayCatalogProviderSchema>;
+
+/** #485 the family discriminant as a guard (narrows the model-entry type). */
+export function isImageSourceProvider(
+  provider: RelayCatalogProvider,
+): provider is RelayImageSourceProvider {
+  return provider.api === IMAGE_SOURCE_API_FAMILY;
+}
 
 export const relayCatalogSchema = z
   .strictObject({
@@ -411,8 +548,11 @@ export function findRelayCatalogModel(
       : keys;
   for (const providerId of ordered) {
     const provider = catalog.providers[providerId];
-    const model = provider?.models.find((entry) => entry.id === modelId);
-    if (provider !== undefined && model !== undefined) {
+    // #485: image-source rows carry image entries and are not chat model
+    // rows — a lookup for chat dispatch skips them entirely.
+    if (provider === undefined || provider.api === IMAGE_SOURCE_API_FAMILY) continue;
+    const model = provider.models.find((entry) => entry.id === modelId);
+    if (model !== undefined) {
       return { providerId, model };
     }
   }

@@ -174,7 +174,7 @@ describe("#450 resolveOverlayCatalog (D1 rows are the sole 正本)", () => {
       imagey: {
         api: "openai-images",
         baseUrl: "https://images.example.com/v1",
-        models: [{ id: "image-model", input: ["image"] }],
+        models: [{ id: "image-model", sizes: ["1024x1024"], outputFormat: "png" }],
       },
       chat: { models: [{ id: "glm-5.3" }] },
     });

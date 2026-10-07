@@ -98,6 +98,8 @@ export async function getProviderConfigTarget(
 export interface ProviderConfigMutationContext {
   baseUrl: string | null;
   hasCredential: boolean;
+  /** #485 the stored api seat — PATCH resolves the model family from it. */
+  api: string | null;
 }
 
 export async function getProviderConfigMutationContext(
@@ -105,12 +107,12 @@ export async function getProviderConfigMutationContext(
   id: string,
 ): Promise<ProviderConfigMutationContext | null> {
   const row = await env.DB.prepare(
-    "SELECT base_url, api_key_enc IS NOT NULL AS has_credential FROM provider_configs WHERE id = ?",
+    "SELECT base_url, api, api_key_enc IS NOT NULL AS has_credential FROM provider_configs WHERE id = ?",
   )
     .bind(id)
-    .first<{ base_url: string | null; has_credential: number }>();
+    .first<{ base_url: string | null; api: string | null; has_credential: number }>();
   if (row === null) return null;
-  return { baseUrl: row.base_url, hasCredential: row.has_credential === 1 };
+  return { baseUrl: row.base_url, api: row.api, hasCredential: row.has_credential === 1 };
 }
 
 /** Credential-set resolution shared by POST/PUT/PATCH (the null protocol). */

@@ -3,7 +3,11 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import { relayCatalogModelSchema } from "@cap/agent-do";
+import {
+  providerModelFamilySchema,
+  relayCatalogModelSchema,
+  relayImageModelSchema,
+} from "@cap/agent-do";
 import { discoveredModelEntrySchema } from "@cap/daemon-service";
 import {
   appSettingsSchema,
@@ -521,12 +525,25 @@ export const publicHttpsBaseUrlSchema = z.string().min(1).max(2000).refine(isPub
   message: "baseUrl must be an https URL naming a public domain (no http, IPs, or intranet hosts)",
 });
 
+/**
+ * #485 one model entry as a write payload accepts it — a valid row of at
+ * least one family (the chat dictionary or the image dictionary). The family
+ * PAIRING (which family the row itself is) is checked by the routes against
+ * the effective api seat, so a cross-family entry answers a named 422
+ * (image_family_model_on_chat_row / chat_seats_on_image_row) instead of a
+ * shapeless union error.
+ */
+export const providerConfigModelWriteEntrySchema = z.union([
+  relayCatalogModelSchema,
+  relayImageModelSchema,
+]);
+
 export const providerConfigWriteSchema = z.strictObject({
   displayName: z.string().min(1).max(200).optional(),
   baseUrl: publicHttpsBaseUrlSchema.optional(),
   api: z.string().min(1).max(64).optional(),
   serviceTier: z.boolean().optional(),
-  models: z.array(relayCatalogModelSchema).optional(),
+  models: z.array(providerConfigModelWriteEntrySchema).optional(),
   apiKey: z.string().min(1).optional(),
 });
 export type ProviderConfigWrite = z.infer<typeof providerConfigWriteSchema>;
@@ -547,7 +564,7 @@ export const providerConfigPatchRequestSchema = z.strictObject({
   baseUrl: publicHttpsBaseUrlSchema.nullish(),
   api: z.string().min(1).max(64).nullish(),
   serviceTier: z.boolean().optional(),
-  models: z.array(relayCatalogModelSchema).optional(),
+  models: z.array(providerConfigModelWriteEntrySchema).optional(),
   apiKey: z.string().min(1).nullish(),
 });
 export type ProviderConfigPatchRequest = z.infer<typeof providerConfigPatchRequestSchema>;
@@ -616,6 +633,13 @@ const providerConfigDiscoverByRowSchema = z.strictObject({
 const providerConfigDiscoverByBaseUrlSchema = z.strictObject({
   baseUrl: publicHttpsBaseUrlSchema,
   apiKey: z.string().min(1).optional(),
+  /**
+   * #485 family hint for an unsaved row: "openai-images" makes the discovery
+   * annotate every entry as an image-family row (the panel is composing an
+   * Image Source row). Omitted/other values fall back to per-entry image-id
+   * detection.
+   */
+  api: z.string().min(1).max(64).optional(),
   hostId: z.string().min(1).optional(),
 });
 /** The union IS the exactly-one-anchor rule: strict members reject mixed
@@ -626,12 +650,28 @@ export const providerConfigDiscoverRequestSchema = z.union([
 ]);
 export type ProviderConfigDiscoverRequest = z.infer<typeof providerConfigDiscoverRequestSchema>;
 
+/**
+ * #485 one discovered entry with the import-family seat the discovery face
+ * derives: "image" for every entry discovered THROUGH an api=openai-images
+ * row, and for entries whose id is a well-known image-generation id when the
+ * anchor is a chat/unknown row — those cannot be imported as chat models,
+ * so the face warns and points at the Image Source row. Server-derived
+ * (never a client guess); image ids stay visible on the response, the
+ * import decision is what the seat drives.
+ */
+export const providerConfigDiscoverModelEntrySchema = discoveredModelEntrySchema.extend({
+  family: providerModelFamilySchema,
+});
+export type ProviderConfigDiscoverModelEntry = z.infer<
+  typeof providerConfigDiscoverModelEntrySchema
+>;
+
 export const providerConfigDiscoverResponseSchema = z.object({
   ok: z.boolean(),
   status: z.number().int().nullable(),
   latencyMs: z.number().int().nullable(),
   error: z.string().nullable(),
-  models: z.array(discoveredModelEntrySchema),
+  models: z.array(providerConfigDiscoverModelEntrySchema),
   warnings: z.array(z.string()),
 });
 export type ProviderConfigDiscoverResponse = z.infer<typeof providerConfigDiscoverResponseSchema>;
