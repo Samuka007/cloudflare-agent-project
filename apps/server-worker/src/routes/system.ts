@@ -3,9 +3,7 @@ import { z } from "zod";
 import {
   BROWSER_BACKED_ENGINES,
   DEFAULT_WEB_SEARCH_CONFIG,
-  decodeGenerateImageConfig,
   decodeWebSearchConfig,
-  envFlag,
   projectWebSearchConfig,
   IMAGE_SOURCE_API_FAMILY,
   SYNTHETIC_RELAY_PROVIDER_ID,
@@ -21,6 +19,7 @@ import {
   projectHarness,
   resolveRelayCatalog,
   resolveRelayCatalogWithOverlay,
+  type ProviderConfigCatalogOverlay,
   type HarnessEnv,
   type ModelsYmlImportParse,
 } from "@cap/provider-app";
@@ -42,6 +41,8 @@ import {
   providerConfigRowSchema,
   providerConfigTestResponseSchema,
   providerConfigsListResponseSchema,
+  systemImageSourcePutRequestSchema,
+  systemImageSourceResponseSchema,
   type ProviderConfigImportEntry,
   type ProviderConfigRow,
   type SystemExecutionOptionsResponse,
@@ -69,6 +70,7 @@ import {
   type CredentialUpdate,
   type ProviderConfigWriteFields,
 } from "../db/provider-configs.js";
+import { getImageSourceProviderId, setImageSourceProviderId } from "../db/image-source.js";
 import {
   discoverProviderModels,
   probeProviderConnection,
@@ -212,20 +214,15 @@ export function buildExecutionOptions(
  * in daemon env, a different trust domain (#255 §6.2, ticket #56).
  */
 export function buildProviderProjections(
-  env: Pick<Env, "AGENT_DO_WEB_SEARCH"> & {
-    /** #362 scope absorption ②: the fallback image gate + source (optional —
-     * a dispatchable openai-images ROW outranks both). */
-    AGENT_DO_GENERATE_IMAGE?: string;
-    AGENT_DO_IMAGE_SOURCE?: string;
-  } & HarnessEnv,
-  overlayProviders?: Record<string, RelayCatalogProvider>,
+  env: Pick<Env, "AGENT_DO_WEB_SEARCH"> & HarnessEnv,
+  overlay?: Pick<ProviderConfigCatalogOverlay, "providers" | "imageSourceProviderId">,
 ) {
   // One resolution for both rows: the harness projection and the catalog
   // status project the same evaluation (same-source, #350).
   const resolution =
-    overlayProviders === undefined
+    overlay === undefined
       ? resolveRelayCatalog(env)
-      : resolveRelayCatalogWithOverlay(env, overlayProviders);
+      : resolveRelayCatalogWithOverlay(env, overlay.providers);
   const harness = projectHarness(resolution.harness);
   // Total over env content: a malformed relay URL degrades to a null host
   // instead of failing the whole read-only face.
@@ -266,18 +263,17 @@ export function buildProviderProjections(
       };
     }
   }
-  // #362 scope absorption ②: generate_image availability, presence-only.
-  // A dispatchable api=openai-images row (panel, hot) wins; the env gate +
-  // decodable source is the fallback posture.
-  const imageRowPresent =
-    overlayProviders !== undefined &&
-    Object.values(overlayProviders).some(
-      (provider) => provider.api === IMAGE_SOURCE_API_FAMILY && provider.models.length > 0,
-    );
+  // #448: generate_image availability, presence-only. The 产图源 seat is
+  // the only gate (#450 — zero env fallback): configured iff the selection
+  // resolves to a dispatchable api=openai-images row. A dangling selection
+  // (row deleted after selection) reports configured:false with the seat id
+  // intact, so the panel can show what to repair.
+  const imageSourceProviderId = overlay?.imageSourceProviderId ?? null;
+  const imageSourceRow =
+    imageSourceProviderId === null ? undefined : overlay?.providers[imageSourceProviderId];
   const imageGeneration = {
-    configured:
-      imageRowPresent ||
-      (envFlag(env.AGENT_DO_GENERATE_IMAGE) && decodeGenerateImageConfigSafely(env)),
+    providerId: imageSourceProviderId,
+    configured: imageSourceRow?.api === IMAGE_SOURCE_API_FAMILY && imageSourceRow.models.length > 0,
   };
   return {
     harness: { ...harness, relayBaseUrlHost },
@@ -296,21 +292,6 @@ export function buildProviderProjections(
       imageGeneration,
     },
   };
-}
-
-/** Env image-source decode check that never throws on the read-only face. */
-function decodeGenerateImageConfigSafely(
-  env: Pick<Env, "AGENT_DO_WEB_SEARCH"> & {
-    AGENT_DO_GENERATE_IMAGE?: string;
-    AGENT_DO_IMAGE_SOURCE?: string;
-  } & HarnessEnv,
-): boolean {
-  try {
-    decodeGenerateImageConfig(env.AGENT_DO_IMAGE_SOURCE);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function registerSystemRoutes(app: Hono<AppEnv>): void {
@@ -448,7 +429,7 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
     const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
     return ctx.json(
       systemProviderProjectionsResponseSchema.parse(
-        buildProviderProjections(ctx.env, overlay?.providers),
+        buildProviderProjections(ctx.env, overlay ?? undefined),
       ),
     );
   });
@@ -576,6 +557,65 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
       details: { retryAfterSeconds: slot.retryAfterSeconds },
     });
   };
+
+  // #448 the 产图源 face: the explicit generate_image source seat. Distinct
+  // path (NOT under /system/providers/:id) so a selection is never confused
+  // with a provider row. Read = the stored seat + the dispatchable
+  // api=openai-images candidates; write = strict {providerId: string|null},
+  // validated against the D1 正本 before the seat moves.
+  const imageSourceCandidates = async (env: Env): Promise<string[]> => {
+    const overlay = await loadProviderConfigCatalogOverlay(env);
+    return Object.entries(overlay?.providers ?? {})
+      .filter(([, provider]) => provider.api === IMAGE_SOURCE_API_FAMILY)
+      .map(([id]) => id)
+      .sort();
+  };
+
+  routes.get("/system/image-source", async (ctx) => {
+    return ctx.json(
+      systemImageSourceResponseSchema.parse({
+        providerId: await getImageSourceProviderId(ctx.env),
+        candidates: await imageSourceCandidates(ctx.env),
+      }),
+    );
+  });
+
+  routes.put("/system/image-source", async (ctx) => {
+    const payload = await requireJsonBody(ctx, systemImageSourcePutRequestSchema);
+    if (payload.providerId !== null) {
+      const id = requireValidId(payload.providerId);
+      const target = await getProviderConfigTarget(ctx.env, id);
+      if (target === null) {
+        throw new ApiError({
+          status: 404,
+          code: "provider_config_not_found",
+          message: `provider config "${id}" not found (POST /system/providers to create)`,
+        });
+      }
+      if (target.api !== IMAGE_SOURCE_API_FAMILY) {
+        throw new ApiError({
+          status: 422,
+          code: "not_an_image_source",
+          message: `provider "${id}" declares api "${target.api ?? "default"}" — only "${IMAGE_SOURCE_API_FAMILY}" rows can serve as the image source`,
+        });
+      }
+      if (target.models.length === 0) {
+        throw new ApiError({
+          status: 422,
+          code: "not_dispatchable",
+          message: `provider "${id}" declares no models — add a model row before selecting it as the image source`,
+        });
+      }
+    }
+    await setImageSourceProviderId(ctx.env, payload.providerId);
+    await hub(ctx.env).notifySystem(["config-changed"]);
+    return ctx.json(
+      systemImageSourceResponseSchema.parse({
+        providerId: payload.providerId,
+        candidates: await imageSourceCandidates(ctx.env),
+      }),
+    );
+  });
 
   routes.get("/system/providers", async (ctx) => {
     const load = await loadProviderConfigOverlay(ctx.env);

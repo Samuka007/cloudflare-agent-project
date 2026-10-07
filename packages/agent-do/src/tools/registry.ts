@@ -311,7 +311,7 @@ const webSearchSchema = type({
 // omp packages/coding-agent/src/tools/image-gen.ts:28-49 (imageGenSchema,
 // 18.6.0 verbatim). The per-request `model` rides the body verbatim; omp's
 // catalog resolution (role chains, hosted carriers) collapses to the
-// configured `AGENT_DO_IMAGE_SOURCE` model — see tools/generate-image.ts.
+// 产图源 seat's configured model — see tools/generate-image.ts.
 const generateImageSchema = type({
   subject: type("string").describe("main subject"),
   "action?": type("string").describe("what subject is doing"),
@@ -953,8 +953,9 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
     // appended after the last builtin, before the hidden tail (omp sdk.ts
     // custom-tool injection order). omp registers it only when the
     // `generate_image.enabled` setting is on (default false) — the
-    // EXPERIMENTAL_TOOL_GATE `generateImage` entry below is that gate, so
-    // the row renders only when the deployment env admits it. Class edge:
+    // EXPERIMENTAL_TOOL_GATE `generateImage` entry below is that gate, fed
+    // by the 产图源 seat (#448): the row renders only when a source is
+    // selected. Class edge:
     // the image API call is DO-local outbound fetch (classification §2);
     // the product save rides the daemon-service thread-file write RPC
     // (tools/generate-image.ts) — a bounded host seam, not host execution
@@ -1109,7 +1110,8 @@ export const EXPERIMENTAL_TOOL_GATE: Readonly<
   checkpoint: "checkpoint",
   rewind: "checkpoint",
   // B2 #322: omp gates the custom tool behind `generate_image.enabled`
-  // (default false, docs/tools/generate_image.md) — this is that posture.
+  // (default false, docs/tools/generate_image.md) — since #448 the seat is
+  // the 产图源 selection: no selected source, no row (zero env fallback).
   generate_image: "generateImage",
 };
 
@@ -1119,7 +1121,12 @@ export const EXPERIMENTAL_TOOL_GATE: Readonly<
  */
 export function enabledToolNames(
   surface: readonly string[],
-  gates: { externalThinking: boolean; contextNotes: boolean; checkpoint: boolean; generateImage: boolean },
+  gates: {
+    externalThinking: boolean;
+    contextNotes: boolean;
+    checkpoint: boolean;
+    generateImage: boolean;
+  },
 ): readonly string[] {
   return surface.filter((name) => {
     const gate = EXPERIMENTAL_TOOL_GATE[name];
