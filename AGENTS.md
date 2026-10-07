@@ -3,6 +3,14 @@
 > [!IMPORTANT]
 > High-level target about current wave: W5（伞 #310 / milestone 12）— agent 基本功能 UX 做到确定性与鲁棒，skill 之外随发现随立。永续使命：云上随时可用的 omp——波次是刻度，交付持续。
 
+## Must-Follow Reading（每会话先读——违反即返工）
+
+动手前按序读过，未读先读：
+
+1. `rule://belief-state-discipline` — 信念台账：每个外部操作前把前提标 OBSERVED/ASSUMED；ASSUMED 不许直接落码/落票，先取 retrieved truth（读近处源码/文档/schema），其次问 provenance，最后才 probe。禁止把上游源码存在性当作产品可达性。
+2. `rule://eval-first-orchestration` — 复杂编排进 eval 内核：远程解析/JSON 内嵌/凭据处理/跨环境探测出现深层引号或多项组合时，用命名 eval cell 留中间态，不写一锤子 shell。
+3. `docs/agents/*` — PM 与 tracker 操作正本：`pm.md`（PM 循环/DoR/派发/关账，含"症状复现即立项，禁 all-in-one 票"）、`acceptance-lane.md`（验收模板+证据三件套）、`issue-tracker.md`（gh 约定+native blocking edges）、`tracker-schema.md`（三轴模型）、`triage-labels.md`（五标签）、`domain.md`（CONTEXT.md/ADR）；跨块判定加读 `docs/design/decomposition.md`。
+
 ## Engineering Doctrine（工程铁律——先读这个）
 
 本节是项目最高优先级的工程纪律，违反任何一条等同于阻断级缺陷。概念均来自标准项目管理/工程实践，此处给出明确中文定义与本项目操作规则。
