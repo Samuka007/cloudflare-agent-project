@@ -150,7 +150,7 @@ describe("criterion 5: Access gate", () => {
     ).rejects.toMatchObject({ status: 401 });
   });
 
-  it("accepts an audience list — a token matching any allowed aud passes (#412 comma ACCESS_AUD)", async () => {
+  it("accepts an audience list — a token matching any allowed aud passes (legacy multi-aud tolerance; staging ACCESS_AUD is single-aud since #435)", async () => {
     const keyPair = (await crypto.subtle.generateKey(
       {
         name: "RSASSA-PKCS1-v1_5",
