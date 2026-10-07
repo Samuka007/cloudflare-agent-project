@@ -24,7 +24,7 @@ import {
   type JevUsage,
 } from "../accept/jev-loop.js";
 
-const ALLOWLIST = ["cap-server-staging.dai-samuel.workers.dev"];
+const ALLOWLIST = ["bb-staging.samuka007.com"];
 
 // ---------------------------------------------------------------------------
 // Fakes

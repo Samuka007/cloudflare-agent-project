@@ -669,7 +669,7 @@ function preregisteredBlock(): Record<string, string> {
 }
 
 async function main(): Promise<void> {
-  const stagingHost = process.env.JEV_STAGING_HOST ?? "cap-server-staging.dai-samuel.workers.dev";
+  const stagingHost = process.env.JEV_STAGING_HOST ?? "bb-staging.samuka007.com";
   const env: RunEnv = {
     cdpHttp: process.env.JEV_CDP_HTTP ?? "http://172.27.0.1:9222",
     stagingHost,

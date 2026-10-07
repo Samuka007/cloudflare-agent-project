@@ -18,7 +18,7 @@
 import { JevError, openTab, resolveJeapiKey, runFlow, type FlowAssertion, type FlowProbe, type FlowReport, type JevPage } from "./jev-loop.js";
 
 const CDP_HTTP = process.env.JEV_CDP_HTTP ?? "http://172.27.0.1:9222";
-const STAGING_HOST = "cap-server-staging.dai-samuel.workers.dev";
+const STAGING_HOST = "bb-staging.samuka007.com";
 const THREAD_URL = `https://${STAGING_HOST}/threads/thr_jk45qe4786`;
 const TAB_NAME = "jev-loop-l177";
 const ROW_TITLE = "Unhandled agent event";

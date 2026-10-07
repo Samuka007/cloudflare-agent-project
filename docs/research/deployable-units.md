@@ -6,7 +6,7 @@
 
 | # | 单元 | 产物形态 | 构建入口 | 部署面 | 实际部署状态 |
 |---|------|----------|----------|--------|--------------|
-| U1 | `cap-server-staging`（组合 server worker + SPA 资产） | wrangler bundle + static assets | flake `apps.staging-deploy` | `wrangler.staging.jsonc` → workers.dev | **唯一真实部署单元**（engineering.md:12） |
+| U1 | `cap-server-staging`（组合 server worker + SPA 资产） | wrangler bundle + static assets | flake `apps.staging-deploy` | `wrangler.staging.jsonc` → `bb-staging.samuka007.com`（custom domain，#412） | **唯一真实部署单元**（engineering.md:12） |
 | U2 | bb SPA dist（前端资产） | vite 静态产物（含 gz/br 预压缩） | bb 子模块 `@bb/app` `pnpm build` | 无独立部署——staging 进 `apps/server-worker/public/` | 仅作为 U1 资产被消费 |
 | U3 | daemon 客户端（宿主执行器 + vendored omp tool-runtime） | Bun 直跑 TS 源码，**无打包产物** | 无（源码即入口） | 手工 `bun src/client/index.ts` | POC 形态，无发布 |
 | U4 | `cap-server-worker`（M0 占位目标） | wrangler 配置 | 同 U1 组合入口 | `wrangler.jsonc`，D1 id 全零占位 | 按票 #26 设计为**未部署**（wrangler.jsonc:17-19） |

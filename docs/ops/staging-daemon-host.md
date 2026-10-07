@@ -12,7 +12,7 @@ nix-personal-config-test 仓（house flake，CT140 warpgate 模子）；本文�
 ```
 CT142 (lxc-stg-01, 192.168.1.142, house flake hosts/nixos/lxc-stg-01)
   -- cap-daemon systemd service, Restart=always, 出站 WS/HTTPS only -->
-    cap-server-staging.dai-samuel.workers.dev  (staging worker, D1 hosts 表)
+    bb-staging.samuka007.com  (staging worker cap-server-staging，custom domain，D1 hosts 表)
 
 workstation (NixOS WSL, ~/workspace/nix-personal-config-test)
   --build-host nixos-pve (CT119, 192.168.1.119, 暖 store)-->
@@ -106,18 +106,23 @@ pct create 142 /var/lib/vz/template/cache/nixos-lxc-stg-01-<ver>.tar.xz \
 enroll（铸码→推 env→等 session.ready→剥码）：
 
 ```bash
-curl -fsS -X POST https://cap-server-staging.dai-samuel.workers.dev/api/v1/hosts/join-codes \
-  -H 'content-type: application/json' -d '{}'
+curl -fsS -X POST https://bb-staging.samuka007.com/api/v1/hosts/join-codes \
+  -H 'content-type: application/json' \
+  -H 'CF-Access-Client-Id: <cap-daemon 服务令牌 Client ID>' \
+  -H 'CF-Access-Client-Secret: <Secret，密库同 .staging-access.env>' \
+  -d '{}'
 # → {joinCode, hostId, expiresAt}；15 分钟一次性
+# 全域在 edge Access 门后（#412 单 root app）：匿名请求被 302 到登录页，
+# 双头必带（同下方 daemon env 的两键，同源密库）。
 
 cat > /tmp/staging-daemon.env <<'EOF'
-DAEMON_SERVICE_URL=https://cap-server-staging.dai-samuel.workers.dev
+DAEMON_SERVICE_URL=https://bb-staging.samuka007.com
 DAEMON_JOIN_CODE=<code>
 DAEMON_DATA_DIR=/var/lib/cap-daemon/data
 DAEMON_SANDBOX_ROOT=/tmp/cap-sandbox
 # daemon face 过 Access（bb-staging.samuka007.com 单 root app「cap-staging」，
-# #412 收敛后全域单门单 aud）后双键必填；直连 workers.dev（无 Access）时
-# 两键整体省略。
+# #412 收敛后全域单门单 aud）后双键必填；旧 workers.dev 免门禁直连面已随
+# 自定义域接管下线（CF 1042，#480），双键无省略形态。
 DAEMON_CF_ACCESS_CLIENT_ID=<cap-daemon service token 的 Client ID>
 DAEMON_CF_ACCESS_CLIENT_SECRET=<Secret，仅创建时可见，密库同 .staging-access.env>
 EOF
@@ -135,7 +140,8 @@ CF Access 双键说明（#420）：
   `authorization: Bearer <hostKey>` **并行发送**：Access 是围墙，hostKey 是门锁，
   两层各司其职（engineering.md 实践 7）；缝合内 hostKey 阶梯零改动。
 - 双键成对生效：只配一头 daemon 拒启（fail-closed，`decodeCfAccessConfig`）；
-  双缺省则线格式与 #420 之前逐字节一致（workers.dev 直连不受影响）。
+  双缺省则线格式与 #420 之前逐字节一致（不加 CF 头）——该形态只对无 Access
+  的自架面成立；bb-staging 全域在门后，无键连接会被 302 到登录页。
 - 手动跑 client 也可用参数面 `--cf-client-id` / `--cf-client-secret`（arg 优先于
   env，同 `--server`/`--join-code` 约定）。
 - 门是 #412 收敛后的**单 root app「cap-staging」**（bb-staging 全域单 aud）：人走
