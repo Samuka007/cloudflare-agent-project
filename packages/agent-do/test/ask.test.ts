@@ -308,6 +308,50 @@ describe("M1.5 T4 — ask pure semantics (omp ask.ts port)", () => {
     expect(seen).toEqual([]);
   });
 
+  test("#478 fail-closed: a payload divergent from the DO schema is an explicit tool error, nothing registers", async () => {
+    const seen: string[] = [];
+    const ctx: AskToolContext = {
+      executionId: "exec-1",
+      threadId: "thr_pure",
+      turnId: "turn_1",
+      owningTurnStatus: () => "tools_running",
+      interactionForExecution: () => Promise.resolve(undefined),
+      registerInteraction: (input) => {
+        seen.push(input.interactionId);
+        return Promise.resolve();
+      },
+      interruptInteraction: () => Promise.resolve(),
+      wake: () => {
+        throw new Error("a divergent ask must fail before it can block");
+      },
+      askTimeoutMs: 0,
+      now: () => 0,
+    };
+    // Every shape below passes the omp-verbatim arktype row (blank strings
+    // are `type("string")`, any `number` rides `recommended`) but fails the
+    // DO payload schema (protocol pending-interactions.ts). Pre-#478 these
+    // reached the journal append and the zod throw wedged the turn.
+    const divergent: { questions: AskQuestion[] }[] = [
+      { questions: [{ id: "   ", question: "Q?", options: [{ label: "A" }] }] },
+      { questions: [{ id: "q", question: "", options: [{ label: "A" }] }] },
+      { questions: [{ id: "q", question: "Q?", options: [{ label: "  " }] }] },
+      {
+        questions: [{ id: "q", question: "Q?", options: [{ label: "A" }], recommended: 0.5 }],
+      },
+      {
+        questions: [{ id: "q", question: "Q?", options: [{ label: "A" }], recommended: -1 }],
+      },
+    ];
+    for (const args of divergent) {
+      const result = await runAskTool(args, ctx);
+      expect(result.status).toBe("error");
+      expect(result.output).toContain(
+        "Error: ask payload diverged from the pending-interaction schema:",
+      );
+    }
+    expect(seen).toEqual([]);
+  });
+
   test("stop-route fold: input/steer assert the active turn, only a terminal clears it", () => {
     expect(activeTurnIdFromEvents([])).toBeNull();
     const input = event(
@@ -584,6 +628,51 @@ describe("M1.5 T4 — ask DO integration (DO↔SPA pending-interaction channel)"
     expect(await rig.stub.cancelTurn({ turnId })).toEqual({ accepted: true });
     await rig.waitTurnComplete(turnId);
     expect(activeTurnIdFromEvents(await rig.events())).toBeNull();
+  });
+
+  test("#478 fail-closed: divergent ask args error the tool honestly — no interaction row, turn completes", async () => {
+    // The blank id survives the omp-verbatim arktype row; pre-#478 the
+    // journal append's zod parse threw out of the executor and the turn
+    // wedged (dispatch died mid-wave, the alarm re-ask loop re-threw). The
+    // executor-side gate turns the same shape into an explicit error result
+    // the model sees, and the turn converges.
+    const rig = await createRig({
+      turns: [
+        {
+          toolCalls: [
+            {
+              name: "ask",
+              arguments: {
+                questions: [{ id: "   ", question: "Database?", options: [{ label: "SQLite" }] }],
+              },
+            },
+          ],
+        },
+        { deltas: ["done"] },
+      ],
+    });
+    const sent = await rig.stub.sendMessage({
+      clientRequestId: "in-ask-divergent",
+      content: [{ type: "text", text: "ask the user" }],
+      mode: "start",
+    });
+    const events = await rig.waitTurnComplete(sent.turnId);
+    expect(await rig.of("interaction.registered")).toEqual([]);
+    const callSeq = events.find(
+      (event) => event.type === "tool.call" && event.data.tool === "ask",
+    )?.seq;
+    if (callSeq === undefined) throw new Error("no ask call");
+    const executionId = executionIdFor(rig.threadId, callSeq);
+    const result = events.find(
+      (event) => event.type === "tool.result" && event.data.executionId === executionId,
+    );
+    if (result?.type !== "tool.result") throw new Error("no ask result");
+    expect(result.data.status).toBe("error");
+    expect(result.data.output).toContain(
+      "Error: ask payload diverged from the pending-interaction schema:",
+    );
+    expect(result.data.output).toContain("ids cannot be blank");
+    expect(events.some((event) => event.type === "interaction.resolved")).toBe(false);
   });
 
   test("replay consistency: ruling landing while evicted is the re-asked executor's journal answer", async () => {
