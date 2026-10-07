@@ -6,7 +6,7 @@ dist/
 .dev.vars.*
 .staging-daemon.env
 .env.local
-.pm-leases.jsonl
+.pm-leases.jsonl*
 .pm-closeouts.jsonl
 .pm-walks.jsonl
 .pm-walk/
