@@ -108,8 +108,8 @@ describe("#362 discoverProviderModels (/models discovery)", () => {
     // #447: the bare edge probe marks its rows metadata-unavailable — the
     // enrichment happens on the host (discoverProviderModelsEnriched).
     expect(verdict.models).toEqual([
-      { id: "glm-5.3", metadataSource: "unavailable" },
-      { id: "glm-5.3-air", name: "GLM Air", metadataSource: "unavailable" },
+      { id: "glm-5.3", metadataSource: "unavailable", family: "chat" },
+      { id: "glm-5.3-air", name: "GLM Air", metadataSource: "unavailable", family: "chat" },
     ]);
     expect(verdict.warnings).toEqual([]);
     expect(calls[0]?.url).toBe("https://newapi.example.com/v1/models");
@@ -123,9 +123,41 @@ describe("#362 discoverProviderModels (/models discovery)", () => {
         Promise.resolve(jsonResponse({ data: [{ id: "good" }, { nope: 1 }, "junk", { id: "" }] })),
     );
     expect(verdict.ok).toBe(true);
-    expect(verdict.models).toEqual([{ id: "good", metadataSource: "unavailable" }]);
+    expect(verdict.models).toEqual([{ id: "good", metadataSource: "unavailable", family: "chat" }]);
     expect(verdict.warnings).toHaveLength(3);
     expect(verdict.warnings[0]).toContain("skipped, never silently dropped");
+  });
+
+  it("#485 marks well-known image-generation ids on a chat/unknown anchor and warns", async () => {
+    const verdict = await discoverProviderModels(
+      { baseUrl: "https://aggregate.example.com/v1", apiKey: null },
+      () =>
+        Promise.resolve(
+          jsonResponse({
+            data: [{ id: "glm-5.3" }, { id: "gpt-image-2" }, { id: "gemini-2.5-flash-image" }],
+          }),
+        ),
+    );
+    expect(verdict.models.map((model) => [model.id, model.family])).toEqual([
+      ["glm-5.3", "chat"],
+      ["gpt-image-2", "image"],
+      ["gemini-2.5-flash-image", "image"],
+    ]);
+    expect(
+      verdict.warnings.some(
+        (warning) => warning.includes("gpt-image-2") && warning.includes("Image Source"),
+      ),
+    ).toBe(true);
+  });
+
+  it("#485 an openai-images anchor marks every entry image with no image-id warning", async () => {
+    const verdict = await discoverProviderModels(
+      { baseUrl: "https://images.example.com/v1", apiKey: null, api: "openai-images" },
+      () =>
+        Promise.resolve(jsonResponse({ data: [{ id: "gpt-image-2.5" }, { id: "image-model-x" }] })),
+    );
+    expect(verdict.models.map((model) => model.family)).toEqual(["image", "image"]);
+    expect(verdict.warnings).toEqual([]);
   });
 
   it("answers ok:false on non-list envelopes and non-JSON bodies", async () => {

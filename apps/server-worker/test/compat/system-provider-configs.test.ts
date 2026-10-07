@@ -783,13 +783,15 @@ describe("#447 discover enrichment: host delegation + degradation fallback", () 
           cost: { input: 0.5, output: 1.5, cacheRead: 0.25, cacheWrite: 0.6 },
           thinking: { mode: "effort", efforts: ["low", "medium", "high"] },
           metadataSource: "models_dev",
+          family: "chat",
         },
-        { id: "bare", metadataSource: "unavailable" },
+        { id: "bare", metadataSource: "unavailable", family: "chat" },
       ],
       warnings: [],
     });
     expect(verdict.models[0]?.thinking?.efforts).toEqual(["low", "medium", "high"]);
     expect(verdict.models[1]?.metadataSource).toBe("unavailable");
+    expect(verdict.models.map((entry) => entry.family)).toEqual(["chat", "chat"]);
   });
 });
 
@@ -1103,5 +1105,235 @@ describe("#362 scope absorption: per-model thinking budget + openai-images rows"
       providerId: "imagey-2",
     });
     await request("PUT", imageSourcePath, { providerId: null });
+  });
+});
+
+/**
+ * #485 the row/model family split: image rows carry image model entries
+ * (sizes/outputFormat/per-image cost) with zero chat seats; chat rows never
+ * admit image-generation ids (the named 422 points at the Image Source
+ * row); discovery annotates the import family per entry; and the loader
+ * backstops rows stored before the split (excision + strip-with-warning,
+ * never silent).
+ */
+describe("#485 row/model family split (chat vs openai-images)", () => {
+  beforeEach(async () => {
+    // Deterministic degraded discovery (the #447 no-host pattern).
+    await env.DB.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
+    resetProbeRateLimiter();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function insertRawRowWithApi(id: string, api: string, models: string): Promise<void> {
+    await env.DB.prepare(
+      "INSERT INTO provider_configs (id, display_name, base_url, api, service_tier, api_key_enc, models, created_at, updated_at) VALUES (?, ?, NULL, ?, 0, NULL, ?, ?, ?)",
+    )
+      .bind(id, id, api, models, Date.now(), Date.now())
+      .run();
+  }
+
+  it("refuses an image-generation id on a chat row with the Image Source pointer", async () => {
+    const refused = await request("POST", "/api/v1/system/providers", {
+      id: "chat-with-image",
+      api: "openai-responses",
+      models: [{ id: "glm-5.3" }, { id: "gpt-image-2" }],
+    });
+    const body = await refused.json<{ code: string; message: string }>();
+    expect(refused.status).toBe(422);
+    expect(body.code).toBe("image_family_model_on_chat_row");
+    expect(body.message).toContain("gpt-image-2");
+    expect(body.message).toContain("Image Source");
+    // Nothing was stored: the refusal is a write gate, not a warning label.
+    expect((await listProviders()).map((row) => row.id)).not.toContain("chat-with-image");
+  });
+
+  it("refuses chat seats on an image row and image semantics on a chat row", async () => {
+    await expect422(
+      await request("POST", "/api/v1/system/providers", {
+        id: "image-bad-seats",
+        api: "openai-images",
+        models: [{ id: "gpt-image-2", contextWindow: 8192 }],
+      }),
+      "chat_seats_on_image_row",
+    );
+    await expect422(
+      await request("POST", "/api/v1/system/providers", {
+        id: "chat-bad-semantics",
+        api: "openai-responses",
+        models: [{ id: "art-model", sizes: ["1024x1024"] }],
+      }),
+      "image_semantics_on_chat_row",
+    );
+  });
+
+  it("accepts image entries on an openai-images row and round-trips them through the loader", async () => {
+    const { status, row } = await postProvider({
+      id: "imagey-485",
+      displayName: "Image Row",
+      api: "openai-images",
+      baseUrl: "https://images.example.com/v1",
+      models: [
+        {
+          id: "gpt-image-2",
+          name: "GPT Image 2",
+          sizes: ["1024x1024", "1536x1024"],
+          outputFormat: "png",
+          cost: { perImage: 0.04 },
+        },
+      ],
+    });
+    expect(status).toBe(201);
+    expect(row?.status).toBe("ok");
+    expect(row?.models[0]).toMatchObject({
+      id: "gpt-image-2",
+      sizes: ["1024x1024", "1536x1024"],
+      outputFormat: "png",
+      cost: { perImage: 0.04 },
+    });
+    // The chat directory never lists the image row…
+    expect((await executionOptions()).providers.map((provider) => provider.id)).not.toContain(
+      "imagey-485",
+    );
+    // …and the image-source face lists it as a candidate, seatable end-to-end.
+    const seat = systemImageSourceResponseSchema.parse(
+      await (await request("GET", "/api/v1/system/image-source")).json(),
+    );
+    expect(seat.candidates).toContain("imagey-485");
+    expect((await request("PUT", "/api/v1/system/image-source", { providerId: "imagey-485" })).status).toBe(200);
+  });
+
+  it("a models-only PATCH keeps the row family; an api flip validates the effective set", async () => {
+    await postProvider({
+      id: "imagey-patch",
+      api: "openai-images",
+      baseUrl: "https://images.example.com/v1",
+      models: [{ id: "gpt-image-2" }],
+    });
+    // Models-only PATCH on the image row judges by the STORED api.
+    await expect422(
+      await request("PATCH", "/api/v1/system/providers/imagey-patch", {
+        models: [{ id: "gpt-image-2", contextWindow: 8192 }],
+      }),
+      "chat_seats_on_image_row",
+    );
+    // A family flip without models validates the STORED rows: the image id
+    // cannot be stranded on a freshly chat-ified row.
+    await expect422(
+      await request("PATCH", "/api/v1/system/providers/imagey-patch", {
+        api: "openai-responses",
+      }),
+      "image_family_model_on_chat_row",
+    );
+    // The same flip succeeds when the same request converts the models.
+    const flipped = await request("PATCH", "/api/v1/system/providers/imagey-patch", {
+      api: "openai-responses",
+      models: [{ id: "glm-5.3" }],
+    });
+    expect(flipped.status).toBe(200);
+    const row = (await listProviders()).find((entry) => entry.id === "imagey-patch");
+    expect(row?.api).toBe("openai-responses");
+    expect(row?.status).toBe("ok");
+  });
+
+  it("the loader excises image ids from a chat row's directory slice with a warning", async () => {
+    // Raw insert bypasses the write gate — the pre-#485 stored-row era.
+    await insertRawRowWithApi(
+      "chat-stale",
+      "anthropic-messages",
+      JSON.stringify([{ id: "glm-5.3" }, { id: "gpt-image-2" }]),
+    );
+    const row = (await listProviders()).find((entry) => entry.id === "chat-stale");
+    expect(row?.status).toBe("warning");
+    expect(row?.warnings.join(" ")).toContain("gpt-image-2");
+    expect(row?.warnings.join(" ")).toContain("Image Source");
+    // The chat directory serves the surviving chat model only…
+    const options = await executionOptions();
+    expect(options.models.map((model) => model.model)).toContain("glm-5.3");
+    expect(options.models.map((model) => model.model)).not.toContain("gpt-image-2");
+    // …while the raw stored value stays visible for repair (never rewritten).
+    expect(JSON.stringify(row?.models)).toContain("gpt-image-2");
+  });
+
+  it("an image row stored with legacy chat seats keeps dispatching — seats stripped with warnings", async () => {
+    await insertRawRowWithApi(
+      "image-stale",
+      "openai-images",
+      JSON.stringify([{ id: "gpt-image-2", input: ["text"], contextWindow: 8192 }]),
+    );
+    const row = (await listProviders()).find((entry) => entry.id === "image-stale");
+    expect(row?.status).toBe("warning");
+    expect(row?.warnings.join(" ")).toContain("chat seat(s) dropped");
+    expect(row?.dispatchable).toBe(true);
+    const seat = systemImageSourceResponseSchema.parse(
+      await (await request("GET", "/api/v1/system/image-source")).json(),
+    );
+    expect(seat.candidates).toContain("image-stale");
+  });
+
+  it("discovery annotates families: chat-row image ids warn, image-row entries land image", async () => {
+    await postProvider({
+      id: "disc-chat",
+      api: "openai-responses",
+      baseUrl: "https://up.example.com/v1",
+      models: [{ id: "glm-5.3" }],
+    });
+    await postProvider({
+      id: "disc-image",
+      api: "openai-images",
+      baseUrl: "https://images.example.com/v1",
+      models: [{ id: "gpt-image-2" }],
+    });
+    vi.stubGlobal(
+      "fetch",
+      (url: string | URL | Request): Promise<Response> => {
+        const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+        const list = href.includes("images.example.com")
+          ? [{ id: "gpt-image-2.5" }]
+          : [{ id: "glm-5.3" }, { id: "gpt-image-2" }];
+        return Promise.resolve(new Response(JSON.stringify({ data: list }), { status: 200 }));
+      },
+    );
+    const chatVerdict = providerConfigDiscoverResponseSchema.parse(
+      await (
+        await request("POST", "/api/v1/system/providers/discover-models", {
+          providerId: "disc-chat",
+        })
+      ).json(),
+    );
+    expect(chatVerdict.models.map((model) => [model.id, model.family])).toEqual([
+      ["glm-5.3", "chat"],
+      ["gpt-image-2", "image"],
+    ]);
+    expect(chatVerdict.warnings.some((warning) => warning.includes("Image Source"))).toBe(true);
+
+    const imageVerdict = providerConfigDiscoverResponseSchema.parse(
+      await (
+        await request("POST", "/api/v1/system/providers/discover-models", {
+          providerId: "disc-image",
+        })
+      ).json(),
+    );
+    expect(imageVerdict.models.map((model) => [model.id, model.family])).toEqual([
+      ["gpt-image-2.5", "image"],
+    ]);
+    // The image anchor adds no image-id warning (the degradation note from
+    // the no-host fallback may still ride along).
+    expect(
+      imageVerdict.warnings.some((warning) => warning.includes("image-generation")),
+    ).toBe(false);
+
+    // The unsaved-row family hint (an image row being composed) rides the
+    // same annotation — no stored row needed.
+    const hinted = providerConfigDiscoverResponseSchema.parse(
+      await (
+        await request("POST", "/api/v1/system/providers/discover-models", {
+          baseUrl: "https://images.example.com/v1",
+          api: "openai-images",
+        })
+      ).json(),
+    );
+    expect(hinted.models.map((model) => model.family)).toEqual(["image"]);
   });
 });

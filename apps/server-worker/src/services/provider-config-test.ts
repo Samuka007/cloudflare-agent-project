@@ -2,6 +2,7 @@ import type {
   ProviderConfigDiscoverResponse,
   ProviderConfigTestResponse,
 } from "../contract/api/system.js";
+import { IMAGE_SOURCE_API_FAMILY, isImageGenerationModelId } from "@cap/agent-do";
 import {
   hostDiscoverModelsResultSchema,
   type DiscoveredModelEntry,
@@ -128,8 +129,59 @@ export async function probeProviderConnection(
  * `metadataSource: "unavailable"` and carries id/name only. The enriched
  * primary path is discoverProviderModelsEnriched below.
  */
+interface RawDiscoverVerdict {
+  ok: boolean;
+  status: number | null;
+  latencyMs: number | null;
+  error: string | null;
+  models: DiscoveredModelEntry[];
+  warnings: string[];
+}
+
+/**
+ * #485 the import-family annotation of a discovery verdict (the chat ⇄ image
+ * split on the import face). `family` is derived server-side per entry:
+ *
+ * - an api=openai-images anchor means every entry lands on the IMAGE row
+ *   (the panel matches them to image drafts — sizes/format/price, no chat
+ *   seats);
+ * - a chat/unknown anchor marks well-known image-generation ids as "image":
+ *   they cannot import into a chat row, so the verdict carries an explicit
+ *   warning pointing at the Image Source row — never a silent chat import.
+ *
+ * The seat is informational for the import decision; entries stay visible
+ * either way (skip-with-warning discipline, the caller decides).
+ */
+function withDiscoveredFamilies(
+  verdict: RawDiscoverVerdict,
+  apiHint: string | null,
+): ProviderConfigDiscoverResponse {
+  const imageRow = apiHint === IMAGE_SOURCE_API_FAMILY;
+  const models = verdict.models.map((entry) => ({
+    ...entry,
+    family: imageRow || isImageGenerationModelId(entry.id) ? ("image" as const) : ("chat" as const),
+  }));
+  const imageIds = imageRow
+    ? []
+    : models.filter((entry) => entry.family === "image").map((entry) => entry.id);
+  if (imageIds.length === 0) return { ...verdict, models };
+  const listed = imageIds.slice(0, 5).join(", ");
+  const listedIds =
+    imageIds.length > 5 ? `${listed} +${String(imageIds.length - 5)} more` : listed;
+  return {
+    ...verdict,
+    models,
+    warnings: [
+      ...verdict.warnings,
+      `${String(imageIds.length)} discovered entry(ies) are image-generation models ` +
+        `(${listedIds}) — 产图族 cannot import into a chat row; create or reuse an ` +
+        `api=openai-images row and select it in Settings → Providers → Image Source`,
+    ],
+  };
+}
+
 export async function discoverProviderModels(
-  target: { baseUrl: string; apiKey: string | null },
+  target: { baseUrl: string; apiKey: string | null; api?: string | null },
   fetchImpl: FetchImpl = fetch,
 ): Promise<ProviderConfigDiscoverResponse> {
   const url = `${target.baseUrl.replace(/\/+$/, "")}/models`;
@@ -200,7 +252,10 @@ export async function discoverProviderModels(
     }
     models.push({ ...parsed.data, metadataSource: "unavailable" });
   }
-  return { ok: true, status: response.status, latencyMs, error: null, models, warnings };
+  return withDiscoveredFamilies(
+    { ok: true, status: response.status, latencyMs, error: null, models, warnings },
+    target.api ?? null,
+  );
 }
 
 /**
@@ -283,11 +338,14 @@ export async function discoverProviderModelsEnriched(
       notes.push(`host ${hostId}: malformed discovery result`);
       continue;
     }
-    return parsed.data;
+    return withDiscoveredFamilies(parsed.data, target.api ?? null);
   }
+  // The degraded fallback annotates with the same hint (its own annotation
+  // already applied — the enriched call above returns it verbatim).
   const fallback = await discoverProviderModels({
     baseUrl: target.baseUrl,
     apiKey: target.apiKey,
+    api: target.api,
   });
   return {
     ...fallback,

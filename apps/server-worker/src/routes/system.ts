@@ -7,6 +7,10 @@ import {
   resolveWebSearchConfig,
   SEARCH_ENGINE_IDS,
   IMAGE_SOURCE_API_FAMILY,
+  isImageGenerationModelId,
+  relayCatalogModelSchema,
+  relayImageModelKeys,
+  relayImageModelSchema,
   SYNTHETIC_RELAY_PROVIDER_ID,
   type RelayCatalogProvider,
 } from "@cap/agent-do";
@@ -647,6 +651,70 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     });
   };
 
+  /**
+   * #485 the row⇄model family pairing gate (write half of the family split):
+   * a write's model entries must belong to the row's EFFECTIVE family — the
+   * payload's api seat for POST/PUT, the stored api for a PATCH that moves
+   * only models. Cross-family entries answer named 422s instead of leaking
+   * into storage: 产图 model ids never enter a chat row (they cannot serve
+   * chat turns), and the chat seats (reasoning/input/contextWindow/maxTokens/
+   * thinking ladder/per-token cost) never enter an image row.
+   */
+  const assertModelFamilyPairing = (models: unknown[], effectiveApi: string | null): void => {
+    const imageFamily = effectiveApi === IMAGE_SOURCE_API_FAMILY;
+    for (const [index, entry] of models.entries()) {
+      const label = `model ${String(index + 1)}`;
+      const keys = typeof entry === "object" && entry !== null ? Object.keys(entry) : [];
+      if (imageFamily) {
+        if (relayImageModelSchema.safeParse(entry).success) continue;
+        const crossSeats = keys.filter((key) => !relayImageModelKeys.includes(key));
+        throw new ApiError({
+          status: 422,
+          code: "chat_seats_on_image_row",
+          message:
+            crossSeats.length > 0
+              ? `${label} declares chat seat(s) (${crossSeats.join(", ")}) — an api=openai-images row ` +
+                `carries image semantics only (id/name/description/sizes/outputFormat/cost.perImage); ` +
+                `remove them (they belong on a chat row)`
+              : `${label} is not a usable image model row ` +
+                `(id/name/description/sizes/outputFormat/cost.perImage)`,
+        });
+      }
+      const parsedChat = relayCatalogModelSchema.safeParse(entry);
+      if (!parsedChat.success) {
+        const imageSeats = keys.filter(
+          (key) =>
+            relayImageModelKeys.includes(key) &&
+            key !== "id" &&
+            key !== "name" &&
+            key !== "description",
+        );
+        throw new ApiError({
+          status: 422,
+          code: "image_semantics_on_chat_row",
+          message:
+            imageSeats.length > 0
+              ? `${label} declares image semantics (${imageSeats.join(", ")}) — those belong on an ` +
+                `api=openai-images row (Settings → Providers → Image Source)`
+              : `${label} is not a usable chat model row ` +
+                `(${parsedChat.error.issues
+                  .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+                  .join("; ")})`,
+        });
+      }
+      if (isImageGenerationModelId(parsedChat.data.id)) {
+        throw new ApiError({
+          status: 422,
+          code: "image_family_model_on_chat_row",
+          message:
+            `model "${parsedChat.data.id}" is an image-generation model (产图族) — it cannot serve ` +
+            `chat turns on a chat provider row; move it to an api=openai-images row and select it in ` +
+            `Settings → Providers → Image Source`,
+        });
+      }
+    }
+  };
+
   // #448 the 产图源 face: the explicit generate_image source seat. Distinct
   // path (NOT under /system/providers/:id) so a selection is never confused
   // with a provider row. Read = the stored seat + the dispatchable
@@ -931,6 +999,9 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         message: `provider config "${payload.id}" already exists (PUT/PATCH to edit)`,
       });
     }
+    if (payload.models !== undefined) {
+      assertModelFamilyPairing(payload.models, payload.api ?? null);
+    }
     const credential = credentialOf(payload.apiKey);
     refuseKeyWithoutMasterKey(ctx.env, credential);
     await insertProviderConfig(ctx.env, payload.id, writeFieldsOf(payload), credential);
@@ -952,6 +1023,9 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         message: `provider config "${id}" not found (POST /system/providers to create)`,
       });
     }
+    if (payload.models !== undefined) {
+      assertModelFamilyPairing(payload.models, payload.api ?? null);
+    }
     const credential = credentialOf(payload.apiKey);
     refuseKeyWithoutMasterKey(ctx.env, credential);
     // PUT writes the visible face wholesale (writeFieldsOf): an absent
@@ -972,6 +1046,20 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         code: "provider_config_not_found",
         message: `provider config "${id}" not found`,
       });
+    }
+    const apiMoving = payload.api !== undefined && (payload.api ?? null) !== current.api;
+    if (payload.models !== undefined || apiMoving) {
+      // PATCH resolves the family from the payload's api seat when it moves,
+      // else from the stored row (a models-only PATCH keeps the row family).
+      // A family flip validates the EFFECTIVE model set — the payload's rows
+      // when present, else the stored ones — so image ids cannot be stranded
+      // on a freshly chat-ified row (or chat seats on a new image row).
+      const effectiveModels =
+        payload.models ?? (await getProviderConfigTarget(ctx.env, id))?.models ?? [];
+      assertModelFamilyPairing(
+        effectiveModels,
+        payload.api !== undefined ? payload.api : current.api,
+      );
     }
     const credential = credentialOf(payload.apiKey);
     refuseKeyWithoutMasterKey(ctx.env, credential);
@@ -1082,7 +1170,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         : await discoverProviderModelsEnriched(ctx.env, {
             baseUrl: payload.baseUrl,
             apiKey: payload.apiKey ?? null,
-            api: null,
+            api: payload.api ?? null,
             hostId: payload.hostId,
           });
     return ctx.json(providerConfigDiscoverResponseSchema.parse(verdict));
@@ -1167,6 +1255,21 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
           message:
             "PROVIDER_CONFIG_MASTER_KEY is not configured — refusing to store a plaintext API key " +
             "(set the Worker secret first, then re-import; rows without keys still work in mock mode)",
+        });
+        continue;
+      }
+      // #485: the SAME family pairing the manual CRUD faces enforce — the
+      // parser already refuses image ids in chat providers, so this is the
+      // backstop that keeps one row-creating path from drifting.
+      try {
+        assertModelFamilyPairing(candidate.models, candidate.api);
+      } catch (error) {
+        entries.push({
+          ...entryBase,
+          verdict: "skipped",
+          status: 422,
+          code: "family_mismatch",
+          message: error instanceof Error ? error.message : String(error),
         });
         continue;
       }

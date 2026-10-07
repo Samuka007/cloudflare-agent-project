@@ -309,6 +309,47 @@ providers:
     expect(provider?.warnings.join("\n")).toContain("azure-openai-responses");
   });
 
+  test("#485 an image-generation model id skips with the Image Source pointer", () => {
+    const parse = parseModelsYml(
+      `
+providers:
+  mixed:
+    api: anthropic-messages
+    models:
+      - id: glm-5.3
+      - id: gpt-image-2
+        name: GPT Image 2
+      - id: gemini-2.5-flash-image
+`,
+    );
+    const provider = parse.providers[0];
+    expect(provider?.models.map((model) => model.id)).toEqual(["glm-5.3"]);
+    const transcript = provider?.warnings.join("\n") ?? "";
+    expect(transcript).toContain('model "gpt-image-2"');
+    expect(transcript).toContain("产图族");
+    expect(transcript).toContain("Image Source");
+    expect(transcript).toContain("gemini-2.5-flash-image");
+  });
+
+  test("#485 a model-level api=openai-images skips with the Image Source pointer, not the no-adaptor verdict", () => {
+    const parse = parseModelsYml(
+      `
+providers:
+  imager:
+    api: anthropic-messages
+    models:
+      - id: art-model
+        api: openai-images
+`,
+    );
+    const provider = parse.providers[0];
+    expect(provider?.models).toEqual([]);
+    const transcript = provider?.warnings.join("\n") ?? "";
+    expect(transcript).toContain("openai-images");
+    expect(transcript).toContain("Image Source");
+    expect(transcript).not.toContain("has no cloud adaptor yet");
+  });
+
   test("unusable model rows skip with warnings — never silently dropped", () => {
     const parse = parseModelsYml(
       `

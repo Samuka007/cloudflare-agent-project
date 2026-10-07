@@ -4,7 +4,10 @@ import {
   decodeRelayCatalog,
   deriveRelayReasoning,
   findRelayCatalogModel,
+  isImageGenerationModelId,
+  isImageSourceProvider,
   relayApiConsumesEffortMap,
+  relayCatalogProviderSchema,
   relayCatalogSchema,
   relayModelEntrySchema,
   resolveRelaySelection,
@@ -63,8 +66,10 @@ describe("#350 MODEL_RELAY_CATALOG schema", () => {
     const catalog = decodeRelayCatalog(JSON.stringify(FULL_CATALOG));
     expect(catalog).not.toBeNull();
     expect(catalog?.defaultProvider).toBe("main");
-    expect(catalog?.providers.main?.models[0]?.input).toEqual(["text", "image"]);
-    expect(catalog?.providers.main?.models[0]?.cost?.cacheWrite).toBe(0);
+    const main = catalog?.providers.main;
+    if (main === undefined || isImageSourceProvider(main)) throw new Error("expected chat branch");
+    expect(main.models[0]?.input).toEqual(["text", "image"]);
+    expect(main.models[0]?.cost?.cacheWrite).toBe(0);
     expect(catalog?.providers.backup?.models).toHaveLength(1);
   });
 
@@ -244,7 +249,9 @@ describe("#361 relay api face + effort mapping", () => {
         },
       }),
     );
-    expect(catalog?.providers.omp?.models[0]?.reasoningEffortMap).toEqual({
+    const omp = catalog?.providers.omp;
+    if (omp === undefined || isImageSourceProvider(omp)) throw new Error("expected chat branch");
+    expect(omp.models[0]?.reasoningEffortMap).toEqual({
       xhigh: "max",
       ultra: "high",
     });
@@ -341,5 +348,118 @@ describe("#361 relay api face + effort mapping", () => {
       modelId: "m",
       reasoningLevel: "none",
     });
+  });
+});
+
+/**
+ * #485 the row/model family split: the provider schema is family-
+ * discriminated (openai-images ⇒ image entries only; every other/unset api
+ * ⇒ chat entries only), and the curated image-id detector names the
+ * well-known 产图 families for the import/loader gates.
+ */
+describe("#485 the row/model family split", () => {
+  test("an openai-images row admits image entries and rejects chat seats", () => {
+    expect(
+      relayCatalogProviderSchema.safeParse({
+        api: "openai-images",
+        models: [
+          {
+            id: "gpt-image-2",
+            name: "GPT Image 2",
+            sizes: ["1024x1024", "1536x1024"],
+            outputFormat: "png",
+            cost: { perImage: 0.04 },
+          },
+        ],
+      }).success,
+    ).toBe(true);
+    // The chat seats have no seat on the image branch (strict).
+    expect(
+      relayCatalogProviderSchema.safeParse({
+        api: "openai-images",
+        models: [{ id: "gpt-image-2", contextWindow: 8192 }],
+      }).success,
+    ).toBe(false);
+    // The per-image cost dictionary is the only cost shape admitted.
+    expect(
+      relayCatalogProviderSchema.safeParse({
+        api: "openai-images",
+        models: [{ id: "gpt-image-2", cost: { input: 0.1, output: 0.2, cacheRead: 0, cacheWrite: 0 } }],
+      }).success,
+    ).toBe(false);
+  });
+
+  test("a chat row admits chat entries and rejects image semantics", () => {
+    expect(
+      relayCatalogProviderSchema.safeParse({
+        api: "openai-responses",
+        models: [{ id: "glm-5.3", input: ["text"], contextWindow: 200000 }],
+      }).success,
+    ).toBe(true);
+    expect(
+      relayCatalogProviderSchema.safeParse({
+        models: [{ id: "m", sizes: ["1024x1024"] }],
+      }).success,
+    ).toBe(false);
+    expect(
+      relayCatalogProviderSchema.safeParse({
+        models: [{ id: "m", cost: { perImage: 0.04 } }],
+      }).success,
+    ).toBe(false);
+  });
+
+  test("the type guard discriminates the family branches", () => {
+    const imageRow = relayCatalogProviderSchema.parse({
+      api: "openai-images",
+      models: [{ id: "gpt-image-2" }],
+    });
+    const chatRow = relayCatalogProviderSchema.parse({ models: [{ id: "m" }] });
+    expect(isImageSourceProvider(imageRow)).toBe(true);
+    expect(isImageSourceProvider(chatRow)).toBe(false);
+    if (!isImageSourceProvider(imageRow)) throw new Error("expected the image branch");
+    expect(imageRow.models[0]?.sizes).toBeUndefined();
+  });
+
+  test("isImageGenerationModelId names the well-known families and whole image segments", () => {
+    for (const id of [
+      "gpt-image-1",
+      "gpt-image-2.5",
+      "dall-e-3",
+      "dalle-3",
+      "imagen-4.0-generate-001",
+      "flux-pro-1.1",
+      "black-forest-labs/FLUX.1-schnell",
+      "stable-diffusion-3.5-large",
+      "sd3.5-large",
+      "qwen-image-edit",
+      "seedream-3.0",
+      "wanx2.1-t2i-turbo",
+      "ideogram-v3",
+      "recraft-v3",
+      "gemini-2.5-flash-image",
+      "gemini-2.0-flash-preview-image-generation",
+    ]) {
+      expect(isImageGenerationModelId(id), id).toBe(true);
+    }
+    for (const id of [
+      "glm-5.3",
+      "claude-opus-4-7",
+      "gpt-5.2-codex",
+      "deepseek-v3.2",
+      "qwen3-max",
+      "",
+      "   ",
+    ]) {
+      expect(isImageGenerationModelId(id), id).toBe(false);
+    }
+  });
+
+  test("findRelayCatalogModel skips image-source rows entirely", () => {
+    const catalog = relayCatalogSchema.parse({
+      providers: {
+        imagey: { api: "openai-images", models: [{ id: "shared-id" }] },
+      },
+    });
+    expect(findRelayCatalogModel(catalog, "shared-id")).toBeUndefined();
   });
 });

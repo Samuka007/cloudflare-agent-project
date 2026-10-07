@@ -21,11 +21,17 @@
 import {
   DEFAULT_WEB_SEARCH_CONFIG,
   IMAGE_SOURCE_API_FAMILY,
+  isImageGenerationModelId,
   projectWebSearchConfig,
   relayApiValues,
   relayCatalogModelSchema,
+  relayImageModelKeys,
+  relayImageModelSchema,
   resolveWebSearchConfig,
+  type RelayCatalogModel,
   type RelayCatalogProvider,
+  type RelayImageModel,
+  type ProviderModelFamily,
   type WebSearchConfig,
   type WebSearchProjection,
 } from "@cap/agent-do";
@@ -338,6 +344,116 @@ function skipWarning(id: string, reason: string): string {
   return `provider config "${id}": ${reason} — skipped (row kept, never silently deleted)`;
 }
 
+/**
+ * #485 image-row recovery (lenient LOAD half of the family split): a model
+ * entry that carries chat seats is decoded by DROPPING those seats with a
+ * loud warning — a pre-existing row (e.g. one that went through the
+ * discovery-merge era) keeps dispatching instead of silently joining the
+ * directory with chat semantics, and the panel shows exactly what to repair.
+ * Writes stay strict (the CRUD faces 422 chat seats on image rows), so the
+ * leniency exists only for rows already stored.
+ */
+function recoverImageModelEntry(entry: unknown): { model: RelayImageModel; note: string } | null {
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return null;
+  const kept: Record<string, unknown> = {};
+  const dropped: string[] = [];
+  for (const [key, value] of Object.entries(entry)) {
+    if (relayImageModelKeys.includes(key)) kept[key] = value;
+    else dropped.push(key);
+  }
+  if (dropped.length === 0) return null;
+  const parsed = relayImageModelSchema.safeParse(kept);
+  if (!parsed.success) return null;
+  return {
+    model: parsed.data,
+    note:
+      `model "${parsed.data.id}": chat seat(s) dropped (${dropped.join(", ")}) — ` +
+      `image rows carry image semantics only ` +
+      `(id/name/description/sizes/outputFormat/cost.perImage); ` +
+      `save the row in the panel to persist the cleanup`,
+  };
+}
+
+/**
+ * #485 the family-paired model decode for one stored row. Chat rows keep the
+ * existing strict whole-array decode, then EXCLUDE image-generation ids from
+ * the effective directory with a loud warning (the chat directory must never
+ * serve 产图 models). Image rows decode against the image dictionary: usable
+ * entries pass, chat-seat contamination is recovered with per-seat warnings,
+ * and an entry that is still unusable skips alone (its siblings keep
+ * dispatching) — never a silent drop.
+ */
+function decodeRowModels(
+  id: string,
+  family: ProviderModelFamily,
+  raw: unknown,
+): { models: RelayImageModel[] | RelayCatalogModel[]; warnings: string[] } {
+  const warnings: string[] = [];
+  if (!Array.isArray(raw)) {
+    return {
+      models: [],
+      warnings: [skipWarning(id, "models is not a list — no model entry decoded")],
+    };
+  }
+  if (family === "chat") {
+    const parsed = relayCatalogModelSchema.array().safeParse(raw);
+    if (!parsed.success) {
+      warnings.push(
+        skipWarning(
+          id,
+          `models failed the catalog schema (${parsed.error.issues
+            .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+            .join("; ")})`,
+        ),
+      );
+      return { models: [], warnings };
+    }
+    const imageIds = parsed.data
+      .filter((model) => isImageGenerationModelId(model.id))
+      .map((model) => model.id);
+    if (imageIds.length > 0) {
+      const listed = imageIds.slice(0, 5).join(", ");
+      const listedIds = imageIds.length > 5 ? `${listed} +${String(imageIds.length - 5)} more` : listed;
+      warnings.push(
+        skipWarning(
+          id,
+          `image-generation model id(s) excluded from the chat directory ` +
+            `(${listedIds}) — move them to an api=openai-images row and ` +
+            `select it in Settings → Providers → Image Source`,
+        ),
+      );
+    }
+    return {
+      models: parsed.data.filter((model) => !isImageGenerationModelId(model.id)),
+      warnings,
+    };
+  }
+  const models: RelayImageModel[] = [];
+  for (const entry of raw) {
+    const strict = relayImageModelSchema.safeParse(entry);
+    if (strict.success) {
+      models.push(strict.data);
+      continue;
+    }
+    const recovered = recoverImageModelEntry(entry);
+    if (recovered !== null) {
+      models.push(recovered.model);
+      warnings.push(`provider config "${id}": ${recovered.note}`);
+      continue;
+    }
+    warnings.push(
+      skipWarning(
+        id,
+        `model entry ${JSON.stringify(entry ?? null).slice(0, 80)} is not a usable image model row ` +
+          `(${strict.error.issues
+            .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+            .join("; ")})`,
+      ),
+    );
+  }
+  return { models, warnings };
+}
+
 /** The full load: CRUD-face rows + overlay halves + the warning transcript. */
 export interface ProviderConfigLoad {
   rows: ProviderConfigRecord[];
@@ -398,6 +514,10 @@ async function readProviderConfigs(
   for (const row of result.results) {
     maxUpdatedAt = Math.max(maxUpdatedAt, row.updated_at);
     const rowWarnings: string[] = [];
+    const declaredApi = row.api !== null && row.api !== "" ? row.api : null;
+    // #485: the row-level api seat IS the model family (see decodeRowModels).
+    const family: ProviderModelFamily =
+      declaredApi === IMAGE_SOURCE_API_FAMILY ? "image" : "chat";
     let models: unknown = [];
     let jsonBroken = false;
     if (typeof row.models === "string" && row.models.trim() !== "") {
@@ -417,21 +537,11 @@ async function readProviderConfigs(
         jsonBroken = true;
       }
     }
-    let decodedModels: RelayCatalogProvider["models"] = [];
+    let decodedModels: RelayCatalogModel[] | RelayImageModel[] = [];
     if (!jsonBroken) {
-      const parsed = relayCatalogModelSchema.array().safeParse(models);
-      if (parsed.success) {
-        decodedModels = parsed.data;
-      } else {
-        rowWarnings.push(
-          skipWarning(
-            row.id,
-            `models failed the catalog schema (${parsed.error.issues
-              .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-              .join("; ")})`,
-          ),
-        );
-      }
+      const decoded = decodeRowModels(row.id, family, models);
+      decodedModels = decoded.models;
+      rowWarnings.push(...decoded.warnings);
     }
     if (options.decrypt && row.api_key_enc !== null) {
       if (env.PROVIDER_CONFIG_MASTER_KEY === undefined || env.PROVIDER_CONFIG_MASTER_KEY === "") {
@@ -466,7 +576,6 @@ async function readProviderConfigs(
         skipWarning(row.id, "declares no models — not dispatchable until a model is added"),
       );
     }
-    const declaredApi = row.api !== null && row.api !== "" ? row.api : null;
     if (declaredApi !== null && !isAdmittedProviderApi(declaredApi)) {
       rowWarnings.push(
         skipWarning(
@@ -476,13 +585,21 @@ async function readProviderConfigs(
       );
     }
     if (dispatchable && (declaredApi === null || isAdmittedProviderApi(declaredApi))) {
-      providers[row.id] = {
+      const shell = {
         ...(row.display_name !== null ? { displayName: row.display_name } : {}),
         ...(row.base_url !== null && row.base_url !== "" ? { baseUrl: row.base_url } : {}),
-        ...(declaredApi !== null ? { api: declaredApi } : {}),
         ...(row.service_tier === 1 ? { serviceTier: true } : {}),
-        models: decodedModels,
       };
+      // The decode above resolved the SAME family from the same declaredApi,
+      // so each branch's cast is the family pairing re-asserted for the type.
+      providers[row.id] =
+        declaredApi === IMAGE_SOURCE_API_FAMILY
+          ? { ...shell, api: declaredApi, models: decodedModels as RelayImageModel[] }
+          : {
+              ...shell,
+              ...(declaredApi !== null ? { api: declaredApi } : {}),
+              models: decodedModels as RelayCatalogModel[],
+            };
     }
     warnings.push(...rowWarnings);
     rows.push({

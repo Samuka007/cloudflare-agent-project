@@ -26,6 +26,8 @@
 
 import { parse as parseYaml } from "yaml";
 import {
+  IMAGE_SOURCE_API_FAMILY,
+  isImageGenerationModelId,
   relayApiValues,
   relayCatalogModelSchema,
   relayReasoningLevelValues,
@@ -338,6 +340,18 @@ function mapModelEntry(
   if (typeof rawId !== "string" || rawId.trim() === "") {
     return { model: null, warnings: [`${subject}: missing id — skipped`] };
   }
+  // #485: an image-generation id never imports into a chat provider row —
+  // it belongs on an api=openai-images row (the Image Source), so the model
+  // skips with the pointer instead of landing as a chat model.
+  if (isImageGenerationModelId(rawId)) {
+    return {
+      model: null,
+      warnings: warnings.concat([
+        `${subject}: image-generation model id (产图族) — not imported into a chat provider; ` +
+          `create an api=openai-images row in Configured and select it in Settings → Providers → Image Source`,
+      ]),
+    };
+  }
   const modelWarnings: string[] = [];
   const entry: Record<string, unknown> = { id: rawId };
   if (typeof merged.name === "string" && merged.name !== "") entry.name = merged.name;
@@ -347,6 +361,14 @@ function mapModelEntry(
   if (merged.api !== undefined) {
     if (typeof merged.api !== "string") {
       modelWarnings.push(`${subject}: api is not a string — model skipped`);
+      return { model: null, warnings: warnings.concat(modelWarnings) };
+    }
+    if (merged.api === IMAGE_SOURCE_API_FAMILY) {
+      modelWarnings.push(
+        `${subject}: api "${IMAGE_SOURCE_API_FAMILY}" belongs to an Image Source row, not a chat ` +
+          `provider — model skipped (create the image row in Configured and select it in Settings → ` +
+          `Providers → Image Source)`,
+      );
       return { model: null, warnings: warnings.concat(modelWarnings) };
     }
     if (!isAdmittedRelayApi(merged.api)) {
