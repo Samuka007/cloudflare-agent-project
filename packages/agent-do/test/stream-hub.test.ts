@@ -323,7 +323,7 @@ describe("#197 L2: journal append → hub frames", () => {
     const ux = await rig.stub.getEvents({ project: "ux" });
     const uxRows = ux.events as unknown as {
       type: string;
-      data?: { item?: { type: string; status?: string; output?: string } };
+      data?: { item?: { type: string; status?: string; output?: string; errorCode?: string } };
     }[];
     expect(uxRows.some((row) => row.type === "system/error")).toBe(false);
     const toolItem = uxRows.find(
@@ -333,7 +333,20 @@ describe("#197 L2: journal append → hub frames", () => {
       throw new Error("ux projection lost the host_offline toolCall item");
     }
     expect(toolItem.status).toBe("failed");
-    expect(toolItem.output).toBe("host_offline");
+    // #454: the placeholder carries the structured refusal — the human
+    // message on the output, the code addressable, never a bare
+    // `host_offline` token a model could read as the sandbox hostname.
+    expect(toolItem.output).toBe("tool not executed: bound host offline");
+    expect(toolItem.errorCode).toBe("host_offline");
+    // And the journal row itself is the same contract (source of truth for
+    // every face: journal → ux item, journal → model face).
+    const resultRow = events.find((event) => event.type === "tool.result");
+    expect(resultRow?.data).toMatchObject({
+      status: "error",
+      exitCode: null,
+      errorCode: "host_offline",
+      output: "tool not executed: bound host offline",
+    });
     expect(journalText(events, sent.turnId)).toContain("recovered");
   });
 

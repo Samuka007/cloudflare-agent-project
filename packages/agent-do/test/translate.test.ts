@@ -217,7 +217,7 @@ describe("translation: event log → model request", () => {
     expect(() => modelRequestFromEvents(log, "t1", 10)).toThrow(ProjectionError);
   });
 
-  test("error statuses map to is_error; empty output gets the omp sentinel", () => {
+  test("error statuses map to is_error + the #454 marker; empty output rides the sentinel", () => {
     const log = [
       event(1, "thread.created", { title: "t", machineId: "local" }),
       event(2, "turn.input", {
@@ -256,7 +256,63 @@ describe("translation: event log → model request", () => {
     expect(block).toEqual({
       type: "tool_result",
       tool_use_id: toolUseIdFor(`${THREAD}:5`),
-      content: "(empty output)",
+      content: "[tool error] (empty output)",
+      is_error: true,
+    });
+  });
+
+  test("#454 not-executed result: the marker carries the refusal code", () => {
+    const log = [
+      event(1, "thread.created", { title: "t", machineId: "cloud" }),
+      event(2, "turn.input", {
+        turnId: "t1",
+        inputId: "i1",
+        content: [{ type: "text", text: "跑 hostname" }],
+      }),
+      event(3, "model.call_started", { turnId: "t1", consumedSteerSeqs: [] }),
+      event(4, "model.call_completed", {
+        turnId: "t1",
+        modelCallId: 3,
+        text: "",
+        toolCalls: [{ name: "bash", arguments: { command: "hostname" } }],
+      }),
+      event(5, "tool.call", {
+        turnId: "t1",
+        modelCallId: 3,
+        tool: "bash",
+        arguments: { command: "hostname" },
+        timeoutMs: 600_000,
+      }),
+      event(6, "tool.result", {
+        turnId: "t1",
+        executionId: `${THREAD}:5`,
+        status: "error",
+        exitCode: null,
+        errorCode: "host_offline",
+        output: "tool not executed: bound host offline",
+      }),
+      event(7, "model.call_started", { turnId: "t1", consumedSteerSeqs: [] }),
+    ];
+    const request = modelRequestFromEvents(log, "t1", 7);
+    const prior = request.priorCalls[0];
+    if (prior === undefined) throw new Error("missing prior call slice");
+    expect(prior.toolResults).toEqual([
+      {
+        executionId: `${THREAD}:5`,
+        tool: "bash",
+        status: "error",
+        output: "tool not executed: bound host offline",
+        errorCode: "host_offline",
+      },
+    ]);
+    // Anthropic face: is_error stays, and the content is unmistakably a
+    // refusal — never a bare host_offline token reading as stdout.
+    const body = anthropicRequestBody(request, WIRE_OPTS);
+    const block = body.messages[2]?.content[0];
+    expect(block).toEqual({
+      type: "tool_result",
+      tool_use_id: toolUseIdFor(`${THREAD}:5`),
+      content: "[tool error host_offline] tool not executed: bound host offline",
       is_error: true,
     });
   });

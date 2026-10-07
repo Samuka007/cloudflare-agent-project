@@ -1,3 +1,5 @@
+import type { ToolResultErrorCode } from "@cap/protocol";
+
 /**
  * Daemon-service seam (outbound, toward ticket #30's daemon service DO).
  *
@@ -48,6 +50,14 @@ export interface ToolResultPayload {
   exitCode: number | null;
   output: string;
   outputTruncated?: boolean;
+  /**
+   * #454: structured refusal code when the tool never executed (execution
+   * suspension #73) — the contract owner is @cap/protocol tool-results;
+   * every not-executed generation point (pre-dispatch rejections, the
+   * dispatch host_offline placeholder) carries it, and the model face
+   * renders the code in its marker. Never set for results of a real run.
+   */
+  errorCode?: ToolResultErrorCode;
   /**
    * B1 (#321): image artifacts this tool produced, by host-disk path. Each
    * lands its own `imageView` journal row (parentToolCallId = the call

@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, test } from "vitest";
-import { newThreadId } from "@cap/protocol";
+import { newThreadId, toolNotExecutedMessage } from "@cap/protocol";
 import { createRig, resetRuntime, type Rig } from "./helpers.js";
 import type { TestDaemonServiceStub } from "../src/testing/test-daemon-do.js";
 import type { FakeJournalOp } from "../src/testing/fake-daemon.js";
@@ -395,8 +395,11 @@ describe("override gates (#289 B3/B4)", () => {
     const [result] = resultRowsOf(events);
     expect(result?.data).toMatchObject({
       status: "error",
+      errorCode: "unknown_host",
     });
-    expect(result?.data.output).toContain(`unknown_host: no registered host "${TARGET_GHOST}"`);
+    expect(result?.data.output).toBe(
+      toolNotExecutedMessage("unknown_host", `no registered host "${TARGET_GHOST}" for the ssh:// override`),
+    );
     expect(dispatchRowsOf(events)).toHaveLength(0);
   }, 30_000);
 
@@ -416,6 +419,7 @@ describe("override gates (#289 B3/B4)", () => {
     });
     const events = await waitTurnSettled(rig, sent.turnId);
     expect(resultRowsOf(events)[0]?.data.status).toBe("error");
+    expect(resultRowsOf(events)[0]?.data.errorCode).toBe("unknown_host");
     expect(resultRowsOf(events)[0]?.data.output).toContain("is destroyed");
   }, 30_000);
 
@@ -436,7 +440,7 @@ describe("override gates (#289 B3/B4)", () => {
     const events = await waitTurnSettled(rig, sent.turnId);
     const [result] = resultRowsOf(events);
     expect(result?.data.status).toBe("error");
-    expect(result?.data.output).toContain("exec_tier_required");
+    expect(result?.data).toMatchObject({ errorCode: "exec_tier_required" });
     expect(result?.data.output).toContain(`ceiling is "auto"`);
     // The rejection never reached the target: no journal ops there at all.
     expect(await journalOf(TARGET_CAPPED)).toHaveLength(0);
@@ -459,7 +463,11 @@ describe("override gates (#289 B3/B4)", () => {
     });
     const events = await waitTurnSettled(rig, sent.turnId);
     expect(resultRowsOf(events)[0]?.data.status).toBe("error");
-    expect(resultRowsOf(events)[0]?.data.output).toContain("registry_unavailable");
+    expect(resultRowsOf(events)[0]?.data).toMatchObject({
+      errorCode: "registry_unavailable",
+      exitCode: null,
+    });
+    expect(resultRowsOf(events)[0]?.data.output).toContain("tool not executed: hosts registry unavailable");
     expect(dispatchRowsOf(events)).toHaveLength(0);
     await seedHostsTable();
   }, 30_000);
@@ -490,7 +498,12 @@ describe("override gates (#289 B3/B4)", () => {
     const [result] = resultRowsOf(events);
     expect(result?.data).toMatchObject({
       status: "error",
-      output: `host_offline: override target "${TARGET_OFFLINE}" has no live daemon session`,
+      errorCode: "host_offline",
+      exitCode: null,
+      output: toolNotExecutedMessage(
+        "host_offline",
+        `override target "${TARGET_OFFLINE}" has no live daemon session`,
+      ),
     });
     // host_lost stays the BOUND-machine marker — the bound host is alive.
     const phases = phaseRowsOf(events, sent.turnId).map((row) =>

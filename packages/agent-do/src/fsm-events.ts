@@ -4,6 +4,7 @@ import {
   pendingInteractionPayloadSchema,
   pendingInteractionResolutionSchema,
   promptContentSchema,
+  toolResultErrorCodeSchema,
 } from "@cap/protocol";
 import { relayReasoningLevelSchema } from "./provider-catalog.js";
 
@@ -393,6 +394,12 @@ export const agentEventDataSchemas = {
     exitCode: z.number().int().nullable(),
     output: z.union([z.string(), blobRefSchema]),
     outputTruncated: z.boolean().optional(),
+    /**
+     * #454: structured refusal code when the tool never executed (execution
+     * suspension #73) — the @cap/protocol tool-results contract; absent for
+     * results of a real run (including real failures).
+     */
+    errorCode: toolResultErrorCodeSchema.optional(),
   }),
 
   /**

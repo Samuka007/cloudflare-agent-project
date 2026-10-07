@@ -276,9 +276,10 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
       case "tool.exec_started":
       case "tool.output":
       // #148 (streaming contract §9.3): a host_offline dispatch renders as the
-      // tool card's placeholder result — `tool.result{status:"error",
-      // output:"host_offline"}` lands right after the dispatch and folds into
-      // the work row. The former system/error row here preempted the screen
+      // tool card's placeholder result — the #454 not-executed result
+      // (`status:"error"`, errorCode "host_offline", the human
+      // "tool not executed: …" message) lands right after the dispatch and
+      // folds into the work row. The former system/error row here preempted the screen
       // mid-turn (thr_jk45qe4786: work::error → system:host_offline:error) and
       // is the banner-ish surface the §9.3 matrix forbids during an active
       // turn; only model.call_sealed/call_failed keep terminal system rows.
@@ -526,7 +527,7 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
         break;
       }
       case "tool.result": {
-        const { status, executionId, output } = event.data;
+        const { status, executionId, output, errorCode } = event.data;
         if (toolByExecution.get(executionId) === "task") {
           // Transport folding: background registrations settle as `ok`
           // receipts (noise); a non-ok result is the only surviving cancel
@@ -588,6 +589,7 @@ export function projectToUxEvents(events: readonly AnyAgentEvent[]): ThreadEvent
                     : "failed",
               output: inlineOutput,
               completedAt: event.createdAt,
+              ...(errorCode !== undefined ? { errorCode } : {}),
             },
           },
           createdAt: event.createdAt,

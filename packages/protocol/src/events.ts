@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { FIRST_SEQ } from "./ids.js";
+import { toolResultErrorCodeSchema } from "./tool-results.js";
 
 /**
  * Append-only thread event log schema.
@@ -120,6 +121,12 @@ export const toolCallItemSchema = z.object({
   status: threadEventItemStatusSchema,
   output: z.string(),
   completedAt: z.number().nullable(),
+  /**
+   * #454: structured refusal code when the tool never executed (execution
+   * suspension #73) — placeholder rows address the refusal structurally
+   * instead of string-matching the output.
+   */
+  errorCode: toolResultErrorCodeSchema.optional(),
   /**
    * #274 J1: parent delegation row for nested work (a subagent's own tool
    * calls) — bb `parentToolCallId` semantics (#256 G2).
