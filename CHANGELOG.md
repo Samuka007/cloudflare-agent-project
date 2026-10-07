@@ -455,6 +455,39 @@ projection`）渲染只读投影 + 「编辑走部署 env」指针（对照 ops/
 
 ### Fixed
 
+- **#496/#500 (W5) 部署通道整尸退役——"\*" 回退缝+HARNESS_DEFAULTS+九 env 标量族全灭
+  （用户裁决 2026-10-07/08：no special case、厨房期不兼容借口）**：#496 剥物化纯删——
+  无 selection 续跑=422 具名（selection_missing），harness 零 env=诚实 unconfigured（零合成
+  默认），FixedReplyProvider 退役为测试夹具；#500 harness.ts 整文件删除（−323 行），残余=
+  execution-posture.ts（权限映射常量表+wire 安全兜底 8192/200K）；预算/窗口/图像输入归 D1
+  行字段（models 条目 thinkingBudgetTokens 等），权限默认归 permission_mode 单行 seat
+  （0008 迁移+GET/PUT /system/permission-mode 热改），机器绑定归 #377 cloud 占位——四层
+  叠层各归一个正本，envConfigured 显示门随通道终死。staging：投影 keys=webSearch,catalog、
+  permission seat 热改线程面即时、老线程 send 422 具名零 mock 回退。
+
+- **#497 (W5) env+hard code 全量普查——逐项四问判决表**（docs/research/env-hardcode-census.md）：
+  27 族合格记档（凭据/拓扑/纯不变量各归所）；7 重设计票（#500-#506）+2 待裁（#507/#508）
+  立票全清。方法论=用户哲学「编译/部署期必要性？为何不是无状态解耦单元？禁止一般/默认/特殊
+  三层心智叠层」。
+
+- **#501/#502/#503/#504/#505/#506 (W5) census 六清**：#501 watchdog 三层读序→KV 单热改正本
+  （env patch 层删）；#502 实验工具闸 env→tool_capabilities D1 seat（0007 迁移+三开关面板
+  热应用）；#503 edge-shield 调参 env 面退役（常量即正本，rig 改测试注入）；#504 bb 形状假旋钮
+  （DATA_DIR/HOST_DAEMON_PORT）退役（BB_DATA_DIR_LABEL 具名常量）；#505 ACCESS_CHECK_ENABLED
+  消除——门态=TEAM_DOMAIN∧AUD 双键在场推导（部署断言升级为退役旗缺席+活 secret 在场双检）；
+  #506 APP_EXTRA_ORIGINS→origin_allowlist D1 seat（0008 迁移+25 例矩阵+CORS echo 热改）。
+
+- **#499 (W5) 不可用/缺失模型统一 UX+派发源统一（两半）**：UX 半（PR #510）——发送门前置拦发
+  （Submit 置换禁用 "Model unavailable — select a model"）+bb ThreadModelFallbackCard unavailable
+  形一键回退（点击=显式改写）+picker 灰显+PATCH /threads/:id 显式改写面（fail-closed）；缺陷半
+  （PR #514）——model-less follow-up 派发源从 journal pin（旧 turn 历史回响）统一为线程存档
+  override（与 composer 显示同门），死行 422 具名零派发——显示=派发由构造保证。
+
+- **#494 (W5) files/mkdir 移植+族面八裁决**：POST /files/mkdir bb-verbatim 端到端（daemon
+  host.mkdir 新命令+真机目录实证），read/write/list/paths/move/remove/previews 八面显式
+  501 not_implemented（各有理由）；CT142 daemon 重建半步闭环（house flake update cap→CT119
+  构建→CT142 switch）。
+
 - **#450 (W5) env 目录腿退役——D1 provider_configs 成为 LLM provider 唯一正本（用户裁决
   2026-10-07「零 env 回落」）**：`MODEL_RELAY_CATALOG`/`MODEL_RELAY_PROVIDER_CREDENTIALS`
   全链删除（provider-app catalog/relay-registry/harness/manager-do + server-worker
