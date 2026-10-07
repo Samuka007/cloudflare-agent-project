@@ -58,7 +58,7 @@ async function putFace(
   body: unknown,
 ): Promise<{ status: number; face?: WebSearchFace; code?: string; message?: string }> {
   const response = await request("PUT", "/api/v1/system/web-search", body);
-  const payload = (await response.json()) as { code?: string; message?: string };
+  const payload = await response.json<{ code?: string; message?: string }>();
   return {
     status: response.status,
     ...(response.status === 200 ? { face: systemWebSearchResponseSchema.parse(payload) } : payload),
@@ -136,8 +136,9 @@ describe("GET /api/v1/system/web-search", () => {
     expect(face.engines.searxng.endpoint).toBe("https://searx.example.com");
     // The raw D1 row is the 正本 the loader (and thus the agent DO) reads.
     const row = await rawSeatRow();
-    expect(JSON.parse(row!.chain)).toEqual(["public", "duckduckgo", "searxng"]);
-    expect(row!.timeout_seconds).toBe(90);
+    if (!row) throw new Error("web_search row must exist");
+    expect(JSON.parse(row.chain)).toEqual(["public", "duckduckgo", "searxng"]);
+    expect(row.timeout_seconds).toBe(90);
   });
 
   it("reports a broken stored row loudly and refuses keep-semantics on it", async () => {
@@ -207,7 +208,9 @@ describe("PUT /api/v1/system/web-search", () => {
     const put = await putFace({ chain: ["public"], timeoutSeconds: 999 });
     expect(put.status).toBe(200);
     expect(put.face?.timeoutSeconds).toBe(300);
-    expect((await rawSeatRow())!.timeout_seconds).toBe(300);
+    const row = await rawSeatRow();
+    if (!row) throw new Error("web_search row must exist");
+    expect(row.timeout_seconds).toBe(300);
   });
 
   it("stores secrets tri-state and AES-GCM at rest", async () => {
@@ -225,12 +228,15 @@ describe("PUT /api/v1/system/web-search", () => {
     ]);
     // Encryption at rest: the D1 column never carries plaintext.
     const row = await rawSeatRow();
-    expect(row!.secrets_enc).not.toBeNull();
-    expect(row!.secrets_enc).not.toContain(BRAVE_KEY);
-    expect(row!.secrets_enc).not.toContain(SEARXNG_TOKEN);
-    const decrypted = JSON.parse(
-      await decryptProviderSecret(RIG_MASTER_KEY, row!.secrets_enc!),
-    ) as { brave?: { apiKey?: string }; searxng?: { token?: string } };
+    if (!row) throw new Error("web_search row must exist");
+    expect(row.secrets_enc).not.toBeNull();
+    if (row.secrets_enc === null) throw new Error("secrets_enc must be stored");
+    expect(row.secrets_enc).not.toContain(BRAVE_KEY);
+    expect(row.secrets_enc).not.toContain(SEARXNG_TOKEN);
+    const decrypted = JSON.parse(await decryptProviderSecret(RIG_MASTER_KEY, row.secrets_enc)) as {
+      brave?: { apiKey?: string };
+      searxng?: { token?: string };
+    };
     expect(decrypted.brave?.apiKey).toBe(BRAVE_KEY);
     expect(decrypted.searxng?.token).toBe(SEARXNG_TOKEN);
     // Keep: a reorder that omits the key fields preserves them.
@@ -240,8 +246,11 @@ describe("PUT /api/v1/system/web-search", () => {
     // Rotate.
     const rotated = await putFace({ engines: { brave: { apiKey: BRAVE_KEY_ROTATED } } });
     expect(rotated.face?.engines.brave.hasApiKey).toBe(true);
+    const rotateRow = await rawSeatRow();
+    if (!rotateRow) throw new Error("web_search row must exist after rotate");
+    if (rotateRow.secrets_enc === null) throw new Error("secrets_enc must be stored after rotate");
     const decryptedAfterRotate = JSON.parse(
-      await decryptProviderSecret(RIG_MASTER_KEY, (await rawSeatRow())!.secrets_enc!),
+      await decryptProviderSecret(RIG_MASTER_KEY, rotateRow.secrets_enc),
     ) as { brave?: { apiKey?: string }; searxng?: { token?: string } };
     expect(decryptedAfterRotate.brave?.apiKey).toBe(BRAVE_KEY_ROTATED);
     expect(decryptedAfterRotate.searxng?.token).toBe(SEARXNG_TOKEN);
