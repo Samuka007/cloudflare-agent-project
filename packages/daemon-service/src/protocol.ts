@@ -295,11 +295,85 @@ export const hostDiscoverModelsResultSchema = z.object({
 });
 export type HostDiscoverModelsResult = z.infer<typeof hostDiscoverModelsResultSchema>;
 
+/**
+ * #445: probe absolute paths for existence — bb `host.paths_exist`
+ * (host-daemon-contract commands.ts:630-634 over pathsExistRequestSchema):
+ * deduped, bounded at 200 paths per ask. Answers the folder picker's
+ * "does this checkout still exist" gate and the machine-setup dialog.
+ */
+export const hostPathsExistCommandSchema = z.object({
+  type: z.literal("host.paths_exist"),
+  paths: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(200)
+    .transform((paths) => Array.from(new Set(paths))),
+});
+export type HostPathsExistCommand = z.infer<typeof hostPathsExistCommandSchema>;
+
+export const hostPathsExistResultSchema = z.object({
+  existence: z.record(z.string(), z.boolean()),
+});
+export type HostPathsExistResult = z.infer<typeof hostPathsExistResultSchema>;
+
+/**
+ * #445: read one project checkout's git anchor — bb `project.inspect`
+ * (host-daemon-contract commands.ts:636-641): resolve the path and report
+ * its `origin` remote, null when the checkout is not a git repo.
+ */
+export const projectInspectCommandSchema = z.object({
+  type: z.literal("project.inspect"),
+  path: z.string().min(1),
+});
+export type ProjectInspectCommand = z.infer<typeof projectInspectCommandSchema>;
+
+/** bb projectInspectResultSchema (commands.ts) verbatim: resolved absolute
+ * path plus the git remote anchor a project row may be missing. */
+export const projectPathInspectionSchema = z.object({
+  path: z.string().min(1),
+  gitRemoteUrl: z.string().nullable(),
+});
+export type ProjectPathInspection = z.infer<typeof projectPathInspectionSchema>;
+
+/**
+ * #445: the daemon-local checkout convention for a project slug — bb
+ * `project.clone_default_path` (commands.ts:643-648). Discovery only:
+ * nothing is created until the clone runs.
+ */
+export const projectCloneDefaultPathCommandSchema = z.object({
+  type: z.literal("project.clone_default_path"),
+  projectSlug: z.string().min(1),
+});
+export type ProjectCloneDefaultPathCommand = z.infer<typeof projectCloneDefaultPathCommandSchema>;
+
+export const projectPathResultSchema = z.object({
+  path: z.string().min(1),
+});
+export type ProjectPathResult = z.infer<typeof projectPathResultSchema>;
+
+/**
+ * #445: clone the project remote onto the daemon — bb `project.clone`
+ * (commands.ts:650-657). Long-running (bb transport "settled", 20-minute
+ * window): the control plane's clone route carries the same timeout on its
+ * hostOnlineRpc ask.
+ */
+export const projectCloneCommandSchema = z.object({
+  type: z.literal("project.clone"),
+  remoteUrl: z.string().min(1),
+  projectSlug: z.string().min(1),
+  targetPath: z.string().min(1).optional(),
+});
+export type ProjectCloneCommand = z.infer<typeof projectCloneCommandSchema>;
+
 export const hostRpcCommandSchema = z.discriminatedUnion("type", [
   hostBrowseDirectoryCommandSchema,
   hostReadFileCommandSchema,
   hostWriteFileCommandSchema,
   hostDiscoverModelsCommandSchema,
+  hostPathsExistCommandSchema,
+  projectInspectCommandSchema,
+  projectCloneDefaultPathCommandSchema,
+  projectCloneCommandSchema,
 ]);
 export type HostRpcCommand = z.infer<typeof hostRpcCommandSchema>;
 

@@ -118,11 +118,7 @@ function rpcFrame(command: unknown, requestId: string): HostRpcRequestFrame {
 describe("dispatchHostRpc read_file glue (bb command-router.ts:160-191)", () => {
   test("a read answers one ok response carrying the file result", async () => {
     const socket = new CapturingSocket();
-    await dispatchHostRpc(
-      tmpReal,
-      socket as unknown as WebSocket,
-      rpcFrame({ type: "host.read_file", path: path.join(tmpReal, "notes.txt") }, "req-b1"),
-    );
+    await dispatchHostRpc({ sandboxRoot: tmpReal, dataDir: tmpReal }, socket as unknown as WebSocket, rpcFrame({ type: "host.read_file", path: path.join(tmpReal, "notes.txt") }, "req-b1"));
     expect(socket.sent).toEqual([
       {
         type: "host-rpc.response",
@@ -136,11 +132,7 @@ describe("dispatchHostRpc read_file glue (bb command-router.ts:160-191)", () => 
 
   test("a failed read answers one failure carrying the dispatch code", async () => {
     const socket = new CapturingSocket();
-    await dispatchHostRpc(
-      tmpReal,
-      socket as unknown as WebSocket,
-      rpcFrame({ type: "host.read_file", path: path.join(tmpReal, "gone.txt") }, "req-b2"),
-    );
+    await dispatchHostRpc({ sandboxRoot: tmpReal, dataDir: tmpReal }, socket as unknown as WebSocket, rpcFrame({ type: "host.read_file", path: path.join(tmpReal, "gone.txt") }, "req-b2"));
     expect(socket.sent).toEqual([
       {
         type: "host-rpc.response",
@@ -238,14 +230,10 @@ describe("writeThreadFile (B2 #322 thread file write)", () => {
 
   test("the command rides the live socket and the write result resolves the caller", async () => {
     const socket = new CapturingSocket();
-    await dispatchHostRpc(
-      tmpReal,
-      socket as unknown as WebSocket,
-      rpcFrame(
-        { type: "host.write_file", threadId: "thr-glue", filename: "glue.png", contentBase64: Buffer.from("glue").toString("base64") },
-        "req-w1",
-      ),
-    );
+    await dispatchHostRpc({ sandboxRoot: tmpReal, dataDir: tmpReal }, socket as unknown as WebSocket, rpcFrame(
+      { type: "host.write_file", threadId: "thr-glue", filename: "glue.png", contentBase64: Buffer.from("glue").toString("base64") },
+      "req-w1",
+    ));
     expect(socket.sent).toEqual([
       {
         type: "host-rpc.response",

@@ -41,6 +41,7 @@ export default tseslint.config(
       "packages/daemon-service/test/eval-kernel.test.ts",
       "packages/daemon-service/test/host-directory.test.ts",
       "packages/daemon-service/test/host-files.test.ts",
+      "packages/daemon-service/test/project-commands.test.ts",
       "packages/daemon-service/test/l1-read-semantics.test.ts",
       "packages/daemon-service/test/l1-glob-grep-semantics.test.ts",
       "packages/daemon-service/test/l1-edit-semantics.test.ts",

@@ -86,6 +86,24 @@ export async function updateProject(
   return getProject(env, args.id);
 }
 
+/**
+ * bb setProjectGitRemoteUrlIfMissing (data/projects.ts:278-294): the add-source
+ * clone/inspect leg anchors the project's git remote — a URL the row already
+ * carries is never overwritten.
+ */
+export async function setProjectGitRemoteUrlIfMissing(
+  env: Env,
+  projectId: string,
+  gitRemoteUrl: string,
+): Promise<ProjectRow | null> {
+  await env.DB.prepare(
+    "UPDATE projects SET git_remote_url = ?, updated_at = ? WHERE id = ? AND git_remote_url IS NULL",
+  )
+    .bind(gitRemoteUrl, Date.now(), projectId)
+    .run();
+  return getProject(env, projectId);
+}
+
 // --- thread sections -------------------------------------------------------------
 
 export async function listThreadSections(env: Env): Promise<ThreadSectionRow[]> {

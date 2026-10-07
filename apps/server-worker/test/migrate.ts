@@ -3,6 +3,7 @@ import controlPlaneSql from "../migrations/0001_control_plane.sql";
 import environmentsSql from "../migrations/0002_environments.sql";
 import providerConfigsSql from "../migrations/0003_provider_configs.sql";
 import cloudPlaceholderHostSql from "../migrations/0004_cloud_placeholder_host.sql";
+import projectSourcesHostUniqueSql from "../migrations/0005_project_sources_host_unique.sql";
 import imageSourceSql from "../migrations/0005_image_source.sql";
 
 /** The migration files, in apply order. The deploy chain replays the whole
@@ -13,6 +14,7 @@ export const MIGRATION_FILES: string[] = [
   environmentsSql,
   providerConfigsSql,
   cloudPlaceholderHostSql,
+  projectSourcesHostUniqueSql,
   imageSourceSql,
 ];
 

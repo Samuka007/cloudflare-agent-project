@@ -14,7 +14,9 @@ import {
  */
 
 export async function getEnvironmentRow(env: Env, id: string): Promise<EnvironmentDbRow | null> {
-  const row = await env.DB.prepare(`SELECT ${ENVIRONMENT_COLUMN_SQL} FROM environments WHERE id = ?`)
+  const row = await env.DB.prepare(
+    `SELECT ${ENVIRONMENT_COLUMN_SQL} FROM environments WHERE id = ?`,
+  )
     .bind(id)
     .first();
   return row ? toEnvironmentDbRow(row) : null;
@@ -24,15 +26,21 @@ export async function listEnvironmentRows(
   env: Env,
   filters: { projectId?: string } = {},
 ): Promise<EnvironmentDbRow[]> {
+  // #445 data-hygiene ruling: the list face is the bindable-workspace
+  // inventory, so a row whose host row is destroyed (tombstoned) must not
+  // advertise itself as selectable — GET /hosts excludes destroyed rows on
+  // the same principle. Row-level reads (GET /environments/:id) stay
+  // unfiltered: an existing thread's binding stays resolvable/debuggable.
   const where: string[] = [];
   const binds: unknown[] = [];
   if (filters.projectId !== undefined) {
     where.push("project_id = ?");
     binds.push(filters.projectId);
   }
-  const sql = `SELECT ${ENVIRONMENT_COLUMN_SQL} FROM environments${
-    where.length > 0 ? ` WHERE ${where.join(" AND ")}` : ""
-  } ORDER BY created_at ASC, id ASC`;
+  where.push("host_id IN (SELECT id FROM hosts WHERE destroyed_at IS NULL)");
+  const sql = `SELECT ${ENVIRONMENT_COLUMN_SQL} FROM environments WHERE ${where.join(
+    " AND ",
+  )} ORDER BY created_at ASC, id ASC`;
   const { results } = await env.DB.prepare(sql)
     .bind(...binds)
     .all();
@@ -75,7 +83,9 @@ export async function createEnvironmentRow(
 ): Promise<EnvironmentDbRow> {
   const now = Date.now();
   await env.DB.prepare(
-    `INSERT INTO environments (${ENVIRONMENT_COLUMN_SQL}) VALUES (${ENVIRONMENT_COLUMN_SQL.split(", ")
+    `INSERT INTO environments (${ENVIRONMENT_COLUMN_SQL}) VALUES (${ENVIRONMENT_COLUMN_SQL.split(
+      ", ",
+    )
       .map(() => "?")
       .join(", ")})`,
   )

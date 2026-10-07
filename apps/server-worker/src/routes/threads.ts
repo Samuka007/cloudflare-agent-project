@@ -490,6 +490,12 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
    * land the trajectory half — thread.rebound migrates state.machineId on
    * replay, so every later dispatch resolves the new machine with zero
    * per-dispatch lookups (§2.1). No mid-turn guard, matching bb.
+   *
+   * #445 disposition: this is an INTERNAL control-plane face, not a product
+   * feature — it has no bb upstream route, no feature proposal, and no SPA
+   * UX. It exists for the owner/测试动线 (binding surgery, rig tests); it is
+   * NOT a recovery path to advertise (the SPA never calls it). Promoting it
+   * to a product capability requires a feature ticket with its own UX.
    */
   routes.post("/threads/:id/environment", async (ctx) => {
     const payload = await requireJsonBody(ctx, rebindThreadEnvironmentRequestSchema);

@@ -190,7 +190,7 @@ describe("dispatchHostRpc host.discover_models glue", () => {
     };
     globalThis.fetch = stubbedFetch;
     try {
-      await dispatchHostRpc("/tmp/unused", socket, {
+      await dispatchHostRpc({ sandboxRoot: "/tmp/unused", dataDir: "/tmp/unused" }, socket, {
         type: "host-rpc.request",
         requestId: "req-447",
         command: { type: "host.discover_models", baseUrl: "https://relay.example.com/v1" },

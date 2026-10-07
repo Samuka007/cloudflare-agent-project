@@ -9,6 +9,11 @@ import type { AppEnv } from "../app-types.js";
  * list + bb's `GET /environments/:id` (public-api.ts:768-776). Shapes are the
  * domain Environment row — the provisioning/status sub-resources (bb's other
  * 10 routes) stay deferred until their daemon faces exist.
+ *
+ * #445 data-hygiene ruling: the list face carries only rows whose host is
+ * still live (the bindable-workspace inventory); the id face answers any
+ * stored row (existing thread bindings stay readable, honestly, even after
+ * the host tombstones — tools then answer host_offline, #436 posture).
  */
 export function registerEnvironmentRoutes(app: Hono<AppEnv>): void {
   const routes = new Hono<AppEnv>();

@@ -1,29 +1,29 @@
 import { Hono } from "hono";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
-import {
-  DAEMON_PROTOCOL_VERSION,
-  mintJoinCode,
-  type DaemonServiceDO,
-  type HostDirectoryListing,
-  type HostRpcCommand,
-} from "@cap/daemon-service";
+import { DAEMON_PROTOCOL_VERSION, mintJoinCode, type DaemonServiceDO } from "@cap/daemon-service";
 import {
   createHostJoinCodeRequestSchema,
+  hostCloneDefaultPathQuerySchema,
+  hostCloneDefaultPathResponseSchema,
   hostDirectoryListingSchema,
   hostDirectoryQuerySchema,
+  hostPathsExistRequestSchema,
   updateHostPermissionCeilingRequestSchema,
   updateHostRequestSchema,
 } from "../contract/api/hosts.js";
+import {
+  HOST_COMMAND_TIMEOUT_MS,
+  hostOnlineRpcOrThrow,
+  requireHostRow,
+} from "../services/host-rpc.js";
 import { createHostId } from "../shared/ids.js";
 import { ApiError } from "../shared/api-error.js";
 import { parseOr422, requireJsonBody } from "../shared/route-utils.js";
 import { getHostRow, listNonDestroyedHostRows, updateHostRow } from "../db/hosts.js";
 import { toHostRecord } from "../services/host-records.js";
+import { requirePublicStandardProject } from "../services/entity-lookup.js";
+import { pathsExistResponseSchema } from "../contract/hdc/local.js";
 import type { AppEnv, Env } from "../app-types.js";
-
-/** bb COMMAND_TIMEOUT_MS (apps/server/src/constants.ts:1) — the host online
- * RPC window (directory browsing today, #302). */
-const HOST_COMMAND_TIMEOUT_MS = 30_000;
 
 /**
  * Hosts face (ruling #7 "hosts 最小"): fleet list/get/rename/ceiling/delete.
@@ -79,7 +79,7 @@ export function registerHostRoutes(app: Hono<AppEnv>): void {
   });
 
   routes.get("/hosts/:id", async (ctx) => {
-    const row = await requireHost(ctx.env, ctx.req.param("id"));
+    const row = await requireHostRow(ctx.env, ctx.req.param("id"));
     return ctx.json(await toHostRecord(ctx.env, row));
   });
 
@@ -87,7 +87,7 @@ export function registerHostRoutes(app: Hono<AppEnv>): void {
   // server conforms to the bb route shape (#195 S5, was /provider-cli-status).
   routes.get("/hosts/:id/provider-clis/status", async (ctx) => {
     // bb assertUsableHostId (routes/hosts.ts:288): unknown/destroyed host → 404.
-    await requireHost(ctx.env, ctx.req.param("id"));
+    await requireHostRow(ctx.env, ctx.req.param("id"));
     // The providers face stays permanently cropped (matrix E8): the web-only
     // deployment never installs or manages codex/claude-code CLIs, so there
     // is no daemon-RPC answer to fake. But the old constant 502
@@ -136,62 +136,54 @@ export function registerHostRoutes(app: Hono<AppEnv>): void {
   // ask here — the SPA's react-query retry covers the just-connecting race.
   routes.get("/hosts/:id/directory", async (ctx) => {
     const query = parseOr422(hostDirectoryQuerySchema, ctx.req.query());
-    const command: HostRpcCommand = {
-      type: "host.browse_directory",
-      ...(query.path !== undefined ? { path: query.path } : {}),
-    };
     const hostId = ctx.req.param("id");
-    // bb assertUsableHostId (routes/hosts.ts:222-223): unknown/destroyed → 404.
-    await requireHost(ctx.env, hostId);
-    const stub = daemonStubOrNull(ctx.env, hostId);
-    if (stub === null) throw hostUnavailable();
-    const outcome = await stub.hostOnlineRpc({
+    const result = await hostOnlineRpcOrThrow(
+      ctx.env,
       hostId,
-      command,
-      timeoutMs: HOST_COMMAND_TIMEOUT_MS,
-    });
-    switch (outcome.kind) {
-      case "host_offline":
-        throw hostUnavailable();
-      case "timeout":
-        // bb online-rpc.ts:154-156.
-        throw new ApiError({
-          status: 504,
-          code: "command_timeout",
-          message: "Timed out waiting for command result",
-        });
-      case "ok": {
-        const response = outcome.response;
-        if (!response.ok) {
-          // bb online-rpc.ts:98-99: a daemon-side dispatch failure surfaces
-          // as 502 with the daemon's own code verbatim (invalid_path, ENOENT…).
-          throw new ApiError({
-            status: 502,
-            code: response.errorCode,
-            message: response.errorMessage,
-            retryable: false,
-          });
-        }
-        if (response.commandType !== command.type) {
-          // bb online-rpc.ts:102-108.
-          throw new ApiError({
-            status: 500,
-            code: "command_result_type_mismatch",
-            message: `Host RPC ${response.requestId} completed with unexpected type ${response.commandType}`,
-          });
-        }
-        const parsed = hostDirectoryListingSchema.safeParse(response.result);
-        if (!parsed.success) {
-          throw new ApiError({
-            status: 500,
-            code: "command_result_invalid",
-            message: `Host RPC ${response.requestId} returned a malformed listing`,
-            details: { issues: parsed.error.issues },
-          });
-        }
-        return ctx.json(parsed.data satisfies HostDirectoryListing);
-      }
+      {
+        type: "host.browse_directory",
+        ...(query.path !== undefined ? { path: query.path } : {}),
+      },
+      HOST_COMMAND_TIMEOUT_MS,
+    );
+    const parsed = hostDirectoryListingSchema.safeParse(result);
+    if (!parsed.success) {
+      throw new ApiError({
+        status: 500,
+        code: "command_result_invalid",
+        message: "Host RPC returned a malformed listing",
+        details: { issues: parsed.error.issues },
+      });
     }
+    return ctx.json(parsed.data);
+  });
+
+  // bb routes/hosts.ts:235-250 (#445): the setup dialog's default clone
+  // destination — discovery only (the daemon resolves its checkout
+  // convention for the project slug; nothing is created).
+  routes.get("/hosts/:id/clone-default-path", async (ctx) => {
+    const query = parseOr422(hostCloneDefaultPathQuerySchema, ctx.req.query());
+    const project = await requirePublicStandardProject(ctx.env, query.projectId);
+    const result = await hostOnlineRpcOrThrow(
+      ctx.env,
+      ctx.req.param("id"),
+      { type: "project.clone_default_path", projectSlug: project.name },
+      HOST_COMMAND_TIMEOUT_MS,
+    );
+    return ctx.json(hostCloneDefaultPathResponseSchema.parse(result));
+  });
+
+  // bb routes/hosts.ts:252-264 (#445): the folder picker's existence gate —
+  // "does this checkout still exist on the host" answered as a map.
+  routes.post("/hosts/:id/paths/exist", async (ctx) => {
+    const payload = await requireJsonBody(ctx, hostPathsExistRequestSchema);
+    const result = await hostOnlineRpcOrThrow(
+      ctx.env,
+      ctx.req.param("id"),
+      { type: "host.paths_exist", paths: payload.paths },
+      HOST_COMMAND_TIMEOUT_MS,
+    );
+    return ctx.json(pathsExistResponseSchema.parse(result));
   });
 
   routes.patch("/hosts/:id", async (ctx) => {
@@ -293,45 +285,6 @@ export function registerHostRoutes(app: Hono<AppEnv>): void {
   });
 
   app.route("/api/v1", routes);
-}
-
-/**
- * bb requireNonDestroyedHostWithStatus (entity-lookup.ts:115-131): unknown →
- * 404 host_not_found; destroyed → 404 host_unavailable with the destroyed
- * details (lifecycle-api-errors.ts:149-158) so the SPA's destroyed-host
- * branch renders instead of the generic fallback.
- */
-async function requireHost(env: Env, hostId: string) {
-  const row = await getHostRow(env, hostId);
-  if (row === null) {
-    throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
-  }
-  if (row.destroyedAt !== null) {
-    throw new ApiError({
-      status: 404,
-      code: "host_unavailable",
-      message: "Host is unavailable",
-      details: {
-        reason: "destroyed",
-        hostStatus: null,
-        suspendedAt: null,
-        destroyedAt: row.destroyedAt,
-      },
-    });
-  }
-  return row;
-}
-
-/**
- * bb HostOnlineRpcUnavailableError → ApiError (services/hosts/online-rpc.ts:
- * 162-163): the host online RPC asked a machine with no live daemon session.
- */
-function hostUnavailable(): ApiError {
-  return new ApiError({
-    status: 502,
-    code: "host_unavailable",
-    message: "Host is not connected",
-  });
 }
 
 /**
