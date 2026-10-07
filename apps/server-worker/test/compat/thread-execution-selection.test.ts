@@ -5,6 +5,8 @@ import type { AnyAgentEvent } from "@cap/agent-do";
 import { ensureMigrations } from "../migrate.js";
 import {
   ensureRigReady,
+  removeRigProviderRow,
+  RIG_RELAY_BASE_URL,
   RIG_MODEL_ID,
   RIG_PROVIDER_ID,
 } from "../helpers.js";
@@ -321,5 +323,193 @@ describe("#351 drift classification (bb three-value vocabulary)", () => {
     };
     expect(classifyExecutionSettingsChange(full, { ...full, model: "other" })).toBe("live");
     expect(classifyExecutionSettingsChange(full, auto)).toBe("session");
+  });
+});
+
+describe("#486 thread default-execution-options face", () => {
+  interface DefaultExecutionOptionsBody {
+    model: string;
+    serviceTier: string;
+    reasoningLevel: string;
+    permissionMode: string;
+    source: string;
+  }
+
+  async function getDefaultExecutionOptions(
+    threadId: string,
+  ): Promise<{ status: number; body: DefaultExecutionOptionsBody | null }> {
+    const response = await exports.default.fetch(
+      `${BASE}/api/v1/threads/${threadId}/default-execution-options`,
+    );
+    return {
+      status: response.status,
+      body:
+        response.status === 200
+          ? await response.json<DefaultExecutionOptionsBody>()
+          : null,
+    };
+  }
+
+  /** #450 the directory is D1: a second row reuses the rig's credential slot
+   * and wire so any dispatch hits the same stub. */
+  async function insertProviderRow(id: string, models: { id: string }[]): Promise<void> {
+    const rig = await env.DB.prepare(
+      "SELECT api_key_enc FROM provider_configs WHERE id = ?",
+    )
+      .bind(RIG_PROVIDER_ID)
+      .first<{ api_key_enc: string }>();
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO provider_configs (id, display_name, base_url, api, service_tier, api_key_enc, models, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)",
+    )
+      .bind(
+        id,
+        id,
+        RIG_RELAY_BASE_URL,
+        "anthropic-messages",
+        rig?.api_key_enc ?? "",
+        JSON.stringify(
+          models.map((model) => ({
+            id: model.id,
+            reasoningLevels: ["none"],
+            defaultReasoningLevel: "none",
+          })),
+        ),
+        Date.now(),
+        Date.now(),
+      )
+      .run();
+  }
+
+  it("a thread's stored selection is the face — display seed equals the dispatched pin", async () => {
+    const created = await createThread({
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
+    });
+    expect(created.status).toBe(201);
+    const thread = await created.json<CreatedThread>();
+    const { status, body } = await getDefaultExecutionOptions(thread.id);
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      model: RIG_MODEL_ID,
+      serviceTier: "default",
+      reasoningLevel: "none",
+      permissionMode: "full",
+      source: "client/turn/requested",
+    });
+  });
+
+  it("a stored selection the directory dropped returns verbatim — never re-projected onto the harness model", async () => {
+    const created = await createThread({
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
+    });
+    expect(created.status).toBe(201);
+    const thread = await created.json<CreatedThread>();
+
+    await insertProviderRow("side", [{ id: "side-model" }]);
+    await removeRigProviderRow();
+    try {
+      const { status, body } = await getDefaultExecutionOptions(thread.id);
+      expect(status).toBe(200);
+      expect(body?.model).toBe(RIG_MODEL_ID);
+
+      // The picker pool keeps the dropped selection renderable (bb's
+      // selected-only contract) — provider-scoped by the query.
+      const scoped = await exports.default.fetch(
+        `${BASE}/api/v1/system/execution-options?providerId=${RIG_PROVIDER_ID}`,
+      );
+      const scopedBody = await scoped.json<{
+        models: { model: string }[];
+        selectedOnlyModels: { model: string; isDefault: boolean }[];
+      }>();
+      expect(scopedBody.models.map((model) => model.model)).toEqual(["side-model"]);
+      expect(scopedBody.selectedOnlyModels.map((model) => model.model)).toEqual([RIG_MODEL_ID]);
+      expect(scopedBody.selectedOnlyModels[0]?.isDefault).toBe(false);
+
+      const otherProvider = await exports.default.fetch(
+        `${BASE}/api/v1/system/execution-options?providerId=side`,
+      );
+      const otherBody = await otherProvider.json<{ selectedOnlyModels: unknown[] }>();
+      expect(otherBody.selectedOnlyModels).toEqual([]);
+
+      // And dispatching the dropped selection still fails closed with the
+      // named error — the read face never relaxes the write face.
+      const send = await post(`/api/v1/threads/${thread.id}/send`, {
+        input: [{ type: "text", text: "dispatch the dropped row" }],
+        mode: "auto",
+        model: RIG_MODEL_ID,
+      });
+      // The rig PROVIDER row is gone, so the rejection names the provider.
+      await expect422(send, "provider_unknown");
+    } finally {
+      await env.DB.prepare("DELETE FROM provider_configs WHERE id = 'side'").run();
+      await ensureRigReady();
+    }
+  });
+
+  it("no stored override under a harness model the provider does not declare serves bb's null face", async () => {
+    // #450 selection-less creates 422, so a NULL override row only exists as
+    // a pre-#450 legacy row — simulated with a direct D1 write. The rig
+    // directory never declares the harness default model, so the read face
+    // answers bb's stored-defaults-absent null instead of projecting one.
+    const created = await createThread({
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
+    });
+    expect(created.status).toBe(201);
+    const thread = await created.json<CreatedThread>();
+    await env.DB.prepare("UPDATE threads SET model_override = NULL WHERE id = ?")
+      .bind(thread.id)
+      .run();
+    try {
+      const { status, body } = await getDefaultExecutionOptions(thread.id);
+      expect(status).toBe(200);
+      expect(body).toBeNull();
+    } finally {
+      await env.DB.prepare("DELETE FROM threads WHERE id = ?").bind(thread.id).run();
+    }
+  });
+
+  it("a changed follow-up send persists the override and pins the turn journal (timeline-provable dispatch)", async () => {
+    // A second rig model gives the follow-up a LIVE change to classify; the
+    // row surgery is undone through the rig re-seed below.
+    await env.DB.prepare("UPDATE provider_configs SET models = ? WHERE id = ?")
+      .bind(
+        JSON.stringify([
+          { id: RIG_MODEL_ID, reasoningLevels: ["none"], defaultReasoningLevel: "none" },
+          { id: "rig-model-2", reasoningLevels: ["none"], defaultReasoningLevel: "none" },
+        ]),
+        RIG_PROVIDER_ID,
+      )
+      .run();
+    const created = await createThread({
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
+    });
+    expect(created.status).toBe(201);
+    const thread = await created.json<CreatedThread>();
+
+    const nextModel = "rig-model-2";
+    const response = await post(`/api/v1/threads/${thread.id}/send`, {
+      input: [{ type: "text", text: "switch models" }],
+      mode: "auto",
+      model: nextModel,
+    });
+    expect(response.status).toBe(200);
+
+    const row = await threadRow(thread.id);
+    expect(row.model_override).toBe(nextModel);
+    const events = await rawEvents(thread.id);
+    expect(events.find((event) => event.type === "thread.execution_updated")).toBeDefined();
+    const lastTurnInput = events
+      .filter((event) => event.type === "turn.input")
+      .at(-1);
+    expect(lastTurnInput?.data).toMatchObject({
+      // The ride is the payload's EXPLICIT selection verbatim (#351) — the
+      // reasoning rung stays unset when the payload omits it and the ladder
+      // default fills at dispatch.
+      execution: { providerId: RIG_PROVIDER_ID, model: nextModel },
+    });
+    await ensureRigReady();
   });
 });

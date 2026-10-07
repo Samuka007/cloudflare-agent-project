@@ -5,6 +5,7 @@ import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import {
   classifyThreadSelectionChange,
   resolveStoredThreadExecution,
+  resolveThreadDefaultExecutionOptions,
   validateThreadExecutionSelection,
 } from "../services/execution-selection.js";
 import {
@@ -26,6 +27,7 @@ import {
 import { promptHistoryResponseSchema } from "../contract/api/projects.js";
 import {
   PROMPT_HISTORY_ENTRY_LIMIT,
+  resolvedThreadExecutionOptionsSchema,
   takeVisiblePromptHistoryEntries,
 } from "../contract/domain/index.js";
 import { updateThreadTabsRequestSchema } from "../contract/api/thread-tabs.js";
@@ -482,6 +484,28 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       response.host = host;
     }
     return ctx.json(response);
+  });
+
+  /**
+   * bb GET /threads/:id/default-execution-options (public-api.ts:1276-1281,
+   * route at routes/threads/data.ts:531-543): the thread composer's
+   * stored-selection face (ResolvedThreadExecutionOptions | null). #486:
+   * without this face the composer never sees the thread's stored selection —
+   * the SPA seeds no model, the picker silently falls to the catalog's
+   * isDefault row (the harness model), and follow-up sends ride no selection
+   * (followUpExecutionSelection gates on this face) so turns dispatch the
+   * deployment default: the exact display+dispatch drift the ticket reports.
+   * Resolution is the stored row through resolveThreadDefaultExecutionOptions
+   * — the same merged catalog a send validates against.
+   */
+  routes.get("/threads/:id/default-execution-options", async (ctx) => {
+    const row = await requirePublicThread(ctx);
+    const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+    return ctx.json(
+      resolvedThreadExecutionOptionsSchema.nullable().parse(
+        resolveThreadDefaultExecutionOptions(ctx.env, row, overlay?.providers ?? {}),
+      ),
+    );
   });
 
   routes.patch("/threads/:id", async (ctx) => {

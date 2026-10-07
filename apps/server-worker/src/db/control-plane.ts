@@ -299,6 +299,25 @@ export async function getThreadRow(env: Env, threadId: string): Promise<ThreadDb
   return row ? toThreadDbRow(row) : null;
 }
 
+/**
+ * #486: distinct stored model overrides across live threads — the selected-
+ * only pool seeds for stored selections the catalog no longer declares. The
+ * picker keeps rendering the stored selection instead of silently recovering
+ * onto the catalog default; a send still validates fail-closed and names the
+ * dead model.
+ */
+export async function listStoredThreadModelOverrides(
+  env: Env,
+  providerId?: string,
+): Promise<string[]> {
+  const scoped = providerId !== undefined;
+  const sql = `SELECT DISTINCT model_override FROM threads WHERE model_override IS NOT NULL AND deleted_at IS NULL${scoped ? " AND provider_id = ?" : ""}`;
+  const { results } = await env.DB.prepare(sql)
+    .bind(...(scoped ? [providerId] : []))
+    .all<{ model_override: string }>();
+  return results.map((row) => row.model_override);
+}
+
 export async function countNonDeletedAssignedChildThreads(
   env: Env,
   parentThreadId: string,

@@ -32,6 +32,10 @@ import {
 } from "@cap/provider-app";
 import type { RuntimeThreadExecutionOptions } from "../../../daemon-worker/src/provider-types.js";
 import type { HarnessEnv } from "@cap/provider-app";
+import {
+  resolvedThreadExecutionOptionsSchema,
+  type ResolvedThreadExecutionOptions,
+} from "../contract/domain/shared-types.js";
 import { ApiError } from "../shared/api-error.js";
 
 /** The create/send payload slice this service validates (all optional). */
@@ -173,6 +177,69 @@ export function resolveStoredThreadExecution(
   } catch (error) {
     if (error instanceof RelaySelectionError) throw selectionErrorToApiError(error);
     throw error;
+  }
+}
+
+/**
+ * bb GET /threads/:id/default-execution-options (routes/threads/data.ts:531-543
+ * → thread-execution-plan.ts:295-386 `defaultView`): the thread composer's
+ * stored-selection face. bb's model chain is input.model ?? modelOverride ??
+ * lastExecution ?? projectExecution (project defaults gated on the row's
+ * provider, :312-315); the port has no per-request input and no stored project
+ * defaults, so the face is the row's overrides resolved against the SAME
+ * merged catalog a send validates against (#486) — the displayed model is the
+ * dispatched model by construction.
+ *
+ * bb's read face trusts the stored row and never catalog-validates it; the
+ * port keeps that display honesty: a stored selection the directory no longer
+ * declares (or an undeclared default under the row's provider) returns the
+ * stored strings verbatim / null (bb's stored-defaults-absent shape) — never
+ * a re-projection onto the harness default model. The DISPATCH half stays
+ * fail-closed (#351): the next selection-bearing send 422s with the named
+ * error instead of silently running another model.
+ */
+export function resolveThreadDefaultExecutionOptions(
+  env: HarnessEnv,
+  row: {
+    providerId: string;
+    modelOverride: string | null;
+    reasoningLevelOverride: string | null;
+  },
+  overlayProviders: Record<string, RelayCatalogProvider>,
+): ResolvedThreadExecutionOptions | null {
+  const parse = (model: string, reasoningLevel: RelayReasoningLevel) =>
+    resolvedThreadExecutionOptionsSchema.parse({
+      model,
+      serviceTier: "default",
+      reasoningLevel,
+      permissionMode: "full",
+      source: "client/turn/requested",
+    });
+  const storedLevel =
+    row.reasoningLevelOverride !== null
+      ? relayReasoningLevelSchema.safeParse(row.reasoningLevelOverride)
+      : undefined;
+  try {
+    const resolved = resolveStoredThreadExecution(env, row, overlayProviders);
+    return parse(resolved.model, resolved.reasoningLevel);
+  } catch (error) {
+    if (!(error instanceof ApiError)) throw error;
+    if (
+      error.code !== "model_unknown" &&
+      error.code !== "provider_unknown" &&
+      error.code !== "provider_default_undeclared"
+    ) {
+      throw error;
+    }
+    // Catalog drifted away from the stored row. With a stored model the
+    // display keeps it verbatim (bb read-face parity; the ladder degrades to
+    // the vocabulary-checked stored rung); without one, bb serves null and
+    // the composer falls to the picker's own default instead of a silently
+    // re-projected row.
+    if (row.modelOverride !== null) {
+      return parse(row.modelOverride, storedLevel?.data ?? "none");
+    }
+    return null;
   }
 }
 
