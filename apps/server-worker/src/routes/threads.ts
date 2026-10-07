@@ -672,6 +672,26 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
         executionRide = next.explicit;
       }
     }
+    // #499 dispatch-source unification: a send WITHOUT a live explicit change
+    // — a model-less follow-up, or a re-send equal to the stored selection —
+    // pins the thread's STORED selection, resolved through the SAME gate the
+    // composer read face and the PATCH rewrite run. The turn never rides the
+    // previous turn's journal pin: display and dispatch read one source by
+    // construction. The ride journals `thread.execution_updated` only when
+    // the stored truth moved (timeline-provable, no churn on equal sends),
+    // and a stored row the directory dropped fails closed with the named 422
+    // instead of dispatching stale history (the #510 acceptance defect: after
+    // the fallback card's PATCH, a model-less follow-up still rode the
+    // create-time pin).
+    if (executionRide === undefined) {
+      const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+      const stored = resolveStoredThreadExecution(ctx.env, row, overlay?.providers ?? {});
+      executionRide = {
+        providerId: stored.providerId,
+        model: stored.model,
+        reasoningLevel: stored.reasoningLevel,
+      };
+    }
     // bb generates the client turn request id server-side when appending the
     // client/turn/requested event (thread-send.ts:346-356); the HTTP schema
     // has no clientRequestId field.
@@ -687,7 +707,10 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       clientRequestId,
       content,
       mode,
-      ...(executionRide !== undefined ? { execution: executionRide } : {}),
+      // #499: both paths above leave a ride set — the send always pins the
+      // thread's stored selection (or the live explicit change that just
+      // rewrote it), never an empty selection.
+      execution: executionRide,
     });
     if (!result.duplicated) {
       // Coarse M0 status transition: the daemon lifecycle (#30) owns the real

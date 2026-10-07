@@ -652,3 +652,169 @@ describe("#499 PATCH execution-override rewrite (fallback card write face)", () 
     }
   });
 });
+
+/**
+ * #499 acceptance defect (PM staging walk on #510): after the fallback card's
+ * PATCH rewrote the STORED override, a model-less follow-up still dispatched
+ * the create-time journal pin — display face (stored override) and dispatch
+ * face (journal pin) were two sources. The send route now resolves every
+ * non-live send through the SAME gate the read face and PATCH run (the stored
+ * row), so display == dispatch by construction; the journal pin is a same-turn
+ * replay echo, never the source for a new turn.
+ */
+describe("#499 dispatch source is the stored selection, not the journal pin", () => {
+  async function patch(path: string, body: unknown): Promise<Response> {
+    return exports.default.fetch(`${BASE}${path}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** A second rig row model gives the rewrite a live target (same pattern as
+   * the PATCH suite above). */
+  async function seedSecondRigModel(): Promise<void> {
+    await env.DB.prepare("UPDATE provider_configs SET models = ? WHERE id = ?")
+      .bind(
+        JSON.stringify([
+          { id: RIG_MODEL_ID, reasoningLevels: ["none"], defaultReasoningLevel: "none" },
+          { id: "rig-model-2", reasoningLevels: ["none"], defaultReasoningLevel: "none" },
+        ]),
+        RIG_PROVIDER_ID,
+      )
+      .run();
+  }
+
+  /** The canonical single-model rig shape (helpers.ensureRigProviderRow's
+   * INSERT OR IGNORE never restores the models column after row surgery). */
+  async function restoreRigModels(): Promise<void> {
+    await env.DB.prepare("UPDATE provider_configs SET models = ? WHERE id = ?")
+      .bind(
+        JSON.stringify([
+          { id: RIG_MODEL_ID, reasoningLevels: ["none"], defaultReasoningLevel: "none" },
+        ]),
+        RIG_PROVIDER_ID,
+      )
+      .run();
+    await ensureRigReady();
+  }
+
+  it("a model-less follow-up after a PATCH rides the stored override (timeline-provable)", async () => {
+    await seedSecondRigModel();
+    const created = await createThread({
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
+    });
+    expect(created.status).toBe(201);
+    const thread = await created.json<CreatedThread>();
+    try {
+      await waitTurnSettled(thread.id);
+      // The fallback card's write: the stored truth moves, the journal does not.
+      const rewritten = await patch(`/api/v1/threads/${thread.id}`, { model: "rig-model-2" });
+      expect(rewritten.status).toBe(200);
+      const before = await rawEvents(thread.id);
+      expect(before.filter((event) => event.type === "thread.execution_updated")).toHaveLength(0);
+
+      // The defect: this model-less send used to pin the create-time journal
+      // pin (RIG_MODEL_ID) instead of the stored override the composer shows.
+      const response = await post(`/api/v1/threads/${thread.id}/send`, {
+        input: [{ type: "text", text: "model-less follow-up after the rewrite" }],
+        mode: "auto",
+      });
+      expect(response.status).toBe(200);
+
+      // Timeline-provable: the journal carries the stored truth — a
+      // thread.execution_updated row plus a turn.input pinned to the same
+      // model the composer face serves.
+      const events = await rawEvents(thread.id);
+      const update = events.filter((event) => event.type === "thread.execution_updated").at(-1);
+      expect(update?.data).toMatchObject({ providerId: RIG_PROVIDER_ID, model: "rig-model-2" });
+      const ride = events.filter((event) => event.type === "turn.input").at(-1);
+      expect(ride?.data).toMatchObject({
+        execution: { providerId: RIG_PROVIDER_ID, model: "rig-model-2", reasoningLevel: "none" },
+      });
+
+      // Two sources, one answer: the read face and the dispatched pin agree.
+      const face = await exports.default.fetch(
+        `${BASE}/api/v1/threads/${thread.id}/default-execution-options`,
+      );
+      expect(face.status).toBe(200);
+      const faceBody = await face.json<{ model: string }>();
+      expect(ride?.data).toMatchObject({ execution: { model: faceBody.model } });
+    } finally {
+      await restoreRigModels();
+    }
+  });
+
+  it("a re-send equal to the stored selection (bb fresh-page shape) still rides the stored model", async () => {
+    await seedSecondRigModel();
+    const created = await createThread({
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
+    });
+    expect(created.status).toBe(201);
+    const thread = await created.json<CreatedThread>();
+    try {
+      await waitTurnSettled(thread.id);
+      const rewritten = await patch(`/api/v1/threads/${thread.id}`, { model: "rig-model-2" });
+      expect(rewritten.status).toBe(200);
+
+      // bb's fresh-page composer re-sends the DISPLAYED model; the server
+      // classifies it unchanged (#351) — the dispatch source must still be
+      // the stored row, never the create-time pin.
+      const response = await post(`/api/v1/threads/${thread.id}/send`, {
+        input: [{ type: "text", text: "equal re-send" }],
+        mode: "auto",
+        model: "rig-model-2",
+      });
+      expect(response.status).toBe(200);
+
+      const events = await rawEvents(thread.id);
+      const ride = events.filter((event) => event.type === "turn.input").at(-1);
+      expect(ride?.data).toMatchObject({
+        execution: { providerId: RIG_PROVIDER_ID, model: "rig-model-2" },
+      });
+    } finally {
+      await restoreRigModels();
+    }
+  });
+
+  it("a model-less follow-up whose stored row left the directory fails closed (named 422, zero churn)", async () => {
+    const created = await createThread({
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
+    });
+    expect(created.status).toBe(201);
+    const thread = await created.json<CreatedThread>();
+    try {
+      await waitTurnSettled(thread.id);
+      // The directory drops the stored model (the #486 pool state the card
+      // renders); the journal still pins it from creation.
+      await env.DB.prepare("UPDATE provider_configs SET models = ? WHERE id = ?")
+        .bind(
+          JSON.stringify([
+            { id: "rig-model-2", reasoningLevels: ["none"], defaultReasoningLevel: "none" },
+          ]),
+          RIG_PROVIDER_ID,
+        )
+        .run();
+      const turnCount = (await rawEvents(thread.id)).filter(
+        (event) => event.type === "turn.input",
+      ).length;
+
+      const rejected = await post(`/api/v1/threads/${thread.id}/send`, {
+        input: [{ type: "text", text: "model-less onto a dropped row" }],
+        mode: "auto",
+      });
+      await expect422(rejected, "model_unknown");
+
+      // Fail-closed: nothing dispatched, nothing journaled — the send never
+      // rides the (equally dropped) journal history instead of the stored row.
+      const events = await rawEvents(thread.id);
+      expect(events.filter((event) => event.type === "turn.input")).toHaveLength(turnCount);
+      expect(events.filter((event) => event.type === "thread.execution_updated")).toHaveLength(0);
+    } finally {
+      await restoreRigModels();
+    }
+  });
+});
