@@ -19,7 +19,8 @@ export interface CfAccessConfig {
  * misconfiguration Access will always refuse (service auth checks both
  * headers), so it fails at start (agent-auth posture: rejection, not
  * silent fallback) instead of dialing with half a credential. Unset pair
- * → undefined — the workers.dev direct-dial wire is unchanged.
+ * → undefined — the no-Access direct-dial wire is unchanged (same bytes as
+ * pre-#420).
  */
 export function decodeCfAccessConfig(
   clientId: string | undefined,

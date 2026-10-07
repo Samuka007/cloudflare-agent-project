@@ -20,7 +20,7 @@ import { Executor } from "../src/client/executor.js";
  * carries CF-Access-Client-Id/CF-Access-Client-Secret alongside the
  * existing `authorization: Bearer <hostKey>` (Access is the wall, hostKey
  * the door lock — engineering.md practice 7). Unset config must leave the
- * wire byte-identical to the pre-#420 shape (workers.dev direct dial).
+ * wire byte-identical to the pre-#420 shape (no-Access direct dial).
  *
  * Harness: the REAL client seam functions (loadIdentity → enroll;
  * establishSession → open + attach) run against a recording fetch and a

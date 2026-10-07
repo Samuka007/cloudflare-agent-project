@@ -13,7 +13,8 @@
   "main": "src/index.ts",
   // #412 cutover step 1（cf-access-agent-compat.md §8；域名用户裁决 2026-10-06：
   // bb-staging.samuka007.com——.com zone 已有 cvat/langfuse Access 先例）。
-  // Access apps 就位前该域名与 workers.dev 同为无门禁（无回归）。
+  // #411/#412 后 edge Access root app「cap-staging」覆盖整域；workers.dev 路由
+  // 已随自定义域接管停用（CF 1042，#480）——本域是唯一活面。
   "routes": [{ "pattern": "bb-staging.samuka007.com", "custom_domain": true }],
   "compatibility_date": "2026-09-29",
   "compatibility_flags": ["nodejs_compat"],
