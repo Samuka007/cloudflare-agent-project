@@ -56,6 +56,14 @@ export interface ProviderConfigRecord {
 /** The catalog half: validated rows + content fingerprint. */
 export interface ProviderConfigCatalogOverlay {
   providers: Record<string, RelayCatalogProvider>;
+  /**
+   * #448 the explicit generate_image source seat: the provider id the panel
+   * selected (D1 image_source), or null when nothing is selected — which is
+   * the ONLY not-configured state (#450: zero env fallback). May dangle when
+   * the selected row was deleted afterwards; the read faces report it and
+   * the executor answers honestly.
+   */
+  imageSourceProviderId: string | null;
   /** Content fingerprint (no secret values) for hot-reload gating. */
   fingerprint: string;
 }
@@ -118,11 +126,29 @@ async function readProviderConfigs(
 ): Promise<ProviderConfigLoad | null> {
   const db = env.DB;
   if (db === undefined) return null;
-  const result = await db
-    .prepare(
+  // #448 the 产图源 seat rides every load so a selection flip hot-applies
+  // through the same fingerprint gate as a row edit. ONE batch round trip
+  // with the rows read — the turn-boundary refresh awaits this loader, and
+  // an extra DO event-loop yield here races the read faces (observed: the
+  // L1 send→read tests see a completed mock turn where one round trip sees
+  // an in-flight one).
+  const [imageSourceResult, rowsResult] = await db.batch([
+    db.prepare("SELECT provider_id FROM image_source WHERE id = 'image_source'"),
+    db.prepare(
       "SELECT id, display_name, base_url, api, service_tier, api_key_enc, models, created_at, updated_at FROM provider_configs ORDER BY id",
-    )
-    .all<ProviderConfigDbRow>();
+    ),
+  ] as const);
+  // The seat row's cell: narrow at the boundary (unknown → string|null).
+  const seatRow: unknown = imageSourceResult?.results[0];
+  let imageSourceProviderId: string | null = null;
+  if (typeof seatRow === "object" && seatRow !== null && "provider_id" in seatRow) {
+    const seatValue: unknown = seatRow.provider_id;
+    if (typeof seatValue === "string") imageSourceProviderId = seatValue;
+  }
+  // One boundary cast: the rows statement is the SAME typed query the
+  // pre-batch `.all<ProviderConfigDbRow>()` trusted — batch erases the
+  // per-statement generic, this restores it.
+  const result = rowsResult as { results: ProviderConfigDbRow[] };
   const rows: ProviderConfigRecord[] = [];
   const providers: Record<string, RelayCatalogProvider> = {};
   const credentials: RelayProviderCredentialMap = {};
@@ -235,19 +261,31 @@ async function readProviderConfigs(
       updatedAt: row.updated_at,
     });
   }
-  const fingerprint = await fingerprintOf(providers, credentials, maxUpdatedAt);
-  return { rows, catalog: { providers, fingerprint }, credentials, warnings };
+  const fingerprint = await fingerprintOf(
+    providers,
+    credentials,
+    maxUpdatedAt,
+    imageSourceProviderId,
+  );
+  return {
+    rows,
+    catalog: { providers, imageSourceProviderId, fingerprint },
+    credentials,
+    warnings,
+  };
 }
 
 /**
  * Content-only fingerprint: provider declarations in full, credential
- * PRESENCE per id, and the newest updated_at (so a key-only rotation still
- * bumps it). Values of secrets never enter the string.
+ * PRESENCE per id, the newest updated_at (so a key-only rotation still
+ * bumps it), and the #448 image-source selection (a seat-only flip
+ * hot-applies). Values of secrets never enter the string.
  */
 async function fingerprintOf(
   providers: Record<string, RelayCatalogProvider>,
   credentials: RelayProviderCredentialMap,
   maxUpdatedAt: number,
+  imageSourceProviderId: string | null,
 ): Promise<string> {
   const content = JSON.stringify({
     providers,
@@ -255,6 +293,7 @@ async function fingerprintOf(
       Object.entries(credentials).map(([id, slot]) => [id, slot.apiKey !== undefined]),
     ),
     maxUpdatedAt,
+    imageSourceProviderId,
   });
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
   let binary = "";

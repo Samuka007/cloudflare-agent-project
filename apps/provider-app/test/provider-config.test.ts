@@ -121,6 +121,7 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
     });
     registry.applyOverlay({
       providers: OVERLAY_PROVIDERS,
+      imageSourceProviderId: null,
       credentials: { panelp: { apiKey: "k-panel", baseUrl: "https://panel.example.com" } },
       standaloneProviders: new Set(Object.keys(OVERLAY_PROVIDERS)),
     });
@@ -141,6 +142,7 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
     });
     registry.applyOverlay({
       providers: OVERLAY_PROVIDERS,
+      imageSourceProviderId: null,
       credentials: {},
       standaloneProviders: new Set(Object.keys(OVERLAY_PROVIDERS)),
     });
@@ -159,12 +161,14 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
     const registry = RelayProviderRegistry.fromEnv({ MODEL_RELAY_CATALOG: ENV_CATALOG });
     registry.applyOverlay({
       providers: OVERLAY_PROVIDERS,
+      imageSourceProviderId: null,
       credentials: { panelp: { apiKey: "k-one", baseUrl: "https://panel.example.com" } },
       standaloneProviders: new Set(Object.keys(OVERLAY_PROVIDERS)),
     });
     const first = registry.providerFor({ providerId: "panelp", model: "panel-only" });
     registry.applyOverlay({
       providers: OVERLAY_PROVIDERS,
+      imageSourceProviderId: null,
       credentials: { panelp: { apiKey: "k-two", baseUrl: "https://panel.example.com" } },
       standaloneProviders: new Set(Object.keys(OVERLAY_PROVIDERS)),
     });
@@ -181,13 +185,29 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
     await expect(loadProviderConfigCatalogOverlay({})).resolves.toBeNull();
   });
 
-  test("imageGenerationSourceFromOverlay resolves the openai-images row's source", () => {
+  test("imageGenerationSourceFromOverlay resolves the explicitly seated openai-images row", () => {
     expect(imageGenerationSourceFromOverlay(null)).toBeNull();
     expect(
       imageGenerationSourceFromOverlay({
         providers: {},
+        imageSourceProviderId: null,
         credentials: {},
         standaloneProviders: new Set(),
+      }),
+    ).toBeNull();
+    // #448: a seat is mandatory — rows without the seat supply nothing.
+    expect(
+      imageGenerationSourceFromOverlay({
+        providers: {
+          imagey: {
+            api: "openai-images",
+            baseUrl: "https://images.example.com/v1/",
+            models: [{ id: "image-model" }, { id: "spare" }],
+          },
+        },
+        imageSourceProviderId: null,
+        credentials: { imagey: { apiKey: "sk-image-362" } },
+        standaloneProviders: new Set(["imagey"]),
       }),
     ).toBeNull();
     const source = imageGenerationSourceFromOverlay({
@@ -198,6 +218,7 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
           models: [{ id: "image-model" }, { id: "spare" }],
         },
       },
+      imageSourceProviderId: "imagey",
       credentials: { imagey: { apiKey: "sk-image-362" } },
       standaloneProviders: new Set(["imagey"]),
     });
@@ -207,5 +228,28 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
       model: "image-model",
       timeoutSeconds: DEFAULT_IMAGE_TIMEOUT_SECONDS,
     });
+    // A seat naming a missing or non-image row is honestly unconfigured.
+    expect(
+      imageGenerationSourceFromOverlay({
+        providers: {},
+        imageSourceProviderId: "gone",
+        credentials: {},
+        standaloneProviders: new Set(),
+      }),
+    ).toBeNull();
+    expect(
+      imageGenerationSourceFromOverlay({
+        providers: {
+          texty: {
+            api: "anthropic-messages",
+            baseUrl: "https://relay.example.com",
+            models: [{ id: "m" }],
+          },
+        },
+        imageSourceProviderId: "texty",
+        credentials: { texty: { apiKey: "k" } },
+        standaloneProviders: new Set(["texty"]),
+      }),
+    ).toBeNull();
   });
 });

@@ -115,8 +115,9 @@ DAEMON_SERVICE_URL=https://cap-server-staging.dai-samuel.workers.dev
 DAEMON_JOIN_CODE=<code>
 DAEMON_DATA_DIR=/var/lib/cap-daemon/data
 DAEMON_SANDBOX_ROOT=/tmp/cap-sandbox
-# daemon face 过 Access（bb-staging.samuka007.com，Access app B）后双键必填；
-# 直连 workers.dev（无 Access）时两键整体省略。
+# daemon face 过 Access（bb-staging.samuka007.com 单 root app「cap-staging」，
+# #412 收敛后全域单门单 aud）后双键必填；直连 workers.dev（无 Access）时
+# 两键整体省略。
 DAEMON_CF_ACCESS_CLIENT_ID=<cap-daemon service token 的 Client ID>
 DAEMON_CF_ACCESS_CLIENT_SECRET=<Secret，仅创建时可见，密库同 .staging-access.env>
 EOF
@@ -137,6 +138,11 @@ CF Access 双键说明（#420）：
   双缺省则线格式与 #420 之前逐字节一致（workers.dev 直连不受影响）。
 - 手动跑 client 也可用参数面 `--cf-client-id` / `--cf-client-secret`（arg 优先于
   env，同 `--server`/`--join-code` 约定）。
+- 门是 #412 收敛后的**单 root app「cap-staging」**（bb-staging 全域单 aud）：人走
+  allow 邮箱策略，daemon 服务令牌走 `non_identity` 决策策略（`allow` 不授权
+  服务令牌——302 登录页实证；unknown Client ID 不入认证日志，排障判据见
+  cf-access-agent-compat.md §9）。worker secret `ACCESS_AUD` 即该 root app
+  的单值 aud（#435 退役多 app 双 aud 形态）。
 
 enroll 成功后**剥除 join code**（编辑 env 文件删 `DAEMON_JOIN_CODE` 行）并
 `systemctl restart cap-daemon`——常驻进程复用 dataDir 身份，不重铸。

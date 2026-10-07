@@ -17,6 +17,7 @@ import {
   providerConfigTestResponseSchema,
   systemProviderProjectionsResponseSchema,
   systemExecutionOptionsResponseSchema,
+  systemImageSourceResponseSchema,
 } from "../../src/contract/api/system.js";
 
 /**
@@ -150,6 +151,8 @@ afterEach(async () => {
   // The suite shares one worker (isolate:false): a leftover D1 row would
   // leak onto later files' execution-options faces.
   await env.DB.prepare("DELETE FROM provider_configs").run();
+  // The #448 产图源 seat is separate 正本 state — the same leak discipline.
+  await env.DB.prepare("DELETE FROM image_source").run();
   // The display-face describe injects a seed catalog onto the worker env —
   // restore the RIG declaration for later files (#434: the rig is a
   // configured deployment).
@@ -1086,7 +1089,7 @@ describe("#362 scope absorption: per-model thinking budget + openai-images rows"
     ]);
   });
 
-  it("openai-images rows are image sources: off the LLM directory, on the projections presence bit, hot", async () => {
+  it("openai-images rows become image sources ONLY through the explicit seat (#448)", async () => {
     await postProvider({
       id: "imagey",
       displayName: "Image Source",
@@ -1101,17 +1104,92 @@ describe("#362 scope absorption: per-model thinking budget + openai-images rows"
     );
     // …on the CRUD face…
     expect((await listProviders()).map((entry) => entry.id)).toContain("imagey");
-    // …and gating the projections presence bit (hot; zero-secret).
+    // …but the projections presence bit stays OFF: a row alone is a
+    // candidate, not a selection (#448/#450 — zero env fallback).
     const projectionsPath = "/api/v1/system/provider-projections";
     let projections = systemProviderProjectionsResponseSchema.parse(
       await (await request("GET", projectionsPath)).json(),
     );
-    expect(projections.catalog.imageGeneration.configured).toBe(true);
-    expect(JSON.stringify(projections)).not.toContain(PANEL_KEY);
-    await deleteRow("imagey");
+    expect(projections.catalog.imageGeneration).toEqual({ configured: false, providerId: null });
+
+    // The image-source face: the row is a candidate, the seat is empty.
+    const imageSourcePath = "/api/v1/system/image-source";
+    const seatOf = async () =>
+      systemImageSourceResponseSchema.parse(await (await request("GET", imageSourcePath)).json());
+    expect(await seatOf()).toEqual({ providerId: null, candidates: ["imagey"] });
+
+    // Selecting the row flips both faces (hot; zero-secret).
+    const put = await request("PUT", imageSourcePath, { providerId: "imagey" });
+    expect(put.status).toBe(200);
+    expect(systemImageSourceResponseSchema.parse(await put.json()).providerId).toBe("imagey");
     projections = systemProviderProjectionsResponseSchema.parse(
       await (await request("GET", projectionsPath)).json(),
     );
-    expect(projections.catalog.imageGeneration.configured).toBe(false);
+    expect(projections.catalog.imageGeneration).toEqual({ configured: true, providerId: "imagey" });
+    expect(JSON.stringify(projections)).not.toContain(PANEL_KEY);
+  });
+
+  it("the seat switches, validates, clears, and dangles honestly (#448)", async () => {
+    const imageSourcePath = "/api/v1/system/image-source";
+    const seatOf = async () =>
+      systemImageSourceResponseSchema.parse(await (await request("GET", imageSourcePath)).json());
+    const projectionsPath = "/api/v1/system/provider-projections";
+    const projectionsOf = async () =>
+      systemProviderProjectionsResponseSchema.parse(
+        await (await request("GET", projectionsPath)).json(),
+      );
+    await postProvider({
+      id: "imagey",
+      api: "openai-images",
+      baseUrl: "https://images.example.com/v1",
+      models: [{ id: "image-model" }],
+    });
+    await postProvider({
+      id: "imagey-2",
+      api: "openai-images",
+      baseUrl: "https://images-two.example.com/v1",
+      models: [{ id: "image-model-2" }],
+    });
+    // Switch between the two candidate rows.
+    await request("PUT", imageSourcePath, { providerId: "imagey" });
+    await request("PUT", imageSourcePath, { providerId: "imagey-2" });
+    expect((await seatOf()).providerId).toBe("imagey-2");
+    expect((await seatOf()).candidates).toEqual(["imagey", "imagey-2"]);
+    expect((await projectionsOf()).catalog.imageGeneration.providerId).toBe("imagey-2");
+
+    // Invalid seats refuse with named codes; the seat never moves.
+    const missing = await request("PUT", imageSourcePath, { providerId: "imagey-missing" });
+    expect(missing.status).toBe(404);
+    expect((await missing.json<{ code: string }>()).code).toBe("provider_config_not_found");
+    await postProvider({ id: "texty", api: "anthropic-messages", models: [{ id: "m" }] });
+    const wrongFamily = await request("PUT", imageSourcePath, { providerId: "texty" });
+    expect(wrongFamily.status).toBe(422);
+    expect((await wrongFamily.json<{ code: string }>()).code).toBe("not_an_image_source");
+    await postProvider({ id: "hollow", api: "openai-images", models: [] });
+    const hollow = await request("PUT", imageSourcePath, { providerId: "hollow" });
+    expect(hollow.status).toBe(422);
+    expect((await hollow.json<{ code: string }>()).code).toBe("not_dispatchable");
+    expect((await seatOf()).providerId).toBe("imagey-2");
+
+    // Clearing is the only not-configured state…
+    await request("PUT", imageSourcePath, { providerId: null });
+    // (hollow is NOT a candidate: the loader drops zero-model rows from the
+    // effective catalog — the same row PUT refuses with not_dispatchable.)
+    expect(await seatOf()).toEqual({
+      providerId: null,
+      candidates: ["imagey", "imagey-2"],
+    });
+    expect((await projectionsOf()).catalog.imageGeneration).toEqual({
+      configured: false,
+      providerId: null,
+    });
+    // …and deleting the seated row dangles it honestly (repair seat intact).
+    await request("PUT", imageSourcePath, { providerId: "imagey-2" });
+    await deleteRow("imagey-2");
+    expect((await projectionsOf()).catalog.imageGeneration).toEqual({
+      configured: false,
+      providerId: "imagey-2",
+    });
+    await request("PUT", imageSourcePath, { providerId: null });
   });
 });

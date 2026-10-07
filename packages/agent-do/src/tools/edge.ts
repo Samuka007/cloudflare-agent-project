@@ -72,7 +72,7 @@ export interface EdgeToolContext {
   webSearch?: WebSearchToolContext;
   /**
    * Image-source surface — bound only for `generate_image` (B2 #322):
-   * decoded `AGENT_DO_IMAGE_SOURCE` config, the owning call's cancel
+   * the panel-resolved 产图源 config (#448), the owning call's cancel
    * signal, the DO's fetch, and the daemon-service thread-file seams.
    */
   generateImage?: GenerateImageToolContext;
@@ -238,7 +238,10 @@ export async function runEdgeTool(
     if (ctx.task === undefined) {
       return { status: "error", output: "task requires the DO-bound spawn context." };
     }
-    return runTaskTool(validated instanceof type.errors ? args : (validated as Record<string, unknown>), ctx.task);
+    return runTaskTool(
+      validated instanceof type.errors ? args : (validated as Record<string, unknown>),
+      ctx.task,
+    );
   }
 
   if (row.name === "yield") {
@@ -313,13 +316,13 @@ export async function runEdgeTool(
 
   if (row.name === "generate_image") {
     // omp imageGenTool.execute (image-gen.ts:232-335) over the single
-    // env-resolved image source; the save leg lands the bytes on the host
+    // seat-resolved image source; the save leg lands the bytes on the host
     // disk via the daemon-service write seam. Abort rethrows as cancelled.
     if (ctx.generateImage === undefined) {
       return {
         status: "error",
         output:
-          "generate_image requires the DO-bound image-source context (AGENT_DO_GENERATE_IMAGE + AGENT_DO_IMAGE_SOURCE).",
+          "generate_image requires the DO-bound image-source context (the selected 产图源 provider row).",
       };
     }
     return runGenerateImageTool(

@@ -65,27 +65,27 @@ export interface RelayProviderRegistryResolution {
 }
 
 /**
- * #362 scope absorption ②: the panel-resolved image source. A provider row
- * with `api: "openai-images"` IS the generate_image switch + source config —
- * row presence is the user opt-in (no separate gate seat), the row's baseUrl
- * + decrypted key + first model row are the source. The env
- * AGENT_DO_GENERATE_IMAGE/AGENT_DO_IMAGE_SOURCE pair is the fallback the DO
- * applies when this returns null. Returns null with an empty-string
- * baseUrl/model when the row is incomplete — the executor answers honestly
- * that the source is not configured (never a guessed default).
+ * #448 the explicit image source. The panel's 产图源 seat
+ * (`overlay.imageSourceProviderId`, D1 image_source) names the
+ * api=openai-images provider row that IS the generate_image switch + source
+ * config — the seat is the user opt-in (no separate gate seat, #450: no env
+ * fallback), and the row's baseUrl + decrypted key + first model row are the
+ * source. null (no seat) or a seat naming a missing/non-image row resolves
+ * to null — generate_image is simply not configured. A seat on an
+ * incomplete row resolves with empty-string baseUrl/model — the executor
+ * answers honestly that the source is not usable (never a guessed default).
  */
 export function imageGenerationSourceFromOverlay(
   overlay: RelayProviderOverlay | null,
 ): GenerateImageConfig | null {
   if (overlay === null) return null;
-  const entry = Object.entries(overlay.providers).find(
-    ([, provider]) => provider.api === IMAGE_SOURCE_API_FAMILY,
-  );
-  if (entry === undefined) return null;
-  const [id, provider] = entry;
+  const seat = overlay.imageSourceProviderId;
+  if (seat === null) return null;
+  const provider = overlay.providers[seat];
+  if (provider?.api !== IMAGE_SOURCE_API_FAMILY) return null;
   return {
     baseUrl: provider.baseUrl?.replace(/\/+$/, "") ?? "",
-    apiKey: overlay.credentials[id]?.apiKey ?? "",
+    apiKey: overlay.credentials[seat]?.apiKey ?? "",
     model: provider.models[0]?.id ?? "",
     timeoutSeconds: DEFAULT_IMAGE_TIMEOUT_SECONDS,
   };
@@ -102,14 +102,16 @@ export function imageGenerationSourceFromOverlay(
  */
 export interface RelayProviderOverlay {
   providers: Record<string, RelayCatalogProvider>;
+  /** #448 the panel-selected image-source row id; null = none selected. */
+  imageSourceProviderId: string | null;
   credentials: RelayProviderCredentialMap;
   standaloneProviders: ReadonlySet<string>;
 }
 
 /**
  * Decode `MODEL_RELAY_PROVIDER_CREDENTIALS` (strict: unknown members and
- * shape violations throw — deployment-time input, the AGENT_DO_IMAGE_SOURCE
- * posture; a silent degradation would turn a typo'd provider id into
+ * shape violations throw — deployment-time input, the loud-decode posture;
+ * a silent degradation would turn a typo'd provider id into
  * upstream 403s instead of a loud deploy failure). Absent/blank → {} (every
  * provider rides the deployment's single-relay slots).
  */

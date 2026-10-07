@@ -73,9 +73,10 @@ export class ComposedAgentDO extends AgentDO {
     const overlay = await loadProviderConfigOverlay(this.env);
     if (overlay === null || overlay.fingerprint === this.appliedOverlayFingerprint) return;
     this.relayRegistry.applyOverlay(overlay);
-    // #362 scope absorption ②: an api=openai-images row is the generate_image
-    // switch + source — refresh the DO-side override alongside the catalog so
-    // a panel edit lands on the next turn (null = env posture resumes).
+    // #448: the 产图源 seat (overlay.imageSourceProviderId) is the
+    // generate_image switch + source — refresh the DO-side source alongside
+    // the catalog so a panel edit lands on the next turn (null = not
+    // configured; the seat rides the same content fingerprint as the rows).
     this.applyImageGenerationSource(imageGenerationSourceFromOverlay(overlay));
     this.appliedOverlayFingerprint = overlay.fingerprint;
   }
