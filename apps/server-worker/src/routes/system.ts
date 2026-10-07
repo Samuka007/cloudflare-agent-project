@@ -54,6 +54,7 @@ import {
   type ProviderConfigRow,
   type SystemExecutionOptionsResponse,
 } from "../contract/api/system.js";
+import type { AvailableModel } from "../contract/domain/provider-types.js";
 import { appSettingsSchema } from "../contract/domain/app-settings.js";
 import { appKeybindingOverridesSchema } from "../contract/domain/app-keybindings.js";
 import { experimentsSchema } from "../contract/domain/experiments.js";
@@ -96,6 +97,7 @@ import {
   applyAppKeybindingOverrides,
   toAppSettings,
 } from "../db/settings.js";
+import { listStoredThreadModelOverrides } from "../db/control-plane.js";
 import type { AppEnv, Env } from "../app-types.js";
 
 /**
@@ -158,6 +160,7 @@ export function buildSystemConfig(env: Env, requestUrl: URL) {
 export function buildExecutionOptions(
   env: HarnessEnv,
   overlayProviders: Record<string, RelayCatalogProvider>,
+  selectedOnlyModels: AvailableModel[] = [],
 ): SystemExecutionOptionsResponse {
   const catalog = resolveOverlayCatalog(resolveHarness(env), overlayProviders);
   return {
@@ -201,9 +204,39 @@ export function buildExecutionOptions(
       defaultReasoningEffort: model.defaultReasoningLevel,
       isDefault: model.isDefault,
     })),
-    selectedOnlyModels: [],
+    // #486: stored thread overrides the merged directory no longer declares
+    // project as selectable-only rows (the bb retired-model pool contract,
+    // api/system.ts:53-59) — the picker keeps rendering a stored selection
+    // instead of silently recovering onto the catalog default. Dispatching a
+    // pooled row still validates fail-closed (422 model_unknown) at send.
+    // An EMPTY directory (unconfigured/broken deployment, #434) stays
+    // verbatim-empty: nothing is pooled onto a face that declares nothing.
+    selectedOnlyModels:
+      catalog.models.length > 0
+        ? selectedOnlyModels.filter(
+            (model) => !catalog.models.some((row) => row.id === model.model),
+          )
+        : [],
     modelLoadError: null,
   };
+}
+
+/**
+ * #486 selected-only pool projection: a stored override string that left the
+ * directory still needs a picker-renderable row. The row is identity-shaped
+ * (label = id, no declared ladder — the reasoning knob falls back to the SPA's
+ * stored rung), never marked default, and dispatch stays fail-closed upstream.
+ */
+function projectStoredOverrideRows(models: string[]): AvailableModel[] {
+  return models.map((model) => ({
+    id: model,
+    model,
+    displayName: model,
+    description: "",
+    supportedReasoningEfforts: [],
+    defaultReasoningEffort: "none",
+    isDefault: false,
+  }));
 }
 
 /** The projections-face webSearch row: the D1 overlay half (#449) mapped to
@@ -448,16 +481,23 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
   routes.get("/system/execution-options", async (ctx) => {
     // bb validates the query against systemExecutionOptionsQuerySchema
     // (public-api.ts:1408-1409); hostId and environmentId are mutually
-    // exclusive. The Worker has no host routing, so the parsed value is
-    // discarded and the primary catalog is served regardless.
-    parseOr422(systemExecutionOptionsQuerySchema, ctx.req.query());
+    // exclusive. The Worker has no host routing; providerId scopes the #486
+    // stored-override selected-only pool (the thread composer always names
+    // one) while the primary directory is served regardless.
+    const query = parseOr422(systemExecutionOptionsQuerySchema, ctx.req.query());
     // #450: the D1 provider rows ARE the directory — a panel-side provider
     // appears here on the next request (no redeploy, no reload); zero rows
     // serve the honest empty picker.
     const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
     return ctx.json(
       systemExecutionOptionsResponseSchema.parse(
-        buildExecutionOptions(ctx.env, overlay?.providers ?? {}),
+        buildExecutionOptions(
+          ctx.env,
+          overlay?.providers ?? {},
+          projectStoredOverrideRows(
+            await listStoredThreadModelOverrides(ctx.env, query.providerId),
+          ),
+        ),
       ),
     );
   });
