@@ -36,6 +36,8 @@ export {
   type HostDiscoverModelsResult,
   type HostFileReadResult,
   type HostFileWriteResult,
+  type HostMkdirCommand,
+  type HostPathMutationResult,
   type HostReadFileCommand,
   type HostRpcCommand,
   type HostRpcRequestFrame,
@@ -55,6 +57,8 @@ export {
 } from "./protocol.js";
 export {
   hostPathsExistResultSchema,
+  hostMkdirCommandSchema,
+  hostPathMutationResultSchema,
   projectPathInspectionSchema,
   projectPathResultSchema,
 } from "./protocol.js";

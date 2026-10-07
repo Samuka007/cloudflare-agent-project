@@ -17,6 +17,7 @@ import { Executor, scanMarkerProcesses } from "./executor.js";
 import { HostRpcCommandError, browseHostDirectory } from "./host-directory.js";
 import { discoverHostProviderModels } from "./host-discovery.js";
 import { readHostFile, writeThreadFile } from "./host-files.js";
+import { mkdirHostPath } from "./host-path-mutations.js";
 import {
   checkHostPathsExist,
   cloneProject,
@@ -490,19 +491,23 @@ export function dispatchHostRpc(
       ? browseHostDirectory(command)
       : command.type === "host.write_file"
         ? writeThreadFile(command, hosts.sandboxRoot)
-        : command.type === "host.discover_models"
-          ? discoverHostProviderModels(command)
-          : command.type === "host.paths_exist"
-            ? checkHostPathsExist(command)
-            : command.type === "project.inspect"
-              ? inspectProjectPath(command)
-              : command.type === "project.clone_default_path"
-                ? Promise.resolve(resolveProjectCloneDefaultPath(hosts.dataDir, command.projectSlug))
-                : command.type === "project.clone"
-                  ? cloneProject(command, hosts.dataDir)
-                  : // The union's remaining arm (host.read_file) — an unknown
-                    // commandType cannot reach here (schema-refused upstream).
-                    readHostFile(command);
+        : command.type === "host.mkdir"
+          ? mkdirHostPath(command)
+          : command.type === "host.discover_models"
+            ? discoverHostProviderModels(command)
+            : command.type === "host.paths_exist"
+              ? checkHostPathsExist(command)
+              : command.type === "project.inspect"
+                ? inspectProjectPath(command)
+                : command.type === "project.clone_default_path"
+                  ? Promise.resolve(
+                      resolveProjectCloneDefaultPath(hosts.dataDir, command.projectSlug),
+                    )
+                  : command.type === "project.clone"
+                    ? cloneProject(command, hosts.dataDir)
+                    : // The union's remaining arm (host.read_file) — an unknown
+                      // commandType cannot reach here (schema-refused upstream).
+                      readHostFile(command);
   return executed.then(
     (result) => {
       respond({ type: "host-rpc.response", ok: true, result });
