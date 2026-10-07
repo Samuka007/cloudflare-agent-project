@@ -41,22 +41,22 @@ export interface Env {
   // --- vars -----------------------------------------------------------------
 
   /**
-   * Cloudflare Access gate. "true" enforces JWT validation on /api/v1/* and
-   * /ws. SEC-W5-001 (#397) fail-closed: every other value LOCKS the control
-   * plane (503 access_gate_disabled) unless the deployment is explicitly
-   * marked local-dev via ACCESS_LOCAL_DEV="true" — never ship the marker in
-   * wrangler configs; deployed configs must flip this to "true".
-   */
-  readonly ACCESS_CHECK_ENABLED?: string;
-  /**
-   * SEC-W5-001 (#397): explicit local-dev marker — the only way a gate-off
-   * deployment serves /api/v1/* and /ws. For the L1 rig and `wrangler dev`
-   * only; deployed configs set ACCESS_CHECK_ENABLED="true" instead.
+   * SEC-W5-001 (#397): explicit local-dev marker — the only way a deployment
+   * without the Access credential pair serves /api/v1/* and /ws (#505: gate
+   * state derives from ACCESS_TEAM_DOMAIN/ACCESS_AUD presence; an absent pair
+   * locks the control plane). For the L1 rig and `wrangler dev` only; never
+   * ship the marker in wrangler configs.
    */
   readonly ACCESS_LOCAL_DEV?: string;
-  /** e.g. "https://myteam.cloudflareaccess.com" — JWKS source. */
+  /**
+   * e.g. "https://myteam.cloudflareaccess.com" — JWKS source. Presence (with
+   * ACCESS_AUD) arms the gate (#505); absence locks the control plane.
+   */
   readonly ACCESS_TEAM_DOMAIN?: string;
-  /** Access application AUD claim. */
+  /**
+   * Access application AUD claim. Presence (with ACCESS_TEAM_DOMAIN) arms
+   * the gate (#505); absence locks the control plane.
+   */
   readonly ACCESS_AUD?: string;
   /** Extra browser origins the Origin guard / CORS accept (comma-separated). */
   readonly APP_EXTRA_ORIGINS?: string;

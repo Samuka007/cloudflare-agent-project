@@ -10,10 +10,13 @@ import { exports } from "cloudflare:workers";
 /**
  * Criterion 5 (port-inventory §6.5): Access rejects unauthorized callers; the
  * SPA keeps zero token logic (all verification is Worker-side, header/cookie
- * only). SEC-W5-001 (#397): the gate is fail-closed — gate-off deployments
- * reject /api/v1 + /ws (503 access_gate_disabled) unless the explicit
- * ACCESS_LOCAL_DEV marker is set. Full JWKS round-trips are L2 (staging), so
- * L1 covers: the fail-closed default, the marker branch, enabled rejection,
+ * only). SEC-W5-001 (#397): the gate is fail-closed. #505 removed the
+ * ACCESS_CHECK_ENABLED flag — gate state derives from the credential pair
+ * (ACCESS_TEAM_DOMAIN ∧ ACCESS_AUD non-empty), so a half-pair or empty
+ * deployment rejects /api/v1 + /ws (503 access_gate_disabled) unless the
+ * explicit ACCESS_LOCAL_DEV marker is set — and the marker can never disarm
+ * an armed gate. Full JWKS round-trips are L2 (staging), so L1 covers: the
+ * fail-closed matrix (empty / half-pair), the marker branch, armed rejection,
  * and the pure JWT verification path against a locally generated RS256
  * keypair.
  */
@@ -40,29 +43,65 @@ beforeAll(ensureMigrations);
 
 describe("criterion 5: Access gate", () => {
   it("serves the API only on the explicit local-dev branch (L1 rig env)", async () => {
-    // Rig bindings (vitest.config.ts): gate off + ACCESS_LOCAL_DEV — the one
-    // sanctioned gate-off surface; deployed configs ship the gate on.
+    // Rig bindings (vitest.config.ts): no Access credentials → gate
+    // disarmed, + ACCESS_LOCAL_DEV — the one sanctioned gate-off surface;
+    // deployed configs ship the credential pair.
     const response = await exports.default.fetch("https://example.com/api/v1/threads");
     expect(response.status).toBe(200);
   });
 
-  it("rejects with 503 when the gate is off and no local-dev marker is set", async () => {
-    // Fail-closed default: flag unset (fresh deployment, vars missing).
+  it("rejects with 503 when the credential pair is absent and no local-dev marker is set", async () => {
+    // Fail-closed default: fresh deployment, secrets never provisioned.
     await expect(accessGate(fakeContext({}, {}), next)).rejects.toMatchObject({
       status: 503,
       code: "access_gate_disabled",
     });
-    // Explicit "false" is equally locked.
+  });
+
+  it("locks on a half-pair — either credential alone does not arm the gate", async () => {
+    // #505: the flag could contradict the secrets (flag on + no credentials
+    // = runtime 500s); with the pair as the gate state, a partial
+    // provisioning is just an unarmed deployment. Each single key (including
+    // empty-string values) keeps the control plane locked.
     await expect(
-      accessGate(fakeContext({}, { ACCESS_CHECK_ENABLED: "false" }), next),
+      accessGate(fakeContext({}, { ACCESS_TEAM_DOMAIN: "https://team.example.com" }), next),
+    ).rejects.toMatchObject({ status: 503, code: "access_gate_disabled" });
+    await expect(
+      accessGate(fakeContext({}, { ACCESS_AUD: "test-aud" }), next),
+    ).rejects.toMatchObject({ status: 503, code: "access_gate_disabled" });
+    await expect(
+      accessGate(fakeContext({}, { ACCESS_TEAM_DOMAIN: "", ACCESS_AUD: "test-aud" }), next),
+    ).rejects.toMatchObject({ status: 503, code: "access_gate_disabled" });
+    await expect(
+      accessGate(
+        fakeContext({}, { ACCESS_TEAM_DOMAIN: "https://team.example.com", ACCESS_AUD: "" }),
+        next,
+      ),
     ).rejects.toMatchObject({ status: 503, code: "access_gate_disabled" });
   });
 
   it("passes gate-off traffic only with the explicit local-dev marker", async () => {
-    await accessGate(
-      fakeContext({}, { ACCESS_CHECK_ENABLED: "false", ACCESS_LOCAL_DEV: "true" }),
-      next,
-    );
+    await accessGate(fakeContext({}, { ACCESS_LOCAL_DEV: "true" }), next);
+  });
+
+  it("never lets the local-dev marker disarm an armed gate", async () => {
+    // The marker widens nothing: once the credential pair exists, JWT
+    // verification applies even if a stray marker leaks into a deployed env
+    // (SEC-W5-001 fail-closed direction — the marker can only unlock an
+    // already-unarmed deployment, never weaken an armed one).
+    await expect(
+      accessGate(
+        fakeContext(
+          {},
+          {
+            ACCESS_TEAM_DOMAIN: "https://team.example.com",
+            ACCESS_AUD: "test-aud",
+            ACCESS_LOCAL_DEV: "true",
+          },
+        ),
+        next,
+      ),
+    ).rejects.toMatchObject({ status: 401, code: "unauthorized" });
   });
 
   it("locks /api/v1 and /ws at the assembled-app level when gate-off without the marker", async () => {
@@ -71,10 +110,7 @@ describe("criterion 5: Access gate", () => {
     // rejects before any binding is read, hence the empty env.
     const lockedEnv = {} as unknown as Env;
     const app = createApp(lockedEnv);
-    const threads = await app.fetch(
-      new Request("https://example.com/api/v1/threads"),
-      lockedEnv,
-    );
+    const threads = await app.fetch(new Request("https://example.com/api/v1/threads"), lockedEnv);
     expect(threads.status).toBe(503);
     expect(await threads.json()).toMatchObject({ code: "access_gate_disabled" });
 
@@ -83,9 +119,12 @@ describe("criterion 5: Access gate", () => {
     expect(await ws.json()).toMatchObject({ code: "access_gate_disabled" });
   });
 
-  it("rejects requests without a token when the gate is enabled", async () => {
+  it("rejects requests without a token when the gate is armed", async () => {
     await expect(
-      accessGate(fakeContext({}, { ACCESS_CHECK_ENABLED: "true" }), next),
+      accessGate(
+        fakeContext({}, { ACCESS_TEAM_DOMAIN: "https://team.example.com", ACCESS_AUD: "test-aud" }),
+        next,
+      ),
     ).rejects.toMatchObject({ status: 401, code: "unauthorized" });
   });
 
@@ -94,7 +133,7 @@ describe("criterion 5: Access gate", () => {
       accessGate(
         fakeContext(
           { "cf-access-jwt-assertion": "garbage.token" },
-          { ACCESS_CHECK_ENABLED: "true", ACCESS_TEAM_DOMAIN: "https://team.example.com" },
+          { ACCESS_TEAM_DOMAIN: "https://team.example.com", ACCESS_AUD: "test-aud" },
         ),
         next,
       ),
@@ -210,7 +249,12 @@ describe("criterion 5: Access gate", () => {
     // The real service-token shape (staging tail #439/#440): identity claims
     // present-but-empty — the old .min(1) schema rejected this at
     // claims-parse while the browser (identity-bearing) tokens passed.
-    const claims = { aud: "app-aud", exp: Math.floor(Date.now() / 1000) + 300, sub: "", iss: "https://team.example.com" };
+    const claims = {
+      aud: "app-aud",
+      exp: Math.floor(Date.now() / 1000) + 300,
+      sub: "",
+      iss: "https://team.example.com",
+    };
     const encode = (value: object): string =>
       btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
     const signingInput = `${encode({ alg: "RS256", kid })}.${encode(claims)}`;
@@ -287,9 +331,7 @@ describe("criterion 5: Access gate", () => {
         keyPair.privateKey,
         new TextEncoder().encode(`${header}.${encode(claims)}`),
       );
-      return `${header}.${encode(claims)}.${btoa(
-        String.fromCharCode(...new Uint8Array(signature)),
-      )
+      return `${header}.${encode(claims)}.${btoa(String.fromCharCode(...new Uint8Array(signature)))
         .replaceAll("+", "-")
         .replaceAll("/", "_")
         .replaceAll("=", "")}`;
@@ -320,15 +362,13 @@ describe("criterion 5: Access gate", () => {
     }
 
     function stubJwks(jwks: object[]): void {
-      vi.stubGlobal(
-        "fetch",
-        () =>
-          Promise.resolve(
-            new Response(JSON.stringify({ keys: jwks }), {
+      vi.stubGlobal("fetch", () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ keys: jwks }), {
             status: 200,
             headers: { "content-type": "application/json" },
-            }),
-          ),
+          }),
+        ),
       );
     }
 
@@ -352,7 +392,6 @@ describe("criterion 5: Access gate", () => {
         fakeContext(
           { "cf-access-jwt-assertion": token },
           {
-            ACCESS_CHECK_ENABLED: "true",
             ACCESS_TEAM_DOMAIN: "https://team.example.com",
             ACCESS_AUD: "test-aud",
           },
@@ -375,7 +414,6 @@ describe("criterion 5: Access gate", () => {
         fakeContext(
           { "cf-access-jwt-assertion": emailOnlyToken },
           {
-            ACCESS_CHECK_ENABLED: "true",
             ACCESS_TEAM_DOMAIN: "https://team.example.com",
             ACCESS_AUD: "test-aud",
           },

@@ -39,13 +39,14 @@ if [[ ! -d node_modules ]]; then
   exit 1
 fi
 
-# SEC-W5-001 (#397): deploy-time gate-on assertion. The runtime gate is
-# fail-closed, so a gate-off staging deploy would ship a control plane that
-# answers 503 access_gate_disabled on every /api/v1 + /ws request — dead on
-# arrival. Block it here instead. The config is JSONC, so extract the var
-# with the assert script (comments stripped first); a bash grep would
-# false-trip on the relay catalog URL's "//" and cannot verify the value.
-echo "== asserting Access gate is on in wrangler.staging.jsonc (SEC-W5-001) =="
+# SEC-W5-001 (#397): deploy-time gate-armed assertion. #505 removed the flag —
+# gate state IS the credential pair (middleware/access.ts derives it from
+# ACCESS_TEAM_DOMAIN + ACCESS_AUD), so the assert script checks that the
+# retired var has not crept back into the JSONC config and that both secrets
+# exist on the worker (live `wrangler secret list`). Either missing = a
+# staging deploy whose control plane answers 503 access_gate_disabled on
+# every /api/v1 + /ws request — dead on arrival.
+echo "== asserting Access gate credentials (config + worker secrets, SEC-W5-001) =="
 node scripts/assert-staging-gate.mjs
 
 if [[ $SKIP_SPA -eq 0 ]]; then

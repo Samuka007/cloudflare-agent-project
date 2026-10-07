@@ -4,22 +4,25 @@ import { ApiError } from "../shared/api-error.js";
 import type { Env } from "../app-types.js";
 
 /**
- * Cloudflare Access JWT gate (spec #17 认证 decision; flag-gated via
- * ACCESS_CHECK_ENABLED). When enabled, every /api/v1 request and /ws upgrade
- * must carry a valid Access token: `Cf-Access-Jwt-Assertion` header or the
- * `CF_Authorization` cookie (browsers send the cookie automatically; the SPA
- * itself has zero token logic). Verification is standard RS256 JWT against
- * the team JWKS ({team}/cdn-cgi/access/certs) with audience == ACCESS_AUD,
- * per Cloudflare Access docs. Failure → 401 unauthorized JSON, so the SPA's
- * HTML/401 mapping degrades to "Authentication failed" and
- * ReconnectingWebSocket simply retries (bb-spa-ux-surface §4.2).
+ * Cloudflare Access JWT gate (spec #17 认证 decision). When armed, every
+ * /api/v1 request and /ws upgrade must carry a valid Access token:
+ * `Cf-Access-Jwt-Assertion` header or the `CF_Authorization` cookie (browsers
+ * send the cookie automatically; the SPA itself has zero token logic).
+ * Verification is standard RS256 JWT against the team JWKS
+ * ({team}/cdn-cgi/access/certs) with audience == ACCESS_AUD, per Cloudflare
+ * Access docs. Failure → 401 unauthorized JSON, so the SPA's HTML/401 mapping
+ * degrades to "Authentication failed" and ReconnectingWebSocket simply retries
+ * (bb-spa-ux-surface §4.2).
  *
- * SEC-W5-001 (#397): the gate is fail-closed. ACCESS_CHECK_ENABLED !==
- * "true" no longer means "open" — it means the deployment has no
- * authentication front, so /api/v1/* and /ws answer 503
+ * SEC-W5-001 (#397): the gate is fail-closed. #505 removed the
+ * ACCESS_CHECK_ENABLED flag — gate state derives from the credential pair
+ * itself (accessGateEnabled: ACCESS_TEAM_DOMAIN ∧ ACCESS_AUD non-empty), so
+ * a deployment either has the Access app credentials or it has no
+ * authentication front; there is no third "flag says on, secrets say off"
+ * state to drift into. Credentials absent → /api/v1/* and /ws answer 503
  * access_gate_disabled. The ONLY way to run gate-off is the explicit
  * local-dev marker ACCESS_LOCAL_DEV="true" (L1 rig, `wrangler dev`);
- * deployed configs must ship the gate on (deploy scripts assert it).
+ * deployed configs ship the two secrets (deploy scripts assert them).
  */
 
 const jwtHeaderSchema = z.object({ alg: z.string(), kid: z.string() });
@@ -197,8 +200,7 @@ export async function verifyAccessToken(
   if (typeof claims.exp !== "number" || claims.exp * 1000 < nowMs) {
     throw unauthorized();
   }
-  const allowed =
-    typeof options.audience === "string" ? [options.audience] : options.audience;
+  const allowed = typeof options.audience === "string" ? [options.audience] : options.audience;
   const presented = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   const audienceOk = presented.some((a) => allowed.includes(a));
   if (!audienceOk) {
@@ -220,9 +222,7 @@ function requireTeamDomain(env: Env): string {
   // "host/cdn-cgi/…" 非法 URL → gate 覆盖面全 500。归一化：裸域名补
   // https://，尾斜杠剥除——两种形态都合法，一类事故关门。
   const raw = env.ACCESS_TEAM_DOMAIN.trim().replace(/\/+$/, "");
-  return raw.startsWith("https://") || raw.startsWith("http://")
-    ? raw
-    : `https://${raw}`;
+  return raw.startsWith("https://") || raw.startsWith("http://") ? raw : `https://${raw}`;
 }
 
 function unauthorized(): ApiError {
@@ -233,8 +233,17 @@ function unauthorized(): ApiError {
   });
 }
 
-export function accessGateEnabled(env: Env): boolean {
-  return env.ACCESS_CHECK_ENABLED === "true";
+/**
+ * Gate state = credential presence (#505): both ACCESS_TEAM_DOMAIN and
+ * ACCESS_AUD non-empty (whitespace-only counts as absent, matching
+ * requireTeamDomain's normalization). No flag, one source of state —
+ * SEC-W5-001 fail-closed keeps its one-sided failure mode: no credentials =
+ * no control plane.
+ */
+function accessGateEnabled(env: Env): boolean {
+  const teamDomain = env.ACCESS_TEAM_DOMAIN?.trim() ?? "";
+  const aud = env.ACCESS_AUD?.trim() ?? "";
+  return teamDomain !== "" && aud !== "";
 }
 
 /** Hex sha-256 — the per-credential fallback principal when the token
@@ -252,15 +261,15 @@ export async function accessGate(ctx: Context, next: Next) {
     // Fail-closed (SEC-W5-001 #397): gate-off no longer means open. The only
     // branch that serves /api/v1 + /ws without the gate is the explicit
     // local-dev marker (L1 rig, `wrangler dev`; never in wrangler configs) —
-    // otherwise the deployment has no authentication front at all, so reject
-    // the whole control plane. 503 (not 401): no client credential can fix a
-    // deployment-side misconfiguration.
+    // otherwise the deployment lacks the Access credential pair (#505: the
+    // pair IS the gate state), so reject the whole control plane. 503 (not
+    // 401): no client credential can fix a deployment-side misconfiguration.
     if ((ctx.env as Env).ACCESS_LOCAL_DEV !== "true") {
       throw new ApiError({
         status: 503,
         code: "access_gate_disabled",
         message:
-          "Control plane is locked: the Cloudflare Access gate is disabled and this deployment is not marked local-dev (deployments must set ACCESS_CHECK_ENABLED=true with ACCESS_TEAM_DOMAIN/ACCESS_AUD secrets; local rigs set ACCESS_LOCAL_DEV=true)",
+          "Control plane is locked: the Access credential pair (ACCESS_TEAM_DOMAIN + ACCESS_AUD secrets) is not configured and this deployment is not marked local-dev — provision both secrets (`wrangler secret put`) to arm the gate, or set ACCESS_LOCAL_DEV=true on a local rig only",
         retryable: false,
       });
     }
@@ -302,7 +311,7 @@ export async function accessGate(ctx: Context, next: Next) {
     });
   } catch (error) {
     // Decode-only diagnostic (no signature trust): aud/exp/iss are
- // non-sensitive claims; pinpoints aud-mismatch vs expiry vs issuer.
+    // non-sensitive claims; pinpoints aud-mismatch vs expiry vs issuer.
     try {
       const parts = token.split(".");
       const payload = decodeSegment(parts[1] ?? "") as Record<string, unknown>;
