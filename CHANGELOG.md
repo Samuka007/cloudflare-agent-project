@@ -455,6 +455,56 @@ projection`）渲染只读投影 + 「编辑走部署 env」指针（对照 ops/
 
 ### Fixed
 
+- **#450 (W5) env 目录腿退役——D1 provider_configs 成为 LLM provider 唯一正本（用户裁决
+  2026-10-07「零 env 回落」）**：`MODEL_RELAY_CATALOG`/`MODEL_RELAY_PROVIDER_CREDENTIALS`
+  全链删除（provider-app catalog/relay-registry/harness/manager-do + server-worker
+  env/routes/execution-selection + wrangler.staging 播种行），目录=overlay 单源投影
+  （`resolveOverlayCatalog`）；零行=诚实空目录（picker 空、无选择 create 422
+  provider_default_undeclared，#434 nothing-synthesized），行凭据恒 standalone（部署
+  凭据永不回落，防外泄）；`defaultProviderId` 恒 null、`decodeError` 恒 false 保契约形。
+  测试面同构收口：rig 从 env binding 改 D1 行播种（真加密凭据+转发式 wire 桩+holdRigWire
+  确定性 in-flight 门），15+ 裸 create 站点补显式 rig 选择。staging 实证：零配置空态
+  诚实+面板配行（newapi/glm-5.3-flash，AES-GCM 密钥）→ 真 turn 端到端（DOGFOOD-450-OK）；
+  PM ops 同窗删三死 secret（MODEL_RELAY_PROVIDER_CREDENTIALS/AGENT_DO_IMAGE_SOURCE/
+  AGENT_DO_GENERATE_IMAGE）。
+
+- **#477 (W5) idle 线程永久 "Working..." 指示器——coarse status flip 无守卫复活 active +
+  detail 面读 stale 行**：create/send 的 dispatch flip 在瞬封 turn（DO 终局结算先落）后
+  重写 active 盖掉 idle，GET /threads/:id（SPA bootstrap 正本）照读 stale 行，而结算广播
+  与新页 WS subscribe 竞速丢失（hub 纯易失 fan-out）→ 永久 Working。修复：flip 加
+  `expectedStatus`/`expectedUpdatedAt` CAS（sealed turn 永不复活）；detail 面读时结算
+  （#52 timeline 面同构，仅 starting/active/stopping 行付 journal 读，幂等+广播）。
+  回归：thread-477-detail-settlement 5 例（修复前全红）；staging 三线程真机复验零指示器。
+
+- **#478 (W5) ask 载荷 schema 发散 fail-closed**：omp-verbatim 行 schema 是 DO 载荷 schema
+  的真超集（空白串/非整 recommended 过行不过 DO），分歧载荷此前打进 journal 追加的 zod
+  parse 抛出 executor → turn driver fiber 中波死 → alarm 重问循环永抛（卡死而非诚实失败，
+  违 #436）。修复：`runAskTool` 注册前用与 journal 追加**同一** `pendingInteractionPayloadSchema`
+  校验投影载荷，分歧=显式 error tool result（模型可自纠、turn 收敛）——单一 schema 权威，
+  未来投影漂移自动被同一道门拦下。纯层 5 形状+DO 集成（空白 id 全 turn 收敛、零注册）双测。
+
+- **#484 (W5) provider 面板 harness 遗像块——envConfigured 门+重标注（用户报）**：#450
+  退役部署通道后，投影区残留 "Relay mode: mock / open.bigmodel.cn / glm-5.3" 死通道
+  如实投影（零 env=HARNESS_DEFAULTS 合成），被读作"我的 provider 是 mock"。修复：投影
+  harness 行增 `envConfigured`（9 变量空白判定），面板块重标注 "Deployment relay
+  channel"+legacy 归属文案；**零 env 部署整块不渲染**（测试钉死）。每块正本归属文案
+  （provider=D1 行 hot-applied/web_search=D1 可编辑/harness=legacy env）一并理顺。
+
+- **#486 (W5) 线程模型漂移——选 glm-5.3-flash 进线程显 glm-5.3（显示+派发双漂移，用户报）**：
+  根因链：bb composer 以 `GET /threads/:id/default-execution-options` 为存档选择种子而
+  Worker 端从未实现该路由 → 种子空 → 选择器静默落目录 isDefault 行（#450 后=harness
+  glm-5.3）→ follow-up 不带模型 → send 无 ride → 按部署默认派发。修复：新增
+  default-execution-options 存档面（存档行过同一合并目录；目录漂移时读面信任存档原文
+  返回、无存档返 null——bb 读面 parity，派发半保持 fail-closed 422）；execution-options
+  增 selectedOnlyModels 池（存档 override 目录已不含者投影为池行，空目录保持真空 #434）；
+  bb picker 池行统一 "Model unavailable" 标注。显式选择永不静默漂移；显示=派发由构造保证。
+
+- **#480 workers.dev 旧域残留清理（1042）**：#412 自定义域接管后
+  cap-server-staging.dai-samuel.workers.dev 已死——deploy-staging.yml 探活正本切
+  bb-staging.samuka007.com，匿名断言 401→302（edge Access 门在场语义；worker 级 401
+  留待 CI Access token 流）；JEV 脚本默认 host/fixture/ops+research 活态文档同步；
+  历史记录性提及保留（实测快照/审计记录/spike 数据不改写）。
+
 - **#325 (W5) 多压缩对回放投影丢当时 armed cut——rewindContextCut 补 as-of-call 时间锚**：
   `checkpointRewindState` 增 `beforeSeq` 独占上界（只折 `seq < beforeSeq` 的行），
   `rewindContextCut` 签名增 `modelCallId` 锚（translate.ts 调用点传入当前
