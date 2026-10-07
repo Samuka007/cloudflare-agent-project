@@ -278,15 +278,15 @@ export function buildProviderProjections(
   } catch {
     // env content, not a caller error
   }
-  const webSearch = webSearchProjectionRow(overlay?.webSearch);
+  const webSearch = webSearchProjectionRow(overlay.webSearch);
   // #448: generate_image availability, presence-only. The 产图源 seat is
   // the only gate (#450 — zero env fallback): configured iff the selection
   // resolves to a dispatchable api=openai-images row. A dangling selection
   // (row deleted after selection) reports configured:false with the seat id
   // intact, so the panel can show what to repair.
-  const imageSourceProviderId = overlay?.imageSourceProviderId ?? null;
+  const imageSourceProviderId = overlay.imageSourceProviderId;
   const imageSourceRow =
-    imageSourceProviderId === null ? undefined : overlay?.providers[imageSourceProviderId];
+    imageSourceProviderId === null ? undefined : overlay.providers[imageSourceProviderId];
   const imageGeneration = {
     providerId: imageSourceProviderId,
     configured: imageSourceRow?.api === IMAGE_SOURCE_API_FAMILY && imageSourceRow.models.length > 0,

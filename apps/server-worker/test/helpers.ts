@@ -94,15 +94,15 @@ const RIG_SSE_BODY = [
  * round-trips). Always `release()` in a finally — a leaked hold stalls every
  * later rig-wire turn in the shared worker.
  */
-let rigWireHold: Promise<void> | null = null;
+let rigWireHold: Promise<true> | null = null;
 
 export function holdRigWire(): { release: () => void } {
-  const { promise, resolve } = Promise.withResolvers<void>();
+  const { promise, resolve } = Promise.withResolvers<true>();
   rigWireHold = promise;
   return {
     release: () => {
       if (rigWireHold === promise) rigWireHold = null;
-      resolve();
+      resolve(true);
     },
   };
 }
@@ -135,7 +135,7 @@ export function ensureRigRelayWire(): void {
       if (hold !== null) return hold.then(serveRigWire);
       return serveRigWire();
     }
-    return original(url as string, init);
+    return original(url, init);
   };
   Object.assign(stub, { __rigWireStub: true });
   vi.stubGlobal("fetch", stub);

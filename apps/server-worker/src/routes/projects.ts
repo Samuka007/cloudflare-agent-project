@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { projectPathInspectionSchema } from "@cap/daemon-service";
-import type { RelayCatalogProvider } from "@cap/agent-do";
 import {
   createProjectRequestSchema,
   createThreadSectionRequestSchema,
@@ -18,11 +17,9 @@ import {
 } from "../contract/api/projects.js";
 import {
   PROMPT_HISTORY_ENTRY_LIMIT,
-  projectExecutionDefaultsSchema,
   projectSourceSchema,
   takeVisiblePromptHistoryEntries,
 } from "../contract/domain/index.js";
-import type { ProjectExecutionDefaults } from "../contract/domain/shared-types.js";
 import { threadListEntrySchema } from "../contract/domain/thread.js";
 import {
   copyProjectAttachments,
