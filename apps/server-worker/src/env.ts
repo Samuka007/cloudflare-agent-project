@@ -58,8 +58,6 @@ export interface Env {
   readonly ACCESS_TEAM_DOMAIN?: string;
   /** Access application AUD claim. */
   readonly ACCESS_AUD?: string;
-  /** Extra browser origins the Origin guard / CORS accept (comma-separated). */
-  readonly APP_EXTRA_ORIGINS?: string;
   /** Version banner for /system/version (bb appVersion.currentVersion). */
   readonly SERVER_VERSION?: string;
   /** bb config.dataDir analogue; the Worker has no fs — surface value only. */

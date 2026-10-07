@@ -18,6 +18,7 @@ import {
   availableModelSchema,
   experimentsSchema,
   featureFlagsSchema,
+  parseOriginLike,
   permissionModeSchema,
   pluginThemeMetaSchema,
   providerInfoSchema,
@@ -489,6 +490,45 @@ export const systemToolCapabilitiesPutRequestSchema = z
   .strict();
 export type SystemToolCapabilitiesPutRequest = z.infer<
   typeof systemToolCapabilitiesPutRequestSchema
+>;
+
+/**
+ * #506 the origin-allowlist face (the D1 `origin_allowlist` single-row seat,
+ * the sole 正本 — the APP_EXTRA_ORIGINS env input is deleted, zero env
+ * fallback). GET/PUT /system/origin-allowlist: the extra browser origins the
+ * Origin guard / CORS leg accept beyond the request-target derivation; an
+ * absent row is the default zero-extra posture. A write hot-applies on the
+ * next Origin-carrying request (no redeploy).
+ */
+export const systemOriginAllowlistResponseSchema = z.object({
+  origins: z.array(z.string()),
+});
+export type SystemOriginAllowlistResponse = z.infer<
+  typeof systemOriginAllowlistResponseSchema
+>;
+
+/**
+ * PUT /system/origin-allowlist: wholesale replace. Every entry must parse as
+ * a strict http(s) browser origin (the shared parseOriginLike grammar);
+ * failures surface as bb 422 validation_failed with the offending entry's
+ * path.
+ */
+export const systemOriginAllowlistPutRequestSchema = z
+  .object({ origins: z.array(z.string()) })
+  .strict()
+  .superRefine((value, refineCtx) => {
+    value.origins.forEach((entry, index) => {
+      if (parseOriginLike(entry) === null) {
+        refineCtx.addIssue({
+          code: "custom",
+          path: ["origins", index],
+          message: `not a strict http(s) browser origin: ${JSON.stringify(entry)}`,
+        });
+      }
+    });
+  });
+export type SystemOriginAllowlistPutRequest = z.infer<
+  typeof systemOriginAllowlistPutRequestSchema
 >;
 
 // --- #362/#450 provider configurable panel (port-only CRUD face) -------------

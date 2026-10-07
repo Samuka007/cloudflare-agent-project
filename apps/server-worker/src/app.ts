@@ -14,12 +14,18 @@ import { installShScript } from "./install-sh.js";
 import type { AppEnv, Env } from "./app-types.js";
 import type { Context, Next } from "hono";
 
+/** Shared fallback: no guard read this request (no Origin header) = none extra. */
+const EMPTY_ORIGIN_ALLOWLIST: ReadonlySet<string> = new Set();
+
 /**
  * Hono assembly, ported from bb apps/server/src/server.ts (commit 8473d8c33)
  * middleware order: guard → CORS → routes, with Access gate inserted ahead of
  * the API (spec #17: Access 前置, Worker 内仅校验 JWT).
  */
-export function createApp(env: Env): Hono<AppEnv> {
+// The env slot stays for call-shape symmetry with app.fetch(request, env, ctx)
+// (the c5 rig builds the assembled app against an explicit locked env); the
+// guards read bindings per-request off ctx.env instead (#506).
+export function createApp(_env: Env): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   app.onError(apiErrorHandler);
 
@@ -45,7 +51,11 @@ export function createApp(env: Env): Hono<AppEnv> {
     "/api/v1/*",
     cors({
       origin: (origin, ctx) => {
-        const extra = new Set((env.APP_EXTRA_ORIGINS ?? "").split(",").map((o) => o.trim()));
+        // #506: the allowlist rides the Origin-guard's per-request D1 read
+        // (stashed on the context) — one query serves both legs, and a
+        // /system/origin-allowlist write hot-applies without a redeploy.
+        const stashed: unknown = ctx.get("originAllowlist");
+        const extra = stashed instanceof Set ? stashed : EMPTY_ORIGIN_ALLOWLIST;
         const requestOrigin = new URL(ctx.req.url).origin;
         if (origin === requestOrigin || (extra.has(origin) && origin !== "")) {
           return origin;
