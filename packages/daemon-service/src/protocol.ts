@@ -213,10 +213,93 @@ export const hostWriteFileCommandSchema = z.object({
 });
 export type HostWriteFileCommand = z.infer<typeof hostWriteFileCommandSchema>;
 
+/**
+ * #447: run provider /models discovery ON the host and return metadata-
+ * enriched rows. The edge (Workers) cannot run omp's pi-catalog enrichment
+ * face (bundled catalog + models.dev hydration need the Bun host —
+ * `Bun.zstdDecompress`), so the control plane delegates the whole probe to
+ * the connected daemon and consumes the enriched list. `api` is the row's
+ * declared family hint ("anthropic" | "openai-responses" | …, free-form);
+ * it selects the auth-header convention (anthropic → x-api-key +
+ * anthropic-version, else Bearer — the probeProviderConnection family
+ * conventions) and echoes onto every enriched row.
+ */
+export const hostDiscoverModelsCommandSchema = z.object({
+  type: z.literal("host.discover_models"),
+  baseUrl: z.string().min(1),
+  apiKey: z.string().min(1).optional(),
+  api: z.string().min(1).nullable().optional(),
+});
+export type HostDiscoverModelsCommand = z.infer<typeof hostDiscoverModelsCommandSchema>;
+
+/**
+ * #447: one discovered model row with the omp catalog metadata seats. Every
+ * metadata seat is value-or-null (null = looked and unknown — the panel
+ * renders "unknown", never an empty cell), and `metadataSource` names where
+ * the metadata came from so partial knowledge stays honest:
+ * - "models_dev": the live models.dev catalog (via pi-catalog hydration)
+ *   matched the id (bundled catalog filled the seats models.dev prunes).
+ * - "bundled": only the bundled snapshot knew the id (offline fallback).
+ * - "none": no catalog knew the id — every seat is null.
+ * - "unavailable": enrichment never ran (the bare edge fallback) — rows
+ *   carry id/name only.
+ * The seats mirror the panel's editor draft vocabulary plus the omp thinking
+ * ladder verbatim; write-back to a provider row goes through the panel's
+ * draft projection (the stored catalog schema rejects these display seats).
+ */
+export const discoveredModelEntrySchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).optional(),
+  api: z.string().min(1).optional(),
+  reasoning: z.boolean().nullable().optional(),
+  input: z
+    .array(z.enum(["text", "image"]))
+    .nullable()
+    .optional(),
+  contextWindow: z.number().int().positive().nullable().optional(),
+  maxTokens: z.number().int().positive().nullable().optional(),
+  cost: z
+    .strictObject({
+      input: z.number().nonnegative(),
+      output: z.number().nonnegative(),
+      cacheRead: z.number().nonnegative(),
+      cacheWrite: z.number().nonnegative(),
+    })
+    .nullable()
+    .optional(),
+  thinking: z
+    .object({
+      /** omp ThinkingControlMode (e.g. "effort"); null when unresolvable. */
+      mode: z.string().min(1).nullable(),
+      /** omp effort ladder verbatim; empty = reasoning but ladder unknown. */
+      efforts: z.array(z.string().min(1)),
+    })
+    .nullable()
+    .optional(),
+  metadataSource: z.enum(["models_dev", "bundled", "none", "unavailable"]),
+});
+export type DiscoveredModelEntry = z.infer<typeof discoveredModelEntrySchema>;
+
+/**
+ * #447: the discover verdict the daemon answers inside `host-rpc.response`.
+ * Same verdict grammar as the server's own bare-discovery face: ok/verdict
+ * envelope with skip-with-warning discipline for unusable entries.
+ */
+export const hostDiscoverModelsResultSchema = z.object({
+  ok: z.boolean(),
+  status: z.number().int().nullable(),
+  latencyMs: z.number().int().nullable(),
+  error: z.string().nullable(),
+  models: z.array(discoveredModelEntrySchema),
+  warnings: z.array(z.string()),
+});
+export type HostDiscoverModelsResult = z.infer<typeof hostDiscoverModelsResultSchema>;
+
 export const hostRpcCommandSchema = z.discriminatedUnion("type", [
   hostBrowseDirectoryCommandSchema,
   hostReadFileCommandSchema,
   hostWriteFileCommandSchema,
+  hostDiscoverModelsCommandSchema,
 ]);
 export type HostRpcCommand = z.infer<typeof hostRpcCommandSchema>;
 

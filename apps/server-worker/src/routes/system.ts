@@ -70,7 +70,7 @@ import {
   type ProviderConfigWriteFields,
 } from "../db/provider-configs.js";
 import {
-  discoverProviderModels,
+  discoverProviderModelsEnriched,
   probeProviderConnection,
 } from "../services/provider-config-test.js";
 import { consumeProbeSlot } from "../services/probe-rate-limit.js";
@@ -758,15 +758,26 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   // PM addition ① (#362): /models discovery. Anchored either on an unsaved
   // row ({baseUrl, apiKey?}) or a saved one ({providerId} — the row's
   // baseUrl plus its DECRYPTED stored secret, which the panel never sees).
+  // #447: the probe delegates to a connected host (host.discover_models) for
+  // pi-catalog enrichment; `hostId` pins the server, otherwise registered
+  // persistent hosts serve in creation order, and the edge's bare probe is
+  // the explicit degradation fallback (rows marked metadata-unavailable).
   routes.post("/system/providers/discover-models", async (ctx) => {
     assertProbeSlotAvailable(ctx);
     const payload = await requireJsonBody(ctx, providerConfigDiscoverRequestSchema);
     const verdict =
       "providerId" in payload
-        ? await discoverForSavedRow(ctx, requireValidId(payload.providerId), payload.apiKey)
-        : await discoverProviderModels({
+        ? await discoverForSavedRow(
+            ctx,
+            requireValidId(payload.providerId),
+            payload.apiKey,
+            payload.hostId,
+          )
+        : await discoverProviderModelsEnriched(ctx.env, {
             baseUrl: payload.baseUrl,
             apiKey: payload.apiKey ?? null,
+            api: null,
+            hostId: payload.hostId,
           });
     return ctx.json(providerConfigDiscoverResponseSchema.parse(verdict));
   });
@@ -888,8 +899,15 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
 }
 
 /** The {providerId}-anchored discovery branch: resolves the row's baseUrl
- * and its stored secret (unless the panel re-typed a key for this probe). */
-async function discoverForSavedRow(ctx: Context<AppEnv>, id: string, typedKey: string | undefined) {
+ * and its stored secret (unless the panel re-typed a key for this probe).
+ * The row's declared api family rides along as the auth-header/enrichment
+ * hint. */
+async function discoverForSavedRow(
+  ctx: Context<AppEnv>,
+  id: string,
+  typedKey: string | undefined,
+  hostId: string | undefined,
+) {
   const target = await getProviderConfigTarget(ctx.env, id);
   if (target === null) {
     throw new ApiError({
@@ -911,5 +929,10 @@ async function discoverForSavedRow(ctx: Context<AppEnv>, id: string, typedKey: s
   // An explicitly typed key (panel re-entry) wins for this one probe;
   // otherwise the row's decrypted stored secret rides — never echoed back.
   const apiKey = typedKey ?? (await readProviderConfigSecret(ctx.env, id));
-  return discoverProviderModels({ baseUrl: target.baseUrl, apiKey });
+  return discoverProviderModelsEnriched(ctx.env, {
+    baseUrl: target.baseUrl,
+    apiKey,
+    api: target.api,
+    hostId,
+  });
 }

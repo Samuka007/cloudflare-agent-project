@@ -63,7 +63,10 @@ describe("#362 probeProviderConnection (test-connection)", () => {
   it("answers a bounded-error verdict on upstream failure", async () => {
     const verdict = await probeProviderConnection(
       { api: "anthropic", baseUrl: "https://up.example.com", model: "m", apiKey: null },
-      () => Promise.resolve(jsonResponse({ error: { message: "nope sk-echo-should-not-matter" } }, 401)),
+      () =>
+        Promise.resolve(
+          jsonResponse({ error: { message: "nope sk-echo-should-not-matter" } }, 401),
+        ),
     );
     expect(verdict.ok).toBe(false);
     expect(verdict.status).toBe(401);
@@ -102,7 +105,12 @@ describe("#362 discoverProviderModels (/models discovery)", () => {
       },
     );
     expect(verdict.ok).toBe(true);
-    expect(verdict.models).toEqual([{ id: "glm-5.3" }, { id: "glm-5.3-air", name: "GLM Air" }]);
+    // #447: the bare edge probe marks its rows metadata-unavailable — the
+    // enrichment happens on the host (discoverProviderModelsEnriched).
+    expect(verdict.models).toEqual([
+      { id: "glm-5.3", metadataSource: "unavailable" },
+      { id: "glm-5.3-air", name: "GLM Air", metadataSource: "unavailable" },
+    ]);
     expect(verdict.warnings).toEqual([]);
     expect(calls[0]?.url).toBe("https://newapi.example.com/v1/models");
     expect(new Headers(calls[0]?.init.headers).get("authorization")).toBe("Bearer sk-disc-362");
@@ -111,10 +119,11 @@ describe("#362 discoverProviderModels (/models discovery)", () => {
   it("reports unusable entries as warnings — never silently dropped", async () => {
     const verdict = await discoverProviderModels(
       { baseUrl: "https://up.example.com", apiKey: null },
-      () => Promise.resolve(jsonResponse({ data: [{ id: "good" }, { nope: 1 }, "junk", { id: "" }] })),
+      () =>
+        Promise.resolve(jsonResponse({ data: [{ id: "good" }, { nope: 1 }, "junk", { id: "" }] })),
     );
     expect(verdict.ok).toBe(true);
-    expect(verdict.models).toEqual([{ id: "good" }]);
+    expect(verdict.models).toEqual([{ id: "good", metadataSource: "unavailable" }]);
     expect(verdict.warnings).toHaveLength(3);
     expect(verdict.warnings[0]).toContain("skipped, never silently dropped");
   });

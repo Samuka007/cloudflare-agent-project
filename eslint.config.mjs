@@ -53,6 +53,9 @@ export default tseslint.config(
       // #420 CF Access header lane: same Bun-only shape (globalThis
       // fetch/WebSocket override drives the real client seam functions).
       "packages/daemon-service/test/l1-cf-access-headers.test.ts",
+      // #447 pi-catalog enrichment lane: same Bun-only shape (pi-catalog
+      // hydration needs Bun), typechecked in tsconfig.client.json.
+      "packages/daemon-service/test/host-discovery.test.ts",
       // Node-ambient client test (moved to tsconfig.client.json — the
       // workers-side program's ambient set conflicts): outside the project
       // service's default tsconfig discovery, prettier-formatted only.
