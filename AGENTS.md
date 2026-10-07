@@ -9,7 +9,8 @@
 
 1. `rule://belief-state-discipline` — 信念台账：每个外部操作前把前提标 OBSERVED/ASSUMED；ASSUMED 不许直接落码/落票，先取 retrieved truth（读近处源码/文档/schema），其次问 provenance，最后才 probe。禁止把上游源码存在性当作产品可达性。
 2. `rule://eval-first-orchestration` — 复杂编排进 eval 内核：远程解析/JSON 内嵌/凭据处理/跨环境探测出现深层引号或多项组合时，用命名 eval cell 留中间态，不写一锤子 shell。
-3. `docs/agents/*` — PM 与 tracker 操作正本：`pm.md`（PM 循环/DoR/派发/关账，含"症状复现即立项，禁 all-in-one 票"）、`acceptance-lane.md`（验收模板+证据三件套）、`issue-tracker.md`（gh 约定+native blocking edges）、`tracker-schema.md`（三轴模型）、`triage-labels.md`（五标签）、`domain.md`（CONTEXT.md/ADR）；跨块判定加读 `docs/design/decomposition.md`。
+3. `omp://secrets.md` — 凭据脱敏机制正本：`$$HASH(:hint)$$`/`$$FRIENDLY_HASH(:hint)$$` 占位符=secrets.yml/env/内建正则收集的明文可逆脱敏；会话与工具参数自动脱/还原——取凭据真实值时按此机制解析（secrets.yml 两级：`~/.omp/agent/` 与 `<cwd>/.omp/`），**明文永不回显进 transcript**。
+4. `docs/agents/*` — PM 与 tracker 操作正本：`pm.md`（PM 循环/DoR/派发/关账，含"症状复现即立项，禁 all-in-one 票"）、`acceptance-lane.md`（验收模板+证据三件套）、`issue-tracker.md`（gh 约定+native blocking edges）、`tracker-schema.md`（三轴模型）、`triage-labels.md`（五标签）、`domain.md`（CONTEXT.md/ADR）；跨块判定加读 `docs/design/decomposition.md`。
 
 ## Engineering Doctrine（工程铁律——先读这个）
 
