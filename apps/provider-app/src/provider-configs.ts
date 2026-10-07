@@ -180,10 +180,10 @@ interface WebSearchAssembly {
 }
 
 /** Parse one JSON cell; a broken cell is reported, never silently empty. */
-function parseJsonCell<T>(label: string, raw: string | null, warnings: string[]): T | undefined {
+function parseJsonCell(label: string, raw: string | null, warnings: string[]): unknown {
   if (raw === null || raw.trim() === "") return undefined;
   try {
-    return JSON.parse(raw) as T;
+    return JSON.parse(raw);
   } catch (error) {
     warnings.push(
       `web_search config row: ${label} is not valid JSON (${error instanceof Error ? error.message : String(error)})`,
@@ -227,7 +227,6 @@ async function assembleWebSearch(
       fingerprint: JSON.stringify({ decodeError: true, updatedAt: row.updated_at }),
     };
   };
-  let storedEngines: WebSearchStoredEngines | undefined;
   let secrets: WebSearchStoredSecrets | undefined;
   if (options.decrypt && row.secrets_enc !== null) {
     if (masterKey === undefined || masterKey === "") {
@@ -245,11 +244,12 @@ async function assembleWebSearch(
       }
     }
   }
-  storedEngines = parseJsonCell<WebSearchStoredEngines>("engines", row.engines, warnings);
+  const storedEngines = parseJsonCell("engines", row.engines, warnings) as
+    WebSearchStoredEngines | undefined;
   if (row.engines !== null && storedEngines === undefined) {
     return fail("engines is not valid JSON");
   }
-  const chain = parseJsonCell<string[]>("chain", row.chain, warnings);
+  const chain = parseJsonCell("chain", row.chain, warnings) as string[] | undefined;
   if (chain === undefined) return fail("chain is not valid JSON");
   const patch = {
     chain,
@@ -268,12 +268,13 @@ async function assembleWebSearch(
   // Presence map: the decrypt half derives it from the real secrets; the
   // catalog half reads the plaintext meta column. The "(stored)" marker is
   // presence-only — the projection emits booleans, never a value.
-  const meta = parseJsonCell<WebSearchSecretsMeta>("secrets_meta", row.secrets_meta, warnings);
+  const meta = parseJsonCell("secrets_meta", row.secrets_meta, warnings) as
+    WebSearchSecretsMeta | undefined;
   const faceEngines: WebSearchFaceEngines = {
     brave: {
       // The decrypt half reads the real secrets; the catalog half the meta.
       hasApiKey:
-        options.decrypt === true
+        options.decrypt
           ? secrets?.brave?.apiKey !== undefined
           : meta?.brave?.apiKey === true,
     },
@@ -283,11 +284,11 @@ async function assembleWebSearch(
       language: storedEngines?.searxng?.language ?? null,
       safesearch: storedEngines?.searxng?.safesearch ?? null,
       hasToken:
-        options.decrypt === true
+        options.decrypt
           ? secrets?.searxng?.token !== undefined
           : meta?.searxng?.token === true,
       hasBasicAuth:
-        options.decrypt === true
+        options.decrypt
           ? secrets?.searxng?.basicUsername !== undefined ||
             secrets?.searxng?.basicPassword !== undefined
           : meta?.searxng?.basic === true,

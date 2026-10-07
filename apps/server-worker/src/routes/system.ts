@@ -234,8 +234,8 @@ function webSearchProjectionRow(overlayRow: WebSearchOverlayRow | undefined): {
   }
   if (overlayRow.projection === null) {
     return {
-      configured: overlayRow?.configured ?? false,
-      decodeError: overlayRow?.decodeError === true,
+      configured: overlayRow.configured,
+      decodeError: overlayRow.decodeError,
       chain: [],
       timeoutSeconds: null,
       browserBackedEngines: [...BROWSER_BACKED_ENGINES],
@@ -678,7 +678,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     const payload = await requireJsonBody(ctx, systemWebSearchPutRequestSchema);
     const load = await loadProviderConfigOverlay(ctx.env);
     const row = load?.webSearch;
-    if (row !== undefined && row.decodeError) {
+    if (row?.decodeError) {
       throw new ApiError({
         status: 422,
         code: "web_search_row_broken",
