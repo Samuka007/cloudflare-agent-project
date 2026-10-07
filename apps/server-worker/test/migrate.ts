@@ -5,6 +5,7 @@ import providerConfigsSql from "../migrations/0003_provider_configs.sql";
 import cloudPlaceholderHostSql from "../migrations/0004_cloud_placeholder_host.sql";
 import projectSourcesHostUniqueSql from "../migrations/0005_project_sources_host_unique.sql";
 import imageSourceSql from "../migrations/0005_image_source.sql";
+import orphanHostReferencesSql from "../migrations/0006_orphan_host_references.sql";
 
 /** The migration files, in apply order. The deploy chain replays the whole
  * `migrations/*.sql` directory per deploy (#295, scripts/deploy-staging.sh);
@@ -16,6 +17,7 @@ export const MIGRATION_FILES: string[] = [
   cloudPlaceholderHostSql,
   projectSourcesHostUniqueSql,
   imageSourceSql,
+  orphanHostReferencesSql,
 ];
 
 /** Statement splitter shared with the deploy replay: one statement per `;\n`
