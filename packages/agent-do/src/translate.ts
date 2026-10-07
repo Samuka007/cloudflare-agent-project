@@ -317,6 +317,7 @@ export function modelRequestFromEvents(
           tool: slice.toolNameByExecutionId.get(event.data.executionId) ?? "unknown",
           status: event.data.status,
           output: typeof event.data.output === "string" ? event.data.output : "",
+          ...(event.data.errorCode !== undefined ? { errorCode: event.data.errorCode } : {}),
         });
         break;
       }

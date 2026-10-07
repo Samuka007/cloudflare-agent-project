@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { localFileContentSchema, localImageContentSchema } from "@cap/protocol";
+import {
+  localFileContentSchema,
+  localImageContentSchema,
+  toolResultErrorCodeSchema,
+} from "@cap/protocol";
 import { DAEMON_PROTOCOL_VERSION } from "./constants.js";
 
 /**
@@ -138,6 +142,14 @@ export const toolResultPayloadSchema = z.object({
   exitCode: z.number().nullable(),
   output: z.string(),
   outputTruncated: z.boolean().optional(),
+  /**
+   * #454: structured refusal code when the tool never executed — the
+   * @cap/protocol tool-results contract. The DO-side generation points
+   * (dispatch host_offline placeholder, pre-dispatch rejections) set it;
+   * a client never produces it today, the field keeps this wire twin
+   * shape-identical with the agent-do ToolResultPayload seam.
+   */
+  errorCode: toolResultErrorCodeSchema.optional(),
   /**
    * B1 (#321): image artifacts the tool produced, by host-disk path — the
    * wire twin of agent-do ToolResultPayload.images. The DO folds each into

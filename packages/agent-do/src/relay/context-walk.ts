@@ -5,6 +5,7 @@ import type {
   PriorModelCall,
   SteerContribution,
 } from "../provider.js";
+import { toolResultErrorMarker, type ToolResultErrorCode } from "@cap/protocol";
 
 /**
  * Protocol-neutral context walk (#361 adaptor seam, #28 ruling ③ translation
@@ -62,7 +63,29 @@ export type WalkedImage =
 export type WalkUserPart =
   | { kind: "text"; text: string }
   | { kind: "image"; image: WalkedImage }
-  | { kind: "tool-result"; callId: string; output: string; isError: boolean };
+  | {
+      kind: "tool-result";
+      callId: string;
+      output: string;
+      isError: boolean;
+      errorCode?: ToolResultErrorCode;
+    };
+
+/**
+ * #454 model-face tool result text: every non-ok result carries the
+ * structured marker (`[tool error]` / `[tool error <code>]`) ahead of its
+ * output, so failure semantics survive the flag-less faces (chat-completions
+ * role:"tool", responses function_call_output) and can never read as
+ * exit-0 stdout. Pure string composition — the faces render it verbatim.
+ */
+const toolResultText = (
+  output: string,
+  isError: boolean,
+  errorCode?: ToolResultErrorCode,
+): string => {
+  const body = output === "" ? EMPTY_OUTPUT_SENTINEL : output;
+  return isError ? `${toolResultErrorMarker(errorCode)} ${body}` : body;
+};
 
 export interface WalkAssistantToolCall {
   /** Deterministic id derived from the log (toolUseIdFor) — never the wire's. */
@@ -190,11 +213,13 @@ export function walkModelRequestContext(
       // Terminal results answer this assistant's tool calls; they join the
       // pending user-side material of the next user segment.
       for (const result of call.toolResults) {
+        const isError = result.status !== "ok";
         pendingUserParts.push({
           kind: "tool-result",
           callId: toolUseIdFor(result.executionId),
-          output: result.output === "" ? EMPTY_OUTPUT_SENTINEL : result.output,
-          isError: result.status !== "ok",
+          output: toolResultText(result.output, isError, result.errorCode),
+          isError,
+          ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
         });
       }
     }
@@ -212,11 +237,13 @@ export function walkModelRequestContext(
     flushUser();
     segments.push(assistantOf(call));
     for (const result of call.toolResults) {
+      const isError = result.status !== "ok";
       pendingUserParts.push({
         kind: "tool-result",
         callId: toolUseIdFor(result.executionId),
-        output: result.output === "" ? EMPTY_OUTPUT_SENTINEL : result.output,
-        isError: result.status !== "ok",
+        output: toolResultText(result.output, isError, result.errorCode),
+        isError,
+        ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
       });
     }
   }

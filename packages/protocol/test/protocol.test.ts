@@ -12,6 +12,9 @@ import {
   realtimeClientMessageSchema,
   realtimeThreadChangedSchema,
   sendMessageRequestSchema,
+  toolNotExecutedMessage,
+  toolResultErrorCodeSchema,
+  toolResultErrorMarker,
   threadEventsResponseSchema,
   timelineResponseSchema,
   type ThreadEventEnvelope,
@@ -482,5 +485,38 @@ describe("prompt content image union (#317)", () => {
     expect(promptContentSchema.safeParse({ type: "localImage" }).success).toBe(false);
     expect(promptContentSchema.safeParse({ type: "video", url: "https://x.test/v.mp4" }).success)
       .toBe(false);
+  });
+});
+
+describe("tool-result not-executed contract (#454)", () => {
+  it("renders the human message per code, detail after the em dash", () => {
+    expect(toolNotExecutedMessage("host_offline")).toBe(
+      "tool not executed: bound host offline",
+    );
+    expect(
+      toolNotExecutedMessage("host_offline", 'override target "h1" has no live daemon session'),
+    ).toBe('tool not executed: bound host offline — override target "h1" has no live daemon session');
+    expect(toolNotExecutedMessage("unknown_host", 'no registered host "h2"')).toBe(
+      'tool not executed: unknown host — no registered host "h2"',
+    );
+    expect(toolNotExecutedMessage("exec_tier_required", 'ceiling is "accept-edits"')).toBe(
+      'tool not executed: exec-tier permission required — ceiling is "accept-edits"',
+    );
+    expect(toolNotExecutedMessage("registry_unavailable", "the registry read failed")).toBe(
+      "tool not executed: hosts registry unavailable — the registry read failed",
+    );
+  });
+
+  it("prefixes the model-face marker with the code when present", () => {
+    expect(toolResultErrorMarker()).toBe("[tool error]");
+    expect(toolResultErrorMarker("host_offline")).toBe("[tool error host_offline]");
+  });
+
+  it("rejects a bogus code and accepts the closed set", () => {
+    for (const code of ["host_offline", "unknown_host", "exec_tier_required", "registry_unavailable"]) {
+      expect(toolResultErrorCodeSchema.parse(code)).toBe(code);
+    }
+    expect(toolResultErrorCodeSchema.safeParse("offline").success).toBe(false);
+    expect(toolResultErrorCodeSchema.safeParse("host_offline ").success).toBe(false);
   });
 });

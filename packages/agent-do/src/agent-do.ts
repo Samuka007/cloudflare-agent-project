@@ -13,6 +13,8 @@ import {
   type PendingInteractionRow,
   type RealtimeThreadDelta,
   type RealtimeSubscriptionTarget,
+  toolNotExecutedMessage,
+  type ToolResultErrorCode,
 } from "@cap/protocol";
 import { EventLog } from "./event-log.js";
 import {
@@ -2882,7 +2884,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * between re-asks re-evaluates, the same honesty a mid-run disconnect
    * already gets.
    */
-  private async checkOverrideTarget(hostId: string): Promise<string | null> {
+  private async checkOverrideTarget(
+    hostId: string,
+  ): Promise<{ code: ToolResultErrorCode; detail: string } | null> {
     const db = this.env.DB;
     if (db === undefined) return null;
     let row: { max_permission_mode: string; destroyed_at: number | null } | null;
@@ -2893,23 +2897,33 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         .first<{ max_permission_mode: string; destroyed_at: number | null }>();
     } catch (error) {
       console.error(`hosts registry read failed for override target ${hostId}`, error);
-      return (
-        `registry_unavailable: the hosts registry read for "${hostId}" failed — ` +
-        `the ssh:// override is refused until the registry answers`
-      );
+      return {
+        code: "registry_unavailable",
+        detail:
+          `the hosts registry read for "${hostId}" failed — ` +
+          `the ssh:// override is refused until the registry answers`,
+      };
     }
     if (row === null) {
-      return `unknown_host: no registered host "${hostId}" for the ssh:// override`;
+      return {
+        code: "unknown_host",
+        detail: `no registered host "${hostId}" for the ssh:// override`,
+      };
     }
     if (row.destroyed_at !== null) {
-      return `unknown_host: host "${hostId}" is destroyed (deletion is explicit and never resurrects)`;
+      return {
+        code: "unknown_host",
+        detail: `host "${hostId}" is destroyed (deletion is explicit and never resurrects)`,
+      };
     }
     if (row.max_permission_mode !== "full") {
-      return (
-        `exec_tier_required: a host:path override is an exec-class operation and host ` +
-        `"${hostId}" ceiling is "${row.max_permission_mode}" — raise the host ceiling or ` +
-        `run the call on the bound machine`
-      );
+      return {
+        code: "exec_tier_required",
+        detail:
+          `a host:path override is an exec-class operation and host ` +
+          `"${hostId}" ceiling is "${row.max_permission_mode}" — raise the host ceiling or ` +
+          `run the call on the bound machine`,
+      };
     }
     return null;
   }
@@ -3001,7 +3015,12 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       if (rejected !== null) {
         await this.ingestResult(
           execution,
-          { status: "error", exitCode: null, output: rejected },
+          {
+            status: "error",
+            exitCode: null,
+            errorCode: rejected.code,
+            output: toolNotExecutedMessage(rejected.code, rejected.detail),
+          },
           { ack: false },
         );
         return;
@@ -3045,13 +3064,22 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       await this.ingestResult(execution, {
         status: "error",
         exitCode: null,
-        // Bound-machine offline keeps the M0 exact payload (ux placeholder
-        // matches on it); an override target names itself so the model can
-        // retry locally or against another host.
+        // #454: the tool never executed — the structured refusal contract
+        // (isError + code + human message), both for the immediate reject
+        // and the mid-turn suspension placeholder (watchdog re-ask on a
+        // host that died mid-run). The model face never renders this as
+        // exit-0 stdout.
+        errorCode: "host_offline",
+        // The bound-machine placeholder is the canonical #454 message; an
+        // override target names itself so the model can retry locally or
+        // against another host.
         output:
           overriddenMachineId === null
-            ? "host_offline"
-            : `host_offline: override target "${overriddenMachineId}" has no live daemon session`,
+            ? toolNotExecutedMessage("host_offline")
+            : toolNotExecutedMessage(
+                "host_offline",
+                `override target "${overriddenMachineId}" has no live daemon session`,
+              ),
       });
     }
   }
@@ -3738,6 +3766,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       exitCode: result.exitCode,
       output: result.output,
       outputTruncated: result.outputTruncated,
+      ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
     });
     if (!options.ack) {
       this.waitWindows.delete(execution.executionId);
