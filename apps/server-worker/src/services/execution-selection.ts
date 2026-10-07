@@ -26,8 +26,8 @@ import {
 } from "@cap/agent-do";
 import {
   classifyExecutionSettingsChange,
-  resolveRelayCatalog,
-  resolveRelayCatalogWithOverlay,
+  resolveOverlayCatalog,
+  resolveHarness,
   type RelayCatalogResolution,
 } from "@cap/provider-app";
 import type { RuntimeThreadExecutionOptions } from "../../../daemon-worker/src/provider-types.js";
@@ -86,13 +86,13 @@ function explicitOf(input: ThreadExecutionSelectionInput): RelaySelection | null
 export function validateThreadExecutionSelection(
   env: HarnessEnv,
   input: ThreadExecutionSelectionInput,
-  overlayProviders?: Record<string, RelayCatalogProvider>,
+  overlayProviders: Record<string, RelayCatalogProvider>,
 ): ValidatedThreadExecutionSelection {
   const explicit = explicitOf(input);
-  const catalog: RelayCatalogResolution =
-    overlayProviders === undefined
-      ? resolveRelayCatalog(env)
-      : resolveRelayCatalogWithOverlay(env, overlayProviders);
+  const catalog: RelayCatalogResolution = resolveOverlayCatalog(
+    resolveHarness(env),
+    overlayProviders,
+  );
   if (explicit === null) {
     try {
       return { explicit: null, resolved: resolveRelayCatalogSelection(catalog, {}) };
@@ -144,12 +144,12 @@ export function resolveStoredThreadExecution(
     modelOverride: string | null;
     reasoningLevelOverride: string | null;
   },
-  overlayProviders?: Record<string, RelayCatalogProvider>,
+  overlayProviders: Record<string, RelayCatalogProvider>,
 ): ResolvedThreadExecutionSelection {
-  const catalog: RelayCatalogResolution =
-    overlayProviders === undefined
-      ? resolveRelayCatalog(env)
-      : resolveRelayCatalogWithOverlay(env, overlayProviders);
+  const catalog: RelayCatalogResolution = resolveOverlayCatalog(
+    resolveHarness(env),
+    overlayProviders,
+  );
   const storedLevel =
     stored.reasoningLevelOverride !== null
       ? relayReasoningLevelSchema.safeParse(stored.reasoningLevelOverride)

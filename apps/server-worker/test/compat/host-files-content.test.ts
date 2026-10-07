@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
-import { apiGet } from "../helpers.js";
+import { apiGet, ensureRigReady, RIG_MODEL_ID, RIG_PROVIDER_ID } from "../helpers.js";
 import {
   buildHostFileContentResponse,
   decodeHostFileContent,
@@ -18,6 +18,7 @@ import { ApiError } from "../../src/shared/api-error.js";
  * (bb daemon-file-response.ts port).
  */
 beforeAll(async () => {
+  await ensureRigReady();
   await apiGet("/api/v1/hosts");
 });
 
@@ -43,6 +44,8 @@ async function createThreadOnHost(hostId: string | undefined): Promise<string> {
       projectId: "proj_personal",
       origin: "app",
       environment,
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
       input: [{ type: "text", text: "render a diagram" }],
     }),
   });

@@ -13,10 +13,11 @@ import type { UxThreadEvent } from "../../src/seam/agent-do.js";
  * `thread/contextWindowUsage/updated` rows (bb
  * extractThreadContextWindowUsage semantics; our producer only emits complete
  * rows, so the fold is last-wins). The route half (response field + SPA
- * consumption) is exercised end-to-end below: the composed stack's
- * fixed-reply provider reports an estimated receipt (harness default window
- * 200K), which the SPA's ThreadContextWindowIndicator renders once the
- * timeline response carries the field.
+ * consumption) is exercised end-to-end below: #450 the composed stack's
+ * turn dispatches through the rig's D1 provider row, so the receipt is the
+ * relay wire's REAL usage (harness default window 200K), which the SPA's
+ * ThreadContextWindowIndicator renders once the timeline response carries
+ * the field.
  */
 
 beforeAll(ensureMigrations);
@@ -68,7 +69,7 @@ describe("buildContextWindowUsage (#308)", () => {
 });
 
 describe("#308 end-to-end: timeline response carries the indicator value", () => {
-  it("a completed fixed-reply turn lands contextWindowUsage (estimated, 200K window)", async () => {
+  it("a completed turn lands contextWindowUsage (real receipt, 200K window)", async () => {
     const thread = await createThread();
     await send(thread.id);
     const response = await exports.default.fetch(
@@ -77,7 +78,10 @@ describe("#308 end-to-end: timeline response carries the indicator value", () =>
     expect(response.status).toBe(200);
     const parsed = threadTimelineResponseSchema.parse(await response.json());
     expect(parsed.contextWindowUsage).toBeDefined();
-    expect(parsed.contextWindowUsage?.estimated).toBe(true);
+    // #450: turns dispatch through the D1 rig row, so the receipt is the
+    // relay wire's real usage — the estimated flag is a deployment-mock
+    // artifact no longer reachable on any dispatched turn.
+    expect(parsed.contextWindowUsage?.estimated).toBe(false);
     expect(parsed.contextWindowUsage?.modelContextWindow).toBe(200_000);
     expect(parsed.contextWindowUsage?.usedTokens).toBeGreaterThan(0);
   });

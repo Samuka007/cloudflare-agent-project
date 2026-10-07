@@ -104,17 +104,6 @@ export interface Env {
    */
   readonly MODEL_RELAY_IMAGE_INPUT?: string;
   /**
-   * #350 catalog declaration (public, zero-secret JSON —
-   * packages/agent-do/src/provider-catalog.ts): providers × models ×
-   * capabilities the deployment bought, projected into
-   * GET /system/execution-options, the provider-projections catalog row and
-   * the project execution defaults — one resolution, shared with the
-   * provider-app harness. Strict decode: a shape violation degrades the
-   * read faces to the env-only synthesis and reports decodeError; secrets
-   * have no field in this schema (keys stay in their own env/secret slots).
-   */
-  readonly MODEL_RELAY_CATALOG?: string;
-  /**
    * #362 AES-GCM master key for the provider_configs.api_key_enc column
    * (the user-configurable provider panel). Worker SECRET in deployment
    * (`wrangler secret put PROVIDER_CONFIG_MASTER_KEY`); unset = rows with

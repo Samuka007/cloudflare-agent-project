@@ -16,24 +16,23 @@
  * `resolveHarness` is a total pure function over the worker env record:
  * missing values fall to the ruled defaults, and a missing API key degrades
  * the relay to the fixed-reply mock (mock-first ruling on #28) instead of
- * failing thread starts.
+ * failing thread starts. #450 (user ruling 2026-10-07): the provider
+ * DIRECTORY is not a harness concern anymore — the MODEL_RELAY_CATALOG /
+ * MODEL_RELAY_PROVIDER_CREDENTIALS env seeds are deleted and the picker's
+ * truth is the D1 provider_configs rows (catalog.ts resolveOverlayCatalog);
+ * the harness carries the legacy deployment channel only.
  */
 
 import {
   AnthropicRelayProvider,
   CompletionsRelayProvider,
-  IMAGE_SOURCE_API_FAMILY,
   ResponsesRelayProvider,
   anthropicRequestBody,
   completionsRequestBody,
   responsesRequestBody,
   estimateWireRequestTokens,
   envFlag,
-  decodeRelayCatalog,
   deriveRelayReasoning,
-  findRelayCatalogModel,
-  resolveResponsesEffort,
-  relayApiConsumesEffortMap,
   DEFAULT_RELAY_API,
   type RelayApi,
   type ResponsesEffort,
@@ -41,12 +40,10 @@ import {
   type ModelProvider,
   type ModelRequest,
   type ModelStreamChunk,
-  type RelayCatalog,
   type RelayConfig,
 } from "@cap/agent-do";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import type { RuntimeThreadExecutionOptions } from "../../daemon-worker/src/provider-types.js";
-import { decodeRelayProviderCredentials } from "./relay-registry.js";
 
 /** Environment variables this harness reads (all optional). */
 export interface HarnessEnv {
@@ -73,26 +70,6 @@ export interface HarnessEnv {
    * upstream 400 on the first image turn, so the deployment opts in).
    */
   MODEL_RELAY_IMAGE_INPUT?: string;
-  /**
-   * #350 catalog declaration (public, zero-secret JSON;
-   * packages/agent-do/src/provider-catalog.ts): the multi-provider/multi-model
-   * directory the deployment bought. The row for the running model feeds the
-   * declared scalars (contextWindow/maxTokens/imageInput/reasoning default)
-   * with explicit env scalars keeping precedence; a broken declaration
-   * degrades to the env-only synthesis (resolveHarness stays total) and the
-   * projection faces report the decode error.
-   */
-  MODEL_RELAY_CATALOG?: string;
-  /**
-   * #351 per-provider credential slots (#255 ruling C — the public catalog
-   * never carries keys). Strict JSON `{[providerId]: {apiKey?, baseUrl?}}`;
-   * a provider without an entry rides the deployment's single-relay slots
-   * (MODEL_RELAY_BASE_URL_ANTHROPIC / _API_KEY). Malformed JSON fails loudly
-   * at registry construction (deployment-time input, the loud-decode
-   * posture) — a silent wrong-credential degradation would surface as
-   * upstream 403s instead.
-   */
-  MODEL_RELAY_PROVIDER_CREDENTIALS?: string;
   /** Host binding pin; unset = the cloud placeholder (#377, no fabricated machine). */
   DAEMON_MACHINE_ID?: string;
   /** `accept-edits` | `auto` | `full` (default `full`). */
@@ -112,15 +89,16 @@ export interface ResolvedHarness {
     thinking: ThinkingConfig;
     supportsImageInput: boolean;
     /**
-     * #361: the protocol face the deployment default relay speaks (the
-     * running row's api, then its provider's, then anthropic-messages).
-     * Drives relayProviderFrom construction; projected as relayMode.
+     * #361: the protocol face the deployment default relay speaks. With the
+     * #450 env-seed removal there is no declared running row, so the
+     * deployment channel always speaks the incumbent anthropic face; the D1
+     * rows carry their own api fold on the registry side.
      */
     api: RelayApi;
     /**
-     * #361: the deployment default reasoning rung mapped to the Responses
-     * effort (execution default level through the running row's map).
-     * ResponsesRelayProvider consumes it; the anthropic face ignores it.
+     * The deployment default reasoning rung mapped to the Responses effort.
+     * The anthropic channel consumes no effort map → constant "none"
+     * (ResponsesRelayProvider ignores it; kept for shape parity).
      */
     reasoningEffort: ResponsesEffort;
   };
@@ -184,87 +162,28 @@ function executionOptionsOf(
   };
 }
 
-/**
- * The decoded MODEL_RELAY_CATALOG declaration, or undefined when absent or
- * unusable. Totality seam for resolveHarness (never throws on env content):
- * a broken catalog degrades to the env-only synthesis while the projection
- * faces (routes/system.ts) surface the decode error separately.
- */
-export function catalogFromEnv(
-  env: Pick<HarnessEnv, "MODEL_RELAY_CATALOG">,
-): RelayCatalog | undefined {
-  try {
-    return decodeRelayCatalog(env.MODEL_RELAY_CATALOG) ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /** Key 1+2+3 in one total resolution. Never throws on env content. */
 export function resolveHarness(env: HarnessEnv): ResolvedHarness {
-  // #350 catalog declaration: locate the row for the model turns actually
-  // run (env MODEL_RELAY_MODEL, else the catalog's default model, else the
-  // ruled default) and fold its declared scalars under the explicit-env
-  // precedence that predates the catalog (#308/#319 contracts unchanged).
-  const catalog = catalogFromEnv(env);
-  const firstProviderKey = Object.keys(catalog?.providers ?? {})[0];
-  const defaultProviderKey = catalog?.defaultProvider ?? firstProviderKey;
-  const catalogDefaultModel =
-    defaultProviderKey !== undefined
-      ? catalog?.providers[defaultProviderKey]?.models[0]?.id
-      : undefined;
+  // #450: no catalog fold — the D1 正本 rows are the picker's truth; the
+  // harness carries the legacy deployment channel only (#17 Q4 scalars).
   // Empty-after-trim counts as unset (same fallback `||` gave, kept explicit
   // because `??` alone would let an empty string through).
   const modelRaw = env.MODEL_RELAY_MODEL?.trim() ?? "";
-  const model = modelRaw !== "" ? modelRaw : (catalogDefaultModel ?? HARNESS_DEFAULTS.model);
-  const row = catalog !== undefined ? findRelayCatalogModel(catalog, model)?.model : undefined;
-  const locatedProvider = catalog !== undefined ? findRelayCatalogModel(catalog, model) : undefined;
-  const locatedProviderApi =
-    locatedProvider !== undefined
-      ? catalog?.providers[locatedProvider.providerId]?.api
-      : undefined;
-  // #361: the running row's protocol face — model api, then its provider's,
-  // then the incumbent anthropic face. The edge catalog enum-validated both
-  // seats at decode, so this fold cannot meet an unspeakable family.
-  // #362: the image-source family never drives the LLM wire — a degenerate
-  // declaration whose default row is an openai-images provider falls back to
-  // the incumbent face (the projection filters image rows from the LLM
-  // directory; the harness fold stays consistent with it).
-  const relayApi: RelayApi =
-    row?.api ??
-    (locatedProviderApi === IMAGE_SOURCE_API_FAMILY ? undefined : locatedProviderApi) ??
-    DEFAULT_RELAY_API;
-  // #351 credentials JSON: the default provider's slot rides under strict
-  // decode (malformed JSON fails the deployment loudly — never a silent
-  // mock). Precedence: credentials slot → catalog
-  // provider baseUrl → legacy scalar → ruled default (#361 cutover seam).
-  const credentials = decodeRelayProviderCredentials(env.MODEL_RELAY_PROVIDER_CREDENTIALS);
-  const credentialsSlot = defaultProviderKey !== undefined ? credentials[defaultProviderKey] : undefined;
-  const catalogBaseUrl =
-    locatedProvider !== undefined
-      ? catalog?.providers[locatedProvider.providerId]?.baseUrl?.trim()
-      : defaultProviderKey !== undefined
-        ? catalog?.providers[defaultProviderKey]?.baseUrl?.trim()
-        : undefined;
-  const baseUrlRaw =
-    credentialsSlot?.baseUrl?.trim()
-    ?? (catalogBaseUrl !== undefined && catalogBaseUrl !== "" ? catalogBaseUrl : undefined)
-    ?? env.MODEL_RELAY_BASE_URL_ANTHROPIC?.trim()
-    ?? "";
+  const model = modelRaw !== "" ? modelRaw : HARNESS_DEFAULTS.model;
+  const relayApi: RelayApi = DEFAULT_RELAY_API;
+  const baseUrlRaw = env.MODEL_RELAY_BASE_URL_ANTHROPIC?.trim() ?? "";
   const baseUrl = baseUrlRaw === "" ? HARNESS_DEFAULTS.baseUrl : baseUrlRaw;
-  const credentialsApiKey = credentialsSlot?.apiKey?.trim() ?? "";
-  const scalarApiKey = env.MODEL_RELAY_API_KEY?.trim() ?? "";
-  const apiKey = credentialsApiKey !== "" ? credentialsApiKey : scalarApiKey;
+  const apiKey = env.MODEL_RELAY_API_KEY?.trim() ?? "";
   const maxTokensRaw = Number.parseInt(env.MODEL_RELAY_MAX_TOKENS ?? "", 10);
   const maxTokens =
     Number.isFinite(maxTokensRaw) && maxTokensRaw > 0
       ? maxTokensRaw
-      : (row?.maxTokens ?? HARNESS_DEFAULTS.maxTokens);
+      : HARNESS_DEFAULTS.maxTokens;
   const contextWindowRaw = Number.parseInt(env.MODEL_RELAY_CONTEXT_WINDOW ?? "", 10);
   const contextWindow =
     Number.isFinite(contextWindowRaw) && contextWindowRaw > 0
       ? contextWindowRaw
-      : (row?.contextWindow ?? HARNESS_DEFAULTS.contextWindow);
+      : HARNESS_DEFAULTS.contextWindow;
   const budgetRaw = Number.parseInt(env.MODEL_RELAY_THINKING_BUDGET_TOKENS ?? "", 10);
   const machineIdRaw = env.DAEMON_MACHINE_ID?.trim() ?? "";
   const thinking: ThinkingConfig =
@@ -272,21 +191,10 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
       ? { type: "enabled", budget_tokens: budgetRaw }
       : { type: "disabled" };
   const thinkingEnabled = thinking.type === "enabled";
-  const derivedLadder = deriveRelayReasoning({
-    thinkingEnabled,
-    declaredLevels: row?.reasoningLevels,
-    declaredDefault: row?.defaultReasoningLevel,
-  });
-  // #361/#363: the deployment default rung mapped onto the OpenAI effort —
-  // the openai-effort faces carry a rung (the anthropic face pins "none"
-  // here; its knob is the thinking budget above). An openai row whose
-  // default rung has no effort mapping throws HERE, at resolution: a broken
-  // declaration fails the deployment loudly (catalog doctrine), never
-  // silently clamps onto another effort.
-  const reasoningEffort = resolveResponsesEffort(
-    relayApiConsumesEffortMap(relayApi) ? derivedLadder.defaultLevel : "none",
-    row?.reasoningEffortMap,
-  );
+  const derivedLadder = deriveRelayReasoning({ thinkingEnabled });
+  // The deployment channel speaks the incumbent anthropic face, which
+  // consumes no effort map → the Responses effort is the "none" identity.
+  const reasoningEffort: ResponsesEffort = "none";
   return {
     relay: {
       mode: apiKey === "" ? "mock" : "anthropic",
@@ -296,10 +204,7 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
       maxTokens,
       contextWindow,
       thinking,
-      // Capability union (#350): either declaration turns it on — the #319
-      // env flag or the catalog row's `input` carrying "image".
-      supportsImageInput:
-        envFlag(env.MODEL_RELAY_IMAGE_INPUT) || row?.input?.includes("image") === true,
+      supportsImageInput: envFlag(env.MODEL_RELAY_IMAGE_INPUT),
       api: relayApi,
       reasoningEffort,
     },

@@ -323,13 +323,15 @@ export const systemProviderProjectionsResponseSchema = z.object({
     browserBackedEngines: z.array(z.string()),
   }),
   /**
-   * Catalog declaration status (#350): the MODEL_RELAY_CATALOG ledger is a
-   * public zero-secret declaration, so unlike the credential faces this row
-   * may name ids — but the full declared values (ladders, windows, display
+   * Catalog status (#350 → #450): the D1 provider_configs rows are the sole
+   * directory 正本 (the env MODEL_RELAY_CATALOG seed is retired), so this row
+   * names ids only — the full declared values (ladders, windows, display
    * names) live on GET /system/execution-options, the same resolution.
-   * decodeError mirrors the webSearch precedent: the strict decode failed,
-   * NO rows are served (#434 — nothing synthesized), and the error text is
-   * dropped (zod messages can quote raw env content — zero-secret discipline).
+   * decodeError is the retired env-era state: without env JSON to decode it
+   * cannot arise (D1 rows carry per-row skip-with-warning on the CRUD face)
+   * and stays constantly false with the shape kept. defaultProviderId is
+   * constantly null — rows declare no deployment-wide default (#434: no
+   * first-key fill; a selection without an explicit provider fails closed).
    */
   catalog: z.object({
     configured: z.boolean(),
@@ -443,11 +445,12 @@ export const systemImageSourcePutRequestSchema = z
   .strict();
 export type SystemImageSourcePutRequest = z.infer<typeof systemImageSourcePutRequestSchema>;
 
-// --- #362 provider configurable panel (port-only CRUD face) ------------------
+// --- #362/#450 provider configurable panel (port-only CRUD face) -------------
 // GET/POST/PUT/PATCH/DELETE /system/providers(+ /:id, /:id/test): the
-// user-face provider configuration 正本 (D1 provider_configs). The env
-// MODEL_RELAY_CATALOG pair degrades to the deployment seed; these rows ride
-// OVER it (same id → D1 wins). Secret discipline: `apiKey` is WRITE-ONLY —
+// user-face provider configuration 正本 (D1 provider_configs) — and since
+// #450 the SOLE directory source (the env MODEL_RELAY_CATALOG pair is
+// retired; zero env fallback anywhere on the provider path). Secret
+// discipline: `apiKey` is WRITE-ONLY —
 // it is AES-GCM encrypted into api_key_enc and never read back; responses
 // carry `hasApiKey` presence only. PUT replaces the row's visible face
 // wholesale (absent visible fields reset), while BOTH write verbs treat the

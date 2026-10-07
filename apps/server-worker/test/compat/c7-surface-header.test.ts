@@ -1,13 +1,17 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { ensureMigrations } from "../migrate.js";
 import { exports } from "cloudflare:workers";
+import { ensureRigReady, RIG_MODEL_ID, RIG_PROVIDER_ID } from "../helpers.js";
 
 /**
  * Criterion 7 (port-inventory §6.7): SDK fetches carry
  * `x-bb-app-surface: web`; the Worker must accept and pass them through
  * without error.
  */
-beforeAll(ensureMigrations);
+beforeAll(async () => {
+  await ensureMigrations();
+  await ensureRigReady();
+});
 
 describe("criterion 7: x-bb-app-surface passthrough", () => {
   it("serves API reads with the surface header present", async () => {
@@ -29,6 +33,8 @@ describe("criterion 7: x-bb-app-surface passthrough", () => {
         projectId: "proj_personal",
         origin: "app",
         environment: { type: "host", workspace: { type: "personal" } },
+        providerId: RIG_PROVIDER_ID,
+        model: RIG_MODEL_ID,
         input: [{ type: "text", text: "surface header probe" }],
       }),
     });

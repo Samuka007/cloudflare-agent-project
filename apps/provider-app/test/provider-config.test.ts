@@ -5,16 +5,19 @@ import {
   imageGenerationSourceFromOverlay,
   encryptProviderSecret,
   loadProviderConfigCatalogOverlay,
+  resolveOverlayCatalog,
   RelayProviderRegistry,
-  resolveRelayCatalogWithOverlay,
 } from "../src/index.js";
+import { resolveHarness } from "../src/harness.js";
 import { DEFAULT_IMAGE_TIMEOUT_SECONDS } from "@cap/agent-do";
 
 /**
- * #362 provider configurable panel: the crypto half (AES-256-GCM over the D1
- * api_key_enc column), the overlay merge (env seed ⊕ D1 rows, D1 wins), and
- * the registry's standalone-credential posture (user-configured rows never
- * fall back to deployment relay slots — the credential-leak red line).
+ * #362/#450 provider configurable panel: the crypto half (AES-256-GCM over the
+ * D1 api_key_enc column), the D1-only overlay resolution (each row IS its
+ * catalog entry — row-level, whole-row; there is no env seed to merge over
+ * since #450), and the registry's standalone-credential posture
+ * (user-configured rows never fall back to deployment relay slots — the
+ * credential-leak red line).
  */
 
 const MASTER_KEY = "unit-rig-master-key";
@@ -52,99 +55,77 @@ describe("#362 provider-config crypto (AES-256-GCM)", () => {
   });
 });
 
-const ENV_CATALOG = JSON.stringify({
-  defaultProvider: "envp",
-  providers: {
-    envp: { displayName: "Env Provider", models: [{ id: "env-model", name: "Env Model" }] },
-  },
-});
-const ENV_CREDENTIALS = JSON.stringify({
-  envp: { apiKey: "k-deployment", baseUrl: "https://env-relay.example.com" },
-});
 const OVERLAY_PROVIDERS: Record<string, RelayCatalogProvider> = {
   envp: {
-    displayName: "Panel Override",
+    displayName: "Panel Row",
     api: "openai-responses",
     models: [{ id: "panel-model" }],
   },
   panelp: { api: "anthropic-messages", models: [{ id: "panel-only" }] },
 };
 
-describe("#362 resolveRelayCatalogWithOverlay (merge resolution)", () => {
-  test("same-id D1 rows replace the env declaration wholesale; new ids join", () => {
-    const merged = resolveRelayCatalogWithOverlay(
-      { MODEL_RELAY_CATALOG: ENV_CATALOG },
-      OVERLAY_PROVIDERS,
-    );
-    const byId = new Map(merged.providers.map((provider) => [provider.id, provider]));
-    expect(byId.get("envp")?.displayName).toBe("Panel Override");
-    expect(byId.has("panelp")).toBe(true);
-    const modelIds = merged.models.map((model) => model.id);
-    expect(modelIds).toContain("panel-model");
-    expect(modelIds).toContain("panel-only");
-    // The declared env row is gone and nothing is synthesized back (#434):
-    // the D1 replacement is wholesale in both directions.
-    expect(merged.models.filter((model) => model.id === "env-model")).toHaveLength(0);
-    expect(merged.defaultProviderId).toBe("envp");
+describe("#362/#450 the overlay IS the directory (loader rows are row-level whole-row)", () => {
+  test("every decoded row projects verbatim; one row replacing another is a row write away", () => {
+    // The loader hands the registry rows keyed by id; the projection is the
+    // rows themselves — an id swap on the panel swaps the directory entry
+    // wholesale (whole-row semantics, #434: nothing is synthesized back).
+    const first = resolveOverlayCatalog(resolveHarness({}), OVERLAY_PROVIDERS);
+    expect(first.configured).toBe(true);
+    expect(first.providers.map((provider) => provider.id)).toEqual(["envp", "panelp"]);
+    expect(first.models.map((model) => model.id)).toEqual(["panel-model", "panel-only"]);
+
+    // A panel write that replaces the envp row's declaration replaces the
+    // whole entry — the previous declaration's models are gone entirely.
+    const rewritten = resolveOverlayCatalog(resolveHarness({}), {
+      envp: { displayName: "Rewritten", models: [{ id: "rewritten-model" }] },
+      panelp: OVERLAY_PROVIDERS.panelp ?? { models: [] },
+    });
+    expect(rewritten.models.map((model) => model.id)).toEqual(["rewritten-model", "panel-only"]);
+    expect(rewritten.models.filter((model) => model.id === "panel-model")).toHaveLength(0);
   });
 
-  test("a broken env seed keeps its loud decodeError while overlay rows still serve", () => {
-    const merged = resolveRelayCatalogWithOverlay(
-      { MODEL_RELAY_CATALOG: "{not-json" },
-      OVERLAY_PROVIDERS,
-    );
-    expect(merged.decodeError).toBe(true);
-    expect(merged.configured).toBe(true);
-    expect(merged.providers.map((provider) => provider.id)).toEqual(["envp", "panelp"]);
-  });
-
-  test("zero overlay rows falls through byte-identical to the plain resolution", () => {
-    const plain = resolveRelayCatalogWithOverlay({ MODEL_RELAY_CATALOG: ENV_CATALOG }, {});
-    expect(plain.configured).toBe(true);
-    expect(plain.decodeError).toBe(false);
-    expect(plain.providers.map((provider) => provider.id)).toEqual(["envp"]);
-    expect(plain.models.map((model) => model.id)).toContain("env-model");
+  test("zero rows is the honest empty directory — nothing rides in its place", () => {
+    const empty = resolveOverlayCatalog(resolveHarness({}), {});
+    expect(empty.configured).toBe(false);
+    expect(empty.decodeError).toBe(false);
+    expect(empty.providers).toEqual([]);
+    expect(empty.models).toEqual([]);
   });
 });
 
 // #434 point 6 retired seedProviderConfigRows: the CRUD display face lists
-// ONLY user rows. The seed/merged-face behavior assertions died with the
-// function; the wire-level guarantees live in the server-worker L1 suite
-// (system-provider-configs.test.ts).
+// ONLY user rows. The wire-level guarantees live in the server-worker L1
+// suite (system-provider-configs.test.ts).
 describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
   test("an overlay row resolves with its OWN wire identity, never deployment slots", () => {
-    const registry = RelayProviderRegistry.fromEnv({
-      MODEL_RELAY_CATALOG: ENV_CATALOG,
+    const registry = RelayProviderRegistry.create({
       MODEL_RELAY_API_KEY: "k-deployment",
       MODEL_RELAY_BASE_URL_ANTHROPIC: "https://env-relay.example.com",
-      MODEL_RELAY_PROVIDER_CREDENTIALS: ENV_CREDENTIALS,
     });
     registry.applyOverlay({
       providers: OVERLAY_PROVIDERS,
       imageSourceProviderId: null,
       credentials: { panelp: { apiKey: "k-panel", baseUrl: "https://panel.example.com" } },
-      standaloneProviders: new Set(Object.keys(OVERLAY_PROVIDERS)),
     });
     const standalone = registry.resolve({ providerId: "panelp", model: "panel-only" });
     expect(standalone.config.apiKey).toBe("k-panel");
     expect(standalone.config.baseUrl).toBe("https://panel.example.com");
-    // The SAME-ID override (envp) must NOT ride the env credential slot with
-    // the user's baseUrl — that is the leak vector the posture exists for.
-    const overridden = registry.resolve({ providerId: "envp", model: "panel-model" });
-    expect(overridden.config.apiKey).toBe("");
-    expect(overridden.config.baseUrl).toBe("");
+    // The SAME-ID row the panel rewrote (envp) must NOT ride the deployment
+    // credential slot with the user's baseUrl — that is the leak vector the
+    // posture exists for. No credential slot → empty slots, never k-deployment.
+    const rewritten = registry.resolve({ providerId: "envp", model: "panel-model" });
+    expect(rewritten.config.apiKey).toBe("");
+    expect(rewritten.config.baseUrl).toBe("");
   });
 
   test("an incomplete overlay row fails dispatch with the named credential error", () => {
-    const registry = RelayProviderRegistry.fromEnv({
-      MODEL_RELAY_CATALOG: ENV_CATALOG,
+    const registry = RelayProviderRegistry.create({
       MODEL_RELAY_API_KEY: "k-deployment",
     });
     registry.applyOverlay({
       providers: OVERLAY_PROVIDERS,
       imageSourceProviderId: null,
       credentials: {},
-      standaloneProviders: new Set(Object.keys(OVERLAY_PROVIDERS)),
     });
     // #434 point ⑦: no row-level mock. resolve() still answers (the config
     // slots are honestly empty), but dispatch refuses to fabricate a client.
@@ -158,19 +139,17 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
   });
 
   test("applyOverlay clears the instance cache — stale wire clients never survive a rotation", () => {
-    const registry = RelayProviderRegistry.fromEnv({ MODEL_RELAY_CATALOG: ENV_CATALOG });
+    const registry = RelayProviderRegistry.create({});
     registry.applyOverlay({
       providers: OVERLAY_PROVIDERS,
       imageSourceProviderId: null,
       credentials: { panelp: { apiKey: "k-one", baseUrl: "https://panel.example.com" } },
-      standaloneProviders: new Set(Object.keys(OVERLAY_PROVIDERS)),
     });
     const first = registry.providerFor({ providerId: "panelp", model: "panel-only" });
     registry.applyOverlay({
       providers: OVERLAY_PROVIDERS,
       imageSourceProviderId: null,
       credentials: { panelp: { apiKey: "k-two", baseUrl: "https://panel.example.com" } },
-      standaloneProviders: new Set(Object.keys(OVERLAY_PROVIDERS)),
     });
     const second = registry.providerFor({ providerId: "panelp", model: "panel-only" });
     expect(second).not.toBe(first);
@@ -192,7 +171,6 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
         providers: {},
         imageSourceProviderId: null,
         credentials: {},
-        standaloneProviders: new Set(),
       }),
     ).toBeNull();
     // #448: a seat is mandatory — rows without the seat supply nothing.
@@ -207,7 +185,6 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
         },
         imageSourceProviderId: null,
         credentials: { imagey: { apiKey: "sk-image-362" } },
-        standaloneProviders: new Set(["imagey"]),
       }),
     ).toBeNull();
     const source = imageGenerationSourceFromOverlay({
@@ -220,7 +197,6 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
       },
       imageSourceProviderId: "imagey",
       credentials: { imagey: { apiKey: "sk-image-362" } },
-      standaloneProviders: new Set(["imagey"]),
     });
     expect(source).toEqual({
       baseUrl: "https://images.example.com/v1",
@@ -234,7 +210,6 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
         providers: {},
         imageSourceProviderId: "gone",
         credentials: {},
-        standaloneProviders: new Set(),
       }),
     ).toBeNull();
     expect(
@@ -248,7 +223,6 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
         },
         imageSourceProviderId: "texty",
         credentials: { texty: { apiKey: "k" } },
-        standaloneProviders: new Set(["texty"]),
       }),
     ).toBeNull();
   });

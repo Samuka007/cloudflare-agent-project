@@ -6,9 +6,9 @@
   // replaces the direct open.bigmodel.cn anthropic secret (zhipu account
   // quota wall 429/1310; the 10-04 "anthropic truncation" misdiagnosis was
   // corrected same day — newapi anthropic SSE completes with message_stop).
-  // Credentials ride MODEL_RELAY_PROVIDER_CREDENTIALS (Worker secret, put
-  // by PM at cutover; scalar MODEL_RELAY_* secrets deleted so the catalog
-  // takes effect — env scalars override the catalog per #350).
+  // #450 the catalog 正本 is the D1 provider_configs rows (the panel's CRUD
+  // face); the env seed and its credentials secret are retired — seed the
+  // newapi row through POST /api/v1/system/providers instead.
   "name": "cap-server-staging",
   "main": "src/index.ts",
   // #412 cutover step 1（cf-access-agent-compat.md §8；域名用户裁决 2026-10-06：
@@ -94,7 +94,6 @@
     // is a first-class state: the binding default is the cloud placeholder
     // and /hosts stays honestly empty. Real machines join through enroll
     // (join code, or the env key minting a fresh host).
-    "MODEL_RELAY_CATALOG": "{\"defaultProvider\":\"omp\",\"providers\":{\"omp\":{\"displayName\":\"newapi\",\"baseUrl\":\"https://newapi.samuka007.top/v1\",\"api\":\"openai-responses\",\"models\":[{\"id\":\"glm-5.3-flash\",\"name\":\"GLM 5.3 Flash\",\"reasoning\":true,\"input\":[\"text\"]}]}}}",
     // #303 thinking walkthrough: budget on → reasoning ladder projects one
     // rung; Responses face maps it onto reasoning.effort.
     "MODEL_RELAY_THINKING_BUDGET_TOKENS": "4096",

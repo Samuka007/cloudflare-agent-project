@@ -1,35 +1,37 @@
 import {
-  decodeRelayCatalog,
   deriveRelayReasoning,
   DEFAULT_RELAY_API,
   IMAGE_SOURCE_API_FAMILY,
   type RelayApi,
-  type RelayCatalog,
   type RelayCatalogModel,
   type RelayCatalogProvider,
   type ResponsesEffort,
   type RelayReasoningLevel,
 } from "@cap/agent-do";
-import { resolveHarness, type HarnessEnv, type ResolvedHarness } from "./harness.js";
+import type { ResolvedHarness } from "./harness.js";
 
 /**
- * Relay catalog resolution (#350) — the MODEL_RELAY_CATALOG declaration
- * (packages/agent-do/src/provider-catalog.ts) projected into the read faces:
- * GET /system/execution-options (server routes/system.ts), the
+ * Relay catalog resolution (#350 → #450) — the D1 provider-config 正本
+ * (provider_configs rows, the panel's CRUD face) projected into the read
+ * faces: GET /system/execution-options (server routes/system.ts), the
  * provider-projections catalog row, and the project execution defaults
  * (routes/projects.ts). One resolution, several projections — the #319
  * dual-face pattern generalized to the catalog layer (roadmap §0.1/§2.3).
  *
- * Same-source by construction: the resolution runs resolveHarness and the
- * running model's directory row is folded FROM the harness output (model,
- * maxTokens, contextWindow, image input, thinking ladder default) — the
- * picker face and the turns-actually-run truth cannot disagree, which is
- * exactly the assertion the ticket pins ("harness 与目录对同一 env 求值一致").
+ * Same-source stays by construction: the resolution carries the harness
+ * resolution and folds the running model's directory row FROM the harness
+ * output (model, maxTokens, contextWindow, image input) so the picker face
+ * and the turns-actually-run truth cannot disagree — the assertion the
+ * #350 ticket pinned ("harness 与目录对同一 env 求值一致").
  *
- * #434: the resolution is a pure projection of the declaration. Absent or
- * broken declarations serve zero rows (`decodeError` marks the broken case);
- * nothing is synthesized, no first-key default is guessed, and a selection
- * without an explicit provider fails closed at the resolver.
+ * #450 (user ruling 2026-10-07): the env seed is GONE. There is no env
+ * branch anywhere on the provider-selection path — the D1 rows are the sole
+ * 正本. The resolution is a pure projection of those rows (#434): nothing is
+ * synthesized, no first-key default is guessed, and a selection without an
+ * explicit provider fails closed at the resolver. Schema-invalid D1 rows
+ * never reach this projection — the loader drops them with a loud
+ * per-row warning on the CRUD face (skip-with-warning), so the
+ * catalog-level `decodeError` state of the env era cannot arise.
  */
 
 export interface RelayCatalogModelRow {
@@ -76,14 +78,20 @@ export interface RelayCatalogProviderRow {
 }
 
 export interface RelayCatalogResolution {
-  /** True when MODEL_RELAY_CATALOG is set (including the decodeError case). */
+  /** True when at least one D1 provider row projects into the directory. */
   configured: boolean;
-  /** True when the env JSON failed the strict decode — no rows are served. */
+  /**
+   * Retired with the env seed (#450): a catalog-level decode error cannot
+   * arise when there is no env JSON to decode — D1 rows carry per-row
+   * schema warnings on the CRUD face instead (skip-with-warning) and the
+   * directory simply drops them. Constantly false, contract shape kept.
+   */
   decodeError: boolean;
   /**
-   * The declaration's defaultProvider; null when the declaration names none
-   * or no usable declaration exists (#434: no first-key fill, no seam — an
-   * absent default fails closed at selection instead).
+   * Null forever: D1 rows carry no deployment-wide default declaration
+   * (#434: no first-key fill — a selection without an explicit provider
+   * fails closed at the resolver). The picker always sends an explicit
+   * selection; legacy journals replay against it and 422 honestly.
    */
   defaultProviderId: string | null;
   providers: RelayCatalogProviderRow[];
@@ -92,96 +100,38 @@ export interface RelayCatalogResolution {
   harness: ResolvedHarness;
 }
 
-/** The empty resolution face: no usable declaration, nothing synthesized. */
-function emptyResolution(
+/**
+ * The D1 overlay resolution (sole 正本, #450): the provider-config rows the
+ * panel CRUD face curates are the entire directory. Zero-config (no rows)
+ * serves the empty resolution — the picker is honestly empty and a
+ * selection without rows fails closed at the resolver. Nothing is
+ * synthesized: no default row, no running-model stand-in.
+ */
+export function resolveOverlayCatalog(
   harness: ResolvedHarness,
-  configured: boolean,
-  decodeError: boolean,
-): RelayCatalogResolution {
-  return {
-    configured,
-    decodeError,
-    defaultProviderId: null,
-    providers: [],
-    models: [],
-    harness,
-  };
-}
-
-/**
- * Resolve the catalog directory over the deployment env. Never throws on env
- * content: absent or broken declarations serve NO directory rows
- * (#434 — no env-only synthesis; the deployment channel inside
- * `harness` is untouched), with `decodeError: true` marking the broken case
- * (the web_search decodeError precedent) so the misconfiguration stays
- * loudly visible on the read faces.
- */
-export function resolveRelayCatalog(env: HarnessEnv): RelayCatalogResolution {
-  const harness = resolveHarness(env);
-  const raw = env.MODEL_RELAY_CATALOG;
-  const configured = raw !== undefined && raw.trim() !== "";
-  let catalog: RelayCatalog | null;
-  try {
-    catalog = decodeRelayCatalog(raw);
-  } catch {
-    return emptyResolution(harness, configured, true);
-  }
-  if (catalog === null) {
-    return emptyResolution(harness, false, false);
-  }
-
-  return projectCatalogDirectory(harness, catalog.providers, {
-    configured: true,
-    decodeError: false,
-    defaultProviderId: catalog.defaultProvider ?? null,
-  });
-}
-
-/**
- * #362 merged resolution: the D1 provider overlay (user-configured rows)
- * rides over the env catalog. Same provider id → the overlay row replaces
- * the env declaration wholesale (the ticket's "同 id D1 覆盖"); new ids are
- * added. A broken env declaration keeps its loud `decodeError: true` flag
- * while the overlay rows still serve (a misconfigured deployment seed must
- * not take user-configured providers down). Zero rows overall (no usable
- * declaration and no overlay) serves the empty resolution — #434: nothing
- * is synthesized.
- */
-export function resolveRelayCatalogWithOverlay(
-  env: HarnessEnv,
   overlayProviders: Record<string, RelayCatalogProvider>,
 ): RelayCatalogResolution {
-  const harness = resolveHarness(env);
-  const raw = env.MODEL_RELAY_CATALOG;
-  const configured = raw !== undefined && raw.trim() !== "";
-  let base: RelayCatalog | null;
-  let decodeError = false;
-  try {
-    base = decodeRelayCatalog(raw);
-  } catch {
-    base = null;
-    decodeError = true;
+  if (Object.keys(overlayProviders).length === 0) {
+    // The empty resolution face: no configured rows, nothing synthesized.
+    return {
+      configured: false,
+      decodeError: false,
+      defaultProviderId: null,
+      providers: [],
+      models: [],
+      harness,
+    };
   }
-  const merged: Record<string, RelayCatalogProvider> = { ...(base?.providers ?? {}) };
-  for (const [providerId, provider] of Object.entries(overlayProviders)) {
-    merged[providerId] = provider;
-  }
-  if (Object.keys(merged).length === 0) {
-    // Every declared row failed decode and nothing overlays: the empty
-    // resolution keeps the loud decodeError semantics of the plain one.
-    return emptyResolution(harness, configured, decodeError);
-  }
-  const envDefault = base?.defaultProvider;
-  return projectCatalogDirectory(harness, merged, {
+  return projectCatalogDirectory(harness, overlayProviders, {
     configured: true,
-    decodeError,
-    defaultProviderId: envDefault ?? null,
+    decodeError: false,
+    defaultProviderId: null,
   });
 }
 
 /**
- * The shared projection body: declared provider entries → directory rows.
- * Only declared rows are projected (#434): a declaration that omits the
+ * The shared projection body: configured provider entries → directory rows.
+ * Only configured rows are projected (#434): a directory that omits the
  * running model simply has no default row on the directory face — the
  * omission is configuration, never papered over with a synthesized row.
  */

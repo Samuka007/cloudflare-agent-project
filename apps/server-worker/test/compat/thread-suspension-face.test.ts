@@ -1,7 +1,15 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate.js";
-import { send, type CreatedThread, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers.js";
+import {
+  ensureRigReady,
+  send,
+  type CreatedThread,
+  RIG_MODEL_ID,
+  RIG_PROVIDER_ID,
+  TEST_ENROLL_KEY,
+  TEST_HOST_KEY,
+} from "../helpers.js";
 import { threadResponseSchema } from "../../src/contract/api/threads.js";
 import { threadListEntrySchema } from "../../src/contract/domain/thread.js";
 import { getEnvironmentRow } from "../../src/db/environments.js";
@@ -23,7 +31,10 @@ import type { ThreadDbRow } from "../../src/db/rows.js";
  * 消息可发, 模型可回, Host Execution rejected with placeholder rows.
  * `waiting-for-host` is never emitted (that pinned face locks the composer).
  */
-beforeAll(ensureMigrations);
+beforeAll(async () => {
+  await ensureMigrations();
+  await ensureRigReady();
+});
 
 /** The pool's generated Cloudflare.Env vs the app Env: the DO class labels
  * differ, the bindings are the same objects (worker-configuration.d.ts). */
@@ -48,7 +59,14 @@ async function seedHost(): Promise<HostSeed> {
   return { id };
 }
 
-const NO_TURN_CREATE = { origin: "app", input: [], originKind: "fork" } as const;
+const NO_TURN_CREATE = {
+  origin: "app",
+  input: [],
+  originKind: "fork",
+  // #450: the explicit selection the fail-closed create validation demands.
+  providerId: RIG_PROVIDER_ID,
+  model: RIG_MODEL_ID,
+} as const;
 
 /** Bind a thread to a fleet host through the public create face (#288). */
 async function createBoundThread(hostId: string, title: string): Promise<CreatedThread & { environmentId: string }> {

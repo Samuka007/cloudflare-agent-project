@@ -17,7 +17,11 @@ import {
   snapshotHarness,
 } from "./harness.js";
 import type { HarnessEnv } from "./harness.js";
-import { RelayProviderRegistry, relayAgentRuntime } from "./relay-registry.js";
+import {
+  EMPTY_PROVIDER_OVERLAY,
+  RelayProviderRegistry,
+  relayAgentRuntime,
+} from "./relay-registry.js";
 import { loadProviderConfigOverlay, type ProviderConfigEnv } from "./provider-configs.js";
 import { flattenPromptInputGroups } from "./flatten-input.js";
 
@@ -626,15 +630,17 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       harness.relay.contextWindow,
       harness.relay.thinking.type,
       harness.relay.supportsImageInput,
-      // #351: the catalog + credential declarations are registry identity —
-      // a declaration change re-registers the providerId-keyed rows.
-      this.env.MODEL_RELAY_CATALOG ?? "",
-      this.env.MODEL_RELAY_PROVIDER_CREDENTIALS === undefined ? "unset" : "set",
+      // #450: the D1 overlay content is the registry identity — a panel
+      // provider edit re-registers the providerId-keyed rows.
       overlay?.fingerprint ?? "",
     ].join("|");
     if (this.registeredRelayFingerprint === fingerprint) return;
-    const registry = RelayProviderRegistry.fromEnv(this.env);
-    if (overlay !== null) registry.applyOverlay(overlay);
+    // #450: the D1 overlay is the sole directory 正本 — the registry is
+    // constructed over it directly (no env seed branch).
+    const registry = RelayProviderRegistry.create(
+      this.env,
+      overlay ?? EMPTY_PROVIDER_OVERLAY,
+    );
     setAgentRuntime("*", relayAgentRuntime(this.env, registry));
     this.registeredRelayFingerprint = fingerprint;
   }

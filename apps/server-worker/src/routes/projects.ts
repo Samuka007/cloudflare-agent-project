@@ -65,11 +65,6 @@ import {
 import { hostOnlineRpcOrThrow, requireUsableHostRow } from "../services/host-rpc.js";
 import { requirePublicProject, requirePublicStandardProject } from "../services/entity-lookup.js";
 import { toThreadListEntries } from "../services/runtime-display.js";
-import {
-  loadProviderConfigCatalogOverlay,
-  resolveRelayCatalog,
-  resolveRelayCatalogWithOverlay,
-} from "@cap/provider-app";
 import type { AppEnv, Env } from "../app-types.js";
 import type { ProjectRow } from "../db/rows.js";
 
@@ -327,8 +322,10 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
   // public-api.ts:381-388). No composer 404: the resolved runtime default.
   routes.get("/projects/:id/default-execution-options", async (ctx) => {
     await requirePublicProject(ctx.env, ctx.req.param("id"));
-    const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
-    return ctx.json(resolveProjectDefaultExecutionOptions(ctx.env, overlay?.providers));
+    // #434/#450: D1 rows carry no deployment-wide default declaration —
+    // bb's stored-defaults-absent shape; the picker sends the explicit
+    // selection, never a synthesized default row.
+    return ctx.json(null);
   });
 
   // bb routes/projects.ts:402-418: public project required, limit clamped to
@@ -500,39 +497,6 @@ async function toProjectWithThreads(env: Env, row: ProjectRow) {
     ),
     defaultExecutionOptions: null,
   };
-}
-
-/**
- * bb resolveProjectCreateDefaultExecutionPlan (services/threads/
- * thread-execution-plan.ts:409-424) serves the stored defaults or null; the
- * port has no stored-defaults face yet, so it resolves the bb
- * ProjectExecutionDefaults shape (packages/domain shared-types.ts:639-645)
- * from the SAME catalog+harness resolution the picker faces serve (#350):
- * provider = the declaration's defaultProvider, model/tier/reasoning/
- * permission = the harness execution resolution. This is the roadmap §2.3
- * contradiction-1 fix — the hardcoded "medium" (which nothing ran) vs the
- * directory "none" vs the harness "none" split collapses onto one source:
- * budget off → "none" everywhere, budget on → the declared default rung.
- * #434: a deployment whose declaration names no defaultProvider serves
- * `null` (bb's stored-defaults-absent shape) — never a synthesized row.
- */
-function resolveProjectDefaultExecutionOptions(
-  env: Env,
-  overlayProviders?: Record<string, RelayCatalogProvider>,
-): ProjectExecutionDefaults | null {
-  const catalog =
-    overlayProviders === undefined
-      ? resolveRelayCatalog(env)
-      : resolveRelayCatalogWithOverlay(env, overlayProviders);
-  if (catalog.defaultProviderId === null) return null;
-  const harness = catalog.harness;
-  return projectExecutionDefaultsSchema.parse({
-    providerId: catalog.defaultProviderId,
-    model: harness.relay.model,
-    serviceTier: harness.execution.serviceTier,
-    reasoningLevel: harness.execution.reasoningLevel,
-    permissionMode: harness.execution.permissionMode,
-  });
 }
 
 function projectSourceHostConflict(): ApiError {

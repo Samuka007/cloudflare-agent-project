@@ -114,6 +114,9 @@ describe("POST /threads/:id/compact (#309)", () => {
     );
     expect(compactionRow).toBeDefined();
     expect(parsed.contextWindowUsage).toBeDefined();
-    expect(parsed.contextWindowUsage?.estimated).toBe(true);
+    // #450: turns dispatch through the D1 rig row, so the receipt is the
+    // relay wire's real usage — the estimated flag is a deployment-mock
+    // artifact no longer reachable on any dispatched turn.
+    expect(parsed.contextWindowUsage?.estimated).toBe(false);
   });
 });

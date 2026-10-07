@@ -315,11 +315,15 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // no selection fields resolve against the DECLARED defaultProvider —
     // and a deployment that declares none fails the create with the named
     // 422 (provider_default_undeclared) instead of storing an "omp" sentinel.
-    // #362: the selection validates against the MERGED directory (env seed ⊕
-    // D1 provider rows) — a panel-side provider is selectable the moment it
-    // exists.
+    // #362/#450: the selection validates against the D1 directory (the sole
+    // 正本 — a panel-side provider is selectable the moment it exists; no
+    // rows → the fail-closed empty directory).
     const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
-    const selection = validateThreadExecutionSelection(ctx.env, payload, overlay?.providers);
+    const selection = validateThreadExecutionSelection(
+      ctx.env,
+      payload,
+      overlay?.providers ?? {},
+    );
     const providerId = selection.resolved.providerId;
     // #288: the binding source chain resolves once, here — explicit choice >
     // project default source > deployment single machine — and feeds BOTH
@@ -564,11 +568,11 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
             ? { reasoningLevel: payload.reasoningLevel }
             : {}),
         },
-        overlay?.providers,
+        overlay?.providers ?? {},
       );
       // validateThreadExecutionSelection never returns null anymore (#434):
       // the payload always carries providerId here, so `explicit` is set.
-      const current = resolveStoredThreadExecution(ctx.env, row, overlay?.providers);
+      const current = resolveStoredThreadExecution(ctx.env, row, overlay?.providers ?? {});
       if (classifyThreadSelectionChange(current, next.resolved) === "live" && next.explicit) {
         await updateThreadRecord(ctx.env, row.id, {
           ...(payload.model !== undefined ? { modelOverride: payload.model } : {}),

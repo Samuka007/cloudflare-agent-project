@@ -3,6 +3,7 @@ import { env, exports } from "cloudflare:workers";
 import { agentEventDataSchemas } from "@cap/agent-do";
 import { apiErrorSchema } from "@cap/protocol";
 import { ensureMigrations } from "../migrate.js";
+import { ensureRigReady, RIG_MODEL_ID, RIG_PROVIDER_ID } from "../helpers.js";
 import { uploadedPromptAttachmentSchema } from "../../src/contract/api/projects.js";
 import { threadResponseSchema } from "../../src/contract/api/threads.js";
 import type { AgentDoRpc } from "../../src/seam/agent-do.js";
@@ -15,7 +16,10 @@ import type { AgentDoRpc } from "../../src/seam/agent-do.js";
  * contained-but-unuploaded reference is a 400, on both faces. Absolute paths
  * and URI-like values pass through untouched (bb runtime-readable rule).
  */
-beforeAll(ensureMigrations);
+beforeAll(async () => {
+  await ensureMigrations();
+  await ensureRigReady();
+});
 
 const BASE = "https://example.com";
 const PROJECT = "proj_personal";
@@ -49,6 +53,9 @@ async function createWithInput(input: unknown[], overrides: Record<string, unkno
       projectId: PROJECT,
       origin: "app",
       environment: { type: "host", workspace: { type: "personal" } },
+      // #450: the explicit selection the fail-closed create validation demands.
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
       input,
       ...overrides,
     }),

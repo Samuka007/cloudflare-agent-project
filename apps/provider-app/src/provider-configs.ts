@@ -1,11 +1,10 @@
 /**
- * #362 the D1 provider-config overlay loader — the user-face configuration
- * 正本 (provider_configs table). The env MODEL_RELAY_CATALOG /
- * MODEL_RELAY_PROVIDER_CREDENTIALS pair is the deployment seed: the D1 rows
- * are the user-face 正本, merged OVER the env declaration (same id → D1
- * wins), and dispatch merges the DECRYPTED row keys over the env credential
- * slots. #434: the CRUD display face lists ONLY these user rows — the env
- * seed's read faces are the projections/execution-options faces.
+ * #362/#450 the D1 provider-config overlay loader — the user-face
+ * configuration 正本 (provider_configs table) and the ONLY directory source
+ * (#450: the env MODEL_RELAY_CATALOG / MODEL_RELAY_PROVIDER_CREDENTIALS
+ * seeds are deleted; there is no env branch anywhere on the provider path).
+ * #434: the CRUD display face lists ONLY these user rows; the read faces
+ * (execution-options / projections) project the same rows.
  *
  * Discipline carried from #350/#266:
  * - Bad rows are skipped WITH a warning — never silently deleted. The row
@@ -578,7 +577,7 @@ export async function loadProviderConfigCatalogOverlay(
  */
 export async function loadProviderConfigOverlay(
   env: ProviderConfigEnv,
-): Promise<(ProviderConfigFullOverlay & { standaloneProviders: ReadonlySet<string> }) | null> {
+): Promise<ProviderConfigFullOverlay | null> {
   const load = await readProviderConfigs(env, { decrypt: true });
   if (load === null) return null;
   for (const warning of load.warnings) console.warn(`[provider-configs] ${warning}`);
@@ -587,6 +586,5 @@ export async function loadProviderConfigOverlay(
     rows: load.rows,
     credentials: load.credentials,
     webSearchConfig: load.webSearchConfig,
-    standaloneProviders: new Set(Object.keys(load.catalog.providers)),
   };
 }
