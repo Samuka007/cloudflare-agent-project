@@ -28,12 +28,13 @@ export { callSeqFromExecutionId, executionIdFor, threadIdFromExecutionId } from 
 export { clearAgentRuntimes, getAgentRuntime, setAgentRuntime } from "./injection.js";
 export type { AgentRuntime } from "./injection.js";
 export {
+  DEFAULT_EXPERIMENTAL_TOOL_CONFIG,
   DEFAULT_WATCHDOG_CONFIG,
   envFlag,
   mergeWatchdogConfig,
   parseWatchdogConfigPatch,
 } from "./config.js";
-export type { WatchdogConfig, WatchdogConfigPatch } from "./config.js";
+export type { ExperimentalToolConfig, WatchdogConfig, WatchdogConfigPatch } from "./config.js";
 export { ModelProviderError } from "./provider.js";
 export type {
   ImageContribution,

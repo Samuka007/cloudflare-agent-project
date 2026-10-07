@@ -97,6 +97,12 @@ export class ComposedAgentDO extends AgentDO {
     } else if (!overlay.webSearch.decodeError) {
       this.applyWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG);
     }
+    // #502: the tool-capability seat rides the same fingerprint gate — the
+    // three #150 gates (think / context_notes+new_context / checkpoint+rewind)
+    // hot-apply on the next turn; an absent row resolves to the omp posture
+    // (all off). The seat IS the config, so it applies whenever the
+    // fingerprint moves (no broken-row hold-back — the decode is total).
+    this.applyToolCapabilities(overlay.toolCapabilities);
     this.appliedOverlayFingerprint = overlay.fingerprint;
   }
 }

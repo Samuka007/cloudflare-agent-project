@@ -52,6 +52,8 @@ import {
   providerConfigsListResponseSchema,
   systemImageSourcePutRequestSchema,
   systemImageSourceResponseSchema,
+  systemToolCapabilitiesPutRequestSchema,
+  systemToolCapabilitiesResponseSchema,
   systemWebSearchPutRequestSchema,
   systemWebSearchResponseSchema,
   type ProviderConfigImportEntry,
@@ -83,6 +85,7 @@ import {
   type ProviderConfigWriteFields,
 } from "../db/provider-configs.js";
 import { getImageSourceProviderId, setImageSourceProviderId } from "../db/image-source.js";
+import { getToolCapabilities, setToolCapabilities } from "../db/tool-capabilities.js";
 import { setWebSearchConfig, webSearchHasSecrets } from "../db/web-search.js";
 import {
   discoverProviderModelsEnriched,
@@ -381,6 +384,11 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
     const experiments = await getExperiments(ctx.env);
     const stored = await getStoredAppearance(ctx.env);
     const draft = buildSystemConfig(ctx.env, url);
+    // #502: the tool-gate vocabulary projects the D1 `tool_capabilities`
+    // seat (the row is the single 正本 — an absent row is the all-off omp
+    // posture). Read-time resolution, the same posture as the rest of the
+    // config face's D1 legs.
+    const toolCapabilities = await getToolCapabilities(ctx.env);
     const candidate = {
       generalSettings: toAppSettings(settingsRow),
       keybindings: applyAppKeybindingOverrides(DEFAULT_APP_KEYBINDINGS, overrides),
@@ -397,7 +405,14 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
           : defaultAppTheme,
       customThemes: draft.customThemes,
       pluginThemes: draft.pluginThemes,
-      featureFlags: draft.featureFlags,
+      featureFlags: {
+        ...draft.featureFlags,
+        toolCapabilities: {
+          externalThinking: toolCapabilities.externalThinking,
+          contextNotes: toolCapabilities.contextNotes,
+          checkpoint: toolCapabilities.checkpoint,
+        },
+      },
       hostDaemonPort: draft.hostDaemonPort,
       serverUrl: draft.serverUrl,
       // #436: read-time resolution — the cascade's server-body leg names the
@@ -949,6 +964,28 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     // up (system.ts:348 precedent).
     await hub(ctx.env).notifySystem(["config-changed"]);
     return ctx.json(await webSearchFaceOf(ctx.env));
+  });
+
+  // #502 the experimental tool-capability face: the D1 `tool_capabilities`
+  // single-row seat is the sole 正本 (zero env fallback — the three
+  // AGENT_DO_* gate envs are deleted). Read = the stored gates (+ whether
+  // the row exists at all); write = wholesale replace of the three booleans.
+  routes.get("/system/tool-capabilities", async (ctx) => {
+    return ctx.json(
+      systemToolCapabilitiesResponseSchema.parse(await getToolCapabilities(ctx.env)),
+    );
+  });
+
+  routes.put("/system/tool-capabilities", async (ctx) => {
+    const payload = await requireJsonBody(ctx, systemToolCapabilitiesPutRequestSchema);
+    await setToolCapabilities(ctx.env, payload);
+    // Hot-apply broadcast (#382): the seat rides the same overlay fingerprint
+    // as the provider rows, so the next turn picks the gates up (the
+    // image-source/web-search writes ride the same path).
+    await hub(ctx.env).notifySystem(["config-changed"]);
+    return ctx.json(
+      systemToolCapabilitiesResponseSchema.parse(await getToolCapabilities(ctx.env)),
+    );
   });
 
   routes.get("/system/providers", async (ctx) => {

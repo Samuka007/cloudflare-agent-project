@@ -178,8 +178,13 @@ export function decodeWatchdogConfig(
 // context-settings.ts:66-69): think = cfgExternalThinking, context_notes +
 // new_context = cfgCompactionExperimentalContextManagement, checkpoint +
 // rewind = cfgCheckpointEnabled. T1/T3 shipped them ungated; this restores
-// the omp posture: deployment-time env inputs (#102 patch-over-defaults
-// pattern), all default OFF.
+// the omp posture, all default OFF.
+//
+// #502: the gate VALUES have exactly one 正本 — the D1 `tool_capabilities`
+// single-row seat (hot-applied at the turn boundary through
+// AgentDO.applyToolCapabilities). The three deployment env inputs
+// (AGENT_DO_* gate flags) are deleted; DEFAULT_EXPERIMENTAL_TOOL_CONFIG
+// below is the absent-row posture (omp defaults), not a config layer.
 // ---------------------------------------------------------------------------
 
 export interface ExperimentalToolConfig {
@@ -203,17 +208,4 @@ export function envFlag(raw: string | undefined): boolean {
   if (raw === undefined) return false;
   const normalized = raw.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "on";
-}
-
-/** Deployment env → gate config (#102 patch-over-defaults pattern). */
-export function decodeExperimentalToolConfig(env: {
-  AGENT_DO_EXTERNAL_THINKING?: string;
-  AGENT_DO_CONTEXT_NOTES?: string;
-  AGENT_DO_CHECKPOINT?: string;
-}): ExperimentalToolConfig {
-  return {
-    externalThinking: envFlag(env.AGENT_DO_EXTERNAL_THINKING),
-    contextNotes: envFlag(env.AGENT_DO_CONTEXT_NOTES),
-    checkpoint: envFlag(env.AGENT_DO_CHECKPOINT),
-  };
 }

@@ -50,9 +50,9 @@ import {
 } from "./fsm-events.js";
 import { executionIdFor, threadIdFromExecutionId } from "./ids.js";
 import {
+  DEFAULT_EXPERIMENTAL_TOOL_CONFIG,
   DEFAULT_WATCHDOG_CONFIG,
   WATCHDOG_CONFIG_KV_KEY,
-  decodeExperimentalToolConfig,
   decodeWatchdogConfig,
   mergeWatchdogConfig,
   parseWatchdogConfigPatch,
@@ -194,15 +194,6 @@ function capArtifactText(
 export interface AgentDoBindings {
   /** Optional JSON patch over the default watchdog config (env var). */
   AGENT_DO_WATCHDOG?: string;
-  /**
-   * #150 experimental tool gates (#102 patch-over-defaults pattern, omp
-   * defaults all false): externalThinking gates `think` (paired with
-   * forceReasoningOff), contextNotes gates context_notes/new_context,
-   * checkpoint gates checkpoint/rewind.
-   */
-  AGENT_DO_EXTERNAL_THINKING?: string;
-  AGENT_DO_CONTEXT_NOTES?: string;
-  AGENT_DO_CHECKPOINT?: string;
   /**
    * Optional JSON array of MCP servers (matrix C2, #327) — Streamable HTTP
    * endpoints the DO connects to in-process (edge do-local class, the same
@@ -457,9 +448,16 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * so a panel edit takes effect on the next real turn with zero redeploy.
    */
   private imageSource: GenerateImageConfig | null = null;
-  /** Decoded once from the #150 experimental-gate envs; deployment-time
-   * input, all default OFF (omp tools/index.ts:766-772 posture). */
-  private readonly experimentalGates: ExperimentalToolConfig;
+  /**
+   * #502 the three #150 experimental tool gates (think / context_notes +
+   * new_context / checkpoint + rewind). The D1 `tool_capabilities` seat is
+   * the sole 正本 (the three AGENT_DO_* env gates are deleted); the value
+   * starts at the omp posture (all OFF) and the deploying worker's
+   * ComposedAgentDO hot-applies the seat at the turn boundary, so a panel
+   * write takes effect on the next turn with zero redeploy. The wire
+   * assembly reads the CURRENT value per model call (buildModelRequest).
+   */
+  private experimentalGates: ExperimentalToolConfig = { ...DEFAULT_EXPERIMENTAL_TOOL_CONFIG };
   /**
    * The panel-resolved image source (the 产图源 seat) is the only gate +
    * source (#448/#450): non-null opens the generate_image wire row and the
@@ -475,6 +473,21 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    */
   applyWebSearchConfig(config: WebSearchConfig): void {
     this.webSearchConfig = config;
+  }
+  /**
+   * #502 the panel-resolved tool gates (D1 `tool_capabilities`): applied at
+   * the turn-boundary refresh, read per model call by the wire assembly —
+   * the same hot-apply seam as the image source and web_search config.
+   */
+  applyToolCapabilities(capabilities: ExperimentalToolConfig): void {
+    // Explicit field construction: callers may carry overlay-only extras
+    // (e.g. the seat's `configured` presence flag) that must not leak onto
+    // the DO state or the model wire.
+    this.experimentalGates = {
+      externalThinking: capabilities.externalThinking,
+      contextNotes: capabilities.contextNotes,
+      checkpoint: capabilities.checkpoint,
+    };
   }
   private state: ReplayState = emptyReplayState();
   private threadId: string | null = null;
@@ -534,7 +547,6 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   constructor(ctx: DurableObjectState, env: AgentDoBindings) {
     super(ctx, env);
     this.cfg = decodeWatchdogConfig(env.AGENT_DO_WATCHDOG, DEFAULT_WATCHDOG_CONFIG);
-    this.experimentalGates = decodeExperimentalToolConfig(env);
     this.mcpSurface = new McpToolSurface(decodeMcpServersConfig(env.AGENT_DO_MCP_SERVERS));
     this.log = new EventLog(ctx.storage, env.BLOBS, this.cfg.r2BypassBytes);
     this.state = this.loadState();
@@ -2737,12 +2749,14 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     const { events } = await this.readAllEvents();
     const request = modelRequestFromEvents(events, turnId, modelCallId);
     // #150 experimental gates: the wire assembly filters the experimental
-    // tools by the deployment gates, then applies the omp supports(model)
-    // verdict (sdk.ts:4275-4282) and derives the forceReasoningOff pin from
-    // the RENDERED surface — the DO does not know the relay model id, so the
-    // "external CoT ∧ native reasoning never coexist" pairing can only be
-    // computed at the wire (#257: pinning off the gate alone killed the
-    // native CoT pathway for native-reasoning models like glm-5.3).
+    // tools by the current gate values (#502: the D1 `tool_capabilities`
+    // seat, hot-applied via applyToolCapabilities), then applies the omp
+    // supports(model) verdict (sdk.ts:4275-4282) and derives the
+    // forceReasoningOff pin from the RENDERED surface — the DO does not know
+    // the relay model id, so the "external CoT ∧ native reasoning never
+    // coexist" pairing can only be computed at the wire (#257: pinning off
+    // the gate alone killed the native CoT pathway for native-reasoning
+    // models like glm-5.3).
     const gated: ModelRequest = {
       ...request,
       // #448: the 产图源 seat gates generate_image (its presence is the

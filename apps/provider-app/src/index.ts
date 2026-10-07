@@ -46,6 +46,7 @@ export {
   type ProviderConfigFullOverlay,
   type ProviderConfigLoad,
   type ProviderConfigRecord,
+  type ToolCapabilitiesOverlayRow,
   type WebSearchFaceEngines,
   type WebSearchOverlayRow,
   type WebSearchSecretsMeta,

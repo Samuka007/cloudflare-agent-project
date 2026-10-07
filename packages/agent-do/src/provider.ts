@@ -184,11 +184,13 @@ export interface ModelRequest {
    */
   toolChoice?: { name: string };
   /**
-   * Deployment-time experimental tool gates (#150): the wire assembly filters
+   * Experimental tool gates (#150): the wire assembly filters
    * think/context_notes/new_context/checkpoint/rewind off the surface unless
-   * their env gate is on (config.ts ExperimentalToolConfig, all default
-   * false); `generateImage` folds from the 产图源 seat's presence (#448 —
-   * no selected source, no row; #450 zero env fallback).
+   * their gate is on — the values come from the D1 `tool_capabilities` seat
+   * (#502, hot-applied; the deployment env inputs are deleted) whose
+   * absent-row posture is all-off; `generateImage` folds from the 产图源
+   * seat's presence (#448 — no selected source, no row; #450 zero env
+   * fallback).
    * Absent = the ungated default surfaces (mock/test passthrough).
    */
   experimentalGates?: {
