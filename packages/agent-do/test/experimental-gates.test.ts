@@ -1,5 +1,6 @@
-import { describe, expect, test } from "vitest";
-import { DEFAULT_EXPERIMENTAL_TOOL_CONFIG, decodeExperimentalToolConfig } from "../src/config.js";
+import { afterEach, describe, expect, test } from "vitest";
+import { runInDurableObject } from "cloudflare:test";
+import { DEFAULT_EXPERIMENTAL_TOOL_CONFIG, type ExperimentalToolConfig } from "../src/config.js";
 import {
   enabledToolNames,
   EXPERIMENTAL_TOOL_GATE,
@@ -9,16 +10,23 @@ import {
 } from "../src/tools/registry.js";
 import { anthropicRequestBody, supportsExternalThinking } from "../src/relay/wire.js";
 import type { ModelRequest } from "../src/provider.js";
+import { createRig, resetRuntime } from "./helpers.js";
 
 /**
  * #150 L1 — the experimental tools are gated OFF by default (omp
  * tools/index.ts:766-772 posture: cfgExternalThinking,
- * cfgCompactionExperimentalContextManagement, cfgCheckpointEnabled), flip on
- * per env gate, and the `think` gate pairs with the omp forceReasoningOff
- * reasoning pin (sdk.ts:4275-4282). generate_image's gate is NOT an env —
- * it folds from the 产图源 seat (#448); the wire shape still carries it as
- * the fourth boolean.
+ * cfgCompactionExperimentalContextManagement, cfgCheckpointEnabled) and the
+ * `think` gate pairs with the omp forceReasoningOff reasoning pin
+ * (sdk.ts:4275-4282). #502: the gate VALUES come from the D1
+ * `tool_capabilities` seat (hot-applied via AgentDO.applyToolCapabilities at
+ * the turn boundary — the env inputs are deleted); generate_image's gate is
+ * NOT part of the seat — it folds from the 产图源 seat (#448); the wire
+ * shape still carries it as the fourth boolean.
  */
+
+afterEach(() => {
+  resetRuntime();
+});
 
 const FIVE = ["think", "context_notes", "new_context", "checkpoint", "rewind"];
 const SIX = [...FIVE, "generate_image"];
@@ -66,34 +74,59 @@ describe("#150/#322 — gate map covers exactly the experimental tools", () => {
     }
   });
 
-  test("decodeExperimentalToolConfig: defaults off; 1/true/on flip on; junk stays off", () => {
-    expect(decodeExperimentalToolConfig({})).toEqual(DEFAULT_EXPERIMENTAL_TOOL_CONFIG);
+  test("#502 absent row = the omp posture defaults (all gates off)", () => {
     expect(DEFAULT_EXPERIMENTAL_TOOL_CONFIG).toEqual({
       externalThinking: false,
       contextNotes: false,
       checkpoint: false,
     });
-    expect(
-      decodeExperimentalToolConfig({
-        AGENT_DO_EXTERNAL_THINKING: "1",
-        AGENT_DO_CONTEXT_NOTES: "true",
-        AGENT_DO_CHECKPOINT: "on",
-      }),
-    ).toEqual({
+  });
+
+  test("#502 the D1 seat applies at the turn boundary (applyToolCapabilities)", async () => {
+    const rig = await createRig({ turns: [{ deltas: ["ok"] }] });
+    const first = await rig.stub.sendMessage({
+      clientRequestId: "gates-default",
+      mode: "auto",
+      content: [{ type: "text", text: "hi" }],
+    });
+    await rig.waitTurnComplete(first.turnId);
+    // Nothing applied yet = the omp posture on the wire (defaults + the
+    // #448 image seat folding to off).
+    expect(rig.mock().calls[0]?.experimentalGates).toEqual({
+      ...DEFAULT_EXPERIMENTAL_TOOL_CONFIG,
+      generateImage: false,
+    });
+
+    // The composed worker's turn-boundary refresh calls this with the
+    // overlay row; `configured` is overlay-only presence and must not leak
+    // into the DO state or the model wire.
+    await runInDurableObject(rig.stub, (instance) => {
+      const seat = {
+        externalThinking: true,
+        contextNotes: true,
+        checkpoint: true,
+        configured: true,
+      };
+      instance.applyToolCapabilities(seat);
+      const seam = instance as unknown as { experimentalGates: ExperimentalToolConfig };
+      expect(seam.experimentalGates).toEqual({
+        externalThinking: true,
+        contextNotes: true,
+        checkpoint: true,
+      });
+    });
+    const second = await rig.stub.sendMessage({
+      clientRequestId: "gates-on",
+      mode: "auto",
+      content: [{ type: "text", text: "hi again" }],
+    });
+    await rig.waitTurnComplete(second.turnId);
+    // The next turn's request carries the flipped gates (the per-call read).
+    expect(rig.mock().calls[1]?.experimentalGates).toEqual({
       externalThinking: true,
       contextNotes: true,
       checkpoint: true,
-    });
-    expect(
-      decodeExperimentalToolConfig({
-        AGENT_DO_EXTERNAL_THINKING: "yes",
-        AGENT_DO_CONTEXT_NOTES: "0",
-        AGENT_DO_CHECKPOINT: "",
-      }),
-    ).toEqual({
-      externalThinking: false,
-      contextNotes: false,
-      checkpoint: false,
+      generateImage: false,
     });
   });
 });

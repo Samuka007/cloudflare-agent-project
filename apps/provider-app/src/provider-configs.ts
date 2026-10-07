@@ -19,6 +19,7 @@
  */
 
 import {
+  DEFAULT_EXPERIMENTAL_TOOL_CONFIG,
   DEFAULT_WEB_SEARCH_CONFIG,
   IMAGE_SOURCE_API_FAMILY,
   isImageGenerationModelId,
@@ -29,6 +30,7 @@ import {
   relayImageModelSchema,
   resolveWebSearchConfig,
   type RelayCatalogModel,
+  type ExperimentalToolConfig,
   type RelayCatalogProvider,
   type RelayImageModel,
   type ProviderModelFamily,
@@ -81,8 +83,22 @@ export interface ProviderConfigCatalogOverlay {
    * is a loud decodeError, never a silent default.
    */
   webSearch: WebSearchOverlayRow;
+  /**
+   * #502 the experimental tool-capability half: the D1 `tool_capabilities`
+   * single-row seat (the sole 正本 — the three AGENT_DO_* env gates are
+   * deleted). Absent row = the omp posture (configured:false, all gates
+   * off); the values gate think / context_notes+new_context /
+   * checkpoint+rewind on the wire.
+   */
+  toolCapabilities: ToolCapabilitiesOverlayRow;
   /** Content fingerprint (no secret values) for hot-reload gating. */
   fingerprint: string;
+}
+
+/** The secret-free overlay half of the #502 tool_capabilities row. */
+export interface ToolCapabilitiesOverlayRow extends ExperimentalToolConfig {
+  /** True when a D1 row exists (false = absent-row omp posture, all off). */
+  configured: boolean;
 }
 
 export interface ProviderConfigFullOverlay extends ProviderConfigCatalogOverlay {
@@ -121,6 +137,16 @@ interface WebSearchDbRow {
   secrets_enc: string | null;
   /** JSON secret-PRESENCE map — the no-decrypt faces read presence only. */
   secrets_meta: string | null;
+  updated_at: number;
+}
+
+/** The #502 tool_capabilities row (single-row seat, same precedent). */
+interface ToolCapabilitiesDbRow {
+  id: string;
+  /** 0/1 gates (#150): think / context_notes+new_context / checkpoint+rewind. */
+  external_thinking: number | null;
+  context_notes: number | null;
+  checkpoint: number | null;
   updated_at: number;
 }
 
@@ -175,6 +201,7 @@ export interface WebSearchFaceEngines {
 }
 
 const WEB_SEARCH_ROW_ID = "web_search";
+const TOOL_CAPABILITIES_ROW_ID = "tool_capabilities";
 const PROVIDER_CONFIG_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** The three halves assembleWebSearch derives from the stored row. */
@@ -482,7 +509,7 @@ async function readProviderConfigs(
   // an extra DO event-loop yield here races the read faces (observed: the
   // L1 send→read tests see a completed mock turn where one round trip sees
   // an in-flight one).
-  const [imageSourceResult, rowsResult, webSearchResult] = await db.batch([
+  const [imageSourceResult, rowsResult, webSearchResult, toolCapabilitiesResult] = await db.batch([
     db.prepare("SELECT provider_id FROM image_source WHERE id = 'image_source'"),
     db.prepare(
       "SELECT id, display_name, base_url, api, service_tier, api_key_enc, models, created_at, updated_at FROM provider_configs ORDER BY id",
@@ -490,6 +517,13 @@ async function readProviderConfigs(
     db.prepare(
       `SELECT id, chain, timeout_seconds, engines, secrets_enc, secrets_meta, updated_at
        FROM ${WEB_SEARCH_ROW_ID} WHERE id = '${WEB_SEARCH_ROW_ID}'`,
+    ),
+    // #502 the tool-capability seat rides the same single batch (one round
+    // trip — the turn-boundary refresh awaits this loader) so a gate flip
+    // hot-applies through the same fingerprint gate as a row edit.
+    db.prepare(
+      `SELECT id, external_thinking, context_notes, checkpoint, updated_at
+       FROM ${TOOL_CAPABILITIES_ROW_ID} WHERE id = '${TOOL_CAPABILITIES_ROW_ID}'`,
     ),
   ] as const);
   // The seat row's cell: narrow at the boundary (unknown → string|null).
@@ -506,6 +540,21 @@ async function readProviderConfigs(
   // Same boundary cast as `result` — the web_search statement returns 0..1 rows.
   const webSearchRows = webSearchResult as { results: WebSearchDbRow[] };
   const webSearchRow = webSearchRows.results[0];
+  // Same boundary cast — the tool_capabilities statement returns 0..1 rows.
+  const toolCapabilitiesRows = toolCapabilitiesResult as { results: ToolCapabilitiesDbRow[] };
+  const toolCapabilitiesRow = toolCapabilitiesRows.results[0];
+  // Absent row = the ruled omp posture (all gates off — the shared defaults,
+  // one owner), never an env override; the 0/1 decode is strict (the
+  // service_tier precedent).
+  const toolCapabilities: ToolCapabilitiesOverlayRow =
+    toolCapabilitiesRow === undefined
+      ? { ...DEFAULT_EXPERIMENTAL_TOOL_CONFIG, configured: false }
+      : {
+          configured: true,
+          externalThinking: toolCapabilitiesRow.external_thinking === 1,
+          contextNotes: toolCapabilitiesRow.context_notes === 1,
+          checkpoint: toolCapabilitiesRow.checkpoint === 1,
+        };
   const rows: ProviderConfigRecord[] = [];
   const providers: Record<string, RelayCatalogProvider> = {};
   const credentials: RelayProviderCredentialMap = {};
@@ -631,10 +680,17 @@ async function readProviderConfigs(
     maxUpdatedAt,
     imageSourceProviderId,
     webSearch.fingerprint,
+    JSON.stringify(toolCapabilities),
   );
   return {
     rows,
-    catalog: { providers, imageSourceProviderId, webSearch: webSearch.overlay, fingerprint },
+    catalog: {
+      providers,
+      imageSourceProviderId,
+      webSearch: webSearch.overlay,
+      toolCapabilities,
+      fingerprint,
+    },
     credentials,
     webSearchConfig: webSearch.config,
     warnings,
@@ -647,7 +703,8 @@ async function readProviderConfigs(
  * bumps it), and the #448 image-source selection (a seat-only flip
  * hot-applies), and the #449 web_search engine-chain content (chain order,
  * non-secret engine settings, secret PRESENCE meta, updated_at — a key-only
- * rotation still bumps it). Values of secrets never enter the string.
+ * rotation still bumps it), and the #502 tool-capability content (a gate
+ * flip hot-applies). Values of secrets never enter the string.
  */
 async function fingerprintOf(
   providers: Record<string, RelayCatalogProvider>,
@@ -655,6 +712,7 @@ async function fingerprintOf(
   maxUpdatedAt: number,
   imageSourceProviderId: string | null,
   webSearchContent: string | null,
+  toolCapabilitiesContent: string,
 ): Promise<string> {
   const content = JSON.stringify({
     providers,
@@ -664,6 +722,7 @@ async function fingerprintOf(
     maxUpdatedAt,
     imageSourceProviderId,
     webSearch: webSearchContent,
+    toolCapabilities: toolCapabilitiesContent,
   });
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
   let binary = "";

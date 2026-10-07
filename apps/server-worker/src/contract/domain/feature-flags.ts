@@ -1,6 +1,9 @@
 //
 // Ported verbatim from bb (Samuka007/bb fork of get-bb/bb) commit 8473d8c33.
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
+// #502 local extension: `toolCapabilities` below is a deliberate deviation
+// (bb upstream knows neither this flag nor its D1 seat); every ported field
+// stays verbatim.
 //
 import { z } from "zod";
 
@@ -28,6 +31,18 @@ export const featureFlagsSchema = z.object({
    * code path.
    */
   timelineWindowEventBudget: z.number().int().positive(),
+  /**
+   * #502 the experimental tool gates, resolved by GET /system/config from
+   * the D1 `tool_capabilities` single-row seat (the sole 正本; the three
+   * AGENT_DO_* gate envs are deleted). think = externalThinking,
+   * context_notes + new_context = contextNotes, checkpoint + rewind =
+   * checkpoint; all false = the absent-row omp posture, all five off.
+   */
+  toolCapabilities: z.object({
+    externalThinking: z.boolean(),
+    contextNotes: z.boolean(),
+    checkpoint: z.boolean(),
+  }),
 });
 export type FeatureFlags = z.infer<typeof featureFlagsSchema>;
 
@@ -39,4 +54,10 @@ export const defaultFeatureFlags: FeatureFlags = {
    * 10k-event thread that motivated the bound was ~670ms unbounded.
    */
   timelineWindowEventBudget: 1_500,
+  /** #502 the absent-row posture: every experimental gate off (omp). */
+  toolCapabilities: {
+    externalThinking: false,
+    contextNotes: false,
+    checkpoint: false,
+  },
 };

@@ -460,6 +460,37 @@ export const systemImageSourcePutRequestSchema = z
   .strict();
 export type SystemImageSourcePutRequest = z.infer<typeof systemImageSourcePutRequestSchema>;
 
+/**
+ * #502 the experimental tool-capability face (the D1 `tool_capabilities`
+ * single-row seat, the sole 正本 — the three AGENT_DO_* gate envs are
+ * deleted, zero env fallback). `configured` reports whether the row exists
+ * at all: false = the absent-row omp posture, all five tool families off.
+ * The three booleans gate think (externalThinking), context_notes +
+ * new_context (contextNotes) and checkpoint + rewind (checkpoint) on the
+ * model wire; a write hot-applies on the next turn (no redeploy).
+ */
+export const systemToolCapabilitiesResponseSchema = z.object({
+  configured: z.boolean(),
+  externalThinking: z.boolean(),
+  contextNotes: z.boolean(),
+  checkpoint: z.boolean(),
+});
+export type SystemToolCapabilitiesResponse = z.infer<
+  typeof systemToolCapabilitiesResponseSchema
+>;
+
+/** PUT /system/tool-capabilities: wholesale replace of the three gates. */
+export const systemToolCapabilitiesPutRequestSchema = z
+  .object({
+    externalThinking: z.boolean(),
+    contextNotes: z.boolean(),
+    checkpoint: z.boolean(),
+  })
+  .strict();
+export type SystemToolCapabilitiesPutRequest = z.infer<
+  typeof systemToolCapabilitiesPutRequestSchema
+>;
+
 // --- #362/#450 provider configurable panel (port-only CRUD face) -------------
 // GET/POST/PUT/PATCH/DELETE /system/providers(+ /:id, /:id/test): the
 // user-face provider configuration 正本 (D1 provider_configs) — and since
