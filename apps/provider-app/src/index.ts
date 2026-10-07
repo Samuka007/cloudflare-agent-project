@@ -47,6 +47,11 @@ export {
   type ProviderConfigFullOverlay,
   type ProviderConfigLoad,
   type ProviderConfigRecord,
+  type WebSearchFaceEngines,
+  type WebSearchOverlayRow,
+  type WebSearchSecretsMeta,
+  type WebSearchStoredEngines,
+  type WebSearchStoredSecrets,
 } from "./provider-configs.js";
 export { decryptProviderSecret, encryptProviderSecret } from "./provider-config-crypto.js";
 export {

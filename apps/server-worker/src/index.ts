@@ -1,4 +1,9 @@
-import { AgentDO, setAgentRuntime, type AgentDoBindings } from "@cap/agent-do";
+import {
+  AgentDO,
+  DEFAULT_WEB_SEARCH_CONFIG,
+  setAgentRuntime,
+  type AgentDoBindings,
+} from "@cap/agent-do";
 import {
   DaemonServiceDO,
   daemonServiceWorker,
@@ -78,6 +83,15 @@ export class ComposedAgentDO extends AgentDO {
     // the catalog so a panel edit lands on the next turn (null = not
     // configured; the seat rides the same content fingerprint as the rows).
     this.applyImageGenerationSource(imageGenerationSourceFromOverlay(overlay));
+    // #449: the engine chain rides the same fingerprint gate — the D1
+    // `web_search` row is the sole 正本 (zero env fallback). A broken row
+    // keeps the last-known config (the read face is loud); an absent row
+    // resolves to the ruled defaults.
+    if (overlay.webSearchConfig !== null) {
+      this.applyWebSearchConfig(overlay.webSearchConfig);
+    } else if (!overlay.webSearch.decodeError) {
+      this.applyWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG);
+    }
     this.appliedOverlayFingerprint = overlay.fingerprint;
   }
 }

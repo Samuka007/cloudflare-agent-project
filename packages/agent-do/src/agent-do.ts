@@ -144,7 +144,6 @@ import {
 import { checkpointRewindState, todoJournalState } from "./tools/session-tree.js";
 import {
   DEFAULT_WEB_SEARCH_CONFIG,
-  decodeWebSearchConfig,
   type WebSearchConfig,
   type WebSearchToolContext,
 } from "./tools/web-search.js";
@@ -204,13 +203,6 @@ export interface AgentDoBindings {
   AGENT_DO_EXTERNAL_THINKING?: string;
   AGENT_DO_CONTEXT_NOTES?: string;
   AGENT_DO_CHECKPOINT?: string;
-  /**
-   * Optional JSON patch over the default web_search provider config (env
-   * var, M1.5 T12). Decoded once at construction; a patch naming a
-   * browser-backed engine (google/ecosia/mojeek) fails the DO loudly —
-   * rejection, never silent fallback (tools/web-search.ts policy).
-   */
-  AGENT_DO_WEB_SEARCH?: string;
   /**
    * Optional JSON array of MCP servers (matrix C2, #327) — Streamable HTTP
    * endpoints the DO connects to in-process (edge do-local class, the same
@@ -447,9 +439,15 @@ class ProviderPullFailure {
 export class AgentDO extends DurableObject<AgentDoBindings> {
   private readonly log: EventLog;
   private cfg: WatchdogConfig;
-  /** Decoded once from `AGENT_DO_WEB_SEARCH` (M1.5 T12); deployment-time
-   * input — the model-facing wire schema carries no engine field. */
-  private readonly webSearchConfig: WebSearchConfig;
+  /**
+   * The web_search engine chain — the D1 `web_search` row is the sole
+   * 正本 (#449, zero env fallback). Starts at the ruled defaults; the
+   * deploying worker's ComposedAgentDO refreshes it at the turn boundary
+   * (refreshRuntime seam), so a panel edit takes effect on the next real
+   * turn with zero redeploy. The model-facing wire schema carries no
+   * engine field.
+   */
+  private webSearchConfig: WebSearchConfig = DEFAULT_WEB_SEARCH_CONFIG;
   /**
    * #448 the panel-resolved image source: the 产图源 seat (D1 image_source)
    * resolved over the api=openai-images provider row. Non-null gates
@@ -469,6 +467,14 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    */
   applyImageGenerationSource(source: GenerateImageConfig | null): void {
     this.imageSource = source;
+  }
+  /**
+   * #449 the panel-resolved engine chain: the DO-local web_search
+   * executor reads it per call, so applying mid-thread lands on the next
+   * web_search execution (the same hot-apply seam as the image source).
+   */
+  applyWebSearchConfig(config: WebSearchConfig): void {
+    this.webSearchConfig = config;
   }
   private state: ReplayState = emptyReplayState();
   private threadId: string | null = null;
@@ -529,10 +535,6 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     super(ctx, env);
     this.cfg = decodeWatchdogConfig(env.AGENT_DO_WATCHDOG, DEFAULT_WATCHDOG_CONFIG);
     this.experimentalGates = decodeExperimentalToolConfig(env);
-    this.webSearchConfig = decodeWebSearchConfig(
-      env.AGENT_DO_WEB_SEARCH,
-      DEFAULT_WEB_SEARCH_CONFIG,
-    );
     this.mcpSurface = new McpToolSurface(decodeMcpServersConfig(env.AGENT_DO_MCP_SERVERS));
     this.log = new EventLog(ctx.storage, env.BLOBS, this.cfg.r2BypassBytes);
     this.state = this.loadState();

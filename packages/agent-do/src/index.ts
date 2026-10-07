@@ -87,11 +87,15 @@ export {
 export {
   BROWSER_BACKED_ENGINES,
   DEFAULT_WEB_SEARCH_CONFIG,
-  decodeWebSearchConfig,
+  engineSettingsPatchSchema,
   projectWebSearchConfig,
+  resolveWebSearchConfig,
+  SEARCH_ENGINE_IDS,
+  webSearchConfigPatchSchema,
 } from "./tools/web-search.js";
 export type {
   BrowserBackedEngineId,
+  WebSearchConfigPatch,
   SearchEngineId,
   WebSearchConfig,
   WebSearchEngineProjection,

@@ -883,7 +883,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryRow[] = [
   {
     // M1.5/T12 #102: web_search edge port — DO-native fetch provider surface
     // (tools/web-search.ts). The browser-backed google/ecosia/mojeek engines
-    // are excluded at the CONFIG layer (decodeWebSearchConfig policy error —
+    // are excluded at the CONFIG layer (resolveWebSearchConfig policy error —
     // classification §2.2/§6.1 red line: unexcluded, the edge class silently
     // becomes hybrid). omp WebSearchTool declares no `intent` member
     // (index.ts:363-371) → resolveIntentMode default "require", same rule as

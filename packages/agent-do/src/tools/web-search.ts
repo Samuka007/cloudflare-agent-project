@@ -11,7 +11,7 @@ import type { EdgeToolResult } from "./edge.js";
  * omp's google/ecosia/mojeek adapters escalate failed plain fetches to a
  * host-shared headless Chromium (`acquireBrowser`); a DO-local engine set
  * that included them would silently make the edge class hybrid. The
- * exclusion therefore lives AT THE CONFIG LAYER (`decodeWebSearchConfig`
+ * exclusion therefore lives AT THE CONFIG LAYER (`resolveWebSearchConfig`
  * rejects any chain naming them with a structured policy error — L1:
  * disabled engines are refused, never silently dropped), and this module's
  * transports are plain fetch only: challenge/bot walls surface as
@@ -68,7 +68,7 @@ const SEARCH_ENGINE_ID_TABLE: Record<SearchEngineId, true> = {
   public: true,
 };
 
-const SEARCH_ENGINE_IDS: readonly SearchEngineId[] = Object.keys(
+export const SEARCH_ENGINE_IDS: readonly SearchEngineId[] = Object.keys(
   SEARCH_ENGINE_ID_TABLE,
 ) as SearchEngineId[];
 
@@ -80,7 +80,7 @@ export function browserBackedEnginePolicyError(id: string): Error {
 }
 
 // ---------------------------------------------------------------------------
-// Config — settings/env per the config.ts patch-over-defaults pattern
+// Config — panel/D1-resolved settings (#449), patch over defaults
 // ---------------------------------------------------------------------------
 
 /** omp web/search/types.ts:12 — per-transport default (seconds). */
@@ -116,8 +116,9 @@ export interface WebSearchConfig {
   /**
    * Ordered provider chain — the edge replacement for omp's `web` role
    * chain. Default: keyed API first, credential-free aggregate as
-   * fallback. Deployment-time input; the model cannot reach it (the wire
-   * schema is omp verbatim and has no engine field).
+   * fallback. The D1 `web_search` row is the sole 正本 (#449 — the
+   * `AGENT_DO_WEB_SEARCH` env path is deleted); the model cannot reach it
+   * (the wire schema is omp verbatim and has no engine field).
    */
   chain: SearchEngineId[];
   /** Per-transport ceiling in seconds (clamped 1..300 at decode). */
@@ -131,7 +132,7 @@ export const DEFAULT_WEB_SEARCH_CONFIG: WebSearchConfig = {
   engines: {},
 };
 
-const engineSettingsPatchSchema = z.object({
+export const engineSettingsPatchSchema = z.object({
   brave: z
     .object({
       apiKey: z.string().min(1).optional(),
@@ -150,24 +151,30 @@ const engineSettingsPatchSchema = z.object({
     .optional(),
 });
 
-const webSearchConfigPatchSchema = z.object({
+export const webSearchConfigPatchSchema = z.object({
   chain: z.array(z.string()).min(1).optional(),
   timeoutSeconds: z.number().int().positive().optional(),
   engines: engineSettingsPatchSchema.optional(),
 });
+export type WebSearchConfigPatch = z.infer<typeof webSearchConfigPatchSchema>;
 
 /**
- * Decode the `AGENT_DO_WEB_SEARCH` env JSON patch over `base`. Shape
- * violations throw (zod); a chain naming a browser-backed engine throws
- * the structured policy error — rejection, not silent fallback (L1).
+ * Resolve a config patch over `base` — the single validation path shared
+ * by the panel write face (server-worker PUT /system/web-search) and the
+ * stored-row loader (#449). Shape violations throw (zod); a chain naming
+ * a browser-backed engine throws the structured policy error — rejection,
+ * not silent fallback (L1). There is deliberately no env input: the D1
+ * `web_search` row is the only 正本 (#450 zero-env ruling).
  */
-export function decodeWebSearchConfig(
-  raw: string | undefined,
-  base: WebSearchConfig = DEFAULT_WEB_SEARCH_CONFIG,
+export function resolveWebSearchConfig(
+  base: WebSearchConfig,
+  patch: WebSearchConfigPatch,
 ): WebSearchConfig {
-  if (raw === undefined || raw === "") return base;
-  const patch = webSearchConfigPatchSchema.parse(JSON.parse(raw));
-  for (const id of patch.chain ?? []) {
+  // Re-validate even typed input: the resolver is the single shape gate
+  // (positive int timeout, known engine settings members) for the write
+  // face AND the stored-row loader alike.
+  const validated = webSearchConfigPatchSchema.parse(patch);
+  for (const id of validated.chain ?? []) {
     if (id in BROWSER_BACKED_ENGINE_TABLE) {
       throw browserBackedEnginePolicyError(id);
     }
@@ -178,17 +185,17 @@ export function decodeWebSearchConfig(
     }
   }
   const timeoutSeconds =
-    patch.timeoutSeconds === undefined
+    validated.timeoutSeconds === undefined
       ? base.timeoutSeconds
-      : Math.min(MAX_WEB_SEARCH_TIMEOUT_SECONDS, Math.max(1, patch.timeoutSeconds));
+      : Math.min(MAX_WEB_SEARCH_TIMEOUT_SECONDS, Math.max(1, validated.timeoutSeconds));
   return {
     // Every entry was validated against the engine table above; the erased
     // JSON boundary is the only reason the cast is needed.
-    chain: (patch.chain ?? base.chain) as SearchEngineId[],
+    chain: (validated.chain ?? base.chain) as SearchEngineId[],
     timeoutSeconds,
     engines: {
-      brave: patch.engines?.brave ?? base.engines.brave,
-      searxng: patch.engines?.searxng ?? base.engines.searxng,
+      brave: validated.engines?.brave ?? base.engines.brave,
+      searxng: validated.engines?.searxng ?? base.engines.searxng,
     },
   };
 }
@@ -1365,9 +1372,10 @@ export interface WebSearchParams {
 }
 
 /**
- * DO-bound context: the AgentDO binds config (decoded once from
- * `AGENT_DO_WEB_SEARCH`), the owning call's cancel signal, and the global
- * fetch (MSW-intercepted under the vitest workers pool).
+ * DO-bound context: the AgentDO binds config (the D1 `web_search` row,
+ * applied through `AgentDO.applyWebSearchConfig` — #449, zero env), the
+ * owning call's cancel signal, and the global fetch (MSW-intercepted
+ * under the vitest workers pool).
  */
 export interface WebSearchToolContext {
   readonly config: WebSearchConfig;

@@ -88,7 +88,7 @@ const agentAuthPatchSchema = z.object({
 });
 
 /**
- * Decode the `DAEMON_AGENT_AUTH` env JSON (#102 decodeWebSearchConfig
+ * Decode the `DAEMON_AGENT_AUTH` env JSON (#102 resolveWebSearchConfig
  * shape). Shape violations throw (zod) — rejection, not silent fallback.
  */
 export function decodeAgentAuthConfig(

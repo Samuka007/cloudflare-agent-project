@@ -10,9 +10,10 @@ import {
   BROWSER_BACKED_ENGINES,
   DEFAULT_WEB_SEARCH_CONFIG,
   MAX_WEB_SEARCH_TIMEOUT_SECONDS,
-  decodeWebSearchConfig,
+  resolveWebSearchConfig,
   runWebSearchTool,
   type WebSearchToolContext,
+  type WebSearchConfigPatch,
 } from "../src/tools/web-search.js";
 
 /**
@@ -155,23 +156,21 @@ describe("M1.5/T12 — registry row is omp verbatim", () => {
 describe("M1.5/T12 — config-layer engine exclusion (classification §2.2/§6.1 red line)", () => {
   test("each browser-backed engine is refused with the structured policy error", () => {
     for (const engine of BROWSER_BACKED_ENGINES) {
-      expect(() => decodeWebSearchConfig(JSON.stringify({ chain: [engine] }))).toThrow(
+      expect(() => resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, { chain: [engine] })).toThrow(
         `web_search edge policy: engine "${engine}" is browser-backed (classification table §2.2/§6.1 — its anti-bot escalation can acquire a host Chromium) and is excluded from the DO-local provider set. Allowed engines: brave, duckduckgo, searxng, startpage, public.`,
       );
     }
   });
 
   test("an unknown engine is refused; a valid patch merges over the defaults", () => {
-    expect(() => decodeWebSearchConfig(JSON.stringify({ chain: ["askjeeves"] }))).toThrow(
+    expect(() => resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, { chain: ["askjeeves"] })).toThrow(
       'web_search config: unknown engine "askjeeves". Allowed engines: brave, duckduckgo, searxng, startpage, public.',
     );
-    const decoded = decodeWebSearchConfig(
-      JSON.stringify({
+    const decoded = resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, {
         chain: ["searxng"],
         timeoutSeconds: 90,
         engines: { searxng: { endpoint: "https://searx.example.com" } },
-      }),
-    );
+    });
     expect(decoded.chain).toEqual(["searxng"]);
     expect(decoded.timeoutSeconds).toBe(90);
     expect(decoded.engines.searxng?.endpoint).toBe("https://searx.example.com");
@@ -180,17 +179,17 @@ describe("M1.5/T12 — config-layer engine exclusion (classification §2.2/§6.1
   });
 
   test("the per-transport ceiling: omp dispatcher cap at 300s, non-positive rejected", () => {
-    expect(decodeWebSearchConfig(JSON.stringify({ timeoutSeconds: 999 })).timeoutSeconds).toBe(
+    expect(resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, { timeoutSeconds: 999 }).timeoutSeconds).toBe(
       MAX_WEB_SEARCH_TIMEOUT_SECONDS,
     );
     // omp: "Set a positive number of seconds" — non-positive is a config error.
-    expect(() => decodeWebSearchConfig(JSON.stringify({ timeoutSeconds: 0 }))).toThrow();
+    expect(() => resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, { timeoutSeconds: 0 })).toThrow();
     expect(DEFAULT_WEB_SEARCH_CONFIG.timeoutSeconds).toBe(60);
   });
 
-  // The DO constructor's only web_search input is decodeWebSearchConfig —
-  // the rejections above are the construction-time behavior (AGENT_DO_WEB_
-  // SEARCH is decoded once; the test rig's env leaves it unbound).
+  // The DO's only web_search input is the D1 row applied through
+  // applyWebSearchConfig (#449) — the rejections above are the write-face
+  // validation behavior (the loader runs the same resolveWebSearchConfig).
 });
 
 // ---------------------------------------------------------------------------
@@ -200,7 +199,7 @@ describe("M1.5/T12 — config-layer engine exclusion (classification §2.2/§6.1
 /** The DI fixture for the pure executor — bound to the real MSW fetch. */
 function testCtx(overrides: Partial<WebSearchToolContext> = {}): WebSearchToolContext {
   return {
-    config: decodeWebSearchConfig(undefined),
+    config: DEFAULT_WEB_SEARCH_CONFIG,
     signal: new AbortController().signal,
     fetchImpl: (input, init) => fetch(input, init),
     publicDeadlines: { softMs: 2_000, hardMs: 8_000 },
@@ -209,10 +208,10 @@ function testCtx(overrides: Partial<WebSearchToolContext> = {}): WebSearchToolCo
 }
 
 function ctxWithConfig(
-  raw: string,
+  patch: WebSearchConfigPatch,
   overrides: Partial<WebSearchToolContext> = {},
 ): WebSearchToolContext {
-  return testCtx({ config: decodeWebSearchConfig(raw), ...overrides });
+  return testCtx({ config: resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, patch), ...overrides });
 }
 
 describe("M1.5/T12 — engine allow/deny matrix (first success wins, failures advance)", () => {
@@ -224,9 +223,7 @@ describe("M1.5/T12 — engine allow/deny matrix (first success wins, failures ad
         return HttpResponse.json(BRAVE_BODY);
       }),
     );
-    const ctx = ctxWithConfig(
-      JSON.stringify({ chain: ["brave"], engines: { brave: { apiKey: "brv-key" } } }),
-    );
+    const ctx = ctxWithConfig({ chain: ["brave"], engines: { brave: { apiKey: "brv-key" } } });
     const result = await runWebSearchTool({ query: "durable objects" }, ctx);
     expect(result.status).toBe("ok");
     expect(requests).toBe(1);
@@ -259,7 +256,7 @@ describe("M1.5/T12 — engine allow/deny matrix (first success wins, failures ad
     // No brave key: brave is unavailable → skipped, public answers.
     const result = await runWebSearchTool(
       { query: "test" },
-      ctxWithConfig(JSON.stringify({ chain: ["brave", "public"] })),
+      ctxWithConfig({ chain: ["brave", "public"] }),
     );
     expect(result.status).toBe("ok");
     expect(braveHits).toBe(0);
@@ -270,7 +267,7 @@ describe("M1.5/T12 — engine allow/deny matrix (first success wins, failures ad
   test("no available engine and no failures returns omp's no-provider text", async () => {
     const result = await runWebSearchTool(
       { query: "test" },
-      ctxWithConfig(JSON.stringify({ chain: ["brave", "searxng"] })),
+      ctxWithConfig({ chain: ["brave", "searxng"] }),
     );
     expect(result).toEqual({ status: "ok", output: "Error: No web search model configured." });
   });
@@ -284,12 +281,10 @@ describe("M1.5/T12 — engine allow/deny matrix (first success wins, failures ad
     );
     const result = await runWebSearchTool(
       { query: "test" },
-      ctxWithConfig(
-        JSON.stringify({
-          chain: ["brave", "searxng"],
-          engines: { brave: { apiKey: "k" }, searxng: { endpoint: "https://searx.example.com" } },
-        }),
-      ),
+      ctxWithConfig({
+        chain: ["brave", "searxng"],
+        engines: { brave: { apiKey: "k" }, searxng: { endpoint: "https://searx.example.com" } },
+      }),
     );
     expect(result.status).toBe("ok");
     expect(result.output).toBe(
@@ -314,7 +309,7 @@ describe("M1.5/T12 — engine allow/deny matrix (first success wins, failures ad
     // First success wins: single-engine chains isolate one transport each.
     const startpageResult = await runWebSearchTool(
       { query: "engines", recency: "week" },
-      ctxWithConfig(JSON.stringify({ chain: ["startpage"] })),
+      ctxWithConfig({ chain: ["startpage"] }),
     );
     expect(startpageResult.status).toBe("ok");
     // Startpage form flow: homepage `sc` token carried, query + with_date=w.
@@ -330,7 +325,7 @@ describe("M1.5/T12 — engine allow/deny matrix (first success wins, failures ad
 
     const ddgResult = await runWebSearchTool(
       { query: "engines", recency: "week" },
-      ctxWithConfig(JSON.stringify({ chain: ["duckduckgo"] })),
+      ctxWithConfig({ chain: ["duckduckgo"] }),
     );
     expect(ddgResult.status).toBe("ok");
     // DDG form: raw query, kl default, recency → df=w, b empty.
@@ -356,18 +351,16 @@ describe("M1.5/T12 — engine allow/deny matrix (first success wins, failures ad
         return HttpResponse.json(SEARXNG_BODY);
       }),
     );
-    const ctx = ctxWithConfig(
-      JSON.stringify({
-        chain: ["searxng"],
-        engines: {
-          searxng: {
-            endpoint: "https://searx.example.com",
-            basicUsername: "u",
-            basicPassword: "p",
-          },
+    const ctx = ctxWithConfig({
+      chain: ["searxng"],
+      engines: {
+        searxng: {
+          endpoint: "https://searx.example.com",
+          basicUsername: "u",
+          basicPassword: "p",
         },
-      }),
-    );
+      },
+    });
     const result = await runWebSearchTool({ query: "q" }, ctx);
     expect(result.status).toBe("ok");
     expect(auth).toMatch(/^Basic /);
@@ -389,7 +382,7 @@ describe("M1.5/T12 — engine allow/deny matrix (first success wins, failures ad
     );
     const result = await runWebSearchTool(
       { query: "q" },
-      ctxWithConfig(JSON.stringify({ chain: ["duckduckgo"] })),
+      ctxWithConfig({ chain: ["duckduckgo"] }),
     );
     expect(result.status).toBe("ok");
     // Single failure: the normalized engine error, unprefixed (omp
@@ -440,7 +433,7 @@ describe("M1.5/T12 — timeout cutoff and abort rethrow", () => {
     );
     const result = await runWebSearchTool(
       { query: "slow brave" },
-      ctxWithConfig(JSON.stringify({ chain: ["brave", "duckduckgo"], timeoutSeconds: 1 }), {
+      ctxWithConfig({ chain: ["brave", "duckduckgo"], timeoutSeconds: 1 }, {
         fetchImpl: hangingBraveFetch,
       }),
     );
@@ -464,12 +457,9 @@ describe("M1.5/T12 — timeout cutoff and abort rethrow", () => {
         return HttpResponse.json(BRAVE_BODY);
       }),
     );
-    const ctx = ctxWithConfig(
-      JSON.stringify({ chain: ["brave"], engines: { brave: { apiKey: "k" } } }),
-      {
-        signal: controller.signal,
-      },
-    );
+    const ctx = ctxWithConfig({ chain: ["brave"], engines: { brave: { apiKey: "k" } } }, {
+      signal: controller.signal,
+    });
     const pending = runWebSearchTool({ query: "cancel me" }, ctx);
     // Await the real signal (fetch in flight), not a guessed duration.
     await entered.promise;
@@ -491,7 +481,7 @@ describe("M1.5/T12 — timeout cutoff and abort rethrow", () => {
     setTimeout(settled.resolve, 5);
     await settled.promise;
     expect(signal.aborted).toBe(true);
-    const ctx = ctxWithConfig(JSON.stringify({ chain: ["brave"] }), {
+    const ctx = ctxWithConfig({ chain: ["brave"] }, {
       signal,
     });
     const result = await runWebSearchTool({ query: "q" }, ctx);
@@ -517,7 +507,7 @@ describe("M1.5/T12 — Public Web 5s/30s cutoff with straggler abort", () => {
     );
     const result = await runWebSearchTool(
       { query: "race" },
-      ctxWithConfig(JSON.stringify({ chain: ["public"] }), {
+      ctxWithConfig({ chain: ["public"] }, {
         publicDeadlines: { softMs: 500, hardMs: 2_000 },
       }),
     );
@@ -543,7 +533,7 @@ describe("M1.5/T12 — Public Web 5s/30s cutoff with straggler abort", () => {
     );
     const result = await runWebSearchTool(
       { query: "dedup" },
-      ctxWithConfig(JSON.stringify({ chain: ["public"] }), {
+      ctxWithConfig({ chain: ["public"] }, {
         publicDeadlines: { softMs: 2_000, hardMs: 8_000 },
       }),
     );
@@ -582,7 +572,7 @@ describe("M1.5/T12 — Public Web 5s/30s cutoff with straggler abort", () => {
     );
     const result = await runWebSearchTool(
       { query: "all fail" },
-      ctxWithConfig(JSON.stringify({ chain: ["public"] }), {
+      ctxWithConfig({ chain: ["public"] }, {
         publicDeadlines: { softMs: 200, hardMs: 1_000 },
       }),
     );
