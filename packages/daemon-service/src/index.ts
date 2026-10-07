@@ -40,11 +40,23 @@ export {
   type HostRpcCommand,
   type HostRpcRequestFrame,
   type HostRpcResponseFrame,
+  type HostPathsExistCommand,
+  type HostPathsExistResult,
   type HostWriteFileCommand,
+  type ProjectCloneCommand,
+  type ProjectCloneDefaultPathCommand,
+  type ProjectInspectCommand,
+  type ProjectPathInspection,
+  type ProjectPathResult,
   type KillListServiceFrame,
   type ObservedExecution,
   type ObservedState,
   type ServiceFrame,
+} from "./protocol.js";
+export {
+  hostPathsExistResultSchema,
+  projectPathInspectionSchema,
+  projectPathResultSchema,
 } from "./protocol.js";
 export {
   consumeJoinCode,
