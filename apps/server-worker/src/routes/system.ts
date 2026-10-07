@@ -52,6 +52,8 @@ import {
   providerConfigsListResponseSchema,
   systemImageSourcePutRequestSchema,
   systemImageSourceResponseSchema,
+  systemOriginAllowlistResponseSchema,
+  systemOriginAllowlistPutRequestSchema,
   systemToolCapabilitiesPutRequestSchema,
   systemToolCapabilitiesResponseSchema,
   systemWebSearchPutRequestSchema,
@@ -87,6 +89,8 @@ import {
 } from "../db/provider-configs.js";
 import { getImageSourceProviderId, setImageSourceProviderId } from "../db/image-source.js";
 import { getToolCapabilities, setToolCapabilities } from "../db/tool-capabilities.js";
+import { getOriginAllowlist, setOriginAllowlist } from "../db/origin-allowlist.js";
+import { canonicalOriginAllowlist } from "../contract/domain/origin-allowlist.js";
 import { setWebSearchConfig, webSearchHasSecrets } from "../db/web-search.js";
 import {
   discoverProviderModelsEnriched,
@@ -991,6 +995,32 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     return ctx.json(
       systemToolCapabilitiesResponseSchema.parse(await getToolCapabilities(ctx.env)),
     );
+  });
+
+  // #506 the origin-allowlist face: the D1 `origin_allowlist` single-row seat
+  // is the sole 正本 for the extra browser origins the Origin guard / CORS
+  // leg accept (the APP_EXTRA_ORIGINS env input is deleted — zero-env
+  // ruling). Read = the stored list (an absent row is the default
+  // zero-extra posture); write = wholesale replace, every entry 422-validated
+  // against the shared parseOriginLike grammar. Effect is immediate: the
+  // guard re-reads the row on every Origin-carrying request, so a write
+  // hot-applies without a redeploy.
+  routes.get("/system/origin-allowlist", async (ctx) => {
+    return ctx.json(
+      systemOriginAllowlistResponseSchema.parse({
+        origins: [...(await getOriginAllowlist(ctx.env))],
+      }),
+    );
+  });
+
+  routes.put("/system/origin-allowlist", async (ctx) => {
+    const payload = await requireJsonBody(ctx, systemOriginAllowlistPutRequestSchema);
+    const origins = canonicalOriginAllowlist(payload.origins);
+    await setOriginAllowlist(ctx.env, origins);
+    // Hot-apply broadcast (#382): connected panels refresh their system
+    // faces exactly like a settings write (system.ts:348 precedent).
+    await hub(ctx.env).notifySystem(["config-changed"]);
+    return ctx.json(systemOriginAllowlistResponseSchema.parse({ origins }));
   });
 
   routes.get("/system/providers", async (ctx) => {

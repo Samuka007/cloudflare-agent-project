@@ -58,8 +58,6 @@ export interface Env {
    * the gate (#505); absence locks the control plane.
    */
   readonly ACCESS_AUD?: string;
-  /** Extra browser origins the Origin guard / CORS accept (comma-separated). */
-  readonly APP_EXTRA_ORIGINS?: string;
   /** Version banner for /system/version (bb appVersion.currentVersion). */
   readonly SERVER_VERSION?: string;
 

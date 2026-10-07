@@ -8,6 +8,7 @@ import imageSourceSql from "../migrations/0005_image_source.sql";
 import webSearchSql from "../migrations/0006_web_search.sql";
 import orphanHostReferencesSql from "../migrations/0006_orphan_host_references.sql";
 import toolCapabilitiesSql from "../migrations/0007_tool_capabilities.sql";
+import originAllowlistSql from "../migrations/0008_origin_allowlist.sql";
 
 /** The migration files, in apply order. The deploy chain replays the whole
  * `migrations/*.sql` directory per deploy (#295, scripts/deploy-staging.sh);
@@ -22,6 +23,7 @@ export const MIGRATION_FILES: string[] = [
   webSearchSql,
   orphanHostReferencesSql,
   toolCapabilitiesSql,
+  originAllowlistSql,
 ];
 
 /** Statement splitter shared with the deploy replay: one statement per `;\n`

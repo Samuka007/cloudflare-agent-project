@@ -1,18 +1,20 @@
 import type { Context, Next } from "hono";
 import { ApiError } from "../shared/api-error.js";
-import type { Env } from "../app-types.js";
+import { parseOriginLike } from "../contract/domain/origin-allowlist.js";
+import { getOriginAllowlist, type OriginAllowlistEnv } from "../db/origin-allowlist.js";
 
 /**
  * Origin guard, ported from bb apps/server/src/browser-request-guard.ts
  * (commit 8473d8c33, isTrustedOrigin :100-133). A browser request carrying an
  * Origin header is trusted only when the origin parses as http/https and
- * matches: (1) a configured app origin (APP_EXTRA_ORIGINS; bb's
- * buildLocalAppOrigins serverPort/devAppPort rules have no Worker analogue),
- * or (2) a request-target origin — the request URL, the Host header, or the
- * first x-forwarded-host value (with protocol from x-forwarded-proto).
- * Requests without an Origin (curl/CLI/SDK) pass untouched. Rejection is
- * bb's 403 forbidden_origin with the same message text (guard :153-158,
- * server.ts:446-449).
+ * matches: (1) a configured app origin — the #506 D1 `origin_allowlist`
+ * seat, hot-editable through /system/origin-allowlist without a redeploy
+ * (bb's buildLocalAppOrigins serverPort/devAppPort rules have no Worker
+ * analogue), or (2) a request-target origin — the request URL, the Host
+ * header, or the first x-forwarded-host value (with protocol from
+ * x-forwarded-proto). Requests without an Origin (curl/CLI/SDK) pass
+ * untouched and pay no D1 read. Rejection is bb's 403 forbidden_origin with
+ * the same message text (guard :153-158, server.ts:446-449).
  */
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost"]);
@@ -20,27 +22,6 @@ const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost"]);
 interface RequestTargets {
   origins: Set<string>;
   hostnames: Set<string>;
-}
-
-function parseOriginLike(value: string): URL | null {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      return null;
-    }
-    if (
-      url.username !== "" ||
-      url.password !== "" ||
-      url.pathname !== "/" ||
-      url.search !== "" ||
-      url.hash !== ""
-    ) {
-      return null;
-    }
-    return url;
-  } catch {
-    return null;
-  }
 }
 
 function requestTargets(ctx: Context): RequestTargets {
@@ -69,27 +50,16 @@ function requestTargets(ctx: Context): RequestTargets {
   return { origins, hostnames };
 }
 
-function configuredOrigins(env: Env): Set<string> {
-  const configured = new Set<string>();
-  for (const raw of (env.APP_EXTRA_ORIGINS ?? "").split(",")) {
-    const trimmed = raw.trim();
-    if (trimmed === "") {
-      continue;
-    }
-    const url = parseOriginLike(trimmed);
-    if (url) {
-      configured.add(url.origin);
-    }
-  }
-  return configured;
-}
-
-function isTrustedOrigin(origin: string, env: Env, targets: RequestTargets): boolean {
+function isTrustedOrigin(
+  origin: string,
+  allowlist: ReadonlySet<string>,
+  targets: RequestTargets,
+): boolean {
   const parsed = parseOriginLike(origin);
   if (!parsed) {
     return false;
   }
-  if (configuredOrigins(env).has(parsed.origin)) {
+  if (allowlist.has(parsed.origin)) {
     return true;
   }
   if (targets.origins.has(parsed.origin)) {
@@ -115,7 +85,12 @@ export async function originGuard(ctx: Context, next: Next) {
     origin !== undefined &&
     !GUARD_EXEMPT_PREFIXES.some((prefix) => ctx.req.path.startsWith(prefix))
   ) {
-    const trusted = isTrustedOrigin(origin, ctx.env as Env, requestTargets(ctx));
+    // #506: ONE D1 read per Origin-carrying request, stashed on the context
+    // so the CORS leg shares the same bytes (the provider-overlay loaders'
+    // request-boundary discipline — never a second query for the same row).
+    const allowlist = await getOriginAllowlist(ctx.env as OriginAllowlistEnv);
+    ctx.set("originAllowlist", allowlist);
+    const trusted = isTrustedOrigin(origin, allowlist, requestTargets(ctx));
     if (!trusted) {
       throw new ApiError({
         status: 403,
