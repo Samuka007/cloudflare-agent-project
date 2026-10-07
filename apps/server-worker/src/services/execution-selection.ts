@@ -271,3 +271,72 @@ export function classifyThreadSelectionChange(
 ): "unchanged" | "live" | "session" {
   return classifyExecutionSettingsChange(executionOptionsOf(current), executionOptionsOf(next));
 }
+
+/**
+ * Presence-sensitive model/reasoning patch slice for PATCH /threads/:id
+ * (#499). `undefined` leaves a field untouched; `null` clears it.
+ */
+export interface ThreadExecutionOverridePatch {
+  model?: string | null;
+  reasoningLevel?: RelayReasoningLevel | null;
+}
+
+/**
+ * #499 the one-click fallback card's write face: resolve the next stored
+ * execution override for a model/reasoningLevel patch. The gate is the SAME
+ * resolveStoredThreadExecution the read face runs — the pair about to be
+ * stored must resolve against the directory, so a model the directory no
+ * longer declares fails closed with the named 422 (model_unknown /
+ * provider_unknown) and nothing persists: the thread truth is only ever
+ * rewritten to a dispatchable row by an explicit user action.
+ *
+ * A model-only patch that strands a stored rung the new model's ladder no
+ * longer supports reconciles onto that model's default rung instead of
+ * persisting an unreadable pair (bb parity:
+ * thread-execution-override.ts:121-132 "reconcile rather than failing").
+ */
+export function resolveThreadExecutionOverridePatch(
+  env: HarnessEnv,
+  row: {
+    providerId: string;
+    modelOverride: string | null;
+    reasoningLevelOverride: string | null;
+  },
+  patch: ThreadExecutionOverridePatch,
+  overlayProviders: Record<string, RelayCatalogProvider>,
+): { modelOverride: string | null; reasoningLevelOverride: string | null } {
+  const candidate = {
+    providerId: row.providerId,
+    modelOverride: "model" in patch ? (patch.model ?? null) : row.modelOverride,
+    reasoningLevelOverride:
+      "reasoningLevel" in patch
+        ? (patch.reasoningLevel ?? null)
+        : row.reasoningLevelOverride,
+  };
+  try {
+    resolveStoredThreadExecution(env, candidate, overlayProviders);
+    return candidate;
+  } catch (error) {
+    const reconcilable =
+      "model" in patch &&
+      !("reasoningLevel" in patch) &&
+      candidate.reasoningLevelOverride !== null &&
+      error instanceof ApiError &&
+      error.code === "reasoning_level_unknown";
+    if (!reconcilable) throw error;
+    const resolved = validateThreadExecutionSelection(
+      env,
+      {
+        providerId: row.providerId,
+        ...(candidate.modelOverride !== null
+          ? { model: candidate.modelOverride }
+          : {}),
+      },
+      overlayProviders,
+    );
+    return {
+      modelOverride: candidate.modelOverride,
+      reasoningLevelOverride: resolved.resolved.reasoningLevel,
+    };
+  }
+}
