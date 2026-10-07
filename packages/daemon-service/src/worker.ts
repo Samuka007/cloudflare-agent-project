@@ -76,10 +76,6 @@ export interface WorkerEnv extends DaemonServiceEnv {
    * explicit message (the missingR2Binding posture).
    */
   readProjectAttachment?: ProjectAttachmentReader;
-  /** Edge-shield tunables (string vars; named-constant defaults). */
-  DAEMON_NEGATIVE_CACHE_MS?: string;
-  DAEMON_RATE_LIMIT_CAPACITY?: string;
-  DAEMON_RATE_LIMIT_REFILL_PER_SEC?: string;
 }
 
 export default {
@@ -360,7 +356,7 @@ async function handleSessionOpen(
   }
   // Edge gates (#36): negative cache first (doomed requests must not drain
   // bucket tokens), then the per-hostId bucket, then the DO.
-  const shield = negotiateGuard(env, hostId);
+  const shield = negotiateGuard(hostId);
   if (shield !== null) return shield;
   const stub = stubForHost(env, hostId);
   let result: OpenSessionResult;
@@ -368,9 +364,9 @@ async function handleSessionOpen(
     result = await stub.openSession({ hostId, protocolVersion, bootId });
   } catch (error) {
     if (isOverloadClass(error)) {
-      armNegativeCache(hostId, negativeCacheTtlMs(env));
+      armNegativeCache(hostId, negativeCacheTtlMs());
       return rateLimitedResponse(
-        negativeCacheTtlMs(env) / 1000,
+        negativeCacheTtlMs() / 1000,
         "durable object is overloaded; retry after the negative-cache window",
       );
     }
@@ -485,7 +481,7 @@ async function handleWsAttach(request: Request, env: WorkerEnv): Promise<Respons
   if (hostId === "" || sessionId === "") {
     return errorResponse("validation_failed", "hostId and sessionId query params required");
   }
-  const shield = negotiateGuard(env, hostId);
+  const shield = negotiateGuard(hostId);
   if (shield !== null) return shield;
   // Forward the upgrade into the DO: the accepted socket must be owned by
   // the per-machine DO so hibernation, leases and the journal co-locate.
@@ -496,9 +492,9 @@ async function handleWsAttach(request: Request, env: WorkerEnv): Promise<Respons
     return await stubForHost(env, hostId).fetch(request);
   } catch (error) {
     if (isOverloadClass(error)) {
-      armNegativeCache(hostId, negativeCacheTtlMs(env));
+      armNegativeCache(hostId, negativeCacheTtlMs());
       return rateLimitedResponse(
-        negativeCacheTtlMs(env) / 1000,
+        negativeCacheTtlMs() / 1000,
         "durable object is overloaded; retry after the negative-cache window",
       );
     }
@@ -668,12 +664,12 @@ async function authorize(
 }
 
 /** Negotiation edge gates (#36): negative-cache window, then token bucket. */
-function negotiateGuard(env: WorkerEnv, hostId: string): Response | null {
+function negotiateGuard(hostId: string): Response | null {
   const remaining = negativeRemainingMs(hostId);
   if (remaining !== null) {
     return rateLimitedResponse(remaining / 1000, "host is in the DO negative-cache window");
   }
-  const bucket = takeToken(env, hostId);
+  const bucket = takeToken(hostId);
   if (!bucket.allowed) {
     return rateLimitedResponse(bucket.retryAfterS, "negotiation rate limit exceeded for host");
   }

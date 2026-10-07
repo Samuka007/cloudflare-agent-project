@@ -334,9 +334,6 @@ export default {
           ENROLL_KEY: credentials.enrollKey,
           DAEMON_HOST_KEY: credentials.hostKey,
           DAEMON_EDGE_KV: env.DAEMON_EDGE_KV,
-          DAEMON_NEGATIVE_CACHE_MS: env.DAEMON_NEGATIVE_CACHE_MS,
-          DAEMON_RATE_LIMIT_CAPACITY: env.DAEMON_RATE_LIMIT_CAPACITY,
-          DAEMON_RATE_LIMIT_REFILL_PER_SEC: env.DAEMON_RATE_LIMIT_REFILL_PER_SEC,
         };
         return await daemonServiceWorker.fetch(request, serviceEnv);
       }
