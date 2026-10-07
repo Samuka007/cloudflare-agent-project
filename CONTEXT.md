@@ -12,3 +12,21 @@
 - **执行悬置（Execution Suspension）**：绑定宿主离线时对该 thread 的状态——**半停**语义（用户裁决 2026-10-04，#73）：消息可发、模型可回（纯聊天继续），Host Execution 被拒并以宿主离线占位结果诚实完成 turn；Edge Execution 不受影响。SPA 呈现词汇（#291，bb 形状）：turn 内＝占位 tool 行、恒无横幅（streaming-contract §9.3 行 1-3）；settled 后＝bb `host-reconnecting` runtime status → "Host disconnected. Waiting for reconnection..." 横幅 + 可排队 composer（`waiting-for-host` 永不发出——该面锁 composer，违反消息可发）。
 - **Cloud-only Failover（纯云降级）**（future，未排期）：宿主不可达时 turn 降级为 Edge Execution 继续的形态（模型 + edge 类工具），Host Execution 悬置。执行悬置的进化候选。
 - **会话可携带性（Session Portability）**（future，未排期）：thread 的绑定宿主迁移到另一台机器的能力。边缘轨迹天然可搬；宿主本地活状态（bash 现场/工作树/后台进程）物理不可搬。
+
+## 词汇：LLM Provider 族
+
+- **Provider 行（Provider Config）**：一个上游模型服务的配置行——baseUrl、凭据、API family、模型表。正本=D1 `provider_configs`（**零 env 回落**，用户裁决 2026-10-07 #450：env 播种与回落路径全删，未配置=空态诚实，不静默供模型）。
+- **API Family（协议族）**：provider 行的 wire 协议枚举，omp `api:` 值域对齐：`anthropic-messages`｜`openai-responses`｜`openai-completions`｜`openai-images`（单一真源=服务端契约；UI 为单选，#452）。
+- **模型发现（Discovery）**：从上游 `/v1/models` 拉模型表并富化元信息。omp 正本=pi-catalog（bundled catalog+models.dev 运行时富化+引用回退）；元信息字段面=contextWindow/maxTokens/thinking/input/cost/reasoning/compat（#447 对齐中）。
+- **产图源（Image Source）**：`generate_image` 的上游=API family 为 `openai-images` 的 provider 行，面板显式单选（#448；env 回落随 #450 删除）。
+- **Web Search 引擎链（Engine Chain）**：web_search 的有序引擎表+per-engine key，正本=D1（#449；env 路径同删）。
+
+## 词汇：机器与工作区族
+
+- **Daemon 链**：bb spa → server-worker → provider-app relay（模型腿）→ AgentDO（turn 编排+事件日志）→ daemon-service DO（宿主租约/命令队列）→ daemon client（宿主机上的 Node 进程，内嵌 omp 工具运行时）。
+- **Host（机器行）**：hosts 表的机器行——真机（daemon 注册，有会话可执行）或 Cloud Placeholder。thread 新建可直接选真机的 **local 工作区**（每机默认工作目录入口）。
+- **Environment／Project Source（工作区行）**：host+path 的项目级工作区（bb 正名 project source；clone 或指向既有目录）。建面=`POST /projects/:id/sources`（bb 上游动线 ProjectMachineSetupDialog，#445 移植中）——未移植前**只有**每机 local 入口可用，项目级 clone/worktree 不可建。
+
+## 词汇：工具结果语义族
+
+- **工具结果两分**（#454）：**执行成功**=stdout/stderr/exit code 如实；**执行未发生**（host 离线/占位机/unknown_host）=结构化错误结果（isError+code+人话 message）。模型面永不以 exit-0 stdout 承载失败语义——占位/离线字符串混进成功输出会污染下游推理（实例：host_offline 被读成"沙箱主机名"）。
