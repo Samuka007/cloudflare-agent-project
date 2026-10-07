@@ -20,10 +20,15 @@
  */
 
 import {
+  DEFAULT_WEB_SEARCH_CONFIG,
   IMAGE_SOURCE_API_FAMILY,
+  projectWebSearchConfig,
   relayApiValues,
   relayCatalogModelSchema,
+  resolveWebSearchConfig,
   type RelayCatalogProvider,
+  type WebSearchConfig,
+  type WebSearchProjection,
 } from "@cap/agent-do";
 import { decryptProviderSecret } from "./provider-config-crypto.js";
 import type { RelayProviderCredentialMap } from "./relay-registry.js";
@@ -64,6 +69,13 @@ export interface ProviderConfigCatalogOverlay {
    * the executor answers honestly.
    */
   imageSourceProviderId: string | null;
+  /**
+   * #449 the web_search engine-chain half: secret-free projection of the D1
+   * `web_search` row (the sole 正本 — the AGENT_DO_WEB_SEARCH env path is
+   * deleted). Absent row = ruled defaults (configured:false); a broken row
+   * is a loud decodeError, never a silent default.
+   */
+  webSearch: WebSearchOverlayRow;
   /** Content fingerprint (no secret values) for hot-reload gating. */
   fingerprint: string;
 }
@@ -72,6 +84,12 @@ export interface ProviderConfigFullOverlay extends ProviderConfigCatalogOverlay 
   /** CRUD-face rows (status + warnings included), aligned with `providers`. */
   rows: ProviderConfigRecord[];
   credentials: RelayProviderCredentialMap;
+  /**
+   * #449 the dispatch half: the full engine config with DECRYPTED secrets
+   * merged (agent DO hot-apply). null when no row exists or the row is
+   * broken (the DO keeps its last-known config; the read face is loud).
+   */
+  webSearchConfig: WebSearchConfig | null;
 }
 
 interface ProviderConfigDbRow {
@@ -86,7 +104,222 @@ interface ProviderConfigDbRow {
   updated_at: number;
 }
 
+/** The #449 web_search row (single-row seat, the image_source precedent). */
+interface WebSearchDbRow {
+  id: string;
+  /** JSON array of engine ids, in chain order. */
+  chain: string;
+  timeout_seconds: number | null;
+  /** JSON non-secret engine settings (searxng endpoint/categories/…). */
+  engines: string | null;
+  /** AES-GCM JSON of the secret half (brave apiKey, searxng token/basic*). */
+  secrets_enc: string | null;
+  /** JSON secret-PRESENCE map — the no-decrypt faces read presence only. */
+  secrets_meta: string | null;
+  updated_at: number;
+}
+
+/** Non-secret engine settings as stored (plaintext `engines` column). */
+export interface WebSearchStoredEngines {
+  searxng?: {
+    endpoint?: string;
+    categories?: string;
+    language?: string;
+    safesearch?: 0 | 1 | 2;
+  };
+}
+
+/** Secret engine settings as stored (the AES-GCM `secrets_enc` payload). */
+export interface WebSearchStoredSecrets {
+  brave?: { apiKey?: string };
+  searxng?: { token?: string; basicUsername?: string; basicPassword?: string };
+}
+
+/** Secret-PRESENCE map as stored (plaintext `secrets_meta` column). */
+export interface WebSearchSecretsMeta {
+  brave?: { apiKey?: boolean };
+  searxng?: { token?: boolean; basic?: boolean };
+}
+
+/** The secret-free overlay half of the web_search row (#449). */
+export interface WebSearchOverlayRow {
+  /** True when a D1 row exists (false = ruled defaults, not a fallback). */
+  configured: boolean;
+  /** True when the stored row failed decode/decrypt — no chain is served. */
+  decodeError: boolean;
+  /** Secret-free projection; null when absent or broken. */
+  projection: WebSearchProjection | null;
+  /**
+   * Zero-secret editable engine detail (the PUT face prefills the non-secret
+   * values and shows secret PRESENCE only); null when absent or broken.
+   */
+  engines: WebSearchFaceEngines | null;
+}
+
+/** Zero-secret engine detail for the panel write face (#449). */
+export interface WebSearchFaceEngines {
+  brave: { hasApiKey: boolean };
+  searxng: {
+    endpoint: string | null;
+    categories: string | null;
+    language: string | null;
+    safesearch: 0 | 1 | 2 | null;
+    hasToken: boolean;
+    hasBasicAuth: boolean;
+  };
+}
+
+const WEB_SEARCH_ROW_ID = "web_search";
 const PROVIDER_CONFIG_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** The three halves assembleWebSearch derives from the stored row. */
+interface WebSearchAssembly {
+  overlay: WebSearchOverlayRow;
+  config: WebSearchConfig | null;
+  fingerprint: string | null;
+}
+
+/** Parse one JSON cell; a broken cell is reported, never silently empty. */
+function parseJsonCell(label: string, raw: string | null, warnings: string[]): unknown {
+  if (raw === null || raw.trim() === "") return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    warnings.push(
+      `web_search config row: ${label} is not valid JSON (${error instanceof Error ? error.message : String(error)})`,
+    );
+    return undefined;
+  }
+}
+
+/**
+ * Assemble the #449 web_search halves from the stored row: the secret-free
+ * overlay projection, the dispatch config (decrypt half only), and the
+ * fingerprint content. Validation runs through resolveWebSearchConfig — the
+ * SAME single path the panel write face uses, so a stored row can never
+ * serve a chain the write face would have rejected. A broken row is a loud
+ * decodeError (skip-with-warning discipline): the row stays in D1, the
+ * projection faces report it, and no defaults are silently substituted.
+ */
+async function assembleWebSearch(
+  row: WebSearchDbRow | undefined,
+  options: { decrypt: boolean },
+  masterKey: string | undefined,
+  warnings: string[],
+): Promise<WebSearchAssembly> {
+  if (row === undefined) {
+    return {
+      overlay: {
+        configured: false,
+        decodeError: false,
+        projection: projectWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG),
+        engines: null,
+      },
+      config: null,
+      fingerprint: null,
+    };
+  }
+  const fail = (reason: string): WebSearchAssembly => {
+    warnings.push(`web_search config row: ${reason} — decodeError (row kept, no chain served)`);
+    return {
+      overlay: { configured: true, decodeError: true, projection: null, engines: null },
+      config: null,
+      fingerprint: JSON.stringify({ decodeError: true, updatedAt: row.updated_at }),
+    };
+  };
+  let secrets: WebSearchStoredSecrets | undefined;
+  if (options.decrypt && row.secrets_enc !== null) {
+    if (masterKey === undefined || masterKey === "") {
+      warnings.push(
+        "web_search config row: secrets_enc present but PROVIDER_CONFIG_MASTER_KEY is not configured — engines needing secrets will report unconfigured",
+      );
+    } else {
+      try {
+        secrets = JSON.parse(await decryptProviderSecret(masterKey, row.secrets_enc)) as
+          WebSearchStoredSecrets;
+      } catch (error) {
+        return fail(
+          `secrets_enc is not decryptable (${error instanceof Error ? error.message : String(error)})`,
+        );
+      }
+    }
+  }
+  const storedEngines = parseJsonCell("engines", row.engines, warnings) as
+    WebSearchStoredEngines | undefined;
+  if (row.engines !== null && storedEngines === undefined) {
+    return fail("engines is not valid JSON");
+  }
+  const chain = parseJsonCell("chain", row.chain, warnings) as string[] | undefined;
+  if (chain === undefined) return fail("chain is not valid JSON");
+  const patch = {
+    chain,
+    ...(row.timeout_seconds !== null ? { timeoutSeconds: row.timeout_seconds } : {}),
+    engines: {
+      ...(secrets?.brave?.apiKey !== undefined ? { brave: { apiKey: secrets.brave.apiKey } } : {}),
+      searxng: { ...storedEngines?.searxng, ...secrets?.searxng },
+    },
+  };
+  let config: WebSearchConfig;
+  try {
+    config = resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, patch);
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error));
+  }
+  // Presence map: the decrypt half derives it from the real secrets; the
+  // catalog half reads the plaintext meta column. The "(stored)" marker is
+  // presence-only — the projection emits booleans, never a value.
+  const meta = parseJsonCell("secrets_meta", row.secrets_meta, warnings) as
+    WebSearchSecretsMeta | undefined;
+  const faceEngines: WebSearchFaceEngines = {
+    brave: {
+      // The decrypt half reads the real secrets; the catalog half the meta.
+      hasApiKey:
+        options.decrypt
+          ? secrets?.brave?.apiKey !== undefined
+          : meta?.brave?.apiKey === true,
+    },
+    searxng: {
+      endpoint: storedEngines?.searxng?.endpoint ?? null,
+      categories: storedEngines?.searxng?.categories ?? null,
+      language: storedEngines?.searxng?.language ?? null,
+      safesearch: storedEngines?.searxng?.safesearch ?? null,
+      hasToken:
+        options.decrypt
+          ? secrets?.searxng?.token !== undefined
+          : meta?.searxng?.token === true,
+      hasBasicAuth:
+        options.decrypt
+          ? secrets?.searxng?.basicUsername !== undefined ||
+            secrets?.searxng?.basicPassword !== undefined
+          : meta?.searxng?.basic === true,
+    },
+  };
+  const overlay: WebSearchOverlayRow = {
+    configured: true,
+    decodeError: false,
+    projection: options.decrypt
+      ? projectWebSearchConfig(config)
+      : projectWebSearchConfig({
+          ...config,
+          engines: {
+            brave: meta?.brave?.apiKey === true ? { apiKey: "(stored)" } : config.engines.brave,
+            searxng: config.engines.searxng,
+          },
+        }),
+    engines: faceEngines,
+  };
+  return {
+    overlay,
+    config: options.decrypt ? config : null,
+    fingerprint: JSON.stringify({
+      chain: config.chain,
+      timeoutSeconds: config.timeoutSeconds,
+      engines: storedEngines ?? {},
+      secretsMeta: meta ?? {},
+      updatedAt: row.updated_at,
+    }),
+  };
+}
 
 /** Type guard: the provider-level api seat admits the #361 relay families +
  * #362's image-source family; anything else is a loud row warning, never a
@@ -111,6 +344,8 @@ export interface ProviderConfigLoad {
   rows: ProviderConfigRecord[];
   catalog: ProviderConfigCatalogOverlay;
   credentials: RelayProviderCredentialMap;
+  /** #449 the dispatch-half engine config (decrypt half only). */
+  webSearchConfig: WebSearchConfig | null;
   warnings: string[];
 }
 
@@ -132,10 +367,14 @@ async function readProviderConfigs(
   // an extra DO event-loop yield here races the read faces (observed: the
   // L1 send→read tests see a completed mock turn where one round trip sees
   // an in-flight one).
-  const [imageSourceResult, rowsResult] = await db.batch([
+  const [imageSourceResult, rowsResult, webSearchResult] = await db.batch([
     db.prepare("SELECT provider_id FROM image_source WHERE id = 'image_source'"),
     db.prepare(
       "SELECT id, display_name, base_url, api, service_tier, api_key_enc, models, created_at, updated_at FROM provider_configs ORDER BY id",
+    ),
+    db.prepare(
+      `SELECT id, chain, timeout_seconds, engines, secrets_enc, secrets_meta, updated_at
+       FROM ${WEB_SEARCH_ROW_ID} WHERE id = '${WEB_SEARCH_ROW_ID}'`,
     ),
   ] as const);
   // The seat row's cell: narrow at the boundary (unknown → string|null).
@@ -149,6 +388,9 @@ async function readProviderConfigs(
   // pre-batch `.all<ProviderConfigDbRow>()` trusted — batch erases the
   // per-statement generic, this restores it.
   const result = rowsResult as { results: ProviderConfigDbRow[] };
+  // Same boundary cast as `result` — the web_search statement returns 0..1 rows.
+  const webSearchRows = webSearchResult as { results: WebSearchDbRow[] };
+  const webSearchRow = webSearchRows.results[0];
   const rows: ProviderConfigRecord[] = [];
   const providers: Record<string, RelayCatalogProvider> = {};
   const credentials: RelayProviderCredentialMap = {};
@@ -261,16 +503,24 @@ async function readProviderConfigs(
       updatedAt: row.updated_at,
     });
   }
+  const webSearch = await assembleWebSearch(
+    webSearchRow,
+    options,
+    env.PROVIDER_CONFIG_MASTER_KEY,
+    warnings,
+  );
   const fingerprint = await fingerprintOf(
     providers,
     credentials,
     maxUpdatedAt,
     imageSourceProviderId,
+    webSearch.fingerprint,
   );
   return {
     rows,
-    catalog: { providers, imageSourceProviderId, fingerprint },
+    catalog: { providers, imageSourceProviderId, webSearch: webSearch.overlay, fingerprint },
     credentials,
+    webSearchConfig: webSearch.config,
     warnings,
   };
 }
@@ -279,13 +529,16 @@ async function readProviderConfigs(
  * Content-only fingerprint: provider declarations in full, credential
  * PRESENCE per id, the newest updated_at (so a key-only rotation still
  * bumps it), and the #448 image-source selection (a seat-only flip
- * hot-applies). Values of secrets never enter the string.
+ * hot-applies), and the #449 web_search engine-chain content (chain order,
+ * non-secret engine settings, secret PRESENCE meta, updated_at — a key-only
+ * rotation still bumps it). Values of secrets never enter the string.
  */
 async function fingerprintOf(
   providers: Record<string, RelayCatalogProvider>,
   credentials: RelayProviderCredentialMap,
   maxUpdatedAt: number,
   imageSourceProviderId: string | null,
+  webSearchContent: string | null,
 ): Promise<string> {
   const content = JSON.stringify({
     providers,
@@ -294,6 +547,7 @@ async function fingerprintOf(
     ),
     maxUpdatedAt,
     imageSourceProviderId,
+    webSearch: webSearchContent,
   });
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
   let binary = "";
@@ -332,6 +586,7 @@ export async function loadProviderConfigOverlay(
     ...load.catalog,
     rows: load.rows,
     credentials: load.credentials,
+    webSearchConfig: load.webSearchConfig,
     standaloneProviders: new Set(Object.keys(load.catalog.providers)),
   };
 }

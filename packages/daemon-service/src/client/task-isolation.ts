@@ -104,7 +104,7 @@ const taskIsolationPatchSchema = z.object({
 
 /**
  * Decode the `DAEMON_TASK_ISOLATION` env JSON patch over omp's defaults
- * (#102 decodeWebSearchConfig shape). Shape violations throw (zod); the
+ * (#102 resolveWebSearchConfig shape). Shape violations throw (zod); the
  * budget may only be lowered, never raised past the vendored 1 GiB pin.
  */
 export function decodeTaskIsolationConfig(

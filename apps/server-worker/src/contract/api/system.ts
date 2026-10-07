@@ -272,8 +272,8 @@ export type SystemVersionQuery = z.infer<typeof systemVersionQuerySchema>;
 // secret values by construction — the harness row re-uses the secret-free
 // HarnessProjection (provider-app projectHarness, key PRESENCE only) plus the
 // relay host, and the web_search row carries engine ids and credential-gate
-// booleans only. There is deliberately no PUT anywhere on this face: the
-// config source of truth is the deployment env (control-plane-layer §3.2).
+// booleans only. The web_search WRITE face lives at /system/web-search below
+// (#449) — the D1 row is the sole 正本, this aggregate stays read-only.
 
 export const providerWebSearchEngineProjectionSchema = z.object({
   engine: z.string(),
@@ -309,13 +309,13 @@ export const systemProviderProjectionsResponseSchema = z.object({
     permissionMode: z.string(),
   }),
   webSearch: z.object({
-    /** True when AGENT_DO_WEB_SEARCH is set (false = ruled defaults). */
+    /** True when the D1 web_search row exists (false = ruled defaults). */
     configured: z.boolean(),
     /**
-     * True when the env JSON failed to decode. The composed AgentDO would
-     * fail the same way at construction, so this reports a broken deployment
-     * rather than a usable chain. Error text is dropped (JSON.parse/zod
-     * messages can quote raw env content — zero-secret discipline).
+     * True when the stored D1 row failed to decode/decrypt — no chain is
+     * served and the DO keeps its last-known config. Error text is dropped
+     * (JSON.parse/zod messages can quote raw row content — zero-secret
+     * discipline).
      */
     decodeError: z.boolean(),
     chain: z.array(providerWebSearchEngineProjectionSchema),
@@ -355,6 +355,74 @@ export const systemProviderProjectionsResponseSchema = z.object({
 export type SystemProviderProjectionsResponse = z.infer<
   typeof systemProviderProjectionsResponseSchema
 >;
+
+/**
+ * #449 the explicit web-search engine-chain face (the D1 `web_search` row,
+ * the sole 正本 — the AGENT_DO_WEB_SEARCH env path is deleted, #450
+ * zero-env ruling). `chain` is the effective ordered chain with per-engine
+ * credential gates; `engines` is the zero-secret editable detail (non-secret
+ * values readable, secret PRESENCE only); `availableEngines` is the
+ * writable vocabulary (the DO-local fetch-only engine set — browser-backed
+ * engines are excluded at the config layer and never selectable).
+ */
+export const systemWebSearchResponseSchema = z.object({
+  configured: z.boolean(),
+  decodeError: z.boolean(),
+  chain: z.array(providerWebSearchEngineProjectionSchema),
+  timeoutSeconds: z.number().nullable(),
+  browserBackedEngines: z.array(z.string()),
+  availableEngines: z.array(z.string()),
+  engines: z.object({
+    brave: z.object({ hasApiKey: z.boolean() }),
+    searxng: z.object({
+      endpoint: z.string().nullable(),
+      categories: z.string().nullable(),
+      language: z.string().nullable(),
+      safesearch: z.union([z.literal(0), z.literal(1), z.literal(2)]).nullable(),
+      hasToken: z.boolean(),
+      hasBasicAuth: z.boolean(),
+    }),
+  }),
+});
+export type SystemWebSearchResponse = z.infer<typeof systemWebSearchResponseSchema>;
+
+/**
+ * PUT /system/web-search. `chain` is the full ordered chain (wholesale —
+ * order IS the payload); every engine setting is TRI-STATE: absent = keep
+ * the stored value, null = clear, string = set — so a partial panel write
+ * (e.g. a reorder) never disturbs unrelated fields.
+ */
+export const systemWebSearchPutRequestSchema = z
+  .object({
+    chain: z.array(z.string()).min(1).optional(),
+    timeoutSeconds: z.number().int().positive().optional(),
+    engines: z
+      .object({
+        brave: z
+          .object({ apiKey: z.string().min(1).nullable().optional() })
+          .strict()
+          .optional(),
+        searxng: z
+          .object({
+            endpoint: z.string().min(1).nullable().optional(),
+            token: z.string().min(1).nullable().optional(),
+            basicUsername: z.string().min(1).nullable().optional(),
+            basicPassword: z.string().min(1).nullable().optional(),
+            categories: z.string().min(1).nullable().optional(),
+            language: z.string().min(1).nullable().optional(),
+            safesearch: z
+              .union([z.literal(0), z.literal(1), z.literal(2)])
+              .nullable()
+              .optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type SystemWebSearchPutRequest = z.infer<typeof systemWebSearchPutRequestSchema>;
 
 /**
  * #448 the explicit image-source face (the 产图源 正本, D1 image_source).

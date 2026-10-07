@@ -1,8 +1,9 @@
-import { beforeAll, describe, expect, it } from "vitest";
-import { exports } from "cloudflare:workers";
+import { beforeAll, afterEach, describe, expect, it } from "vitest";
+import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate.js";
 import { restoreRigRelayCatalog, unsetRigRelayCatalog } from "../helpers.js";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
+import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
 import { systemProviderProjectionsResponseSchema } from "../../src/contract/api/system.js";
 import { buildProviderProjections } from "../../src/routes/system.js";
 
@@ -11,10 +12,17 @@ import { buildProviderProjections } from "../../src/routes/system.js";
  * status face (#255 solution C). The harness row is the secret-free
  * HarnessProjection (provider-app projectHarness) plus the relay host; the
  * web_search row is chain order + credential-gate booleans + browser-backed
- * exclusions. Acceptance: zero secret values anywhere in the response, and
- * no PUT on the face — provider edits ride the deployment env.
+ * exclusions. #449: the web_search row projects the D1 `web_search` seat —
+ * the AGENT_DO_WEB_SEARCH env path is deleted (zero env fallback), edits
+ * ride the /system/web-search write face. Acceptance: zero secret values
+ * anywhere in the response, and no PUT on this aggregate face.
  */
 beforeAll(ensureMigrations);
+
+afterEach(async () => {
+  // The seat is single-row; every case starts from the unconfigured state.
+  await env.DB.prepare("DELETE FROM web_search WHERE id = 'web_search'").run();
+});
 
 describe("GET /api/v1/system/provider-projections", () => {
   it("serves a contract-valid default projection (mock relay, ruled chain)", async () => {
@@ -39,8 +47,9 @@ describe("GET /api/v1/system/provider-projections", () => {
       // harness default (no deployment machine is fabricated).
       expect(parsed.harness.machineId).toBe(CLOUD_PLACEHOLDER_HOST_ID);
       expect(parsed.harness.permissionMode).toBe("full");
-      // Unset AGENT_DO_WEB_SEARCH → ruled default chain: keyed API first,
-      // credential-free aggregate as fallback (#144).
+      // No D1 web_search row → ruled default chain: keyed API first,
+      // credential-free aggregate as fallback (#144); not an env fallback
+      // (#449 — the env path no longer exists).
       expect(parsed.webSearch.configured).toBe(false);
       expect(parsed.webSearch.decodeError).toBe(false);
       expect(
@@ -60,15 +69,16 @@ describe("GET /api/v1/system/provider-projections", () => {
     }
   });
 
-  it("never emits secret values (评审断言)", () => {
+  it("never emits secret values (评审断言)", async () => {
     const RELAY_KEY = "sk-relay-secret-266-harness";
     const BRAVE_KEY = "brave-secret-266-value";
     const SEARXNG_TOKEN = "searxng-secret-266-token";
-    const built = buildProviderProjections({
-      MODEL_RELAY_API_KEY: RELAY_KEY,
-      MODEL_RELAY_BASE_URL_ANTHROPIC: "https://newapi.example.com",
-      MODEL_RELAY_MODEL: "glm-5.3-anth",
-      AGENT_DO_WEB_SEARCH: JSON.stringify({
+    // The engine chain rides the D1 seat: write it through the write face,
+    // then project the SAME state the route reads (#449).
+    await exports.default.fetch("https://example.com/api/v1/system/web-search", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
         chain: ["brave", "searxng"],
         engines: {
           brave: { apiKey: BRAVE_KEY },
@@ -76,6 +86,15 @@ describe("GET /api/v1/system/provider-projections", () => {
         },
       }),
     });
+    const overlay = await loadProviderConfigCatalogOverlay(env);
+    const built = buildProviderProjections(
+      {
+        MODEL_RELAY_API_KEY: RELAY_KEY,
+        MODEL_RELAY_BASE_URL_ANTHROPIC: "https://newapi.example.com",
+        MODEL_RELAY_MODEL: "glm-5.3-anth",
+      },
+      overlay ?? undefined,
+    );
     const wire = systemProviderProjectionsResponseSchema.parse(built);
     const serialized = JSON.stringify(wire);
     expect(serialized).not.toContain(RELAY_KEY);
@@ -94,14 +113,18 @@ describe("GET /api/v1/system/provider-projections", () => {
     ]);
   });
 
-  it("projects credential gates per engine from the env JSON", () => {
-    const built = buildProviderProjections({
-      AGENT_DO_WEB_SEARCH: JSON.stringify({
+  it("projects credential gates per engine from the D1 seat", async () => {
+    await exports.default.fetch("https://example.com/api/v1/system/web-search", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
         chain: ["duckduckgo", "searxng"],
         timeoutSeconds: 120,
         engines: { searxng: { endpoint: "https://searx.example.com" } },
       }),
     });
+    const overlay = await loadProviderConfigCatalogOverlay(env);
+    const built = buildProviderProjections({}, overlay ?? undefined);
     const parsed = systemProviderProjectionsResponseSchema.parse(built);
     expect(parsed.webSearch.configured).toBe(true);
     expect(parsed.webSearch.decodeError).toBe(false);
@@ -118,22 +141,47 @@ describe("GET /api/v1/system/provider-projections", () => {
     expect(parsed.webSearch.timeoutSeconds).toBe(120);
   });
 
-  it("reports decodeError without env content when the env JSON is unusable", () => {
+  it("reports decodeError without row content when the stored chain is unusable", async () => {
     // A browser-backed chain entry is refused at the config layer (L1:
-    // rejection, never silent fallback) — the projection must report the
-    // broken deployment without quoting the raw env or the error text.
-    const raw = JSON.stringify({ chain: ["google"] });
-    const built = buildProviderProjections({ AGENT_DO_WEB_SEARCH: raw });
+    // rejection, never silent fallback) — a hand-edited row carrying one is
+    // a loud decodeError: no chain is served, the error text is dropped
+    // (it can quote raw row content — zero-secret discipline).
+    await env.DB.prepare(
+      "INSERT INTO web_search (id, chain, timeout_seconds, engines, secrets_enc, secrets_meta, updated_at) VALUES ('web_search', '[\"google\"]', 60, NULL, NULL, NULL, ?)",
+    )
+      .bind(Date.now())
+      .run();
+    const overlay = await loadProviderConfigCatalogOverlay(env);
+    const built = buildProviderProjections({}, overlay ?? undefined);
     const parsed = systemProviderProjectionsResponseSchema.parse(built);
     expect(parsed.webSearch.configured).toBe(true);
     expect(parsed.webSearch.decodeError).toBe(true);
     expect(parsed.webSearch.chain).toEqual([]);
     expect(parsed.webSearch.timeoutSeconds).toBeNull();
     expect(parsed.webSearch.browserBackedEngines).toEqual(["google", "ecosia", "mojeek"]);
-    const brokenJson = buildProviderProjections({ AGENT_DO_WEB_SEARCH: "{not-json" });
-    expect(systemProviderProjectionsResponseSchema.parse(brokenJson).webSearch.decodeError).toBe(
-      true,
+  });
+
+  it("projects the ruled defaults when no seat row exists", () => {
+    const built = buildProviderProjections({});
+    const parsed = systemProviderProjectionsResponseSchema.parse(built);
+    expect(parsed.webSearch.configured).toBe(false);
+    expect(parsed.webSearch.decodeError).toBe(false);
+    expect(
+      parsed.webSearch.chain.map((engine) => engine.engine),
+    ).toEqual(["brave", "public"]);
+    expect(parsed.webSearch.timeoutSeconds).toBe(60);
+  });
+
+  it("keeps the aggregate face read-only while the write face sits at /system/web-search", async () => {
+    const response = await exports.default.fetch(
+      "https://example.com/api/v1/system/provider-projections",
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chain: ["public"] }),
+      },
     );
+    expect(response.status).toBe(404);
   });
 
   it("derives the relay host and tolerates a malformed relay URL", () => {

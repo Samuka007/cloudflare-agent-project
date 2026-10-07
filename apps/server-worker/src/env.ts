@@ -124,11 +124,4 @@ export interface Env {
   readonly PROVIDER_CONFIG_MASTER_KEY?: string;
   /** `accept-edits` | `auto` | `full` (default `full`). */
   readonly HARNESS_PERMISSION_MODE?: string;
-  /**
-   * web_search engine chain + engine credentials (#144), read by the composed
-   * AgentDO at construction (packages/agent-do/src/agent-do.ts). #266's
-   * provider projection reads the SAME deployment var — the endpoint projects
-   * chain order and credential-gate booleans only, never the secret values.
-   */
-  readonly AGENT_DO_WEB_SEARCH?: string;
 }

@@ -3,8 +3,9 @@ import { z } from "zod";
 import {
   BROWSER_BACKED_ENGINES,
   DEFAULT_WEB_SEARCH_CONFIG,
-  decodeWebSearchConfig,
   projectWebSearchConfig,
+  resolveWebSearchConfig,
+  SEARCH_ENGINE_IDS,
   IMAGE_SOURCE_API_FAMILY,
   SYNTHETIC_RELAY_PROVIDER_ID,
   type RelayCatalogProvider,
@@ -22,6 +23,10 @@ import {
   type ProviderConfigCatalogOverlay,
   type HarnessEnv,
   type ModelsYmlImportParse,
+  type WebSearchOverlayRow,
+  type WebSearchSecretsMeta,
+  type WebSearchStoredEngines,
+  type WebSearchStoredSecrets,
 } from "@cap/provider-app";
 import {
   systemProviderProjectionsResponseSchema,
@@ -43,6 +48,8 @@ import {
   providerConfigsListResponseSchema,
   systemImageSourcePutRequestSchema,
   systemImageSourceResponseSchema,
+  systemWebSearchPutRequestSchema,
+  systemWebSearchResponseSchema,
   type ProviderConfigImportEntry,
   type ProviderConfigRow,
   type SystemExecutionOptionsResponse,
@@ -71,6 +78,7 @@ import {
   type ProviderConfigWriteFields,
 } from "../db/provider-configs.js";
 import { getImageSourceProviderId, setImageSourceProviderId } from "../db/image-source.js";
+import { setWebSearchConfig, webSearchHasSecrets } from "../db/web-search.js";
 import {
   discoverProviderModelsEnriched,
   probeProviderConnection,
@@ -202,20 +210,64 @@ export function buildExecutionOptions(
   };
 }
 
+/** The projections-face webSearch row: the D1 overlay half (#449) mapped to
+ * the aggregate shape. No overlay (rigs without D1) = the ruled defaults
+ * (configured:false); a broken row reports decodeError with NO chain —
+ * never a silently substituted default. */
+function webSearchProjectionRow(overlayRow: WebSearchOverlayRow | undefined): {
+  configured: boolean;
+  decodeError: boolean;
+  chain: WebSearchEngineProjection[];
+  timeoutSeconds: number | null;
+  browserBackedEngines: string[];
+} {
+  // No overlay (rigs without D1) = the ruled defaults — the same shape the
+  // loader's absent-row half projects.
+  if (overlayRow === undefined) {
+    return {
+      configured: false,
+      decodeError: false,
+      chain: projectWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG).chain,
+      timeoutSeconds: DEFAULT_WEB_SEARCH_CONFIG.timeoutSeconds,
+      browserBackedEngines: [...BROWSER_BACKED_ENGINES],
+    };
+  }
+  if (overlayRow.projection === null) {
+    return {
+      configured: overlayRow.configured,
+      decodeError: overlayRow.decodeError,
+      chain: [],
+      timeoutSeconds: null,
+      browserBackedEngines: [...BROWSER_BACKED_ENGINES],
+    };
+  }
+  return {
+    configured: overlayRow.configured,
+    decodeError: false,
+    chain: overlayRow.projection.chain,
+    timeoutSeconds: overlayRow.projection.timeoutSeconds,
+    browserBackedEngines: [...overlayRow.projection.browserBackedEngines],
+  };
+}
+
 /**
  * GET /system/provider-projections (#266, #255 solution C): aggregate the
  * read-only provider status face. Harness row = projectHarness over
  * resolveHarness (the same total resolution thread turns run) plus the relay
- * host; web_search row = projectWebSearchConfig over decodeWebSearchConfig —
+ * host; web_search row = the D1 `web_search` overlay half (#449 — the
+ * AGENT_DO_WEB_SEARCH env path is deleted, the row is the sole 正本):
  * chain order, credential-gate booleans, browser-backed exclusions. Zero
- * secret values leave the env: key/token contents never enter the response,
- * and decode failures drop the error text (it can quote raw env content).
+ * secret values leave the DB: key/token contents never enter the response,
+ * and decode failures drop the error text (it can quote raw row content).
  * Daemon-side provider pins (judge/security) are NOT visible here — they live
  * in daemon env, a different trust domain (#255 §6.2, ticket #56).
  */
 export function buildProviderProjections(
-  env: Pick<Env, "AGENT_DO_WEB_SEARCH"> & HarnessEnv,
-  overlay?: Pick<ProviderConfigCatalogOverlay, "providers" | "imageSourceProviderId">,
+  env: HarnessEnv,
+  overlay?: Pick<
+    ProviderConfigCatalogOverlay,
+    "providers" | "imageSourceProviderId" | "webSearch"
+  >,
 ) {
   // One resolution for both rows: the harness projection and the catalog
   // status project the same evaluation (same-source, #350).
@@ -232,37 +284,7 @@ export function buildProviderProjections(
   } catch {
     // env content, not a caller error
   }
-  const rawWebSearch = env.AGENT_DO_WEB_SEARCH;
-  let webSearch: {
-    configured: boolean;
-    decodeError: boolean;
-    chain: WebSearchEngineProjection[];
-    timeoutSeconds: number | null;
-    browserBackedEngines: string[];
-  };
-  if (rawWebSearch === undefined || rawWebSearch === "") {
-    webSearch = {
-      configured: false,
-      decodeError: false,
-      ...projectWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG),
-    };
-  } else {
-    try {
-      webSearch = {
-        configured: true,
-        decodeError: false,
-        ...projectWebSearchConfig(decodeWebSearchConfig(rawWebSearch)),
-      };
-    } catch {
-      webSearch = {
-        configured: true,
-        decodeError: true,
-        chain: [],
-        timeoutSeconds: null,
-        browserBackedEngines: [...BROWSER_BACKED_ENGINES],
-      };
-    }
-  }
+  const webSearch = webSearchProjectionRow(overlay?.webSearch);
   // #448: generate_image availability, presence-only. The 产图源 seat is
   // the only gate (#450 — zero env fallback): configured iff the selection
   // resolves to a dispatchable api=openai-images row. A dangling selection
@@ -615,6 +637,183 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         candidates: await imageSourceCandidates(ctx.env),
       }),
     );
+  });
+
+  // #449 the web-search engine-chain face: the D1 `web_search` row is the
+  // sole 正本 (zero env fallback — AGENT_DO_WEB_SEARCH is deleted). Read =
+  // the effective chain + zero-secret editable engine detail; write = the
+  // full ordered chain plus TRI-STATE engine settings (absent = keep the
+  // stored value, null = clear, value = set), validated through the SAME
+  // resolveWebSearchConfig path the stored-row loader runs.
+  const webSearchFaceOf = async (env: Env) => {
+    const overlay = await loadProviderConfigCatalogOverlay(env);
+    const ws = overlay?.webSearch;
+    return systemWebSearchResponseSchema.parse({
+      configured: ws?.configured ?? false,
+      decodeError: ws?.decodeError ?? false,
+      chain: ws?.projection?.chain ?? [],
+      timeoutSeconds: ws?.projection?.timeoutSeconds ?? null,
+      browserBackedEngines:
+        ws?.projection?.browserBackedEngines ?? [...BROWSER_BACKED_ENGINES],
+      availableEngines: [...SEARCH_ENGINE_IDS],
+      engines: ws?.engines ?? {
+        brave: { hasApiKey: false },
+        searxng: {
+          endpoint: null,
+          categories: null,
+          language: null,
+          safesearch: null,
+          hasToken: false,
+          hasBasicAuth: false,
+        },
+      },
+    });
+  };
+
+  routes.get("/system/web-search", async (ctx) => {
+    return ctx.json(await webSearchFaceOf(ctx.env));
+  });
+
+  routes.put("/system/web-search", async (ctx) => {
+    const payload = await requireJsonBody(ctx, systemWebSearchPutRequestSchema);
+    const load = await loadProviderConfigOverlay(ctx.env);
+    const row = load?.webSearch;
+    if (row?.decodeError) {
+      throw new ApiError({
+        status: 422,
+        code: "web_search_row_broken",
+        message:
+          "the stored web_search row failed to decode/decrypt — repair it in D1 before editing through this face (keep-semantics cannot read the stored values)",
+      });
+    }
+    const prior = load?.webSearchConfig;
+    // Tri-state merge: undefined = keep the stored value, null = clear,
+    // value = set. Cleared and unset fields collapse to absent in storage.
+    const tri = (
+      priorValue: string | undefined,
+      next: string | null | undefined,
+    ): string | undefined => (next === undefined ? priorValue : (next ?? undefined));
+    const braveApiKey = tri(prior?.engines.brave?.apiKey, payload.engines?.brave?.apiKey);
+    const sxToken = tri(prior?.engines.searxng?.token, payload.engines?.searxng?.token);
+    const sxUser = tri(
+      prior?.engines.searxng?.basicUsername,
+      payload.engines?.searxng?.basicUsername,
+    );
+    const sxPass = tri(
+      prior?.engines.searxng?.basicPassword,
+      payload.engines?.searxng?.basicPassword,
+    );
+    const sxEndpoint = tri(prior?.engines.searxng?.endpoint, payload.engines?.searxng?.endpoint);
+    const sxCategories = tri(
+      prior?.engines.searxng?.categories,
+      payload.engines?.searxng?.categories,
+    );
+    const sxLanguage = tri(prior?.engines.searxng?.language, payload.engines?.searxng?.language);
+    const sxSafesearch =
+      payload.engines?.searxng?.safesearch === undefined
+        ? prior?.engines.searxng?.safesearch
+        : (payload.engines.searxng.safesearch ?? undefined);
+    const effectiveEngines = {
+      ...(braveApiKey !== undefined ? { brave: { apiKey: braveApiKey } } : {}),
+      searxng: {
+        ...(sxEndpoint !== undefined && { endpoint: sxEndpoint }),
+        ...(sxToken !== undefined && { token: sxToken }),
+        ...(sxUser !== undefined && { basicUsername: sxUser }),
+        ...(sxPass !== undefined && { basicPassword: sxPass }),
+        ...(sxCategories !== undefined && { categories: sxCategories }),
+        ...(sxLanguage !== undefined && { language: sxLanguage }),
+        ...(sxSafesearch !== undefined && { safesearch: sxSafesearch }),
+      },
+    };
+    // The single validation path: unknown/browser-backed chain entries,
+    // non-url endpoints, and out-of-vocabulary shapes are REFUSED here —
+    // rejection, never silent fallback (L1).
+    let effective;
+    try {
+      effective = resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, {
+        chain: payload.chain ?? prior?.chain ?? DEFAULT_WEB_SEARCH_CONFIG.chain,
+        timeoutSeconds: payload.timeoutSeconds ?? prior?.timeoutSeconds,
+        engines: effectiveEngines,
+      });
+    } catch (error) {
+      throw new ApiError({
+        status: 422,
+        code: "validation_failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    // Storage split: the secret half rides the AES-GCM column, the
+    // non-secret half the plaintext engines column, and the presence map
+    // the zero-secret meta column.
+    const secrets: WebSearchStoredSecrets = {
+      ...(braveApiKey !== undefined ? { brave: { apiKey: braveApiKey } } : {}),
+      ...(sxToken !== undefined || sxUser !== undefined || sxPass !== undefined
+        ? {
+            searxng: {
+              ...(sxToken !== undefined && { token: sxToken }),
+              ...(sxUser !== undefined && { basicUsername: sxUser }),
+              ...(sxPass !== undefined && { basicPassword: sxPass }),
+            },
+          }
+        : {}),
+    };
+    const engines: WebSearchStoredEngines = {
+      ...(sxEndpoint !== undefined ||
+      sxCategories !== undefined ||
+      sxLanguage !== undefined ||
+      sxSafesearch !== undefined
+        ? {
+            searxng: {
+              ...(sxEndpoint !== undefined && { endpoint: sxEndpoint }),
+              ...(sxCategories !== undefined && { categories: sxCategories }),
+              ...(sxLanguage !== undefined && { language: sxLanguage }),
+              ...(sxSafesearch !== undefined && { safesearch: sxSafesearch }),
+            },
+          }
+        : {}),
+    };
+    const meta: WebSearchSecretsMeta = {
+      ...(secrets.brave !== undefined ? { brave: { apiKey: true } } : {}),
+      ...(secrets.searxng !== undefined
+        ? {
+            searxng: {
+              token: secrets.searxng.token !== undefined,
+              basic:
+                secrets.searxng.basicUsername !== undefined ||
+                secrets.searxng.basicPassword !== undefined,
+            },
+          }
+        : {}),
+    };
+    if (
+      webSearchHasSecrets(secrets) &&
+      (ctx.env.PROVIDER_CONFIG_MASTER_KEY === undefined ||
+        ctx.env.PROVIDER_CONFIG_MASTER_KEY === "")
+    ) {
+      throw new ApiError({
+        status: 422,
+        code: "master_key_missing",
+        message:
+          "PROVIDER_CONFIG_MASTER_KEY is not configured — refusing to store engine secrets " +
+          "(set the Worker secret first; credential-free engines still work)",
+      });
+    }
+    await setWebSearchConfig(
+      ctx.env,
+      {
+        chain: effective.chain,
+        timeoutSeconds: effective.timeoutSeconds,
+        engines,
+        secrets,
+        meta,
+      },
+      ctx.env.PROVIDER_CONFIG_MASTER_KEY,
+    );
+    // Hot-apply broadcast (#382): the engine-chain row rides the same
+    // overlay fingerprint as the provider rows, so the next turn picks it
+    // up (system.ts:348 precedent).
+    await hub(ctx.env).notifySystem(["config-changed"]);
+    return ctx.json(await webSearchFaceOf(ctx.env));
   });
 
   routes.get("/system/providers", async (ctx) => {
