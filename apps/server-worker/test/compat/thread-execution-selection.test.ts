@@ -513,3 +513,142 @@ describe("#486 thread default-execution-options face", () => {
     await ensureRigReady();
   });
 });
+
+describe("#499 PATCH execution-override rewrite (fallback card write face)", () => {
+  async function patch(path: string, body: unknown): Promise<Response> {
+    return exports.default.fetch(`${BASE}${path}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async function readFaceModel(threadId: string): Promise<string | null> {
+    const response = await exports.default.fetch(
+      `${BASE}/api/v1/threads/${threadId}/default-execution-options`,
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json<{ model: string } | null>();
+    return body?.model ?? null;
+  }
+
+  /** A second rig row model gives the rewrite a live target; undone via the
+   * rig re-seed (same pattern as the follow-up-send drift test). */
+  async function seedSecondRigModel(): Promise<void> {
+    await env.DB.prepare("UPDATE provider_configs SET models = ? WHERE id = ?")
+      .bind(
+        JSON.stringify([
+          { id: RIG_MODEL_ID, reasoningLevels: ["none"], defaultReasoningLevel: "none" },
+          { id: "rig-model-2", reasoningLevels: ["none"], defaultReasoningLevel: "none" },
+        ]),
+        RIG_PROVIDER_ID,
+      )
+      .run();
+  }
+
+  it("rewrites the stored model to a directory row and the read face follows", async () => {
+    await seedSecondRigModel();
+    const created = await createThread({
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
+    });
+    expect(created.status).toBe(201);
+    const thread = await created.json<CreatedThread>();
+    try {
+      const response = await patch(`/api/v1/threads/${thread.id}`, {
+        model: "rig-model-2",
+      });
+      expect(response.status).toBe(200);
+      const row = await threadRow(thread.id);
+      expect(row.model_override).toBe("rig-model-2");
+      // The explicit rewrite is the new thread truth on the read face.
+      expect(await readFaceModel(thread.id)).toBe("rig-model-2");
+    } finally {
+      await ensureRigReady();
+    }
+  });
+
+  it("rejects a dropped model with the named 422 and persists nothing", async () => {
+    // The thread stores RIG_MODEL_ID while the directory still declares it…
+    const created = await createThread({
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
+    });
+    expect(created.status).toBe(201);
+    const thread = await created.json<CreatedThread>();
+    // …then the directory drops it (the #486 pool state the card renders).
+    await env.DB.prepare("UPDATE provider_configs SET models = ? WHERE id = ?")
+      .bind(
+        JSON.stringify([
+          { id: "rig-model-2", reasoningLevels: ["none"], defaultReasoningLevel: "none" },
+        ]),
+        RIG_PROVIDER_ID,
+      )
+      .run();
+    try {
+      // Re-selecting the dropped row is NOT a rewrite target: the pool row is
+      // dispatch-dead, so the write face fails closed — no silent recovery.
+      const rejected = await patch(`/api/v1/threads/${thread.id}`, {
+        model: RIG_MODEL_ID,
+      });
+      await expect422(rejected, "model_unknown");
+      const row = await threadRow(thread.id);
+      expect(row.model_override).toBe(RIG_MODEL_ID);
+    } finally {
+      await ensureRigReady();
+    }
+  });
+
+  it("reconciles a stranded stored rung onto the new model's ladder (model-only patch)", async () => {
+    await seedSecondRigModel();
+    const created = await createThread({
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
+      reasoningLevel: "none",
+    });
+    expect(created.status).toBe(201);
+    const thread = await created.json<CreatedThread>();
+    // Strand the stored rung: the budget-off ladder is exactly ["none"], so
+    // this stored value no longer resolves on any row.
+    await env.DB.prepare(
+      "UPDATE threads SET reasoning_level_override = 'ultra' WHERE id = ?",
+    )
+      .bind(thread.id)
+      .run();
+    try {
+      const response = await patch(`/api/v1/threads/${thread.id}`, {
+        model: "rig-model-2",
+      });
+      expect(response.status).toBe(200);
+      const row = await threadRow(thread.id);
+      expect(row.model_override).toBe("rig-model-2");
+      // bb parity: reconcile rather than persist an unreadable pair.
+      expect(row.reasoning_level_override).toBe("none");
+    } finally {
+      await ensureRigReady();
+    }
+  });
+
+  it("rejects an explicit unsupported rung with the named 422", async () => {
+    await seedSecondRigModel();
+    const created = await createThread({
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
+      reasoningLevel: "none",
+    });
+    expect(created.status).toBe(201);
+    const thread = await created.json<CreatedThread>();
+    try {
+      const rejected = await patch(`/api/v1/threads/${thread.id}`, {
+        model: "rig-model-2",
+        reasoningLevel: "high",
+      });
+      await expect422(rejected, "reasoning_level_unknown");
+      const row = await threadRow(thread.id);
+      expect(row.model_override).toBe(RIG_MODEL_ID);
+      expect(row.reasoning_level_override).toBe("none");
+    } finally {
+      await ensureRigReady();
+    }
+  });
+});

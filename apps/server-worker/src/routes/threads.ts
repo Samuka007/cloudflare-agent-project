@@ -4,6 +4,7 @@ import { activeTurnIdFromEvents, type RelaySelection } from "@cap/agent-do";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import {
   classifyThreadSelectionChange,
+  resolveThreadExecutionOverridePatch,
   resolveStoredThreadExecution,
   resolveThreadDefaultExecutionOptions,
   validateThreadExecutionSelection,
@@ -520,11 +521,41 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
         });
       }
     }
+    // #499: model/reasoningLevel are a stored execution-override rewrite (the
+    // fallback card's explicit "use this model" action). Validate the exact
+    // pair that will be stored against the directory BEFORE anything writes —
+    // the same resolveStoredThreadExecution gate the read face runs — so a
+    // dead model fails closed with the named 422 and the thread truth never
+    // drifts onto a row the next GET would reject.
+    const executionPatch =
+      payload.model !== undefined || payload.reasoningLevel !== undefined
+        ? resolveThreadExecutionOverridePatch(
+            ctx.env,
+            row,
+            {
+              ...(payload.model !== undefined ? { model: payload.model } : {}),
+              ...(payload.reasoningLevel !== undefined
+                ? { reasoningLevel: payload.reasoningLevel }
+                : {}),
+            },
+            (await loadProviderConfigCatalogOverlay(ctx.env))?.providers ?? {},
+          )
+        : null;
     const updated = await updateThreadRecord(ctx.env, row.id, {
       ...(payload.title !== undefined ? { title: payload.title } : {}),
       ...(payload.sectionId !== undefined ? { sectionId: payload.sectionId } : {}),
       ...(payload.parentThreadId !== undefined ? { parentThreadId: payload.parentThreadId } : {}),
       ...(payload.visibility !== undefined ? { visibility: payload.visibility } : {}),
+      // Persist the RESOLVED pair — a model-only patch may reconcile a
+      // stranded stored rung (see resolveThreadExecutionOverridePatch) — and
+      // leave values already stored alone.
+      ...(executionPatch !== null && executionPatch.modelOverride !== row.modelOverride
+        ? { modelOverride: executionPatch.modelOverride }
+        : {}),
+      ...(executionPatch !== null &&
+      executionPatch.reasoningLevelOverride !== row.reasoningLevelOverride
+        ? { reasoningLevelOverride: executionPatch.reasoningLevelOverride }
+        : {}),
     });
     if (!updated) {
       throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
