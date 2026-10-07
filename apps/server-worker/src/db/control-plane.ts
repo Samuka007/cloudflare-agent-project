@@ -422,6 +422,22 @@ export interface ThreadMetadataUpdate {
   visibility?: ThreadDbRow["visibility"];
   lastReadAt?: number | null;
   status?: ThreadDbRow["status"];
+  /**
+   * #477 flip guard: apply the write only while the row still carries this
+   * status. The dispatch flips race the agent DO's terminal-turn settlement
+   * (appendEvent → settleControlPlaneRowAfterTerminalTurn) — an instant turn
+   * seals before the flip runs, and an unguarded flip would resurrect
+   * `active` over the settlement's `idle`, re-arming the stuck-Working face.
+   */
+  expectedStatus?: ThreadDbRow["status"];
+  /**
+   * #477 flip guard for the send face: the pre-dispatch status cannot
+   * discriminate "not yet dispatched" from "dispatched and already settled"
+   * (both read `idle`), so the flip also pins the row version it observed.
+   * Any control-plane write in between (the settlement is one) shifts the
+   * stamp and voids the flip.
+   */
+  expectedUpdatedAt?: number;
 }
 
 /**
@@ -490,8 +506,18 @@ export async function updateThreadRecord(
     sets.push("status = ?");
     binds.push(update.status);
   }
-  await env.DB.prepare(`UPDATE threads SET ${sets.join(", ")} WHERE id = ?`)
-    .bind(...binds, threadId)
+  const where: string[] = ["id = ?"];
+  const whereBinds: unknown[] = [threadId];
+  if (update.expectedStatus !== undefined) {
+    where.push("status = ?");
+    whereBinds.push(update.expectedStatus);
+  }
+  if (update.expectedUpdatedAt !== undefined) {
+    where.push("updated_at = ?");
+    whereBinds.push(update.expectedUpdatedAt);
+  }
+  await env.DB.prepare(`UPDATE threads SET ${sets.join(", ")} WHERE ${where.join(" AND ")}`)
+    .bind(...binds, ...whereBinds)
     .run();
   const row = await getThreadRow(env, threadId);
   if (!row) {

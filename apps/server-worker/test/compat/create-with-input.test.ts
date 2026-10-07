@@ -36,11 +36,12 @@ describe("create-with-input dispatches the first turn (#61)", () => {
       title: "create-with-input",
       input: [{ type: "text", text: "first message rides the create" }],
     });
-    // The dispatch flips the coarse M0 status on the create chain itself —
-    // the row never sits at starting. (The rigged relay wire completes the
-    // turn near-instantly, so the coarse status may already be past active.)
+    // The dispatch records the turn on the create chain itself — the row
+    // never sits at starting. #477: the instant rig turn also SEALS inside
+    // the chain, and the CAS-guarded flip must not resurrect `active` over
+    // the settlement — the honest face for a sealed turn is idle.
     const dispatched = await threadDetail(thread);
-    expect(dispatched.status).not.toBe("starting");
+    expect(dispatched.status).toBe("idle");
     // DO event log: bootstrap + the create-carried turn request.
     const types = await rawEventTypes(thread.id);
     expect(types[0]).toBe("thread.created");

@@ -399,17 +399,25 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
         // Coarse M0 status transition shared with the send route: the daemon
         // lifecycle (#30) owns the real starting→active path; without it the
         // control plane flips active on dispatch so SPA surfaces reflect an
-        // open turn.
-        await updateThreadRecord(ctx.env, threadId, { status: "active" });
+        // open turn. #477: the flip is guarded to `starting` — an instant
+        // turn seals (and the DO settles the row idle) inside the dispatch
+        // chain, and re-flipping active over that settlement re-arms the
+        // stuck-Working face the detail settlement exists to clear.
+        const flipped = await updateThreadRecord(ctx.env, threadId, {
+          status: "active",
+          expectedStatus: "starting",
+        });
         dispatchedRow = (await getThreadRow(ctx.env, threadId)) ?? row;
-        await hub(ctx).notifyThread(threadId, ["status-changed"], {
-          projectId: payload.projectId,
-        });
-        await hub(ctx).notifyThread(threadId, ["events-appended"], {
-          eventTypes: [...SEND_EVENT_TYPES],
-          projectId: payload.projectId,
-        });
-        await hub(ctx).notifyProject(payload.projectId, ["threads-changed"]);
+        if (flipped !== null && flipped.row.status === "active") {
+          await hub(ctx).notifyThread(threadId, ["status-changed"], {
+            projectId: payload.projectId,
+          });
+          await hub(ctx).notifyThread(threadId, ["events-appended"], {
+            eventTypes: [...SEND_EVENT_TYPES],
+            projectId: payload.projectId,
+          });
+          await hub(ctx).notifyProject(payload.projectId, ["threads-changed"]);
+        }
       }
     }
     return ctx.json(await toThreadResponseWithSpawnCheck(ctx.env, dispatchedRow), 201);
@@ -427,7 +435,28 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
         includes.add(value as "environment" | "host");
       }
     }
-    const row = await requirePublicThread(ctx);
+    let row = await requirePublicThread(ctx);
+    // #477: this face seeds the SPA's runtime cache (useThreadDetailBootstrap
+    // ingests it and useThread yields to the fresh bootstrap), so a stale
+    // coarse row here renders the permanent Working... surface: the page's
+    // own timeline fetch settles the row moments later (server truth reads
+    // idle) while the settlement's status-changed broadcast races the fresh
+    // page's WS subscribe — the hub is ephemeral fan-out with no replay, so
+    // the correction is lost and nothing refetches. Settle before answering,
+    // mirroring the timeline face (#52). Only rows a terminal turn event can
+    // move pay the journal read; idle/error rows take the hot path.
+    if (row.status === "starting" || row.status === "active" || row.status === "stopping") {
+      const { events } = await agentDoFor(ctx.env, row.id).getEvents({
+        sinceSeq: 0,
+        project: "ux",
+      });
+      const settlement = await settleThreadTurnStatus(ctx.env, row, events);
+      if (settlement !== null) {
+        row = settlement.row;
+        await hub(ctx).notifyThread(row.id, ["status-changed"], { projectId: row.projectId });
+        await hub(ctx).notifyProject(row.projectId, ["threads-changed"]);
+      }
+    }
     // bb buildThreadResponse (base.ts:86-121): one environment read serves
     // both includes; host rides the binding row's hostId with live status.
     const environment =
@@ -545,7 +574,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
 
   routes.post("/threads/:id/send", async (ctx) => {
     const payload = await requireJsonBody(ctx, sendMessageRequestSchema);
-    const row = await requirePublicThread(ctx);
+    let row = await requirePublicThread(ctx);
     // #317 gate unlock: the same attachment-reference verification the create
     // face runs — relative paths must be uploaded into this thread's project
     // family; absolute/URI-like paths pass through to the runtime untouched.
@@ -574,12 +603,17 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       // the payload always carries providerId here, so `explicit` is set.
       const current = resolveStoredThreadExecution(ctx.env, row, overlay?.providers ?? {});
       if (classifyThreadSelectionChange(current, next.resolved) === "live" && next.explicit) {
-        await updateThreadRecord(ctx.env, row.id, {
+        const updated = await updateThreadRecord(ctx.env, row.id, {
           ...(payload.model !== undefined ? { modelOverride: payload.model } : {}),
           ...(payload.reasoningLevel !== undefined
             ? { reasoningLevelOverride: payload.reasoningLevel }
             : {}),
         });
+        // #477: the dispatch flip's stamp guard pins THIS write's version, so
+        // the observed row must carry it.
+        if (updated !== null) {
+          row = updated.row;
+        }
         executionRide = next.explicit;
       }
     }
@@ -604,9 +638,18 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       // Coarse M0 status transition: the daemon lifecycle (#30) owns the real
       // starting→active path; without it the control plane flips active on
       // send so SPA surfaces reflect an open turn.
+      // #477: the flip pins the pre-dispatch row stamp — a turn that seals
+      // inside the dispatch chain settles the row idle (stamping a new
+      // version), and re-flipping active over that settlement re-arms the
+      // stuck-Working face.
       if (row.status !== "active") {
-        await updateThreadRecord(ctx.env, row.id, { status: "active" });
-        await hub(ctx).notifyThread(row.id, ["status-changed"], { projectId: row.projectId });
+        const flipped = await updateThreadRecord(ctx.env, row.id, {
+          status: "active",
+          expectedUpdatedAt: row.updatedAt,
+        });
+        if (flipped !== null && flipped.row.status === "active") {
+          await hub(ctx).notifyThread(row.id, ["status-changed"], { projectId: row.projectId });
+        }
       }
       await hub(ctx).notifyThread(row.id, ["events-appended"], {
         eventTypes: [...SEND_EVENT_TYPES],
