@@ -8,7 +8,6 @@ import {
   resolveOverlayCatalog,
   RelayProviderRegistry,
 } from "../src/index.js";
-import { resolveHarness } from "../src/harness.js";
 import { DEFAULT_IMAGE_TIMEOUT_SECONDS } from "@cap/agent-do";
 
 /**
@@ -69,14 +68,14 @@ describe("#362/#450 the overlay IS the directory (loader rows are row-level whol
     // The loader hands the registry rows keyed by id; the projection is the
     // rows themselves — an id swap on the panel swaps the directory entry
     // wholesale (whole-row semantics, #434: nothing is synthesized back).
-    const first = resolveOverlayCatalog(resolveHarness({}), OVERLAY_PROVIDERS);
+    const first = resolveOverlayCatalog(OVERLAY_PROVIDERS);
     expect(first.configured).toBe(true);
     expect(first.providers.map((provider) => provider.id)).toEqual(["envp", "panelp"]);
     expect(first.models.map((model) => model.id)).toEqual(["panel-model", "panel-only"]);
 
     // A panel write that replaces the envp row's declaration replaces the
     // whole entry — the previous declaration's models are gone entirely.
-    const rewritten = resolveOverlayCatalog(resolveHarness({}), {
+    const rewritten = resolveOverlayCatalog({
       envp: { displayName: "Rewritten", models: [{ id: "rewritten-model" }] },
       panelp: OVERLAY_PROVIDERS.panelp ?? { models: [] },
     });
@@ -85,7 +84,7 @@ describe("#362/#450 the overlay IS the directory (loader rows are row-level whol
   });
 
   test("zero rows is the honest empty directory — nothing rides in its place", () => {
-    const empty = resolveOverlayCatalog(resolveHarness({}), {});
+    const empty = resolveOverlayCatalog({});
     expect(empty.configured).toBe(false);
     expect(empty.decodeError).toBe(false);
     expect(empty.providers).toEqual([]);
@@ -98,10 +97,7 @@ describe("#362/#450 the overlay IS the directory (loader rows are row-level whol
 // suite (system-provider-configs.test.ts).
 describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
   test("an overlay row resolves with its OWN wire identity, never deployment slots", () => {
-    const registry = RelayProviderRegistry.create({
-      MODEL_RELAY_API_KEY: "k-deployment",
-      MODEL_RELAY_BASE_URL_ANTHROPIC: "https://env-relay.example.com",
-    });
+    const registry = RelayProviderRegistry.create();
     registry.applyOverlay({
       providers: OVERLAY_PROVIDERS,
       imageSourceProviderId: null,
@@ -110,18 +106,16 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
     const standalone = registry.resolve({ providerId: "panelp", model: "panel-only" });
     expect(standalone.config.apiKey).toBe("k-panel");
     expect(standalone.config.baseUrl).toBe("https://panel.example.com");
-    // The SAME-ID row the panel rewrote (envp) must NOT ride the deployment
-    // credential slot with the user's baseUrl — that is the leak vector the
-    // posture exists for. No credential slot → empty slots, never k-deployment.
+    // The SAME-ID row the panel rewrote (envp) has no credential slot — its
+    // wire slots stay empty (the #450/#500 standalone posture: a user row is
+    // never hit with a shared credential).
     const rewritten = registry.resolve({ providerId: "envp", model: "panel-model" });
     expect(rewritten.config.apiKey).toBe("");
     expect(rewritten.config.baseUrl).toBe("");
   });
 
   test("an incomplete overlay row fails dispatch with the named credential error", () => {
-    const registry = RelayProviderRegistry.create({
-      MODEL_RELAY_API_KEY: "k-deployment",
-    });
+    const registry = RelayProviderRegistry.create();
     registry.applyOverlay({
       providers: OVERLAY_PROVIDERS,
       imageSourceProviderId: null,
@@ -132,14 +126,14 @@ describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
     expect(() => registry.providerFor({ providerId: "panelp", model: "panel-only" })).toThrow(
       /panelp.*no usable credential/s,
     );
-    // The refusal never leaks the deployment key into the row's wire slots.
+    // The refusal never fabricates a credential into the row's wire slots.
     const resolved = registry.resolve({ providerId: "panelp", model: "panel-only" });
     expect(resolved.config.apiKey).toBe("");
     expect(resolved.config.baseUrl).toBe("");
   });
 
   test("applyOverlay clears the instance cache — stale wire clients never survive a rotation", () => {
-    const registry = RelayProviderRegistry.create({});
+    const registry = RelayProviderRegistry.create();
     registry.applyOverlay({
       providers: OVERLAY_PROVIDERS,
       imageSourceProviderId: null,

@@ -6,7 +6,6 @@ import type {
 } from "../../daemon-worker/src/provider-adapter.js";
 import type { AvailableModel } from "../../daemon-worker/src/provider-types.js";
 import { EdgeAgentProviderAdapter, type ManagerFacade } from "../src/adapter.js";
-import { resolveHarness } from "../src/harness.js";
 import {
   adapterFor,
   afterAbort,
@@ -31,21 +30,6 @@ import {
 
 afterEach(() => {
   resetRuntime();
-});
-
-test("A4: the adapter's image-input capability mirrors the harness verdict", () => {
-  // The declaration lives on the harness relay (MODEL_RELAY_IMAGE_INPUT);
-  // the bb-facing capabilities bit can never disagree with the wire dispatch.
-  const declared = new EdgeAgentProviderAdapter(
-    { handleAdapterCommand: () => Promise.resolve({ ok: true, result: null }) },
-    resolveHarness({ MODEL_RELAY_IMAGE_INPUT: "1" }),
-  );
-  expect(declared.capabilities.supportsImageInput).toBe(true);
-  const undeclared = new EdgeAgentProviderAdapter(
-    { handleAdapterCommand: () => Promise.resolve({ ok: true, result: null }) },
-    resolveHarness({}),
-  );
-  expect(undeclared.capabilities.supportsImageInput).toBe(false);
 });
 
 function startCommand(threadId: string): Extract<AdapterCommand, { type: "thread/start" }> {
@@ -86,11 +70,7 @@ test("full chain: thread/start → turn/start → event stream → relay parity"
   const managerName = freshManagerName();
   const threadId = `thr-${crypto.randomUUID()}`;
   const mock = registerMock(threadId, [{ deltas: ["hello ", "world"] }]);
-  // #496: the model/list face advertises the channel the adapter's harness
-  // names — this chain names glm-5.3 (zero-env adapters advertise nothing).
-  const adapter = adapterFor(managerFacadeByName(managerName), {
-    MODEL_RELAY_MODEL: "glm-5.3",
-  });
+  const adapter = adapterFor(managerFacadeByName(managerName));
 
   const init = await handle(adapter, { type: "initialize" });
   expect(expectOk(init)).toMatchObject({ protocolVersion: 1, provider: "edge-agent" });
@@ -100,7 +80,8 @@ test("full chain: thread/start → turn/start → event stream → relay parity"
 
   const list = await handle(adapter, { type: "model/list" });
   const listResult = expectOk(list) as unknown as { models: AvailableModel[] };
-  expect(listResult.models[0]?.model).toBe("glm-5.3");
+  // #500: the deployment channel is deleted — the face advertises nothing.
+  expect(listResult.models).toEqual([]);
 
   const sent = expectOk(
     await handle(
@@ -278,7 +259,7 @@ test("handleCommand settles inside the budget with deadline_exceeded", async () 
     handleAdapterCommand: (): Promise<AdapterCommandOutcome> =>
       new Promise<AdapterCommandOutcome>(() => undefined),
   };
-  const hungAdapter = new EdgeAgentProviderAdapter(hanging, resolveHarness({}));
+  const hungAdapter = new EdgeAgentProviderAdapter(hanging);
   const outcome = await hungAdapter.handleCommand(
     { type: "thread/discard", threadId: "t", providerThreadId: "p" },
     { timeoutMs: 50 },

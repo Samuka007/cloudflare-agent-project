@@ -21,11 +21,8 @@ import {
   loadProviderConfigCatalogOverlay,
   loadProviderConfigOverlay,
   parseModelsYml,
-  projectHarness,
   resolveOverlayCatalog,
-  resolveHarness,
   type ProviderConfigCatalogOverlay,
-  type HarnessEnv,
   type ModelsYmlImportParse,
   type WebSearchOverlayRow,
   type WebSearchSecretsMeta,
@@ -54,6 +51,8 @@ import {
   systemImageSourceResponseSchema,
   systemOriginAllowlistResponseSchema,
   systemOriginAllowlistPutRequestSchema,
+  systemPermissionModePutRequestSchema,
+  systemPermissionModeResponseSchema,
   systemToolCapabilitiesPutRequestSchema,
   systemToolCapabilitiesResponseSchema,
   systemWebSearchPutRequestSchema,
@@ -88,6 +87,7 @@ import {
   type ProviderConfigWriteFields,
 } from "../db/provider-configs.js";
 import { getImageSourceProviderId, setImageSourceProviderId } from "../db/image-source.js";
+import { getPermissionMode, setPermissionMode } from "../db/permission-mode.js";
 import { getToolCapabilities, setToolCapabilities } from "../db/tool-capabilities.js";
 import { getOriginAllowlist, setOriginAllowlist } from "../db/origin-allowlist.js";
 import { canonicalOriginAllowlist } from "../contract/domain/origin-allowlist.js";
@@ -171,13 +171,13 @@ export function buildSystemConfig(requestUrl: URL) {
  * apps/app/src/hooks/useThreadCreationOptions.test.tsx:44-114); the typed
  * return is the compile-time parity guard pinning the catalog ladder
  * vocabulary to bb's ReasoningLevel enum (shared-types.ts:18-27).
+ * #500: no deployment env takes part — the D1 rows are the whole input.
  */
 export function buildExecutionOptions(
-  env: HarnessEnv,
   overlayProviders: Record<string, RelayCatalogProvider>,
   selectedOnlyModels: AvailableModel[] = [],
 ): SystemExecutionOptionsResponse {
-  const catalog = resolveOverlayCatalog(resolveHarness(env), overlayProviders);
+  const catalog = resolveOverlayCatalog(overlayProviders);
   return {
     providers: catalog.providers.map((provider) => ({
       id: provider.id,
@@ -190,8 +190,10 @@ export function buildExecutionOptions(
         supportsUserQuestion: false,
         supportsFork: false,
         supportsImageInput: provider.imageInput,
-        // min(1) required (domain/provider-types.ts:72); the harness turns
-        // run at the "full" default (env.ts HARNESS_PERMISSION_MODE).
+        // min(1) required (domain/provider-types.ts:72). #500: the turns'
+        // permission default is the D1 `permission_mode` seat (read by the
+        // dispatch bridge); the picker capability stays the single "full"
+        // entry the port's composer has always declared.
         supportedPermissionModes: ["full"],
       },
       composerActions: [],
@@ -206,12 +208,12 @@ export function buildExecutionOptions(
       model: model.model,
       displayName: model.displayName,
       description: model.description,
-      // The ladder is budget-derived (deriveRelayReasoning over
-      // MODEL_RELAY_THINKING_BUDGET_TOKENS, declared overrides folded):
-      // budget off → exactly "none" (bb's level for no extended thinking,
+      // The ladder is budget-derived (deriveRelayReasoning over the row's
+      // thinkingBudgetTokens, declared overrides folded): budget off →
+      // exactly "none" (bb's level for no extended thinking,
       // domain/shared-types.ts:13-20); budget on → the runnable rungs the
-      // declaration carries. The default rung equals the harness
-      // execution.reasoningLevel by construction (same resolution).
+      // row declaration carries. #500: the deployment budget scalar is
+      // deleted — the row field is the only budget source.
       supportedReasoningEfforts: model.reasoningLevels.map((level) => ({
         reasoningEffort: level,
         description: "",
@@ -295,33 +297,11 @@ function webSearchProjectionRow(overlayRow: WebSearchOverlayRow | undefined): {
 }
 
 /**
- * #484: did the deployment actually feed the legacy deployment channel?
- * Any non-blank member of the channel env family counts (the vars
- * resolveHarness reads plus its two execution pins). Zero members = the
- * harness row is the honest empty channel (mode "unconfigured", #496 —
- * nothing synthesized) — the panel hides it (#450: D1 provider_configs is
- * the sole provider 正本, zero env fallback).
- */
-function deploymentChannelEnvConfigured(env: HarnessEnv): boolean {
-  const channelVars: (string | undefined)[] = [
-    env.MODEL_RELAY_BASE_URL_ANTHROPIC,
-    env.MODEL_RELAY_API_KEY,
-    env.MODEL_RELAY_MODEL,
-    env.MODEL_RELAY_CONTEXT_WINDOW,
-    env.MODEL_RELAY_MAX_TOKENS,
-    env.MODEL_RELAY_THINKING_BUDGET_TOKENS,
-    env.MODEL_RELAY_IMAGE_INPUT,
-    env.DAEMON_MACHINE_ID,
-    env.HARNESS_PERMISSION_MODE,
-  ];
-  return channelVars.some((value) => value !== undefined && value.trim() !== "");
-}
-
-/**
  * GET /system/provider-projections (#266, #255 solution C): aggregate the
- * read-only provider status face. Harness row = projectHarness over
- * resolveHarness (the same total resolution thread turns run) plus the relay
- * host and the #484 `envConfigured` gate; web_search row = the D1
+ * read-only provider status face. #500: the legacy deployment-channel
+ * harness row and its `envConfigured` gate are deleted with the env scalars
+ * they projected — the D1 provider_configs rows are the panel's sole
+ * provider 正本 (the catalog row below). web_search row = the D1
  * `web_search` overlay half (#449 — the AGENT_DO_WEB_SEARCH env path is
  * deleted, the row is the sole 正本): chain order, credential-gate booleans,
  * browser-backed exclusions. Zero secret values leave the DB: key/token
@@ -331,25 +311,13 @@ function deploymentChannelEnvConfigured(env: HarnessEnv): boolean {
  * (#255 §6.2, ticket #56).
  */
 export function buildProviderProjections(
-  env: HarnessEnv,
   overlay: Pick<
     ProviderConfigCatalogOverlay,
     "providers" | "imageSourceProviderId" | "webSearch"
   >,
 ) {
-  // One resolution for both rows: the harness projection and the catalog
-  // status project the same evaluation (same-source; the D1 rows are the
-  // sole directory source, #450).
-  const resolution = resolveOverlayCatalog(resolveHarness(env), overlay.providers);
-  const harness = projectHarness(resolution.harness);
-  // Total over env content: a malformed relay URL degrades to a null host
-  // instead of failing the whole read-only face.
-  let relayBaseUrlHost: string | null = null;
-  try {
-    relayBaseUrlHost = new URL(harness.relayBaseUrl).host;
-  } catch {
-    // env content, not a caller error
-  }
+  // The D1 rows are the sole directory source (#450/#500).
+  const resolution = resolveOverlayCatalog(overlay.providers);
   const webSearch = webSearchProjectionRow(overlay.webSearch);
   // #448: generate_image availability, presence-only. The 产图源 seat is
   // the only gate (#450 — zero env fallback): configured iff the selection
@@ -364,7 +332,6 @@ export function buildProviderProjections(
     configured: imageSourceRow?.api === IMAGE_SOURCE_API_FAMILY && imageSourceRow.models.length > 0,
   };
   return {
-    harness: { ...harness, relayBaseUrlHost, envConfigured: deploymentChannelEnvConfigured(env) },
     webSearch,
     // Catalog status (#350 shape, #450 semantics): ids and decode state
     // only — the full values live on GET /system/execution-options.
@@ -375,7 +342,9 @@ export function buildProviderProjections(
       configured: resolution.configured,
       decodeError: resolution.decodeError,
       defaultProviderId: resolution.defaultProviderId,
-      defaultModel: resolution.harness.relay.model,
+      // #500: no deployment model exists — the field stays "" (the picker
+      // selection is always explicit; the model source is the thread).
+      defaultModel: "",
       providers: resolution.providers.map((provider) => provider.id),
       models: resolution.models.map((model) => model.id),
       imageGeneration,
@@ -520,7 +489,6 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
     return ctx.json(
       systemExecutionOptionsResponseSchema.parse(
         buildExecutionOptions(
-          ctx.env,
           overlay?.providers ?? {},
           projectStoredOverrideRows(
             await listStoredThreadModelOverrides(ctx.env, query.providerId),
@@ -537,7 +505,7 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
     const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
     return ctx.json(
       systemProviderProjectionsResponseSchema.parse(
-        buildProviderProjections(ctx.env, overlay ?? {
+        buildProviderProjections(overlay ?? {
           providers: {},
           imageSourceProviderId: null,
           webSearch: {
@@ -1021,6 +989,28 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     // faces exactly like a settings write (system.ts:348 precedent).
     await hub(ctx.env).notifySystem(["config-changed"]);
     return ctx.json(systemOriginAllowlistResponseSchema.parse({ origins }));
+
+  // #500 the permission-mode default face: the D1 `permission_mode`
+  // single-row seat is the sole 正本 (zero env fallback — the retired env
+  // scalar is deleted). Read = the stored posture (+ whether the row exists
+  // at all); write = replace the mode. The dispatch bridge and the
+  // default-execution-options face read the seat per request/turn, so a
+  // write hot-applies without a redeploy.
+  routes.get("/system/permission-mode", async (ctx) => {
+    return ctx.json(
+      systemPermissionModeResponseSchema.parse(await getPermissionMode(ctx.env)),
+    );
+  });
+
+  routes.put("/system/permission-mode", async (ctx) => {
+    const payload = await requireJsonBody(ctx, systemPermissionModePutRequestSchema);
+    await setPermissionMode(ctx.env, payload.mode);
+    // Hot-apply broadcast (#382): the seat is read per dispatch, so the next
+    // turn/defaults read picks the mode up (the tool-capabilities write path).
+    await hub(ctx.env).notifySystem(["config-changed"]);
+    return ctx.json(
+      systemPermissionModeResponseSchema.parse(await getPermissionMode(ctx.env)),
+    );
   });
 
   routes.get("/system/providers", async (ctx) => {

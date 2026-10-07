@@ -21,12 +21,10 @@ import type {
   ProviderExecutionSettingsChange,
 } from "../../daemon-worker/src/provider-adapter.js";
 import type {
-  AvailableModel,
   ProviderCapabilities,
   RuntimeThreadExecutionOptions,
 } from "../../daemon-worker/src/provider-types.js";
-import { classifyHarnessProjection, projectHarness } from "./harness.js";
-import type { ResolvedHarness } from "./harness.js";
+import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 
 /**
  * bb classification semantics (provider-adapter.ts:292-299, fake parity):
@@ -66,19 +64,19 @@ export class EdgeAgentProviderAdapter implements ProviderAdapter {
   readonly approvalRequestPolicy = "runtime" as const;
   readonly capabilities: ProviderCapabilities;
 
-  constructor(
-    private readonly manager: ManagerFacade,
-    private readonly harness: ResolvedHarness,
-  ) {
-    // A4: the image-input bit mirrors the harness relay verdict — the
-    // adapter's capabilities and the relay's wire dispatch can never disagree.
+  constructor(private readonly manager: ManagerFacade) {
+    // #500: the deployment channel (and its MODEL_RELAY_IMAGE_INPUT
+    // declaration) is deleted — the adapter declares no deployment-wide
+    // image input; the per-row verdict (provider_configs `input`) rides the
+    // relay config and the execution-options projection, the two faces the
+    // wire dispatch and the picker actually read.
     this.capabilities = {
       supportsArchive: true,
       supportsRename: true,
       supportsServiceTier: false,
       supportsUserQuestion: false,
       supportsFork: false,
-      supportsImageInput: harness.relay.supportsImageInput,
+      supportsImageInput: false,
       supportedPermissionModes: ["accept-edits", "auto", "full"],
     };
   }
@@ -112,18 +110,6 @@ export class EdgeAgentProviderAdapter implements ProviderAdapter {
     return classifyExecutionSettingsChange(args.current, args.next);
   }
 
-  /**
-   * Provider-application extension of the same vocabulary over the harness
-   * three keys: host binding and permission → `session`; relay and live
-   * execution fields → `live`.
-   */
-  classifyHarnessChange(
-    current: ResolvedHarness,
-    next: ResolvedHarness,
-  ): ProviderExecutionSettingsChange {
-    return classifyHarnessProjection(projectHarness(current), projectHarness(next));
-  }
-
   async handleCommand(
     command: AdapterCommand,
     options: { timeoutMs: number },
@@ -135,46 +121,19 @@ export class EdgeAgentProviderAdapter implements ProviderAdapter {
         result: {
           protocolVersion: 1,
           provider: this.id,
-          relayMode: this.harness.relay.mode,
-          machineId: this.harness.hostBinding.machineId,
+          // #377/#500: no channel relay mode exists; the host binding is the
+          // cloud placeholder (no deployment machine is fabricated).
+          machineId: CLOUD_PLACEHOLDER_HOST_ID,
         },
       };
     }
     if (command.type === "model/list") {
-      // #496: no channel env = no channel — the face advertises nothing
-      // rather than a synthesized row (the D1 catalog is the 正本, #450).
-      if (this.harness.relay.model === "") {
-        return {
-          ok: true,
-          result: { models: [], selectedOnlyModels: [] } satisfies AdapterModelListResult,
-        };
-      }
-      const models: AvailableModel[] = [
-        {
-          id: "edge-agent-default",
-          model: this.harness.relay.model,
-          displayName: `Edge agent (${this.harness.relay.model})`,
-          description:
-            this.harness.relay.mode === "mock"
-              ? "Fixed-reply mock (relay key not configured)"
-              : this.harness.relay.api === "openai-responses"
-                ? "OpenAI Responses-protocol relay model (#361 adaptor)"
-                : this.harness.relay.api === "openai-completions"
-                  ? "OpenAI Chat Completions-protocol relay model (#363 adaptor)"
-                : "Anthropic-protocol relay model (GLM coding plan)",
-          supportedReasoningEfforts: [
-            {
-              reasoningEffort: "none",
-              description: "Deterministic budget (thinking disabled by default)",
-            },
-          ],
-          defaultReasoningEffort: "none",
-          isDefault: true,
-        },
-      ];
+      // #500: the deployment channel is deleted — the face advertises
+      // nothing rather than a synthesized row (the D1 catalog is the
+      // selection 正本, #450; the picker consumes GET /system/execution-options).
       return {
         ok: true,
-        result: { models, selectedOnlyModels: [] } satisfies AdapterModelListResult,
+        result: { models: [], selectedOnlyModels: [] } satisfies AdapterModelListResult,
       };
     }
     return this.withBudget(this.manager.handleAdapterCommand(command), options.timeoutMs);

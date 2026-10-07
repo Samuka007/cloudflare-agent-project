@@ -128,16 +128,17 @@
 - **执行影响值走四层优先级链**，每层只能收窄/具体化，不能静默放宽：
 
 ```text
-部署 env（legacy 通道标量：模型/中转/思考配置；resolveHarness 总解析 =
-  纯 env 标量投影，零合成默认——#496 起零 env=无通道；秘密只存 env，
-  快照只存 key 存在性投影 —— provider-app/harness.ts）
+D1 provider 行 + seat 族（目录/凭据/行标量 = provider_configs，权限模式默认
+  = permission_mode seat；#500 起部署 env 零参与——relay 标量全删，
+  dispatch 与读面只认 D1 —— provider-app/relay-registry.ts 等）
   → app 单行（bb 四族，跨会话默认）
     → host 行操作字段（仅权限轴 ceiling，向下收敛）
-      → thread 执行选项（#42，live/session 漂移分类同 harness）
+      → thread 执行选项（#42 × #351/#499：模型/rung 走线程存储选择，
+        live/session 漂移分类沿 bb classifyExecutionSettingsChange）
         → 单次调用参数（tool.call timeoutMs、watchdog config patch）
 ```
 
-`classifyHarnessProjection` 的 unchanged/live/session 三值分类是链上「改了设置对在跑会话意味着什么」的通用形状；#42 的 thread 级 default-execution-options 复用同一分类语义（bb `classifyExecutionSettingsChange` 同构）。
+`classifyExecutionSettingsChange` 的 unchanged/live/session 三值分类是链上「改了设置对在跑会话意味着什么」的通用形状；#42 的 thread 级 default-execution-options 复用同一分类语义。权限默认的 seat 写（`PUT /system/permission-mode`）逐命令热读——默认端口径的「对在跑会话意味着什么」由命令级 options 承载（无会话快照漂移，#500 删）。
 
 ### 3.2 与 ①② 的一致性钩子（防碎片化的核心）
 
@@ -145,7 +146,7 @@
 | ------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 工具开关（bb dynamicTools/disallowedTools 形状） | **不是设置**——注册表启用策略（§1.2）                         | provider 拥有工具面；设置面长出工具开关 = 第二裁决点                                                                                                                |
 | thread→host 绑定                                 | **不是设置**——路由数据（project 行字段 + thread 轨迹，§2.1） | 绑定是每 thread 一次性事实，不是可随时改的偏好；#50 里「personal 项目与 host:path 绑定纠缠」的查证不产生 per-host 设置，personal 行是 bb 逐字超集，保真偏差单独处置 |
-| 模型/中转/思考配置                               | 部署 env（legacy 通道标量）+ D1 provider 行正本（#450），不进 app_settings | 秘密与部署拓扑不落控制面 DB；快照投影已定义（harness.ts projectHarness）；#496 起 env 通道零合成默认                                                                 |
+| 模型/中转/思考配置                               | D1 provider 行正本（#450）；#500 起零部署 env | 秘密与部署拓扑不落控制面 DB；秘密进加密列，行字段承载 budget/窗口/input；权限默认归 D1 `permission_mode` seat，其余仍不进 app_settings                                     |
 | xdev 开关、essential 集裁剪                      | 注册表策略输入（部署期）                                     | 同 §1.2，改它是发版行为不是改设置                                                                                                                                   |
 | 权限上限                                         | host 行 ceiling（唯一 per-host 值）                          | 操作上限语义，向下收敛                                                                                                                                              |
 

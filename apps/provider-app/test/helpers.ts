@@ -19,8 +19,6 @@ import type {
 import { EdgeAgentProviderAdapter } from "../src/adapter.js";
 import type { ManagerFacade } from "../src/adapter.js";
 import { ManagerDo } from "../src/manager-do.js";
-import type { HarnessEnv } from "../src/harness.js";
-import { resolveHarness } from "../src/harness.js";
 
 /**
  * L1 rig (ticket #28): the manager DO under unique names per test, the real
@@ -46,11 +44,8 @@ export function agentStubByName(name: string): DurableObjectStub<AgentDO> {
   return agentNs.get(agentNs.idFromName(name)) as unknown as DurableObjectStub<AgentDO>;
 }
 
-export function adapterFor(
-  manager: ManagerFacade,
-  harnessEnv: HarnessEnv = {},
-): EdgeAgentProviderAdapter {
-  return new EdgeAgentProviderAdapter(manager, resolveHarness(harnessEnv));
+export function adapterFor(manager: ManagerFacade): EdgeAgentProviderAdapter {
+  return new EdgeAgentProviderAdapter(manager);
 }
 
 export function managerFacadeByName(name: string): ManagerFacade {

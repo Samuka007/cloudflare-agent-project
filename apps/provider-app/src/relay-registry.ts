@@ -24,6 +24,7 @@ import {
   AnthropicRelayProvider,
   CompletionsRelayProvider,
   DEFAULT_IMAGE_TIMEOUT_SECONDS,
+  DEFAULT_RELAY_API,
   IMAGE_SOURCE_API_FAMILY,
   ResponsesRelayProvider,
   resolveRelaySelection,
@@ -38,14 +39,15 @@ import {
   type RelayConfig,
   type RelayReasoningLevel,
   type RelaySelection,
+  type ResponsesEffort,
 } from "@cap/agent-do";
 import type { RelayCatalogResolution } from "./catalog.js";
 import { resolveOverlayCatalog } from "./catalog.js";
 import {
-  resolveHarness,
-  type HarnessEnv,
+  RELAY_FALLBACK_CONTEXT_WINDOW,
+  RELAY_FALLBACK_MAX_TOKENS,
   type ThinkingConfig,
-} from "./harness.js";
+} from "./execution-posture.js";
 
 /** One provider's credential slot (decrypted D1 row secret — never a face). */
 export interface RelayProviderCredential {
@@ -121,29 +123,22 @@ function instanceKey(resolution: RelayProviderRegistryResolution): string {
 export class RelayProviderRegistry {
   private readonly instances = new Map<string, ModelProvider>();
   private catalogResolution: RelayCatalogResolution;
-  private readonly env: HarnessEnv;
   private overlay: RelayProviderOverlay;
 
-  private constructor(
-    env: HarnessEnv,
-    overlay: RelayProviderOverlay,
-  ) {
-    this.env = env;
+  private constructor(overlay: RelayProviderOverlay) {
     this.overlay = overlay;
-    this.catalogResolution = resolveOverlayCatalog(resolveHarness(env), overlay.providers);
+    this.catalogResolution = resolveOverlayCatalog(overlay.providers);
   }
 
   /**
-   * D1-only construction (#450): the overlay is the sole directory 正本.
-   * A zero-config deployment passes EMPTY_PROVIDER_OVERLAY — every face
-   * serves the empty directory and every selection fails closed until the
-   * panel rows land (the per-turn refresh hot-applies them).
+   * D1-only construction (#450, #500): the overlay is the sole directory
+   * 正本 — no deployment env is read at all (the MODEL_RELAY_* scalars are
+   * deleted). A zero-config deployment passes EMPTY_PROVIDER_OVERLAY —
+   * every face serves the empty directory and every selection fails closed
+   * until the panel rows land (the per-turn refresh hot-applies them).
    */
-  static create(
-    env: HarnessEnv,
-    overlay: RelayProviderOverlay = EMPTY_PROVIDER_OVERLAY,
-  ): RelayProviderRegistry {
-    return new RelayProviderRegistry(env, overlay);
+  static create(overlay: RelayProviderOverlay = EMPTY_PROVIDER_OVERLAY): RelayProviderRegistry {
+    return new RelayProviderRegistry(overlay);
   }
 
   /**
@@ -153,7 +148,7 @@ export class RelayProviderRegistry {
    */
   applyOverlay(overlay: RelayProviderOverlay): void {
     this.overlay = overlay;
-    this.catalogResolution = resolveOverlayCatalog(resolveHarness(this.env), overlay.providers);
+    this.catalogResolution = resolveOverlayCatalog(overlay.providers);
     this.instances.clear();
   }
 
@@ -164,13 +159,15 @@ export class RelayProviderRegistry {
    * is outside the row's runnable ladder.
    */
   resolve(selection: RelaySelection): RelayProviderRegistryResolution {
-    const harness = this.catalogResolution.harness;
     const resolved = resolveRelaySelection(
       {
         rows: this.catalogResolution.models,
         defaultProviderId: this.catalogResolution.defaultProviderId,
-        defaultModelId: harness.relay.model,
-        thinkingEnabled: harness.relay.thinking.type === "enabled",
+        // #500: the deployment names no running model and no thinking
+        // budget — a model-less selection fails closed (named 422), and
+        // each row's ladder is decided by its own thinkingBudgetTokens.
+        defaultModelId: "",
+        thinkingEnabled: false,
       },
       selection,
     );
@@ -179,18 +176,15 @@ export class RelayProviderRegistry {
         candidate.providerId === resolved.providerId && candidate.id === resolved.modelId,
     );
     // #361: the selection's protocol face — the row's api fold (model ??
-    // provider ?? harness default), resolved with the same precedence the
-    // catalog rows were built under.
-    const api = row?.api ?? harness.relay.api;
-    // The running row's scalars are the harness fold (env overrides already
-    // applied); other rows read their own declaration.
-    const isRunning = resolved.modelId === harness.relay.model;
+    // provider ?? incumbent anthropic face), resolved with the same
+    // precedence the catalog rows were built under.
+    const api = row?.api ?? DEFAULT_RELAY_API;
     // #361/#363: the rung → OpenAI effort fold. resolveRelaySelection already
     // 422s an unmappable rung on openai-effort rows (fail-closed effort
-    // mapping); this re-resolution is belt over the harness-face path whose
-    // rows may predate that grammar. An anthropic-face row keeps its budget
-    // semantics — no effort fold.
-    let reasoningEffort = harness.relay.reasoningEffort;
+    // mapping); this re-resolution is belt over the row path whose rows may
+    // predate that grammar. An anthropic-face row keeps its budget semantics
+    // — no effort fold. The selection-default effort is the "none" identity.
+    let reasoningEffort: ResponsesEffort = "none";
     if (relayApiConsumesEffortMap(api)) {
       try {
         reasoningEffort = resolveResponsesEffort(resolved.reasoningLevel, row?.reasoningEffortMap);
@@ -211,17 +205,14 @@ export class RelayProviderRegistry {
       this.overlay.credentials[resolved.providerId]?.baseUrl ??
       this.overlay.providers[resolved.providerId]?.baseUrl ??
       "";
-    // #362 scope absorption ①: the row's effective thinking budget wins over
-    // the deployment scalar (thinkingBudgetTokens on the projected row —
-    // model-declared budget, null = budget-off, undefined = legacy row that
-    // keeps the harness fold). A panel budget edit rides the overlay hot.
-    const rowBudget = row?.thinkingBudgetTokens;
+    // #362/#500 scope absorption: the row's thinkingBudgetTokens IS the
+    // budget (null/absent = budget-off — the deployment scalar is deleted).
+    // A panel budget edit rides the overlay hot.
+    const rowBudget = row?.thinkingBudgetTokens ?? null;
     const budgetThinking: ThinkingConfig =
-      rowBudget === undefined
-        ? harness.relay.thinking
-        : rowBudget !== null
-          ? { type: "enabled", budget_tokens: rowBudget }
-          : { type: "disabled" };
+      rowBudget !== null
+        ? { type: "enabled", budget_tokens: rowBudget }
+        : { type: "disabled" };
     const thinking: ThinkingConfig =
       resolved.reasoningLevel === "none" ? { type: "disabled" } : budgetThinking;
     return {
@@ -232,16 +223,13 @@ export class RelayProviderRegistry {
         baseUrl: rowBaseUrl,
         apiKey: rowApiKey,
         model: resolved.modelId,
-        maxTokens: isRunning
-          ? harness.relay.maxTokens
-          : (row?.maxTokens ?? harness.relay.maxTokens),
-        contextWindow: isRunning
-          ? harness.relay.contextWindow
-          : (row?.contextWindow ?? harness.relay.contextWindow),
+        // Wire-safety fallbacks when the row declares none (#496 ruling):
+        // a wrong budget clamps a reply, a wrong window skews a usage
+        // percentage — neither routes a turn.
+        maxTokens: row?.maxTokens ?? RELAY_FALLBACK_MAX_TOKENS,
+        contextWindow: row?.contextWindow ?? RELAY_FALLBACK_CONTEXT_WINDOW,
         thinking,
-        supportsImageInput: isRunning
-          ? harness.relay.supportsImageInput
-          : (row?.imageInput ?? false),
+        supportsImageInput: row?.imageInput ?? false,
         api,
         reasoningEffort,
       },
@@ -263,9 +251,8 @@ export class RelayProviderRegistry {
     // #434 (point ⑦): no row-level mock degradation. A credential gap used
     // to serve the fixed-reply mock as a product mode; that was an implicit
     // default masquerading as the declared row — dispatch now fails with the
-    // named remedy instead. #496: the deployment-channel mock provider is
-    // gone with it; the projections face still reports a configured but
-    // key-less channel as relayMode "mock".
+    // named remedy instead. #496/#500: the deployment-channel mock provider
+    // is gone with the channel itself — no face reports one.
     if (resolution.config.apiKey === "" || resolution.config.baseUrl === "") {
       throw new Error(
         `relay provider "${resolution.providerId}" (${resolution.modelId}) has no usable credential` +

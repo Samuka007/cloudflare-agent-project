@@ -21,9 +21,11 @@ import type { RelayCatalogProvider } from "@cap/agent-do";
  * execution-options.ts:484-490, route at bb apps/server/src/routes/system.ts:
  * 347-349 (path public-api.ts:1405-1409). No host probing; the catalog is
  * the D1 provider-config 正本 (#450 — the env seed is deleted) projected
- * through the same resolution the harness runs (provider-app
+ * through the same resolution the dispatch registry runs (provider-app
  * resolveOverlayCatalog) — #434: no configured rows → an EMPTY directory
- * (nothing synthesized); only configured rows are served.
+ * (nothing synthesized); only configured rows are served. #500: no
+ * deployment env takes part — row declarations (ladder budget / input) are
+ * the whole truth and no row is ever marked default.
  */
 beforeAll(async () => {
   await ensureMigrations();
@@ -57,7 +59,7 @@ describe("GET /api/v1/system/execution-options", () => {
 
   it("serves a contract-valid single-provider catalog from the configured rows", () => {
     const parsed = systemExecutionOptionsResponseSchema.parse(
-      buildExecutionOptions({}, PROVIDERS),
+      buildExecutionOptions(PROVIDERS),
     );
     expect(parsed.providers).toHaveLength(1);
     expect(parsed.providers[0]?.id).toBe("declared");
@@ -66,8 +68,8 @@ describe("GET /api/v1/system/execution-options", () => {
     expect(parsed.modelLoadError).toBeNull();
     expect(parsed.selectedOnlyModels).toEqual([]);
     expect(parsed.models).toHaveLength(1);
-    // #496: zero channel env names NO running model — no row is the
-    // deployment default (nothing invented).
+    // #500: no deployment model is named — no row is the default (nothing
+    // invented).
     expect(parsed.models[0]?.isDefault).toBe(false);
     // The declared ladder is the offer; budget off collapses it to "none".
     expect(
@@ -76,36 +78,17 @@ describe("GET /api/v1/system/execution-options", () => {
     expect(parsed.models[0]?.defaultReasoningEffort).toBe("none");
   });
 
-  it("takes the advertised model name from MODEL_RELAY_MODEL", () => {
-    // Staging sets MODEL_RELAY_MODEL; the endpoint must advertise exactly the
-    // model the agent runtime will run (agent-do worker.ts reads the same var).
-    const configured = systemExecutionOptionsResponseSchema.parse(
-      buildExecutionOptions(
-        { MODEL_RELAY_MODEL: "glm-5.3-air" },
-        {
-          main: { models: [{ id: "glm-5.3-air" }, { id: "spare" }] },
-        },
-      ),
-    );
-    expect(configured.models.map((model) => model.model)).toEqual(["glm-5.3-air", "spare"]);
-    expect(configured.models.map((model) => model.id)).toEqual(["glm-5.3-air", "spare"]);
-    // The rows are NOT auto-defaulted by the face: the running marker follows
-    // the harness model only when the configured rows carry it.
-    expect(configured.models.filter((model) => model.isDefault)).toHaveLength(1);
-  });
-
-  it("projects the image-input capability from MODEL_RELAY_IMAGE_INPUT (#319)", () => {
-    // The same harness resolution the provider-app reads — the picker face
-    // and the relay wire dispatch can never disagree.
+  it("projects the image-input capability from the row declaration (#319/#500)", () => {
+    // The row declaration is the ONE source — the picker face and the relay
+    // wire dispatch can never disagree.
     const declared = systemExecutionOptionsResponseSchema.parse(
-      buildExecutionOptions(
-        { MODEL_RELAY_MODEL: "glm-5.3", MODEL_RELAY_IMAGE_INPUT: "1" },
-        PROVIDERS,
-      ),
+      buildExecutionOptions({
+        main: { models: [{ id: "glm-5.3", input: ["text", "image"] }] },
+      }),
     );
     expect(declared.providers[0]?.capabilities.supportsImageInput).toBe(true);
     const undeclared = systemExecutionOptionsResponseSchema.parse(
-      buildExecutionOptions({ MODEL_RELAY_MODEL: "glm-5.3" }, PROVIDERS),
+      buildExecutionOptions({ main: { models: [{ id: "glm-5.3" }] } }),
     );
     expect(undeclared.providers[0]?.capabilities.supportsImageInput).toBe(false);
   });
@@ -113,7 +96,6 @@ describe("GET /api/v1/system/execution-options", () => {
   it("#450 projects configured multi-provider rows verbatim", () => {
     const parsed = systemExecutionOptionsResponseSchema.parse(
       buildExecutionOptions(
-        {},
         {
           main: {
             displayName: "Main relay",
@@ -155,46 +137,43 @@ describe("GET /api/v1/system/execution-options", () => {
   });
 
   it("#362 reflects the thinking budget in the ladder and honors the declared default", () => {
-    // Budget on + declared default → the picker offers the declared ladder
-    // with the declared rung — the same derivation the harness execution
-    // reports (same resolution).
+    // #500: the row's thinkingBudgetTokens is the budget — budget on +
+    // declared default → the picker offers the declared ladder with the
+    // declared rung (the same derivation the dispatch registry runs).
     const declared = systemExecutionOptionsResponseSchema.parse(
-      buildExecutionOptions(
-        { MODEL_RELAY_THINKING_BUDGET_TOKENS: "4096" },
-        {
-          omp: {
-            models: [
-              {
-                id: "glm-5.3",
-                reasoningLevels: ["none", "low", "medium", "high"],
-                defaultReasoningLevel: "high",
-              },
-            ],
-          },
+      buildExecutionOptions({
+        omp: {
+          models: [
+            {
+              id: "glm-5.3",
+              reasoningLevels: ["none", "low", "medium", "high"],
+              defaultReasoningLevel: "high",
+              thinkingBudgetTokens: 4096,
+            },
+          ],
         },
-      ),
+      }),
     );
     expect(
       declared.models[0]?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort),
     ).toEqual(["none", "low", "medium", "high"]);
     expect(declared.models[0]?.defaultReasoningEffort).toBe("high");
-    // Budget on without configured rows → NO rows at all (#434: nothing is
-    // synthesized, so there is no implicit "medium" row to serve).
+    // No configured rows → NO rows at all (#434: nothing is synthesized).
     const undeclared = systemExecutionOptionsResponseSchema.parse(
-      buildExecutionOptions({ MODEL_RELAY_THINKING_BUDGET_TOKENS: "4096" }, {}),
+      buildExecutionOptions({}),
     );
     expect(undeclared.models).toEqual([]);
     expect(undeclared.providers).toEqual([]);
   });
 
-  it("#434 leaves the running model unmarked when the rows omit it", () => {
+  it("#434/#500 never marks a row default — no deployment model exists", () => {
     const parsed = systemExecutionOptionsResponseSchema.parse(
-      buildExecutionOptions({ MODEL_RELAY_MODEL: "glm-5.3" }, {
+      buildExecutionOptions({
         main: { models: [{ id: "glm-5.3-flash" }] },
       }),
     );
-    // #434: the omission is configuration — the configured row serves, and
-    // nothing is synthesized under it to carry the default marker.
+    // The configured row serves, and nothing is synthesized to carry a
+    // default marker (the selection is always explicit).
     expect(parsed.models.map((model) => model.model)).toEqual(["glm-5.3-flash"]);
     expect(parsed.models.filter((model) => model.isDefault)).toHaveLength(0);
   });

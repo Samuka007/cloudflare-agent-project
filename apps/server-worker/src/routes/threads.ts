@@ -25,6 +25,7 @@ import {
   resolvePendingInteractionRequestSchema,
   type ThreadResponse,
 } from "../contract/api/threads.js";
+import { getPermissionMode } from "../db/permission-mode.js";
 import { promptHistoryResponseSchema } from "../contract/api/projects.js";
 import {
   PROMPT_HISTORY_ENTRY_LIMIT,
@@ -345,7 +346,6 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // rows → the fail-closed empty directory).
     const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
     const selection = validateThreadExecutionSelection(
-      ctx.env,
       payload,
       overlay?.providers ?? {},
     );
@@ -521,18 +521,20 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
    * stored-selection face (ResolvedThreadExecutionOptions | null). #486:
    * without this face the composer never sees the thread's stored selection —
    * the SPA seeds no model, the picker silently falls to the catalog's
-   * isDefault row (the harness model), and follow-up sends ride no selection
+  * isDefault row, and follow-up sends ride no selection
    * (followUpExecutionSelection gates on this face) so turns dispatch the
    * deployment default: the exact display+dispatch drift the ticket reports.
    * Resolution is the stored row through resolveThreadDefaultExecutionOptions
-   * — the same merged catalog a send validates against.
+  * — the same merged catalog a send validates against. #500: the display's
+  * permission posture is the D1 `permission_mode` seat (hot, no redeploy).
    */
   routes.get("/threads/:id/default-execution-options", async (ctx) => {
     const row = await requirePublicThread(ctx);
     const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+    const permissionMode = (await getPermissionMode(ctx.env)).mode;
     return ctx.json(
       resolvedThreadExecutionOptionsSchema.nullable().parse(
-        resolveThreadDefaultExecutionOptions(ctx.env, row, overlay?.providers ?? {}),
+        resolveThreadDefaultExecutionOptions(permissionMode, row, overlay?.providers ?? {}),
       ),
     );
   });
@@ -558,7 +560,6 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     const executionPatch =
       payload.model !== undefined || payload.reasoningLevel !== undefined
         ? resolveThreadExecutionOverridePatch(
-            ctx.env,
             row,
             {
               ...(payload.model !== undefined ? { model: payload.model } : {}),
@@ -676,7 +677,6 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       // names no default model anymore; a row without an override still
       // 422s with the named remedy.
       const next = validateThreadExecutionSelection(
-        ctx.env,
         {
           providerId: row.providerId,
           ...(payload.model !== undefined ? { model: payload.model } : {}),
@@ -691,7 +691,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       );
       // validateThreadExecutionSelection never returns null anymore (#434):
       // the payload always carries providerId here, so `explicit` is set.
-      const current = resolveStoredThreadExecution(ctx.env, row, overlay?.providers ?? {});
+      const current = resolveStoredThreadExecution(row, overlay?.providers ?? {});
       if (classifyThreadSelectionChange(current, next.resolved) === "live" && next.explicit) {
         const updated = await updateThreadRecord(ctx.env, row.id, {
           ...(payload.model !== undefined ? { modelOverride: payload.model } : {}),
@@ -720,7 +720,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // create-time pin).
     if (executionRide === undefined) {
       const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
-      const stored = resolveStoredThreadExecution(ctx.env, row, overlay?.providers ?? {});
+      const stored = resolveStoredThreadExecution(row, overlay?.providers ?? {});
       executionRide = {
         providerId: stored.providerId,
         model: stored.model,

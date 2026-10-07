@@ -19,8 +19,6 @@ import {
   imageGenerationSourceFromOverlay,
   EMPTY_PROVIDER_OVERLAY,
   RelayProviderRegistry,
-  type HarnessEnv,
-  type ManagerDoBindings,
 } from "@cap/provider-app";
 import { createApp } from "./app.js";
 import { updateHostRow, upsertAttachedHost } from "./db/hosts.js";
@@ -63,12 +61,12 @@ export class ComposedAgentDO extends AgentDO {
     // journal-selection dispatch goes through (no deployment-default
     // provider — the "*" fallback posture is retired) — one registration
     // shape shared with the manager.
-    const harnessEnv = env as AgentDoBindings & HarnessEnv;
     // #450: the D1 overlay is the sole directory 正本. The constructor is
     // synchronous and D1 is async, so the isolate starts on the honest
     // zero-config overlay; the awaited refreshRuntime at the turn boundary
     // (agent-do.ts driveTurn) hot-applies the panel rows before dispatch.
-    const registry = RelayProviderRegistry.create(harnessEnv, EMPTY_PROVIDER_OVERLAY);
+    // #500: no deployment env takes part — the overlay is the whole input.
+    const registry = RelayProviderRegistry.create(EMPTY_PROVIDER_OVERLAY);
     this.relayRegistry = registry;
     setAgentRuntime("*", {
       ...relayAgentRuntime(registry),
@@ -116,7 +114,7 @@ export class ComposedHostOrchestratorDO extends HostOrchestratorDO {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env as unknown as ConstructorParameters<typeof HostOrchestratorDO>[1]);
     setProviderAdapter(
-      createEdgeAgentAdapter(env as Env & ManagerDoBindings & { MANAGER: DurableObjectNamespace }),
+      createEdgeAgentAdapter(env as { MANAGER: DurableObjectNamespace }),
     );
   }
 }
