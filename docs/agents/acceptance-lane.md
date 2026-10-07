@@ -16,7 +16,7 @@
 ## 2. 派发（PM 侧）
 
 - 派发时机：实现 lane 交付报告落地、PR 已推、staging 面已随 CD 部署（`SERVER_VERSION` 经 `/api/v1/system/version` 可查）之后。
-- 浏览器票由 `AP.lane` 自动登记租约（tab `l<票号>`、线程前缀 `l<票号>-`）；手工派发同款必填（#240）。
+- 浏览器面（2026-10-07 修订，取代 #240 租约）：验收 lane 用自管 headless Chromium（omp browser facade `browser.open({ name: "l<票号>" })`），无租约义务（租约制废止见 pm.md §验收关账 6）；staging thread 前缀 `l<票号>-` 约定保留。
 - dispatch packet 用 §3 模板实例化：靶面清单逐项来自票面 Acceptance 框，逐框标注 staging/CI 归属。
 
 ## 3. 可复用工单模板（PM 实例化后随 spawn 下发）
@@ -36,12 +36,12 @@
   §2——官方明示 DO worker 不生成 Version URL；Previews 的 scheduled 不跑），
   staging 验收一律走 CD 部署面或 `nix run .#staging-deploy` 手动面（#175）。
 
-## 租约（#240，浏览器票必填）
+## 浏览器卫生（2026-10-07 修订，租约制已废止）
 
-- tab: l<票号>（具名 tab；禁默认 tab、禁他人 tab）
+- 实例：自管 headless Chromium（`browser.open({ name: "l<票号>" })`），并行互不干扰
 - thread prefix: l<票号>-（staging thread=抢占资源，一 thread 一在飞 turn；
   交互测试一律新建专属线程；只读观察零发送）
-- 交付后 PM `AP.release("browser", { lane })` 释放；报告必须回报 tab/thread 使用与关闭状态
+- 报告必须回报 thread 使用情况；用毕 `browser.close({ all: true })` 关闭自家实例
 
 ## 义务
 
