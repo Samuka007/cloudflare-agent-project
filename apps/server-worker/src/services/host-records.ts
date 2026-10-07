@@ -5,6 +5,7 @@ import type { Host } from "../contract/domain/host.js";
 import { listNonDestroyedHostRows } from "../db/hosts.js";
 import type { HostDbRow } from "../db/rows.js";
 import type { Env } from "../env.js";
+import { ApiError } from "../shared/api-error.js";
 
 /**
  * bb toHostRecord reads the status out of the live session before shaping
@@ -72,4 +73,23 @@ export async function resolvePrimaryHostId(env: Env): Promise<string | null> {
   const soleHost = rows[0];
   if (rows.length === 1 && soleHost !== undefined) return soleHost.id;
   return null;
+}
+
+/**
+ * bb requirePrimaryHostId (primary-host.ts:78-84): the omission-resolution
+ * every host-scoped face with an optional `hostId` rides (#494 files face).
+ * No primary at all answers bb's 502 host_unavailable with the
+ * "Local host daemon is not initialized" message; resolution here is
+ * database-only (no dataDir leg), matching resolvePrimaryHostId above.
+ */
+export async function requirePrimaryHostId(env: Env): Promise<string> {
+  const hostId = await resolvePrimaryHostId(env);
+  if (hostId === null) {
+    throw new ApiError({
+      status: 502,
+      code: "host_unavailable",
+      message: "Local host daemon is not initialized",
+    });
+  }
+  return hostId;
 }

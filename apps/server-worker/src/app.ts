@@ -9,6 +9,7 @@ import { registerProjectRoutes, registerThreadSectionRoutes } from "./routes/pro
 import { registerHostRoutes } from "./routes/hosts.js";
 import { registerEnvironmentRoutes } from "./routes/environments.js";
 import { registerPluginRoutes } from "./routes/plugins.js";
+import { registerFileRoutes } from "./routes/files.js";
 import { installShScript } from "./install-sh.js";
 import type { AppEnv, Env } from "./app-types.js";
 import type { Context, Next } from "hono";
@@ -65,6 +66,7 @@ export function createApp(env: Env): Hono<AppEnv> {
   registerProjectRoutes(app);
   registerThreadSectionRoutes(app);
   registerHostRoutes(app);
+  registerFileRoutes(app);
   registerEnvironmentRoutes(app);
   registerPluginRoutes(app);
   registerSystemRoutes(app);

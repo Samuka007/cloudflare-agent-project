@@ -15,6 +15,7 @@
     "test/host-directory.test.ts",
     "test/host-discovery.test.ts",
     "test/host-files.test.ts",
+    "test/host-path-mutations.test.ts",
     "test/project-commands.test.ts",
     "test/l1-ws-close-reconnect.test.ts",
     "test/l1-read-semantics.test.ts",

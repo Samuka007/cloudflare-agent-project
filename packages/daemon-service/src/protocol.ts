@@ -214,6 +214,27 @@ export const hostWriteFileCommandSchema = z.object({
 export type HostWriteFileCommand = z.infer<typeof hostWriteFileCommandSchema>;
 
 /**
+ * #494: create one directory at an absolute host path — bb `host.mkdir`
+ * (host-daemon-contract commands.ts:592-608; the Add-project folder
+ * browser's "New folder"). `rootPath`, when declared, confines the
+ * resolved target beneath that absolute root (bb path-mutations.ts:78-92);
+ * omitted, the explicit absolute disk path is used as-is. Result:
+ * hostPathMutationResultSchema.
+ */
+export const hostMkdirCommandSchema = z.object({
+  type: z.literal("host.mkdir"),
+  path: z.string().min(1),
+  rootPath: z.string().min(1).optional(),
+  recursive: z.boolean(),
+});
+export type HostMkdirCommand = z.infer<typeof hostMkdirCommandSchema>;
+
+/** bb hostPathMutationResultSchema (commands.ts:1300-1302): the mkdir/move/
+ * remove answer — nothing to report but success. */
+export const hostPathMutationResultSchema = z.object({ ok: z.literal(true) });
+export type HostPathMutationResult = z.infer<typeof hostPathMutationResultSchema>;
+
+/**
  * #447: run provider /models discovery ON the host and return metadata-
  * enriched rows. The edge (Workers) cannot run omp's pi-catalog enrichment
  * face (bundled catalog + models.dev hydration need the Bun host —
@@ -369,6 +390,7 @@ export const hostRpcCommandSchema = z.discriminatedUnion("type", [
   hostBrowseDirectoryCommandSchema,
   hostReadFileCommandSchema,
   hostWriteFileCommandSchema,
+  hostMkdirCommandSchema,
   hostDiscoverModelsCommandSchema,
   hostPathsExistCommandSchema,
   projectInspectCommandSchema,

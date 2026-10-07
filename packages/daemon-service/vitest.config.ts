@@ -31,6 +31,8 @@ export default defineConfig({
       "test/host-discovery.test.ts",
       // B1 host-file read lane: node:fs + node:crypto real-fs suite — Bun-only.
       "test/host-files.test.ts",
+      // #494 host.mkdir lane: node:fs real-fs suite — Bun-only.
+      "test/host-path-mutations.test.ts",
       // #445 add-source project lane: node:child_process real git clones — Bun-only.
       "test/project-commands.test.ts",
       "test/l1-read-semantics.test.ts",
