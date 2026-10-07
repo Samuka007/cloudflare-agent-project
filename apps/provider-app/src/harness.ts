@@ -88,9 +88,9 @@ export interface HarnessEnv {
    * never carries keys). Strict JSON `{[providerId]: {apiKey?, baseUrl?}}`;
    * a provider without an entry rides the deployment's single-relay slots
    * (MODEL_RELAY_BASE_URL_ANTHROPIC / _API_KEY). Malformed JSON fails loudly
-   * at registry construction (deployment-time input, the
-   * AGENT_DO_IMAGE_SOURCE posture) — a silent wrong-credential degradation
-   * would surface as upstream 403s instead.
+   * at registry construction (deployment-time input, the loud-decode
+   * posture) — a silent wrong-credential degradation would surface as
+   * upstream 403s instead.
    */
   MODEL_RELAY_PROVIDER_CREDENTIALS?: string;
   /** Host binding pin; unset = the cloud placeholder (#377, no fabricated machine). */
@@ -235,8 +235,8 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
     (locatedProviderApi === IMAGE_SOURCE_API_FAMILY ? undefined : locatedProviderApi) ??
     DEFAULT_RELAY_API;
   // #351 credentials JSON: the default provider's slot rides under strict
-  // decode (malformed JSON fails the deployment loudly, AGENT_DO_IMAGE_SOURCE
-  // posture — never a silent mock). Precedence: credentials slot → catalog
+  // decode (malformed JSON fails the deployment loudly — never a silent
+  // mock). Precedence: credentials slot → catalog
   // provider baseUrl → legacy scalar → ruled default (#361 cutover seam).
   const credentials = decodeRelayProviderCredentials(env.MODEL_RELAY_PROVIDER_CREDENTIALS);
   const credentialsSlot = defaultProviderKey !== undefined ? credentials[defaultProviderKey] : undefined;

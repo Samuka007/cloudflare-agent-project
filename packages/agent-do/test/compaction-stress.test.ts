@@ -257,7 +257,7 @@ function projectedFrom(
 ): ModelRequest {
   return {
     ...modelRequestFromEvents(events, turnId, modelCallId),
-    experimentalGates: DEFAULT_EXPERIMENTAL_TOOL_CONFIG,
+    experimentalGates: { ...DEFAULT_EXPERIMENTAL_TOOL_CONFIG, generateImage: false },
   };
 }
 

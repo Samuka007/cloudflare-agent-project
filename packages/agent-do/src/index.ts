@@ -98,12 +98,9 @@ export type {
   WebSearchProjection,
 } from "./tools/web-search.js";
 export {
-  DEFAULT_GENERATE_IMAGE_CONFIG,
   DEFAULT_IMAGE_TIMEOUT_SECONDS,
   HOST_FILE_RPC_TIMEOUT_MS,
-  MAX_IMAGE_TIMEOUT_SECONDS,
   assemblePrompt,
-  decodeGenerateImageConfig,
   resolveOpenAIImageSize,
 } from "./tools/generate-image.js";
 export type {

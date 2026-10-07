@@ -189,16 +189,12 @@ export interface ExperimentalToolConfig {
   contextNotes: boolean;
   /** omp cfgCheckpointEnabled — gates checkpoint + rewind. */
   checkpoint: boolean;
-  /** B2 #322: omp `generate_image.enabled` (imageGenTool custom-tool gate,
-   * default false) — gates `generate_image`. */
-  generateImage: boolean;
 }
 
 export const DEFAULT_EXPERIMENTAL_TOOL_CONFIG: ExperimentalToolConfig = {
   externalThinking: false,
   contextNotes: false,
   checkpoint: false,
-  generateImage: false,
 };
 
 /** The repo env-flag convention (1/true/on); exported for the relay harness
@@ -214,12 +210,10 @@ export function decodeExperimentalToolConfig(env: {
   AGENT_DO_EXTERNAL_THINKING?: string;
   AGENT_DO_CONTEXT_NOTES?: string;
   AGENT_DO_CHECKPOINT?: string;
-  AGENT_DO_GENERATE_IMAGE?: string;
 }): ExperimentalToolConfig {
   return {
     externalThinking: envFlag(env.AGENT_DO_EXTERNAL_THINKING),
     contextNotes: envFlag(env.AGENT_DO_CONTEXT_NOTES),
     checkpoint: envFlag(env.AGENT_DO_CHECKPOINT),
-    generateImage: envFlag(env.AGENT_DO_GENERATE_IMAGE),
   };
 }

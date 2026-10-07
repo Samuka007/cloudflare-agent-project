@@ -3,7 +3,7 @@
 - 工单：Samuka007/cloudflare-agent-project#55（M0 staging 门禁前置考古）
 - 检索日期：2026-10-04
 - 依据：一手来源为 developers.cloudflare.com 官方文档（2026-08~10 更新版本）+ 我们账号的 CF API 只读实测（`cfat` token，账号 `99646ce7…cae0`）+ 仓库代码逐行核对。二手来源无。API 实测值标注（live 2026-10-04）。
-- 关联：#17（Access 前置 + Worker 内 JWT 校验裁决）、#31（staging 组合部署）、#34（daemon face）、#36（边缘闸门）、docs/engineering.md 横切实践 7/11/12、docs/research/bb-daemon-protocol.md §5（hostKey 形状）
+- 关联：#17（Access 前置 + Worker 内 JWT 校验裁决）、#31（staging 组合部署）、#34（daemon face）、#36（边缘闸门）、docs/engineering.md 横切实践 7/11/12、docs/research/bb-daemon-protocol.md §5（hostKey 形状）、#412/#435（2026-10-06 单 root app 收敛与残留清理，实测结论见 §9）
 
 ---
 
@@ -11,7 +11,7 @@
 
 **Access 是正确的主门禁，但只能用「hostname 型 self-hosted app」形态；IP 过滤只配当第二层，且必须走 WAF custom rules（Zone Lockdown 在 Free 套餐不可用；mTLS 需要 Enterprise/PAYG，出局；worker 级 Access 因 WebSocket 403 限制出局）。** 具体判定：
 
-1. **主门禁**：在 `staging.samuka007.top`（custom domain，前置条件）上建 hostname 型 Access app：主 app 覆盖全站（Allow：owner 邮箱，浏览器 SPA + CDP 走 `CF_Authorization` cookie，默认 24h、全局会话有效期内自动续发）；daemon 缝合路径（`/enroll`、`/session/open`、`/agent/*`、`/agent-sink/*`、`/ws` attach）建**第二个更具体 path 的 Access app** 挂 Service Auth 策略（service token 头），Service Auth/Bypass 策略先于 Allow 评估是文档保证的顺序。hostKey 照旧只在缝合内验（engineering.md 规则 7 不动摇：Access 是围墙，hostKey 是门锁，两层各司其职）。
+1. **主门禁**：在 `staging.samuka007.top`（custom domain，前置条件）上建 hostname 型 Access app：主 app 覆盖全站（Allow：owner 邮箱，浏览器 SPA + CDP 走 `CF_Authorization` cookie，默认 24h、全局会话有效期内自动续发）；daemon 缝合路径（`/enroll`、`/session/open`、`/agent/*`、`/agent-sink/*`、`/ws` attach）建**第二个更具体 path 的 Access app** 挂 Service Auth 策略（service token 头），Service Auth/Bypass 策略先于 Allow 评估是文档保证的顺序。hostKey 照旧只在缝合内验（engineering.md 规则 7 不动摇：Access 是围墙，hostKey 是门锁，两层各司其职）。（**2026-10-06 手术否决**：path app 拆面实测致 SPA CORS+WS 拒连——root 登录 cookie 过不了 path app 的门，生产已收敛单 root app，见 §9。）
 2. **出局项**：worker 级 Access（`worker` destination）文档明示 WebSocket 升级一律 403，而我们 `/ws` 是核心信道；Access mTLS「Enterprise 与 PAYG Zero Trust 套餐可用，Free 不含」；Zone Lockdown「Free 套餐 0 条规则」。
 3. **IP 过滤 = 第二层网络闸**：单条 WAF custom rule（Free 套餐限 5 条，够用）`http.host eq "staging.samuka007.top" and not ip.src in {家庭出口, VPS}` → Block。只在 custom domain 落地后才生效（workers.dev 主机名不在我们 zone，zone WAF 够不着）。CI 不受影响：今日 ci.yml 零 CF 流量，未来 wrangler deploy 只走 `api.cloudflare.com` 控制面，永不碰 app-plane；GH 托管 runner 出口 7,078 条 CIDR（live 实测 api.github.com/meta），做 allowlist 不现实，也无需做。
 4. **应用内中间件照旧**：`ACCESS_CHECK_ENABLED=true` 的 `middleware/access.ts` 保留为纵深防御（它还能覆盖 workers.dev 直连面），与 edge 侧 Access 互补而非重复—— Access 在 edge 挡流量省钱，中间件防 Access 配置漂移。
@@ -146,6 +146,8 @@
 
 ### 5.2 daemon 缝合的共存设计
 
+> **2026-10-06 手术修订**：本节「path 粒度双 app」方案被实测否决（root cookie 过不了 path app → XHR 302→CORS 报错、WS 升级 302→拒连）；生产形态为单 root app + 三策略，见 §9。下方「Access 是围墙、hostKey 是门锁」的分层裁决保留不动摇。
+
 仓库现状（§1 表）：daemon face 在 `index.ts` 入口分发，先于 Hono app —— hostKey Bearer 是缝合内唯一凭据（`edge.ts` authKeyOf + 鉴权阶梯）。Access 上线后的接法：
 
 - **path 粒度双 app**：主 app `staging.samuka007.top`（path 空 = 全站）挂 Allow(owner 邮箱)；第二个 Access app 用更具体的 path（`/enroll`、`/session/open`、`/agent/*`、`/agent-sink/*`、`/ws`）挂 Service Auth 策略（`Any Access Service Token`，可加 `IP ranges` require）。Access 文档保证「更具体的 path 规则优先，不继承」+「Service Auth 先于 Allow 评估」→ 机器走 token、人走登录，同域名同 path 树无冲突。[来源：Application paths — https://developers.cloudflare.com/cloudflare-one/access-controls/policies/app-paths/ §Policy inheritance ；Access policies §Order ]
@@ -178,7 +180,7 @@
 
 ## 7. 推荐组合
 
-**主门禁（身份层）：hostname 型 Access 双 app + service token；第二层（网络层）：单条 WAF custom rule；纵深：现有 `ACCESS_CHECK_ENABLED` 中间件保留。** 具体：
+**主门禁（身份层）：hostname 型 Access 双 app + service token；第二层（网络层）：单条 WAF custom rule；纵深：现有 `ACCESS_CHECK_ENABLED` 中间件保留。**（2026-10-06 手术修订：「双 app」被实测否决，生产为**单 root app「cap-staging」+ 三策略 OR**，见 §9。）具体：
 
 1. `staging.samuka007.top`（custom_domain routes）→ cap-server-staging —— 一切 zone 级产品的前提。
 2. Access app A「cap-staging」（domain `staging.samuka007.top`，path 空）：Allow(owner 邮箱集，照 cvat 模板)，session 24h 默认。
@@ -195,7 +197,7 @@
 1. [ ] wrangler.staging.jsonc 加 `routes: [{ pattern: "staging.samuka007.top", custom_domain: true }]` → 部署（回滚：删 routes 重部署）。
 2. [ ] 建 Access app A（Allow owner 邮箱）；浏览器冒烟：登录 → SPA 加载 → WS hub 连通（回滚：删 app）。
 3. [ ] 建 service token `cap-daemon`，Secret 入密库；curl 双头打 `/health` 确认 200（回滚：revoke）。
-4. [ ] 建 Access app B（daemon paths，Service Auth）；curl 无头打 `/enroll` 确认 302/403、带头确认通过（回滚：删 app B）。
+4. [x] ~~建 Access app B（daemon paths，Service Auth）~~——已随 #412 收敛作废：单 root app 下 daemon 服务令牌与人同门（svc 策略 decision=`non_identity`），无独立 path app。
 5. [ ] daemon client 增加 CF 双头（与 hostKey 并行发送）；L1 冒烟：enroll→open→ws attach 全链（回滚：去头）。
 6. [ ] 设置 secrets `ACCESS_TEAM_DOMAIN=samuka007.cloudflareaccess.com`、`ACCESS_AUD=<app A 的 AUD>`，`ACCESS_CHECK_ENABLED=true` 重部署；验证 workers.dev 直连 `/api/v1/*` 401（中间件生效）、custom domain 正常（回滚：flag 置 false）。
 7. [ ] `PATCH /access/organizations {"strict_service_token_auth": true}`；回归步骤 3/5（回滚：置 false）。
@@ -203,5 +205,33 @@
 9. [ ] lighthouse DDNS → 规则重写自动化接线（如采纳 IP 层）；把「IP 集合重写」登记进 docs/ops/。
 10. [ ] SPA fetch 补 `X-Requested-With: XMLHttpRequest`（过期会话得 401 而非 302 HTML，bb-spa 已有 401 处理路径）。
 11. [ ] CHANGELOG + 本文件收尾（ticket #55 关单引用）。
+
+---
+
+## 9. 实测结论附录（2026-10-06 活体手术实录；#435 收残留）
+
+§0/§5.2/§7/§8 成文于 2026-10-04 设计期，推荐的「主 app + daemon path app」双
+app 拆面当晚落地 7 app 后被实测否决。生产正本以本节为准（来源：#412 comment
+手术实录 + #435 活体复验）：
+
+1. **单 root app 是唯一可行形态**。path app 各持独立 aud，而浏览器登录 cookie
+   只认发它的那个 app——root 登录后 `/api/v1` XHR 与 `/ws` 升级被 302 到
+   cloudflareaccess.com（控制台呈现为 CORS Missing Allow Origin + WS 拒连，
+   用户实报）。6 个 path app 已删：`cap-staging` 单 root app 覆盖
+   bb-staging.samuka007.com 整域，单一 aud（`084987b3…`），一次登录全路径生效。
+2. **三策略 OR 共存**（单 app 内）：`allow-owner`/`allow-owner-me`（人，email
+   规则）+ `svc-daemon`（服务令牌）；session_duration 730h（全对象 PUT 改，
+   部分字段 PUT 被静默忽略）。
+3. **服务令牌策略 decision 必须是 `non_identity`**（现行 API 枚举）：`allow`
+   不授权服务令牌——请求 302 到登录页（活体复现实证）；`service_auth` 不是
+   合法 API 值（12130 unrecognized）。
+4. **unknown Client ID 不入 Access 认证日志**（GET /access/logs/access_requests
+   排障判据）：令牌请求 302 且日志无记录 = Client ID 层面就错了（先查凭据
+   转录完整性）；有 failed 记录 = ID 对、secret 或策略授权层错。
+5. **worker secret `ACCESS_AUD` 为单值**（root app aud；#435 退役多 app 时代的
+   双 aud 形态，`.staging-access.env` 的 `ACCESS_AUD_API_V1` 行同删）。中间件
+   的逗号列表解析保留为遗留容忍（middleware/access.ts），生产值不再含逗号。
+
+---
 
 > AGENT GENERATED: by zhipu-coding-plan/glm-5.3-flash (research subagent)
