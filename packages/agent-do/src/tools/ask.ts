@@ -5,7 +5,10 @@ import type {
   PendingInteractionUserQuestionQuestion,
   UserQuestionPendingInteractionResolution,
 } from "@cap/protocol";
-import { isUserQuestionPendingInteractionResolution } from "@cap/protocol";
+import {
+  isUserQuestionPendingInteractionResolution,
+  pendingInteractionPayloadSchema,
+} from "@cap/protocol";
 import type { AnyAgentEvent } from "../fsm-events.js";
 import type { TurnFsmStatus } from "../turn-state.js";
 import type { EdgeToolResult } from "./edge.js";
@@ -426,6 +429,26 @@ export async function runAskTool(
       seenLabels.add(option.label);
     }
   }
+  // #478 fail-closed: the omp-verbatim arktype row (registry.ts) validates a
+  // superset of the DO payload schema (protocol pending-interactions.ts —
+  // non-blank id/prompt/label, `recommended: int ≥ 0`), so a divergent model
+  // shape would otherwise reach the `interaction.registered` append and the
+  // event-log zod parse would throw OUT of this executor — the turn driver
+  // fiber dies mid-wave and the alarm re-ask loop re-throws forever (a stuck
+  // turn, never an honest failure; #436 doctrine). Validate the projected
+  // payload against the SAME schema the journal append enforces and surface
+  // the divergence as an explicit tool error before anything registers.
+  const payload = buildAskPayload(ctx.executionId, questions);
+  const divergent = pendingInteractionPayloadSchema.safeParse(payload);
+  if (!divergent.success) {
+    const detail = divergent.error.issues
+      .map((issue) => `${issue.path.map(String).join(".") || "(payload)"}: ${issue.message}`)
+      .join("; ");
+    return {
+      status: "error",
+      output: `Error: ask payload diverged from the pending-interaction schema: ${detail}`,
+    };
+  }
 
   const existing = await ctx.interactionForExecution();
   if (existing !== undefined) {
@@ -454,7 +477,7 @@ export async function runAskTool(
     const askTimeoutMs = ctx.askTimeoutMs;
     await ctx.registerInteraction({
       interactionId: `pi_${crypto.randomUUID()}`,
-      payload: buildAskPayload(ctx.executionId, questions),
+      payload,
       expiresAt: askTimeoutMs > 0 ? ctx.now() + askTimeoutMs : null,
     });
   }
