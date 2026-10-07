@@ -73,6 +73,7 @@ import {
 import { DEFAULT_APP_KEYBINDINGS } from "../services/system/app-keybindings.js";
 import { defaultFeatureFlags } from "../contract/domain/feature-flags.js";
 import { ApiError, parseOr422, requireJsonBody } from "../shared/route-utils.js";
+import { BB_DATA_DIR_LABEL } from "../shared/bb-display.js";
 import {
   deleteProviderConfig,
   getProviderConfigMutationContext,
@@ -126,7 +127,7 @@ const appearancePutSchema = z
     message: "At least one field must be provided",
   });
 
-export function buildSystemConfig(env: Env, requestUrl: URL) {
+export function buildSystemConfig(requestUrl: URL) {
   const origin = `${requestUrl.protocol}//${requestUrl.host}`;
   return {
     generalSettings: undefined as never, // replaced by caller
@@ -138,11 +139,14 @@ export function buildSystemConfig(env: Env, requestUrl: URL) {
     customThemes: [],
     pluginThemes: [],
     featureFlags: defaultFeatureFlags,
-    hostDaemonPort: env.HOST_DAEMON_PORT !== undefined ? Number(env.HOST_DAEMON_PORT) : null,
+    // bb config.hostDaemonPort analogue (#504): the port runs no host daemon
+    // — honestly null; the env override was a fake knob and is retired.
+    hostDaemonPort: null,
     serverUrl: origin,
     primaryHostPlatform: null,
     voiceTranscriptionEnabled: false,
-    dataDir: env.DATA_DIR ?? "/data",
+    // bb config.dataDir analogue — display-only label, no fs (#504).
+    dataDir: BB_DATA_DIR_LABEL,
   };
 }
 
@@ -384,7 +388,7 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
     const overrides = await getKeybindingOverrides(ctx.env);
     const experiments = await getExperiments(ctx.env);
     const stored = await getStoredAppearance(ctx.env);
-    const draft = buildSystemConfig(ctx.env, url);
+    const draft = buildSystemConfig(url);
     // #502: the tool-gate vocabulary projects the D1 `tool_capabilities`
     // seat (the row is the single 正本 — an absent row is the all-off omp
     // posture). Read-time resolution, the same posture as the rest of the
@@ -418,7 +422,7 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
       serverUrl: draft.serverUrl,
       // #436: read-time resolution — the cascade's server-body leg names the
       // cloud placeholder (services/host-records.ts resolvePrimaryHostId);
-      // buildSystemConfig stays the pure env/URL draft without D1 access.
+      // buildSystemConfig stays the pure URL draft without D1 access.
       primaryHostId: await resolvePrimaryHostId(ctx.env),
       primaryHostPlatform: draft.primaryHostPlatform,
       voiceTranscriptionEnabled: draft.voiceTranscriptionEnabled,

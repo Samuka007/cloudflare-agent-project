@@ -7,6 +7,7 @@ import type {
   ProviderExecutionContext,
 } from "@cap/daemon-worker";
 import { resolveHarness } from "@cap/provider-app";
+import { BB_DATA_DIR_LABEL } from "../shared/bb-display.js";
 
 /**
  * The #26 ⇄ #29 seam. Event storage and turn state live in the per-thread
@@ -258,7 +259,9 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
       const command: AdapterCommand = {
         type: "thread/start",
         threadId,
-        cwd: env.DATA_DIR ?? "/data",
+        // bb stamps config.dataDir here; on the port it is a display label
+        // (the Worker has no fs) — #504.
+        cwd: BB_DATA_DIR_LABEL,
         ...(args.machineId !== undefined ? { machineId: args.machineId } : {}),
         ...(args.execution !== undefined ? { execution: args.execution } : {}),
         ...(args.title ? { input: [{ type: "text", text: args.title, mentions: [] }] } : {}),

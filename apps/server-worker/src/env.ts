@@ -62,10 +62,6 @@ export interface Env {
   readonly APP_EXTRA_ORIGINS?: string;
   /** Version banner for /system/version (bb appVersion.currentVersion). */
   readonly SERVER_VERSION?: string;
-  /** bb config.dataDir analogue; the Worker has no fs — surface value only. */
-  readonly DATA_DIR?: string;
-  /** bb config.hostDaemonPort analogue; null when unset. */
-  readonly HOST_DAEMON_PORT?: string;
 
   // --- composition vars (#31, #377) -------------------------------------------
 
