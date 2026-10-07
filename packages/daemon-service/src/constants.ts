@@ -96,9 +96,10 @@ export const HOST_KEY_KV_TTL_S = 60;
 /**
  * Negative-cache window: after the DO raises a quota/overload-class failure
  * for a host, the front answers that host's negotiation requests with
- * 429 + Retry-After for this long without touching the DO. The L1 rig
- * overrides via the DAEMON_NEGATIVE_CACHE_MS var (real-clock window;
- * workerd isolates cannot be fake-timed from the test realm).
+ * 429 + Retry-After for this long without touching the DO. #503: this
+ * constant is the sole authority — the L1 rig injects a short real-clock
+ * window through the test-only seam (workerd isolates cannot be fake-timed
+ * from the test realm).
  */
 export const NEGATIVE_CACHE_TTL_MS = 30_000;
 

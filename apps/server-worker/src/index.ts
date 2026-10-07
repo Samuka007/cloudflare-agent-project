@@ -159,9 +159,6 @@ export default {
         ENROLL_KEY: enrollKey,
         DAEMON_HOST_KEY: hostKey,
         DAEMON_EDGE_KV: env.DAEMON_EDGE_KV,
-        DAEMON_NEGATIVE_CACHE_MS: env.DAEMON_NEGATIVE_CACHE_MS,
-        DAEMON_RATE_LIMIT_CAPACITY: env.DAEMON_RATE_LIMIT_CAPACITY,
-        DAEMON_RATE_LIMIT_REFILL_PER_SEC: env.DAEMON_RATE_LIMIT_REFILL_PER_SEC,
         // #49: daemon attach → control-plane host registry (the /hosts face);
         // #195 S3: protocol rejections stamp last_rejected_protocol_version
         // so the SPA's "Needs update" face activates (bb internal/session.ts:53-55).

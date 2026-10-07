@@ -29,9 +29,8 @@
     // defaults. Deployments inject them with `wrangler secret put ENROLL_KEY`
     // / `DAEMON_HOST_KEY`; local `wrangler dev` reads them from .dev.vars
     // (gitignored), which the local smoke scripts write before starting.
-    // L1-rig negative-cache window (#36): real-clock short window so the
-    // expiry test polls a ~1.5s window. Production deploys leave this
-    // UNSET — the named-constant default is 30s (NEGATIVE_CACHE_TTL_MS).
-    "DAEMON_NEGATIVE_CACHE_MS": "1500",
+    // #503: edge-shield tuning has no vars — src/constants.ts is the sole
+    // authority; the L1 rig injects its short negative-cache window through
+    // a test-only seam, so no deployment surface exists for it.
   },
 }

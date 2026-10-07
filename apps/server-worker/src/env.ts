@@ -28,10 +28,6 @@ export interface Env {
    * deployments run without it.
    */
   readonly DAEMON_EDGE_KV?: KVNamespace;
-  /** Edge-shield tunables (#36); unset = named-constant defaults. */
-  readonly DAEMON_NEGATIVE_CACHE_MS?: string;
-  readonly DAEMON_RATE_LIMIT_CAPACITY?: string;
-  readonly DAEMON_RATE_LIMIT_REFILL_PER_SEC?: string;
   /** Static SPA bundle (bb apps/app dist). */
   ASSETS: Fetcher;
   /**

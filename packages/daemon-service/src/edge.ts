@@ -37,15 +37,6 @@ export class DoOverloadError extends Error {
   }
 }
 
-/** Edge-shield env (subset of the worker front's WorkerEnv). */
-export interface EdgeShieldEnv {
-  /** Auth-hash cache; optional — env-only deployments run without it. */
-  DAEMON_EDGE_KV?: KVNamespace;
-  readonly DAEMON_NEGATIVE_CACHE_MS?: string;
-  readonly DAEMON_RATE_LIMIT_CAPACITY?: string;
-  readonly DAEMON_RATE_LIMIT_REFILL_PER_SEC?: string;
-}
-
 export async function sha256Hex(input: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -64,14 +55,20 @@ export function authKvKey(keyHash: string): string {
   return `auth:v1:${keyHash}`;
 }
 
-function intVar(raw: string | undefined, fallback: number): number {
-  if (raw === undefined || raw === "") return fallback;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+/**
+ * #503 test-only tuning seam: the named constants are the sole production
+ * authority; the L1 rig needs a real-clock short window (workerd isolates
+ * cannot be fake-timed from the test realm). Module state is shared with
+ * the front's fetch handler — tests MUST reset with `undefined` when done.
+ */
+let negativeCacheTtlMsOverride: number | undefined;
+
+export function setNegativeCacheTtlMsForTest(ms: number | undefined): void {
+  negativeCacheTtlMsOverride = ms;
 }
 
-export function negativeCacheTtlMs(env: EdgeShieldEnv): number {
-  return intVar(env.DAEMON_NEGATIVE_CACHE_MS, NEGATIVE_CACHE_TTL_MS);
+export function negativeCacheTtlMs(): number {
+  return negativeCacheTtlMsOverride ?? NEGATIVE_CACHE_TTL_MS;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,24 +131,18 @@ export interface BucketVerdict {
   retryAfterS: number;
 }
 
-export function takeToken(
-  env: EdgeShieldEnv,
-  hostId: string,
-  now: number = Date.now(),
-): BucketVerdict {
-  const capacity = intVar(env.DAEMON_RATE_LIMIT_CAPACITY, NEGOTIATE_BUCKET_CAPACITY);
-  const refillPerSec = intVar(env.DAEMON_RATE_LIMIT_REFILL_PER_SEC, NEGOTIATE_REFILL_PER_SEC);
-  const state = buckets.get(hostId) ?? { tokens: capacity, refilledAt: now };
+export function takeToken(hostId: string, now: number = Date.now()): BucketVerdict {
+  const state = buckets.get(hostId) ?? { tokens: NEGOTIATE_BUCKET_CAPACITY, refilledAt: now };
   const refilled = Math.min(
-    capacity,
-    state.tokens + ((now - state.refilledAt) / 1000) * refillPerSec,
+    NEGOTIATE_BUCKET_CAPACITY,
+    state.tokens + ((now - state.refilledAt) / 1000) * NEGOTIATE_REFILL_PER_SEC,
   );
   if (refilled >= 1) {
     buckets.set(hostId, { tokens: refilled - 1, refilledAt: now });
     return { allowed: true, retryAfterS: 0 };
   }
   buckets.set(hostId, { tokens: refilled, refilledAt: now });
-  return { allowed: false, retryAfterS: (1 - refilled) / refillPerSec };
+  return { allowed: false, retryAfterS: (1 - refilled) / NEGOTIATE_REFILL_PER_SEC };
 }
 
 // ---------------------------------------------------------------------------

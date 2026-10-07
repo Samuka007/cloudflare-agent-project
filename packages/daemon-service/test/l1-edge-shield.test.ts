@@ -1,8 +1,8 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { serviceStub, testEnv, uniqueHostId, workerFetch } from "./helpers.js";
 import { DAEMON_PROTOCOL_VERSION } from "../src/constants.js";
 import { DEPLOYMENT_AUTH_MIRROR_DO_ID } from "../src/worker.js";
-import { authKvKey, sha256Hex } from "../src/edge.js";
+import { authKvKey, setNegativeCacheTtlMsForTest, sha256Hex } from "../src/edge.js";
 
 /**
  * Edge shield (#36): the front's DO-request budget. Covers the auth ladder
@@ -102,6 +102,16 @@ describe("L1 edge shield — auth ladder (#36)", () => {
 });
 
 describe("L1 edge shield — negative cache (#36)", () => {
+  // #503: production reads the 30s named constant; the L1 rig injects a
+  // short real-clock window (workerd isolates cannot be fake-timed from this
+  // realm), reset after each test so the pooled suite never inherits it.
+  beforeEach(() => {
+    setNegativeCacheTtlMsForTest(1500);
+  });
+  afterEach(() => {
+    setNegativeCacheTtlMsForTest(undefined);
+  });
+
   test("overload arms a window: 50 requests, 1 DO touch, then expiry reconnects", async () => {
     const hostId = uniqueHostId("negcache");
     const stub = serviceStub(hostId);
@@ -133,9 +143,9 @@ describe("L1 edge shield — negative cache (#36)", () => {
     expect(ws.status).toBe(429);
     expect(await openCallsOf(hostId)).toBe(1);
 
-    // Window expiry (L1 rig DAEMON_NEGATIVE_CACHE_MS=1500): expiry lives on
-    // the workerd isolate clock, which fake timers in this (test) realm
-    // cannot advance — so poll the real condition instead of sleeping:
+    // Window expiry (test-injected 1.5s window, #503): expiry lives on the
+    // workerd isolate clock, which fake timers in this (test) realm cannot
+    // advance — so poll the real condition instead of sleeping:
     // each poll attempt inside the window is answered at the edge (429,
     // zero DO), and the first attempt after expiry reaches the DO and
     // succeeds (bucket is untouched while the window holds).
