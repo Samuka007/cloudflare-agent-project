@@ -1,9 +1,12 @@
 import { Hono } from "hono";
+import { projectPathInspectionSchema } from "@cap/daemon-service";
 import type { RelayCatalogProvider } from "@cap/agent-do";
 import {
   createProjectRequestSchema,
   createThreadSectionRequestSchema,
   deleteThreadSectionRequestSchema,
+  createProjectSourceRequestSchema,
+  updateProjectSourceRequestSchema,
   projectListQuerySchema,
   promptHistoryResponseSchema,
   projectResponseSchema,
@@ -16,6 +19,7 @@ import {
 import {
   PROMPT_HISTORY_ENTRY_LIMIT,
   projectExecutionDefaultsSchema,
+  projectSourceSchema,
   takeVisiblePromptHistoryEntries,
 } from "../contract/domain/index.js";
 import type { ProjectExecutionDefaults } from "../contract/domain/shared-types.js";
@@ -41,15 +45,25 @@ import {
   createThreadSection,
   deleteThreadSection,
   getPersonalProject,
-  getProject,
   getThreadSection,
   listPublicProjects,
   listThreadSections,
   listThreads,
   renameThreadSection,
+  setProjectGitRemoteUrlIfMissing,
   updateProject,
 } from "../db/control-plane.js";
-import { listProjectSources } from "../db/project-sources.js";
+import {
+  countProjectSources,
+  createProjectSourceRow,
+  deleteProjectSourceRow,
+  getProjectSourceByHost,
+  getProjectSourceForProject,
+  listProjectSources,
+  updateProjectSourceRow,
+} from "../db/project-sources.js";
+import { hostOnlineRpcOrThrow, requireUsableHostRow } from "../services/host-rpc.js";
+import { requirePublicProject, requirePublicStandardProject } from "../services/entity-lookup.js";
 import { toThreadListEntries } from "../services/runtime-display.js";
 import {
   loadProviderConfigCatalogOverlay,
@@ -60,10 +74,10 @@ import type { AppEnv, Env } from "../app-types.js";
 import type { ProjectRow } from "../db/rows.js";
 
 /**
- * Projects + sidebar-bootstrap + thread-sections face (bb
+ * Projects + sidebar-bootstrap + thread-sections + sources face (bb
  * apps/server/src/routes/projects.ts + routes/thread-sections.ts, commit
- * 8473d8c33). M0 minimal: CRUD + reorder-free listing; sources are
- * host-binding rows only (no file/skill/branch faces).
+ * 8473d8c33). Sources carry the #445 add-source face (create/update/delete);
+ * the file/skill/branch faces stay deferred until their daemon faces exist.
  */
 export function registerProjectRoutes(app: Hono<AppEnv>): void {
   const routes = new Hono<AppEnv>();
@@ -76,11 +90,13 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
     const includeThreads = (query.include ?? "").split(",").includes("threads");
     if (!includeThreads) {
       return ctx.json(
-        filtered.map((row) =>
-          projectResponseSchema.parse({
-            ...toPublicProject(row),
-            sources: [],
-          }),
+        await Promise.all(
+          filtered.map(async (row) =>
+            projectResponseSchema.parse({
+              ...toPublicProject(row),
+              sources: await listProjectSources(ctx.env, row.id),
+            }),
+          ),
         ),
       );
     }
@@ -161,6 +177,122 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
         sources: await listProjectSources(ctx.env, row.id),
       }),
     );
+  });
+
+  // --- sources (#445 add-source face, bb routes/projects.ts:466-591) -------
+
+  routes.post("/projects/:id/sources", async (ctx) => {
+    const projectId = ctx.req.param("id");
+    const project = await requirePublicStandardProject(ctx.env, projectId);
+    const payload = await requireJsonBody(ctx, createProjectSourceRequestSchema);
+    await requireUsableHostRow(ctx.env, payload.hostId);
+    if (await getProjectSourceByHost(ctx.env, projectId, payload.hostId)) {
+      throw projectSourceHostConflict();
+    }
+    let resolved: { path: string; gitRemoteUrl: string | null };
+    if (payload.type === "clone") {
+      const remoteUrl = payload.remoteUrl ?? project.gitRemoteUrl;
+      if (remoteUrl === null) {
+        throw new ApiError({
+          status: 400,
+          code: "missing_git_remote",
+          message: "A remoteUrl is required because this project has no git remote anchor",
+        });
+      }
+      resolved = await cloneOnHost(
+        ctx.env,
+        payload.hostId,
+        remoteUrl,
+        project.name,
+        payload.targetPath,
+      );
+    } else {
+      resolved = {
+        path: payload.path,
+        gitRemoteUrl: await inspectProjectGitRemoteBestEffort(
+          ctx.env,
+          payload.hostId,
+          payload.path,
+        ),
+      };
+    }
+    const source = await createProjectSourceRow(ctx.env, {
+      projectId,
+      hostId: payload.hostId,
+      path: resolved.path,
+    });
+    // A clone can be orphaned only if another request wins this race after
+    // the up-front check; the database UNIQUE index stays the backstop
+    // (bb routes/projects.ts:510-524).
+    if (source === null) {
+      throw projectSourceHostConflict();
+    }
+    if (resolved.gitRemoteUrl !== null) {
+      await setProjectGitRemoteUrlIfMissing(ctx.env, projectId, resolved.gitRemoteUrl);
+    }
+    await hub(ctx).notifyProject(projectId, ["project-sources-changed"]);
+    return ctx.json(projectSourceSchema.parse(source), 201);
+  });
+
+  routes.patch("/projects/:id/sources/:sourceId", async (ctx) => {
+    const projectId = ctx.req.param("id");
+    await requirePublicStandardProject(ctx.env, projectId);
+    const payload = await requireJsonBody(ctx, updateProjectSourceRequestSchema);
+    const existing = await getProjectSourceForProject(ctx.env, {
+      projectId,
+      sourceId: ctx.req.param("sourceId"),
+    });
+    if (existing === null) {
+      throw new ApiError({
+        status: 404,
+        code: "invalid_request",
+        message: "Project source not found",
+      });
+    }
+    await requireUsableHostRow(ctx.env, existing.hostId);
+    // bb routes/projects.ts:545-551 refuses a request/source type mismatch;
+    // unreachable here — updateProjectSourceRequestSchema pins type
+    // "local_path" and the port's source rows are local_path-only, so the
+    // mismatch class returns with the second source type, if ever.
+    const source = await updateProjectSourceRow(ctx.env, existing.id, {
+      ...(payload.path !== undefined ? { path: payload.path } : {}),
+      ...(payload.isDefault !== undefined ? { isDefault: payload.isDefault } : {}),
+    });
+    if (source === null) {
+      throw new ApiError({
+        status: 404,
+        code: "invalid_request",
+        message: "Project source not found",
+      });
+    }
+    await hub(ctx).notifyProject(projectId, ["project-sources-changed"]);
+    return ctx.json(projectSourceSchema.parse(source));
+  });
+
+  routes.delete("/projects/:id/sources/:sourceId", async (ctx) => {
+    const projectId = ctx.req.param("id");
+    await requirePublicStandardProject(ctx.env, projectId);
+    const existing = await getProjectSourceForProject(ctx.env, {
+      projectId,
+      sourceId: ctx.req.param("sourceId"),
+    });
+    if (existing === null) {
+      throw new ApiError({
+        status: 404,
+        code: "invalid_request",
+        message: "Project source not found",
+      });
+    }
+    if ((await countProjectSources(ctx.env, projectId)) <= 1) {
+      throw new ApiError({
+        status: 409,
+        code: "invalid_request",
+        message: "Cannot delete the last source of a project",
+      });
+    }
+    await deleteProjectSourceRow(ctx.env, existing.id);
+    await hub(ctx).notifyProject(projectId, ["project-sources-changed"]);
+    return ctx.json({ ok: true });
   });
 
   routes.patch("/projects/:id", async (ctx) => {
@@ -403,18 +535,80 @@ function resolveProjectDefaultExecutionOptions(
   });
 }
 
-async function requirePublicProject(env: Env, projectId: string): Promise<ProjectRow> {
-  const row = await getProject(env, projectId);
-  if (!row) {
-    throw new ApiError({ status: 404, code: "project_not_found", message: "Project not found" });
-  }
-  if (row.deletedAt !== null) {
+function projectSourceHostConflict(): ApiError {
+  return new ApiError({
+    status: 409,
+    code: "project_source_host_conflict",
+    message: "Project already has a source on this host",
+  });
+}
+
+/** bb routes/projects.ts:96 — the clone ask's online-RPC window. */
+const PROJECT_CLONE_TIMEOUT_MS = 20 * 60 * 1000;
+
+/** bb runLiveHostCommand(deps, {command: project.clone}) (routes/projects.ts:
+ * 484-495) over the port's hostOnlineRpc seam; the result shape is the daemon
+ * command's contract (projectPathInspectionSchema). */
+async function cloneOnHost(
+  env: Env,
+  hostId: string,
+  remoteUrl: string,
+  projectSlug: string,
+  targetPath: string | undefined,
+): Promise<{ path: string; gitRemoteUrl: string | null }> {
+  const result = await hostOnlineRpcOrThrow(
+    env,
+    hostId,
+    {
+      type: "project.clone",
+      remoteUrl,
+      projectSlug,
+      ...(targetPath !== undefined ? { targetPath } : {}),
+    },
+    PROJECT_CLONE_TIMEOUT_MS,
+  );
+  const parsed = projectPathInspectionSchema.safeParse(result);
+  if (!parsed.success) {
     throw new ApiError({
-      status: 410,
-      code: "project_unavailable",
-      message: "Project is pending deletion",
-      details: { reason: "pending_deletion", deletedAt: row.deletedAt },
+      status: 500,
+      code: "command_result_invalid",
+      message: "Host RPC returned a malformed clone result",
+      details: { issues: parsed.error.issues },
     });
   }
-  return row;
+  return parsed.data;
+}
+
+/**
+ * bb inspectProjectGitRemoteBestEffort (routes/projects.ts:308-326): a
+ * folder-source add inspects the checkout's origin anchor but a dead or
+ * offline host never blocks the add — the inspection degrades to null.
+ */
+async function inspectProjectGitRemoteBestEffort(
+  env: Env,
+  hostId: string,
+  path: string,
+): Promise<string | null> {
+  try {
+    const result = await hostOnlineRpcOrThrow(
+      env,
+      hostId,
+      { type: "project.inspect", path },
+      HOST_INSPECT_TIMEOUT_MS,
+    );
+    return projectPathInspectionSchema.parse(result).gitRemoteUrl;
+  } catch {
+    return null;
+  }
+}
+
+/** bb COMMAND_TIMEOUT_MS (apps/server/src/constants.ts:1). */
+const HOST_INSPECT_TIMEOUT_MS = 30_000;
+
+/** Realtime hub fan-out (threads.ts hub idiom): project changed frames. */
+function hub(ctx: { env: Env }) {
+  const stub = ctx.env.HUB.get(ctx.env.HUB.idFromName("hub"));
+  return stub as DurableObjectStub & {
+    notifyProject(projectId: string, changes: string[]): Promise<{ delivered: number }>;
+  };
 }
