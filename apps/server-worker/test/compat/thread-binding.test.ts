@@ -8,6 +8,7 @@ import {
   threadWithIncludesResponseSchema,
 } from "../../src/contract/api/threads.js";
 import { threadListEntrySchema } from "../../src/contract/domain/thread.js";
+import { projectSourceSchema } from "../../src/contract/domain/index.js";
 import { CLOUD_PLACEHOLDER_HOST_ID, threadSummarySchema } from "@cap/protocol";
 import type { AgentDoRpc } from "../../src/seam/agent-do.js";
 
@@ -41,6 +42,10 @@ async function postJson(path: string, body: unknown): Promise<Response> {
 async function getJson(path: string): Promise<{ status: number; body: unknown }> {
   const response = await exports.default.fetch(`https://example.com${path}`);
   return { status: response.status, body: await response.json() };
+}
+
+async function deleteJson(path: string): Promise<Response> {
+  return exports.default.fetch(`https://example.com${path}`, { method: "DELETE" });
 }
 
 /** Raw per-thread DO log (create-with-input.test.ts idiom). */
@@ -296,5 +301,123 @@ describe("#288 explicit host binding lands in D1, trajectory and read faces", ()
     expect(again.status).toBe(200);
     const eventsAfter = await rawEvents(thread.id);
     expect(eventsAfter.filter((event) => event.type === "thread.rebound")).toHaveLength(1);
+  });
+});
+
+describe("#468 dangling binding references fall to the cloud placeholder", () => {
+  it("destroying the default-source host cascades the source; omitted-environment lands on cloud", async () => {
+    const host = await seedHost();
+    const survivor = await seedHost();
+    const projectA = await seedProjectWithSource(host.id, "/repo/468-a");
+    const projectB = await seedProjectWithSource(host.id, "/repo/468-b");
+    // projectC carries a SECOND source that must survive as a non-default
+    // row — bb's cascade has no promotion (only the SPA-driven source
+    // delete promotes), so the binding default must NOT silently steer to
+    // a machine the user never chose.
+    const projectC = await seedProjectWithSource(host.id, "/repo/468-c");
+    const added = await postJson(`/api/v1/projects/${projectC}/sources`, {
+      type: "local_path",
+      hostId: survivor.id,
+      path: "/repo/468-c-survivor",
+    });
+    expect(added.status).toBe(201);
+
+    // A pre-existing default-bound thread keeps its binding resolvable.
+    const seeded = await postJson("/api/v1/threads", {
+      ...NO_TURN_CREATE,
+      projectId: projectA,
+      title: "468-pre-delete",
+    });
+    expect(seeded.status).toBe(201);
+    const preThread = createdThreadBodySchema.parse(await seeded.json());
+    expect(preThread.environmentId).not.toBeNull();
+
+    const deleted = await deleteJson(`/api/v1/hosts/${host.id}`);
+    expect(deleted.status).toBe(200);
+
+    // Cascade: every project's source on the dead host is gone.
+    for (const projectId of [projectA, projectB]) {
+      const detail = await getJson(`/api/v1/projects/${projectId}`);
+      const body = z.object({ sources: z.array(projectSourceSchema) }).parse(detail.body);
+      expect(body.sources).toHaveLength(0);
+    }
+    const survivorDetail = await getJson(`/api/v1/projects/${projectC}`);
+    const survivorBody = z
+      .object({ sources: z.array(projectSourceSchema) })
+      .parse(survivorDetail.body);
+    expect(survivorBody.sources).toHaveLength(1);
+    expect(survivorBody.sources[0]?.hostId).toBe(survivor.id);
+    expect(survivorBody.sources[0]?.isDefault).toBe(false);
+
+    // The environments row survives (#445 hygiene): the tombstoned binding
+    // stays id-resolvable for the pre-existing thread.
+    const kept = await env.DB.prepare("SELECT COUNT(*) AS n FROM environments WHERE host_id = ?")
+      .bind(host.id)
+      .first();
+    expect(Number(kept?.n)).toBeGreaterThan(0);
+    const preDetail = await getJson(`/api/v1/threads/${preThread.id}?include=environment`);
+    expect(preDetail.status).toBe(200);
+    expect(threadResponseSchema.parse(preDetail.body).environmentId).toBe(preThread.environmentId);
+
+    // The repro: omitted-environment creation lands on the cloud placeholder.
+    const after = await postJson("/api/v1/threads", {
+      ...NO_TURN_CREATE,
+      projectId: projectA,
+      title: "468-after-delete",
+    });
+    expect(after.status, await after.clone().text()).toBe(201);
+    const thread = createdThreadBodySchema.parse(await after.json());
+    expect(thread.environmentId).toBeNull();
+    expect(machineIdOfFirstEvent(await rawEvents(thread.id))).toBe(CLOUD_PLACEHOLDER_HOST_ID);
+
+    // No silent promotion: projectC's next default-bound thread falls to
+    // cloud too, not to the surviving source's host.
+    const fallback = await postJson("/api/v1/threads", {
+      ...NO_TURN_CREATE,
+      projectId: projectC,
+      title: "468-no-promotion",
+    });
+    expect(fallback.status).toBe(201);
+    expect(
+      machineIdOfFirstEvent(await rawEvents(createdThreadBodySchema.parse(await fallback.json()).id)),
+    ).toBe(CLOUD_PLACEHOLDER_HOST_ID);
+  });
+
+  it("a registry-cleared (hard-deleted) default-source host lands on cloud too", async () => {
+    // The staging shape (#468 repro): GET /hosts has no row AND the
+    // tombstone is gone — the source row dangles on a missing host.
+    const host = await seedHost();
+    const projectId = await seedProjectWithSource(host.id, "/repo/468-cleared");
+    await env.DB.prepare("DELETE FROM hosts WHERE id = ?").bind(host.id).run();
+
+    const bare = await postJson("/api/v1/threads", {
+      ...NO_TURN_CREATE,
+      projectId,
+      title: "468-cleared",
+    });
+    expect(bare.status, await bare.clone().text()).toBe(201);
+    const thread = createdThreadBodySchema.parse(await bare.json());
+    expect(thread.environmentId).toBeNull();
+    expect(machineIdOfFirstEvent(await rawEvents(thread.id))).toBe(CLOUD_PLACEHOLDER_HOST_ID);
+  });
+
+  it("the explicit host face keeps the honest 404 on a destroyed host", async () => {
+    const host = await seedHost();
+    const projectId = await seedProjectWithSource(host.id, "/repo/468-explicit");
+    const deleted = await deleteJson(`/api/v1/hosts/${host.id}`);
+    expect(deleted.status).toBe(200);
+
+    const ghost = await postJson("/api/v1/threads", {
+      ...NO_TURN_CREATE,
+      projectId,
+      title: "468-ghost-explicit",
+      environment: {
+        type: "host",
+        hostId: host.id,
+        workspace: { type: "unmanaged", path: "/repo/468-ghost" },
+      },
+    });
+    expect(ghost.status).toBe(404);
+    expect(apiErrorBodySchema.parse(await ghost.json()).code).toBe("host_not_found");
   });
 });

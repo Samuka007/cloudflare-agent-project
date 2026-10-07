@@ -205,3 +205,25 @@ export async function deleteProjectSourceRow(env: Env, sourceId: string): Promis
   }
   return true;
 }
+
+/**
+ * #468: bb's projectSources.hostId is `references hosts.id,
+ * { onDelete: "cascade" }` (packages/db schema.ts:450-483; schema.test.ts:
+ * 344-346 pins sources vanishing with their host), so a deleted machine
+ * takes its source rows across ALL projects with it. The port tombstones
+ * the host (routes/hosts.ts soft destroy) and runs this equivalent from the
+ * delete face. Deliberately NO default promotion — bb's cascade doesn't
+ * promote (only the SPA-driven deleteProjectSource does, :232-276): the
+ * surviving sources keep is_default=0 and the project's binding default
+ * resolves to nothing, which the #377 cloud placeholder terminal owns
+ * (thread-binding.ts #468 branch).
+ */
+export async function deleteProjectSourceRowsByHost(env: Env, hostId: string): Promise<string[]> {
+  const { results } = await env.DB.prepare(
+    "SELECT DISTINCT project_id FROM project_sources WHERE host_id = ?",
+  )
+    .bind(hostId)
+    .all();
+  await env.DB.prepare("DELETE FROM project_sources WHERE host_id = ?").bind(hostId).run();
+  return results.map((row) => String(row.project_id));
+}

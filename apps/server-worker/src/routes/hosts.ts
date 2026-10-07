@@ -20,6 +20,7 @@ import { createHostId } from "../shared/ids.js";
 import { ApiError } from "../shared/api-error.js";
 import { parseOr422, requireJsonBody } from "../shared/route-utils.js";
 import { getHostRow, listNonDestroyedHostRows, updateHostRow } from "../db/hosts.js";
+import { deleteProjectSourceRowsByHost } from "../db/project-sources.js";
 import { toHostRecord } from "../services/host-records.js";
 import { requirePublicStandardProject } from "../services/entity-lookup.js";
 import { pathsExistResponseSchema } from "../contract/hdc/local.js";
@@ -278,9 +279,27 @@ export function registerHostRoutes(app: Hono<AppEnv>): void {
     }
     // bb delete marks destroyedAt (soft destroy), it does not hard-delete.
     await updateHostRow(ctx.env, hostId, { destroyedAt: Date.now() });
+    // #468: bb's soft destroy (its only delete face) tombstones the host and
+    // leaves referencing rows in place; the port splits the consequence by
+    // table. SOURCES are the port's load-bearing binding default
+    // (project_sources.is_default feeds the omitted-environment chain), and
+    // bb's schema declares them dead with the host (projectSources.hostId
+    // ON DELETE CASCADE; schema.test.ts:344-346) — swept here WITHOUT
+    // promotion (bb's cascade has none; only the SPA-driven single-source
+    // delete promotes), so the project's binding default resolves to the
+    // cloud placeholder terminal (#377) instead of a machine the user never
+    // chose. ENVIRONMENTS stay, per the #445 data-hygiene ruling: the list
+    // face already hides tombstoned-host rows, the id face keeps existing
+    // threads readable, and dispatch answers host_offline (#436 posture).
+    const affectedProjectIds = await deleteProjectSourceRowsByHost(ctx.env, hostId);
     // bb destroyHost broadcasts host-disconnected (data/hosts.ts:229-230);
     // bb ships this second frame even when the close above already did.
     await hub(ctx.env).notifyHost(ctx.req.param("id"), ["host-disconnected"]);
+    // The source-list consumers ride the same invalidation the add/update/
+    // delete faces use (routes/projects.ts project-sources-changed).
+    for (const projectId of affectedProjectIds) {
+      await hub(ctx.env).notifyProject(projectId, ["project-sources-changed"]);
+    }
     return ctx.json({ ok: true });
   });
 
@@ -311,6 +330,7 @@ function hub(env: Env) {
   const stub = env.HUB.get(env.HUB.idFromName("hub"));
   return stub as DurableObjectStub & {
     notifyHost(hostId: string, changes: string[]): Promise<{ delivered: number }>;
+    notifyProject(projectId: string, changes: string[]): Promise<{ delivered: number }>;
     requestHostProtocolUpdateRetry(args: { hostId: string }): Promise<{ ok: true }>;
   };
 }

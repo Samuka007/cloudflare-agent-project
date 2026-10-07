@@ -47,6 +47,9 @@ export interface ResolvedThreadBinding {
 async function requireNonDestroyedHost(env: Env, hostId: string): Promise<void> {
   // bb requireNonDestroyedHostWithStatus (routes/hosts.ts:288): unknown and
   // destroyed hosts answer the same plain host_not_found on work faces.
+  // Explicit choices only (#468): the default-binding face must not fail on
+  // a dangling stored reference — that branch skips to the placeholder
+  // below instead of surfacing the dead machine as the caller's error.
   const row = await getHostRow(env, hostId);
   if (row === null) {
     throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
@@ -148,10 +151,21 @@ export async function resolveThreadBinding(
   // the cloud placeholder row (zero D1 on the deployment default, #377;
   // the row itself seeded by #386).
   const source = await getDefaultProjectSource(env, args.projectId);
+  // #468: a stored default whose host row is missing or tombstoned is a
+  // dangling reference, not a bindable machine — the hosts read face hides
+  // both shapes, so resolution answers them the same way: the deployment
+  // default (cloud placeholder) stays the terminal instead of 404ing on a
+  // row the caller never named. The delete face cascades these rows away
+  // (routes/hosts.ts), so the dangling state is transient; the sweep
+  // migration 0006 backfills the pre-cascade staging orphans.
   if (source === null) {
     return { machineId: CLOUD_PLACEHOLDER_HOST_ID, environmentId: null, environment: null };
   }
-  await requireNonDestroyedHost(env, source.hostId);
+  const hostRow = await getHostRow(env, source.hostId);
+  // Optional chain: a missing row degrades exactly like a tombstoned one.
+  if (hostRow?.destroyedAt !== null) {
+    return { machineId: CLOUD_PLACEHOLDER_HOST_ID, environmentId: null, environment: null };
+  }
   const row = await materializeWorkspaceRow(env, {
     projectId: args.projectId,
     hostId: source.hostId,
