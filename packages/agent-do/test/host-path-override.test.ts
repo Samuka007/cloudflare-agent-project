@@ -1,7 +1,8 @@
 import { env } from "cloudflare:workers";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { newThreadId, toolNotExecutedMessage } from "@cap/protocol";
 import { createRig, resetRuntime, type Rig } from "./helpers.js";
+import { ensureMigrations, replayMigrations } from "./migrate.js";
 import type { TestDaemonServiceStub } from "../src/testing/test-daemon-do.js";
 import type { FakeJournalOp } from "../src/testing/fake-daemon.js";
 import { replayEvents } from "../src/turn-state.js";
@@ -171,27 +172,22 @@ function journalOf(name: string): Promise<FakeJournalOp[]> {
   return serviceStubNamed(name).journal() as Promise<FakeJournalOp[]>;
 }
 
-async function seedHostsTable(): Promise<void> {
-  await db.exec(
-    "CREATE TABLE IF NOT EXISTS hosts (" +
-      "id TEXT PRIMARY KEY NOT NULL, " +
-      "max_permission_mode TEXT NOT NULL DEFAULT 'full', " +
-      "destroyed_at INTEGER)",
-  );
-}
-
+/** The rig DB carries the real control-plane schema (helpers' ensureMigrations,
+ * #375) — seeds satisfy the full hosts row the DO's override gate reads. */
 async function seedHost(
   id: string,
   ceiling: string,
   destroyedAt: number | null = null,
 ): Promise<void> {
+  const now = Date.now();
   await db
     .prepare(
-      "INSERT INTO hosts (id, max_permission_mode, destroyed_at) VALUES (?, ?, ?) " +
+      "INSERT INTO hosts (id, name, type, max_permission_mode, destroyed_at, created_at, updated_at) " +
+        "VALUES (?, ?, 'daemon', ?, ?, ?, ?) " +
         "ON CONFLICT (id) DO UPDATE SET max_permission_mode = excluded.max_permission_mode, " +
         "destroyed_at = excluded.destroyed_at",
     )
-    .bind(id, ceiling, destroyedAt)
+    .bind(id, id, ceiling, destroyedAt, now, now)
     .run();
 }
 
@@ -226,13 +222,16 @@ async function waitTurnSettled(rig: Rig, turnId: string): Promise<AnyAgentEvent[
   );
 }
 
+// The first DB touch here (seedHost) precedes any rig, so pin the schema
+// replay before the file's tests (#375).
+beforeAll(() => ensureMigrations());
+
 afterEach(() => {
   resetRuntime();
 });
 
 describe("override routing + deviation journal (#289 acceptance)", () => {
   test("override dispatch rides the TARGET machine's DO; journal deviation row; binding survives", async () => {
-    await seedHostsTable();
     await seedHost(TARGET, "full");
     const target = serviceStubNamed(TARGET);
     await target.dial(TARGET);
@@ -349,7 +348,6 @@ describe("override routing + deviation journal (#289 acceptance)", () => {
   }, 30_000);
 
   test("unresolvable override (mixed hosts) fails before any dispatch — no deviation row at all", async () => {
-    await seedHostsTable();
     const rig = await createRig({
       turns: [
         {
@@ -379,7 +377,6 @@ describe("override routing + deviation journal (#289 acceptance)", () => {
 
 describe("override gates (#289 B3/B4)", () => {
   test("unregistered target: unknown_host, explicit, no fallback dispatch", async () => {
-    await seedHostsTable();
     const rig = await createRig({
       turns: [
         { toolCalls: [{ name: "read", arguments: { path: `ssh://${TARGET_GHOST}/x` } }] },
@@ -404,7 +401,6 @@ describe("override gates (#289 B3/B4)", () => {
   }, 30_000);
 
   test("destroyed target: unknown_host", async () => {
-    await seedHostsTable();
     await seedHost(TARGET_GHOST, "full", 123);
     const rig = await createRig({
       turns: [
@@ -424,7 +420,6 @@ describe("override gates (#289 B3/B4)", () => {
   }, 30_000);
 
   test("ceiling below full: exec_tier_required BEFORE the remote DO resolves (B4 连接前硬拒)", async () => {
-    await seedHostsTable();
     await seedHost(TARGET_CAPPED, "auto");
     const rig = await createRig({
       turns: [
@@ -448,7 +443,6 @@ describe("override gates (#289 B3/B4)", () => {
   }, 30_000);
 
   test("registry read failure refuses the override (permission gate never fails open)", async () => {
-    await seedHostsTable();
     await db.exec("DROP TABLE hosts");
     const rig = await createRig({
       turns: [
@@ -469,11 +463,12 @@ describe("override gates (#289 B3/B4)", () => {
     });
     expect(resultRowsOf(events)[0]?.data.output).toContain("tool not executed: hosts registry unavailable");
     expect(dispatchRowsOf(events)).toHaveLength(0);
-    await seedHostsTable();
+    // Restore the real schema for the rest of the suite — the shadow-DDL
+    // re-create this used to do is exactly the #375 drift.
+    await replayMigrations();
   }, 30_000);
 
   test("override target offline: host_offline deviation row + honest error, NO turn-level host_lost", async () => {
-    await seedHostsTable();
     await seedHost(TARGET_OFFLINE, "full");
     const target = serviceStubNamed(TARGET_OFFLINE);
     await target.setHostOnline(false);

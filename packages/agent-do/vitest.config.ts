@@ -35,7 +35,18 @@ function relayEnvFromDevVars(): Record<string, string> {
 // with no per-file isolation (docs/research/testing-strategy-cloudflare-do.md
 // §4.4 pit 1), so the whole package runs pinned to one non-isolated worker.
 export default defineConfig({
-  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } })],
+  plugins: [
+    cloudflareTest({
+      wrangler: { configPath: "./wrangler.jsonc" },
+      miniflare: {
+        // test/migrate.ts imports the control-plane migration files as text
+        // (apps/server-worker owns the schema; the rig replays it verbatim so
+        // terminal-turn settlement has its `threads` table — #375). Same Text
+        // rule apps/server-worker/vitest.config.ts pins for its migrate.ts.
+        modulesRules: [{ type: "Text", include: ["**/*.sql"], fallThrough: true }],
+      },
+    }),
+  ],
   define: {
     __RELAY_ENV__: JSON.stringify(relayEnvFromDevVars()),
   },

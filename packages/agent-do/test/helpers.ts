@@ -8,6 +8,7 @@ import type { RelaySelection } from "../src/provider-catalog.js";
 import type { ModelProvider } from "../src/provider.js";
 import { MockModelProvider, type MockTurn } from "../src/testing/mock-provider.js";
 import type { TestDaemonServiceStub } from "../src/testing/test-daemon-do.js";
+import { ensureMigrations } from "./migrate.js";
 
 /**
  * Test rig: one agent DO (per-thread) + the reference fake daemon-service DO,
@@ -49,6 +50,11 @@ const agentNamespace = (env as { AGENT_DO: DurableObjectNamespace }).AGENT_DO;
 const serviceNamespace = (env as { DAEMON_SERVICE: DurableObjectNamespace }).DAEMON_SERVICE;
 
 export async function createRig(options: RigOptions = {}): Promise<Rig> {
+  // The rig DB carries the composed deployment's control-plane schema
+  // (test/migrate.ts) — terminal turns settle `threads` rows for real
+  // instead of dying on `no such table` (#375). Idempotent replay: cheap
+  // after the first rig in the worker context.
+  await ensureMigrations();
   const threadId = options.threadId ?? newThreadId();
   const provider = options.provider ?? new MockModelProvider(options.turns ?? [{ deltas: ["ok"] }]);
   setAgentRuntime(threadId, { provider });
@@ -145,6 +151,63 @@ export async function createRig(options: RigOptions = {}): Promise<Rig> {
 /** Tests register runtimes globally; drop them so files stay independent. */
 export function resetRuntime(): void {
   clearAgentRuntimes();
+}
+
+/**
+ * Real-model smoke wait for the tool-call phase's only two live outcomes: a
+ * `tool.call` row, or a terminal row for the turn — a provider-side stream
+ * break seals `turn.failed` mid-call and NO tool.call ever arrives (#375), so
+ * a bare tool.call poll would burn its whole budget and die as a content-free
+ * `'no' ≠ 'yes'`. This surfaces the journal's failure evidence instead, and
+ * the longer budget covers real-model first-call TTFB (seconds to tens of
+ * seconds through the relay) that the rig's 20s mock-oriented default
+ * pinches. Returns the tool.call row.
+ */
+export async function waitForToolCallOrTerminal(rig: Rig, turnId: string): Promise<AnyAgentEvent> {
+  let snapshot = await rig.events();
+  let timedOut = false;
+  let pollError: unknown;
+  try {
+    await expect
+      .poll(
+        async () => {
+          snapshot = await rig.events();
+          return snapshot.some((event) => event.type === "tool.call") ||
+            snapshot.some(
+              (event) =>
+                (event.type === "turn.completed" ||
+                  event.type === "turn.failed" ||
+                  event.type === "turn.cancelled") &&
+                event.data.turnId === turnId,
+            )
+            ? "yes"
+            : "no";
+        },
+        { timeout: 60_000, interval: 100 },
+      )
+      .toBe("yes");
+  } catch (error) {
+    timedOut = true;
+    pollError = error;
+  }
+  const toolCall = snapshot.find((event) => event.type === "tool.call");
+  if (toolCall !== undefined) return toolCall;
+  // No tool.call: the turn settled terminal (or the budget died) — the
+  // journal holds the why (model.call_failed/turn.failed rows); surface it.
+  const evidence = snapshot
+    .filter(
+      (event) =>
+        event.type === "model.call_failed" ||
+        event.type === "turn.failed" ||
+        event.type === "turn.cancelled",
+    )
+    .map((event) => `${event.type}: ${JSON.stringify(event.data)}`)
+    .join("; ");
+  const detail =
+    `turn ${turnId} ${timedOut ? "outlived the tool-call budget" : "settled"} without a ` +
+    `tool.call — journal evidence: ${evidence === "" ? "none" : evidence}`;
+  if (pollError !== undefined) throw new Error(detail, { cause: pollError });
+  throw new Error(detail);
 }
 
 /** Types of all events as a compact list (assertion helper). */
