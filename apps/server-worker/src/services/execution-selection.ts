@@ -27,13 +27,12 @@ import {
 import {
   classifyExecutionSettingsChange,
   resolveOverlayCatalog,
-  resolveHarness,
   type RelayCatalogResolution,
 } from "@cap/provider-app";
 import type { RuntimeThreadExecutionOptions } from "../../../daemon-worker/src/provider-types.js";
-import type { HarnessEnv } from "@cap/provider-app";
 import {
   resolvedThreadExecutionOptionsSchema,
+  type PermissionMode,
   type ResolvedThreadExecutionOptions,
 } from "../contract/domain/shared-types.js";
 import { ApiError } from "../shared/api-error.js";
@@ -88,15 +87,11 @@ function explicitOf(input: ThreadExecutionSelectionInput): RelaySelection | null
  * no synthesis admits anything).
  */
 export function validateThreadExecutionSelection(
-  env: HarnessEnv,
   input: ThreadExecutionSelectionInput,
   overlayProviders: Record<string, RelayCatalogProvider>,
 ): ValidatedThreadExecutionSelection {
   const explicit = explicitOf(input);
-  const catalog: RelayCatalogResolution = resolveOverlayCatalog(
-    resolveHarness(env),
-    overlayProviders,
-  );
+  const catalog: RelayCatalogResolution = resolveOverlayCatalog(overlayProviders);
   if (explicit === null) {
     try {
       return { explicit: null, resolved: resolveRelayCatalogSelection(catalog, {}) };
@@ -122,8 +117,11 @@ function resolveRelayCatalogSelection(
     {
       rows: catalog.models,
       defaultProviderId: catalog.defaultProviderId,
-      defaultModelId: catalog.harness.relay.model,
-      thinkingEnabled: catalog.harness.relay.thinking.type === "enabled",
+      // #500: no deployment model / thinking scalar exists — a model-less
+      // selection fails closed (named 422) and each row's ladder is decided
+      // by its own thinkingBudgetTokens.
+      defaultModelId: "",
+      thinkingEnabled: false,
     },
     selection,
   );
@@ -142,7 +140,6 @@ function resolveRelayCatalogSelection(
  * selection-bearing write, never silently fall back.
  */
 export function resolveStoredThreadExecution(
-  env: HarnessEnv,
   stored: {
     providerId: string;
     modelOverride: string | null;
@@ -150,10 +147,7 @@ export function resolveStoredThreadExecution(
   },
   overlayProviders: Record<string, RelayCatalogProvider>,
 ): ResolvedThreadExecutionSelection {
-  const catalog: RelayCatalogResolution = resolveOverlayCatalog(
-    resolveHarness(env),
-    overlayProviders,
-  );
+  const catalog: RelayCatalogResolution = resolveOverlayCatalog(overlayProviders);
   const storedLevel =
     stored.reasoningLevelOverride !== null
       ? relayReasoningLevelSchema.safeParse(stored.reasoningLevelOverride)
@@ -199,7 +193,7 @@ export function resolveStoredThreadExecution(
  * error instead of silently running another model.
  */
 export function resolveThreadDefaultExecutionOptions(
-  env: HarnessEnv,
+  permissionMode: PermissionMode,
   row: {
     providerId: string;
     modelOverride: string | null;
@@ -212,7 +206,9 @@ export function resolveThreadDefaultExecutionOptions(
       model,
       serviceTier: "default",
       reasoningLevel,
-      permissionMode: "full",
+      // #500: the stored-thread display default is the D1 seat's posture
+      // (the server route reads it per request — hot, no redeploy).
+      permissionMode,
       source: "client/turn/requested",
     });
   const storedLevel =
@@ -220,7 +216,7 @@ export function resolveThreadDefaultExecutionOptions(
       ? relayReasoningLevelSchema.safeParse(row.reasoningLevelOverride)
       : undefined;
   try {
-    const resolved = resolveStoredThreadExecution(env, row, overlayProviders);
+    const resolved = resolveStoredThreadExecution(row, overlayProviders);
     return parse(resolved.model, resolved.reasoningLevel);
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;
@@ -296,7 +292,6 @@ export interface ThreadExecutionOverridePatch {
  * thread-execution-override.ts:121-132 "reconcile rather than failing").
  */
 export function resolveThreadExecutionOverridePatch(
-  env: HarnessEnv,
   row: {
     providerId: string;
     modelOverride: string | null;
@@ -314,7 +309,7 @@ export function resolveThreadExecutionOverridePatch(
         : row.reasoningLevelOverride,
   };
   try {
-    resolveStoredThreadExecution(env, candidate, overlayProviders);
+    resolveStoredThreadExecution(candidate, overlayProviders);
     return candidate;
   } catch (error) {
     const reconcilable =
@@ -325,7 +320,6 @@ export function resolveThreadExecutionOverridePatch(
       error.code === "reasoning_level_unknown";
     if (!reconcilable) throw error;
     const resolved = validateThreadExecutionSelection(
-      env,
       {
         providerId: row.providerId,
         ...(candidate.modelOverride !== null

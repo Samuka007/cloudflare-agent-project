@@ -6,8 +6,11 @@ import type {
   AdapterCommandOutcome,
   ProviderExecutionContext,
 } from "@cap/daemon-worker";
-import { resolveHarness } from "@cap/provider-app";
 import { BB_DATA_DIR_LABEL } from "../shared/bb-display.js";
+// #500: resolveHarness is gone with the deployment channel — the posture
+// rides defaultExecutionOptions + the D1 permission_mode seat.
+import { defaultExecutionOptions } from "@cap/provider-app";
+import { getPermissionMode } from "../db/permission-mode.js";
 
 /**
  * The #26 ⇄ #29 seam. Event storage and turn state live in the per-thread
@@ -192,11 +195,15 @@ export interface ManagerRegistryRpc {
 /**
  * bb fills claudeCodeMockCliTraffic from app settings before dispatch
  * (execution-options.ts:180); the M0 fill is the disabled default (same fill
- * the daemon-worker fake uses).
+ * the daemon-worker fake uses). #500: the default execution posture is the
+ * D1 `permission_mode` seat's mode (no deployment model — the thread
+ * selection is the model source); the read happens per command, so a seat
+ * write hot-applies without a redeploy.
  */
-function bridgeContext(env: Env): ProviderExecutionContext {
+async function bridgeContext(env: Env): Promise<ProviderExecutionContext> {
+  const permissionMode = (await getPermissionMode(env)).mode;
   return {
-    ...resolveHarness(env).execution,
+    ...defaultExecutionOptions(permissionMode),
     claudeCodeMockCliTraffic: { enabled: false, endpoint: "https://api.anthropic.com" },
   };
 }
@@ -265,7 +272,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
         ...(args.machineId !== undefined ? { machineId: args.machineId } : {}),
         ...(args.execution !== undefined ? { execution: args.execution } : {}),
         ...(args.title ? { input: [{ type: "text", text: args.title, mentions: [] }] } : {}),
-        options: bridgeContext(env),
+        options: await bridgeContext(env),
         instructionMode: "append",
       };
       const outcome = await dispatch(command);
@@ -305,7 +312,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
           expectedTurnId: session.activeTurnId,
           input,
           clientRequestId: args.clientRequestId,
-          options: bridgeContext(env),
+          options: await bridgeContext(env),
           ...(args.execution !== undefined ? { execution: args.execution } : {}),
         });
       };
@@ -332,7 +339,7 @@ function orchestratorBackedRpc(env: Env, threadId: string): AgentDoRpc {
         providerThreadId: session.providerThreadId,
         input,
         clientRequestId: args.clientRequestId,
-        options: bridgeContext(env),
+        options: await bridgeContext(env),
         ...(args.execution !== undefined ? { execution: args.execution } : {}),
       });
       if (!outcome.ok) bridgeFailure("turn/start", outcome);

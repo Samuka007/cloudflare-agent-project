@@ -5,7 +5,6 @@ import {
   ensureRigProviderRow,
   removeRigProviderRow,
 } from "../helpers.js";
-import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
 import type { ProviderConfigCatalogOverlay } from "@cap/provider-app";
 import { systemProviderProjectionsResponseSchema } from "../../src/contract/api/system.js";
@@ -13,17 +12,17 @@ import { buildProviderProjections } from "../../src/routes/system.js";
 
 /**
  * Ticket #266: GET /system/provider-projections — the read-only provider
- * status face (#255 solution C). The harness row is the secret-free
- * HarnessProjection (provider-app projectHarness) plus the relay host; the
- * web_search row is chain order + credential-gate booleans + browser-backed
- * exclusions. #449: the web_search row projects the D1 `web_search` seat —
- * the AGENT_DO_WEB_SEARCH env path is deleted (zero env fallback), edits
- * ride the /system/web-search write face. #450: the catalog row projects the
- * D1 provider_configs rows (the env seed is deleted — no decodeError state,
- * no defaultProviderId). #484: the harness row carries the `envConfigured`
- * gate — at zero channel env the block is defaults synthesis and the panel
- * hides it. Acceptance: zero secret values anywhere in the response, and no
- * PUT on this aggregate face.
+ * status face (#255 solution C). The web_search row is chain order +
+ * credential-gate booleans + browser-backed exclusions (#449: it projects
+ * the D1 `web_search` seat — the AGENT_DO_WEB_SEARCH env path is deleted,
+ * edits ride the /system/web-search write face). #450: the catalog row
+ * projects the D1 provider_configs rows (the env seed is deleted — no
+ * decodeError state, no defaultProviderId). #500: the legacy
+ * deployment-channel harness row and its `envConfigured` gate are DELETED
+ * with the env scalars they projected — the D1 rows are the panel's sole
+ * provider 正本, and the response carries no harness block at all.
+ * Acceptance: zero secret values anywhere in the response, and no PUT on
+ * this aggregate face.
  */
 beforeAll(async () => {
   await ensureMigrations();
@@ -62,21 +61,9 @@ describe("GET /api/v1/system/provider-projections", () => {
       );
       expect(response.status).toBe(200);
       const parsed = systemProviderProjectionsResponseSchema.parse(await response.json());
-      // Zero channel env in the test worker → the honest empty channel
-      // (#496: mode "unconfigured", nothing synthesized).
-      expect(parsed.harness.relayMode).toBe("unconfigured");
-      // #450: the deployment channel is the incumbent anthropic face.
-      expect(parsed.harness.relayApi).toBe("anthropic-messages");
-      expect(parsed.harness.relayKeyPresent).toBe(false);
-      expect(parsed.harness.relayBaseUrlHost).toBeNull();
-      expect(parsed.harness.relayModel).toBe("");
-      // #377: no DAEMON_MACHINE_ID var → the cloud placeholder is the honest
-      // harness default (no deployment machine is fabricated).
-      expect(parsed.harness.machineId).toBe(CLOUD_PLACEHOLDER_HOST_ID);
-      expect(parsed.harness.permissionMode).toBe("full");
-      // #484: zero channel env → the panel hides the block (the empty rows
-      // next to the live D1 provider rows carry no channel information).
-      expect(parsed.harness.envConfigured).toBe(false);
+      // #500: the legacy deployment-channel block is gone entirely — the
+      // response carries no harness row at all.
+      expect(parsed).not.toHaveProperty("harness");
       // No D1 web_search row → ruled default chain: keyed API first,
       // credential-free aggregate as fallback (#144); not an env fallback
       // (#449 — the env path no longer exists).
@@ -100,7 +87,6 @@ describe("GET /api/v1/system/provider-projections", () => {
   });
 
   it("never emits secret values (评审断言)", async () => {
-    const RELAY_KEY = "sk-relay-secret-266-harness";
     const BRAVE_KEY = "brave-secret-266-value";
     const SEARXNG_TOKEN = "searxng-secret-266-token";
     // The engine chain rides the D1 seat: write it through the write face,
@@ -117,26 +103,12 @@ describe("GET /api/v1/system/provider-projections", () => {
       }),
     });
     const overlay = await loadedOverlay();
-    const built = buildProviderProjections(
-      {
-        MODEL_RELAY_API_KEY: RELAY_KEY,
-        MODEL_RELAY_BASE_URL_ANTHROPIC: "https://newapi.example.com",
-        MODEL_RELAY_MODEL: "glm-5.3-anth",
-      },
-      overlay,
-    );
+    const built = buildProviderProjections(overlay);
     const wire = systemProviderProjectionsResponseSchema.parse(built);
     const serialized = JSON.stringify(wire);
-    expect(serialized).not.toContain(RELAY_KEY);
     expect(serialized).not.toContain(BRAVE_KEY);
     expect(serialized).not.toContain(SEARXNG_TOKEN);
     // Presence gates survive, values never do.
-    // #484: the channel env is set → the legacy block renders.
-    expect(wire.harness.envConfigured).toBe(true);
-    expect(wire.harness.relayMode).toBe("anthropic");
-    expect(wire.harness.relayApi).toBe("anthropic-messages");
-    expect(wire.harness.relayKeyPresent).toBe(true);
-    expect(wire.harness.relayBaseUrlHost).toBe("newapi.example.com");
     expect(
       wire.webSearch.chain.map((engine) => [engine.engine, engine.credentialsPresent]),
     ).toEqual([
@@ -156,7 +128,7 @@ describe("GET /api/v1/system/provider-projections", () => {
       }),
     });
     const overlay = await loadedOverlay();
-    const built = buildProviderProjections({}, overlay);
+    const built = buildProviderProjections(overlay);
     const parsed = systemProviderProjectionsResponseSchema.parse(built);
     expect(parsed.webSearch.configured).toBe(true);
     expect(parsed.webSearch.decodeError).toBe(false);
@@ -184,7 +156,7 @@ describe("GET /api/v1/system/provider-projections", () => {
       .bind(Date.now())
       .run();
     const overlay = await loadedOverlay();
-    const built = buildProviderProjections({}, overlay);
+    const built = buildProviderProjections(overlay);
     const parsed = systemProviderProjectionsResponseSchema.parse(built);
     expect(parsed.webSearch.configured).toBe(true);
     expect(parsed.webSearch.decodeError).toBe(true);
@@ -197,7 +169,7 @@ describe("GET /api/v1/system/provider-projections", () => {
     // The loader's absent-row half projects the ruled defaults (the same
     // state the route reads on a deployment whose web_search row is absent);
     // EMPTY_OVERLAY (projection null) is the no-DB fallback shape instead.
-    const built = buildProviderProjections({}, await loadedOverlay());
+    const built = buildProviderProjections(await loadedOverlay());
     const parsed = systemProviderProjectionsResponseSchema.parse(built);
     expect(parsed.webSearch.configured).toBe(false);
     expect(parsed.webSearch.decodeError).toBe(false);
@@ -219,63 +191,12 @@ describe("GET /api/v1/system/provider-projections", () => {
     expect(response.status).toBe(404);
   });
 
-  it("derives the relay host and tolerates a malformed relay URL", () => {
-    const host = systemProviderProjectionsResponseSchema.parse(
-      buildProviderProjections(
-        {
-          MODEL_RELAY_BASE_URL_ANTHROPIC: "https://relay.example.net/v1/messages",
-        },
-        EMPTY_OVERLAY,
-      ),
-    );
-    expect(host.harness.relayBaseUrlHost).toBe("relay.example.net");
-    // #484: one channel var is enough — the block renders.
-    expect(host.harness.envConfigured).toBe(true);
-    const malformed = systemProviderProjectionsResponseSchema.parse(
-      buildProviderProjections({ MODEL_RELAY_BASE_URL_ANTHROPIC: "not a url" }, EMPTY_OVERLAY),
-    );
-    expect(malformed.harness.relayBaseUrlHost).toBeNull();
-  });
-
-  it("#484 gates the legacy deployment channel on real env input (blank strings don't count)", () => {
-    expect(
-      systemProviderProjectionsResponseSchema.parse(
-        buildProviderProjections({ MODEL_RELAY_API_KEY: "   " }, EMPTY_OVERLAY),
-      ).harness.envConfigured,
-    ).toBe(false);
-    // The execution pins are channel members too: setting only them renders
-    // the block (the permission/machine rows are real env facts there).
-    expect(
-      systemProviderProjectionsResponseSchema.parse(
-        buildProviderProjections({ DAEMON_MACHINE_ID: "gpu-box-1" }, EMPTY_OVERLAY),
-      ).harness.envConfigured,
-    ).toBe(true);
-  });
-
-  it("carries the harness execution projection from the env", () => {
-    const parsed = systemProviderProjectionsResponseSchema.parse(
-      buildProviderProjections(
-        {
-          HARNESS_PERMISSION_MODE: "accept-edits",
-          DAEMON_MACHINE_ID: "gpu-box-1",
-          MODEL_RELAY_THINKING_BUDGET_TOKENS: "2048",
-        },
-        EMPTY_OVERLAY,
-      ),
-    );
-    expect(parsed.harness.envConfigured).toBe(true);
-    expect(parsed.harness.permissionMode).toBe("accept-edits");
-    expect(parsed.harness.machineId).toBe("gpu-box-1");
-    expect(parsed.harness.relayThinking).toBe("enabled:2048");
-  });
-
   it("#450 reports the catalog status from the D1 rows (empty when unconfigured)", () => {
     // No configured rows → not configured, and NOTHING stands in (#434):
-    // the catalog ledger is honestly empty; #496: the harness row is the
-    // honest empty channel (zero channel env → defaultModel ""). Rows never
-    // declare a default (#450), and the env-era decodeError state cannot
-    // arise.
-    const built = buildProviderProjections({}, EMPTY_OVERLAY);
+    // the catalog ledger is honestly empty. Rows never declare a default
+    // (#450), and the env-era decodeError state cannot arise. #500: no
+    // deployment model is named — defaultModel stays "".
+    const built = buildProviderProjections(EMPTY_OVERLAY);
     const parsed = systemProviderProjectionsResponseSchema.parse(built);
     expect(parsed.catalog.configured).toBe(false);
     expect(parsed.catalog.decodeError).toBe(false);
@@ -295,7 +216,7 @@ describe("GET /api/v1/system/provider-projections", () => {
         Date.now(),
       )
       .run();
-    const built = buildProviderProjections({}, await loadedOverlay());
+    const built = buildProviderProjections(await loadedOverlay());
     const parsed = systemProviderProjectionsResponseSchema.parse(built);
     expect(parsed.catalog.configured).toBe(true);
     expect(parsed.catalog.decodeError).toBe(false);

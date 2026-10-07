@@ -62,6 +62,11 @@ export interface Env {
   readonly SERVER_VERSION?: string;
 
   // --- composition vars (#31, #377) -------------------------------------------
+  //
+  // #500: the former deployment-channel scalars (relay base/key/model/budget/
+  // window/image-input, the machine pin, the permission mode) are DELETED —
+  // the D1 provider_configs rows and the permission_mode seat are the 正本,
+  // and zero env scalars remain on the provider path.
 
   /**
    * Daemon-service front credentials (daemon client enroll/hostKey). Required
@@ -73,27 +78,6 @@ export interface Env {
   readonly ENROLL_KEY?: string;
   readonly DAEMON_HOST_KEY?: string;
   /**
-   * #377: optional explicit harness host pin. Unset = the cloud placeholder
-   * (no deployment machine is fabricated); only a deliberate deployment that
-   * really runs a machine under this name should set it.
-   */
-  readonly DAEMON_MACHINE_ID?: string;
-  /**
-   * Relay harness (#28 three keys): read by the manager and the composed
-   * agent DO's per-isolate runtime registration.
-   */
-  readonly MODEL_RELAY_BASE_URL_ANTHROPIC?: string;
-  readonly MODEL_RELAY_API_KEY?: string;
-  readonly MODEL_RELAY_MODEL?: string;
-  readonly MODEL_RELAY_MAX_TOKENS?: string;
-  readonly MODEL_RELAY_THINKING_BUDGET_TOKENS?: string;
-  /**
-   * A4 image-input capability declaration (#319, 1/true/on). Read by the
-   * execution-options projection (routes/system.ts) and the provider-app
-   * harness — the same deployment var both faces must agree on.
-   */
-  readonly MODEL_RELAY_IMAGE_INPUT?: string;
-  /**
    * #362 AES-GCM master key for the provider_configs.api_key_enc column
    * (the user-configurable provider panel). Worker SECRET in deployment
    * (`wrangler secret put PROVIDER_CONFIG_MASTER_KEY`); unset = rows with
@@ -101,6 +85,4 @@ export interface Env {
    * key-bearing writes are refused (422 master_key_missing).
    */
   readonly PROVIDER_CONFIG_MASTER_KEY?: string;
-  /** `accept-edits` | `auto` | `full` (default `full`). */
-  readonly HARNESS_PERMISSION_MODE?: string;
 }

@@ -129,7 +129,7 @@ test("registry survives manager DO eviction and stays consistent with the agent 
   // Agent DO consistency: same DO name still owns the same thread and log.
   const events = await afterAbort(() => eventsOf(threadId));
   expect(events[0]?.type).toBe("thread.created");
-  // #377: harness default = the cloud placeholder.
+  // #377/#500: the host binding default = the cloud placeholder constant.
   expect(events[0]?.data).toMatchObject({ machineId: CLOUD_PLACEHOLDER_HOST_ID });
 
   // And the recovered thread still runs turns end-to-end.

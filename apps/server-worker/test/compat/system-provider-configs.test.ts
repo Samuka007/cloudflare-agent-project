@@ -4,7 +4,6 @@ import type { z } from "zod";
 import {
   decryptProviderSecret,
   resolveOverlayCatalog,
-  resolveHarness,
 } from "@cap/provider-app";
 import type { AnyAgentEvent, RelayCatalogProvider } from "@cap/agent-do";
 import { ensureMigrations } from "../migrate.js";
@@ -513,7 +512,7 @@ describe("#362/#450 the D1 directory (sole 正本, no env seed)", () => {
   };
 
   it("every decoded row projects verbatim; nothing else joins the directory", () => {
-    const merged = resolveOverlayCatalog(resolveHarness({}), OVERLAY);
+    const merged = resolveOverlayCatalog(OVERLAY);
     expect(merged.configured).toBe(true);
     expect(merged.decodeError).toBe(false);
     const byId = new Map(merged.providers.map((provider) => [provider.id, provider]));

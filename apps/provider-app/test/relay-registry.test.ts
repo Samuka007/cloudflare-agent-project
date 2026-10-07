@@ -11,27 +11,24 @@ import {
   relayAgentRuntime,
   type RelayProviderOverlay,
 } from "../src/relay-registry.js";
+import {
+  RELAY_FALLBACK_CONTEXT_WINDOW,
+  RELAY_FALLBACK_MAX_TOKENS,
+} from "../src/execution-posture.js";
 
 /**
- * #351/#450 relay provider registry: the providerId-keyed dispatch half of
- * the catalog layer. Since #450 the construction is D1-only — the overlay
+ * #351/#450/#500 relay provider registry: the providerId-keyed dispatch half
+ * of the catalog layer. Since #450 the construction is D1-only — the overlay
  * (the decoded provider_configs rows) is the ENTIRE directory and the ONLY
  * credential source: every row is standalone (a user-authored baseUrl is
  * never hit with a deployment key), so a keyless row fails dispatch with the
- * named credential error (#434 point ⑦ — no row-level mock). Two threads
- * selecting two models resolve two DISTINCT RelayConfigs; unknown selections
- * throw RelaySelectionError — the fail-closed red line.
+ * named credential error (#434 point ⑦ — no row-level mock). #500: no
+ * deployment env takes part at all — the row declarations (budget / window /
+ * input) are the per-row truth, the wire-safety fallback constants cover
+ * rows that declare none, and a model-less selection fails closed. Two
+ * threads selecting two models resolve two DISTINCT RelayConfigs; unknown
+ * selections throw RelaySelectionError — the fail-closed red line.
  */
-
-const DEPLOYMENT_ENV = {
-  MODEL_RELAY_MODEL: "glm-5.3",
-  MODEL_RELAY_THINKING_BUDGET_TOKENS: "4096",
-  MODEL_RELAY_IMAGE_INPUT: "1",
-  // Deployment channel scalars exist for the default provider only; rows
-  // NEVER read them (#450 standalone posture — the leak-vector tests below).
-  MODEL_RELAY_API_KEY: "k-deployment",
-  MODEL_RELAY_BASE_URL_ANTHROPIC: "https://main.example.com/api/anthropic",
-};
 
 const OVERLAY: RelayProviderOverlay = {
   providers: {
@@ -46,6 +43,7 @@ const OVERLAY: RelayProviderOverlay = {
           defaultReasoningLevel: "high",
           contextWindow: 200_000,
           maxTokens: 8192,
+          thinkingBudgetTokens: 4096,
         },
         { id: "glm-5.3-air", name: "GLM-5.3-Air", maxTokens: 4096 },
       ],
@@ -57,6 +55,7 @@ const OVERLAY: RelayProviderOverlay = {
           reasoningLevels: ["none", "medium"],
           contextWindow: 128_000,
           maxTokens: 2048,
+          thinkingBudgetTokens: 8192,
         },
       ],
     },
@@ -70,7 +69,7 @@ const OVERLAY: RelayProviderOverlay = {
 
 describe("#351 RelayProviderRegistry resolution over the D1 overlay", () => {
   test("two selected models resolve two distinct wire configs", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, OVERLAY);
+    const registry = RelayProviderRegistry.create(OVERLAY);
     const main = registry.resolve({ providerId: "main", model: "glm-5.3", reasoningLevel: "high" });
     const backup = registry.resolve({
       providerId: "backup",
@@ -82,37 +81,58 @@ describe("#351 RelayProviderRegistry resolution over the D1 overlay", () => {
     expect(backup.config.maxTokens).toBe(2048);
     expect(backup.config.contextWindow).toBe(128_000);
     expect(main.config.maxTokens).toBe(8192);
-    // The budget knob rides any non-none rung; the rung decides.
+    // The budget knob rides any non-none rung; the rung decides, and the
+    // ROW's own thinkingBudgetTokens is the budget (#500).
     expect(main.config.thinking).toEqual({ type: "enabled", budget_tokens: 4096 });
-    expect(backup.config.thinking).toEqual({ type: "enabled", budget_tokens: 4096 });
+    expect(backup.config.thinking).toEqual({ type: "enabled", budget_tokens: 8192 });
   });
 
   test("the none rung dispatches thinking disabled on the same row", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, OVERLAY);
+    const registry = RelayProviderRegistry.create(OVERLAY);
     const off = registry.resolve({ providerId: "main", model: "glm-5.3", reasoningLevel: "none" });
     const on = registry.resolve({ providerId: "main", model: "glm-5.3", reasoningLevel: "high" });
     expect(off.config.thinking).toEqual({ type: "disabled" });
     expect(on.config.thinking).toEqual({ type: "enabled", budget_tokens: 4096 });
   });
 
-  test("non-running rows read their declaration; the running row keeps the harness fold", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, OVERLAY);
-    // MODEL_RELAY_MODEL is glm-5.3 → the running row carries the harness
-    // fold (env overrides and defaults already applied).
-    const running = registry.resolve({ providerId: "main", model: "glm-5.3" });
-    expect(running.modelId).toBe("glm-5.3");
-    expect(running.config.supportsImageInput).toBe(true);
-    // The sibling row declares no image input — capability stays per-row.
+  test("#500: every row carries its own declaration — no deployment fold", () => {
+    const registry = RelayProviderRegistry.create(OVERLAY);
+    const flagship = registry.resolve({ providerId: "main", model: "glm-5.3" });
+    expect(flagship.modelId).toBe("glm-5.3");
+    expect(flagship.config.supportsImageInput).toBe(true);
+    // The sibling row declares no image input and no budget — both stay
+    // honest negatives (budget-off collapses the ladder to [none]) and the
+    // maxTokens window come from the row itself, never a deployment fold.
     const sibling = registry.resolve({ providerId: "main", model: "glm-5.3-air" });
     expect(sibling.config.supportsImageInput).toBe(false);
     expect(sibling.config.maxTokens).toBe(4096);
-    // The deployment budget scalar folds onto rows without their own budget
-    // seat (#362: undefined = legacy row that keeps the harness fold).
-    expect(sibling.config.thinking).toEqual({ type: "enabled", budget_tokens: 4096 });
+    expect(sibling.config.thinking).toEqual({ type: "disabled" });
+    // A budget-off row has exactly one runnable rung — asking for another
+    // fails closed with the named 422 (display and dispatch agree).
+    try {
+      registry.resolve({ providerId: "main", model: "glm-5.3-air", reasoningLevel: "high" });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(RelaySelectionError);
+      expect((error as RelaySelectionError).code).toBe("reasoning_level_unknown");
+    }
+  });
+
+  test("#500: rows that declare no window/budget fall back to the wire-safety constants", () => {
+    const registry = RelayProviderRegistry.create({
+      providers: { bare: { models: [{ id: "bare-model" }] } },
+      imageSourceProviderId: null,
+      credentials: {},
+    });
+    const resolved = registry.resolve({ providerId: "bare", model: "bare-model" });
+    expect(resolved.config.maxTokens).toBe(RELAY_FALLBACK_MAX_TOKENS);
+    expect(resolved.config.contextWindow).toBe(RELAY_FALLBACK_CONTEXT_WINDOW);
+    expect(resolved.config.thinking).toEqual({ type: "disabled" });
+    expect(resolved.config.supportsImageInput).toBe(false);
   });
 
   test("unknown provider/model/reasoning fail closed with named errors", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, OVERLAY);
+    const registry = RelayProviderRegistry.create(OVERLAY);
     try {
       registry.resolve({ providerId: "ghost" });
       expect.unreachable();
@@ -132,10 +152,19 @@ describe("#351 RelayProviderRegistry resolution over the D1 overlay", () => {
     } catch (error) {
       expect((error as RelaySelectionError).code).toBe("reasoning_level_unknown");
     }
+    // #500: no deployment model is named — a provider-only selection has no
+    // default to fall to; pass the model explicitly (named 422).
+    try {
+      registry.resolve({ providerId: "main" });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as RelaySelectionError).code).toBe("model_unknown");
+      expect((error as RelaySelectionError).message).toContain("pass model explicitly");
+    }
   });
 
   test("the zero-config overlay admits nothing (#434 fail-closed)", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV);
+    const registry = RelayProviderRegistry.create();
     // No selection and no D1 default declaration (#450: rows never declare
     // one) → the named undeclared-default 422.
     expect(() => registry.resolve({})).toThrow(/names no defaultProvider/);
@@ -163,7 +192,7 @@ describe("#351 RelayProviderRegistry resolution over the D1 overlay", () => {
   });
 
   test("no explicit selection fails closed — D1 rows declare no default (#434)", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, OVERLAY);
+    const registry = RelayProviderRegistry.create(OVERLAY);
     // #434/#450: no first-key fill and no declaration seat — a selectionless
     // resolve is the named 422, never a guessed provider.
     try {
@@ -176,8 +205,8 @@ describe("#351 RelayProviderRegistry resolution over the D1 overlay", () => {
 });
 
 describe("#351/#450 standalone credentials (D1 rows never ride deployment slots)", () => {
-  test("a row resolves with its OWN wire identity, never the deployment scalars", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, OVERLAY);
+  test("a row resolves with its OWN wire identity, never a deployment slot", () => {
+    const registry = RelayProviderRegistry.create(OVERLAY);
     const main = registry.resolve({ providerId: "main", model: "glm-5.3" });
     expect(main.config.apiKey).toBe("k-main");
     expect(main.config.baseUrl).toBe("https://main.example.com/api/anthropic");
@@ -186,8 +215,8 @@ describe("#351/#450 standalone credentials (D1 rows never ride deployment slots)
     expect(backup.config.baseUrl).toBe("https://backup.example.com/api/anthropic");
   });
 
-  test("a row whose credential slot is empty degrades to empty slots — never the deployment key", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, {
+  test("a row whose credential slot is empty degrades to empty slots — never a deployment key", () => {
+    const registry = RelayProviderRegistry.create({
       ...OVERLAY,
       credentials: {},
     });
@@ -204,7 +233,7 @@ describe("#351/#450 standalone credentials (D1 rows never ride deployment slots)
   });
 
   test("providerFor caches one instance per provider+model+rung", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, OVERLAY);
+    const registry = RelayProviderRegistry.create(OVERLAY);
     const first = registry.providerFor({ providerId: "backup", model: "flash-mini" });
     const again = registry.providerFor({ providerId: "backup", model: "flash-mini" });
     const otherRung = registry.providerFor({
@@ -218,7 +247,7 @@ describe("#351/#450 standalone credentials (D1 rows never ride deployment slots)
   });
 
   test("applyOverlay clears the instance cache — stale wire clients never survive a rotation", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, OVERLAY);
+    const registry = RelayProviderRegistry.create(OVERLAY);
     const first = registry.providerFor({ providerId: "backup", model: "flash-mini" });
     registry.applyOverlay({
       ...OVERLAY,
@@ -235,7 +264,7 @@ describe("#351/#450 standalone credentials (D1 rows never ride deployment slots)
   });
 
   test("relayAgentRuntime installs the registry resolver (the one registration shape)", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, OVERLAY);
+    const registry = RelayProviderRegistry.create(OVERLAY);
     const runtime = relayAgentRuntime(registry);
     expect(typeof runtime.resolveExecutionProvider).toBe("function");
     const resolved = runtime.resolveExecutionProvider({
@@ -268,6 +297,7 @@ describe("#361 openai-responses dispatch", () => {
             defaultReasoningLevel: "none",
             contextWindow: 200_000,
             maxTokens: 8192,
+            thinkingBudgetTokens: 4096,
           },
           // Per-model override: identity face but a custom effort map
           // (omp models.yml compat.reasoningEffortMap deepseek anchor).
@@ -276,6 +306,7 @@ describe("#361 openai-responses dispatch", () => {
             api: "openai-responses",
             reasoningLevels: ["none", "high", "xhigh"],
             reasoningEffortMap: { xhigh: "max" },
+            thinkingBudgetTokens: 4096,
           },
           // A rung the responses wire cannot express without a map entry —
           // ladder-valid but effort-unmappable.
@@ -283,6 +314,7 @@ describe("#361 openai-responses dispatch", () => {
             id: "ultra-row",
             reasoningLevels: ["none", "ultra"],
             defaultReasoningLevel: "none",
+            thinkingBudgetTokens: 4096,
           },
         ],
       },
@@ -292,13 +324,13 @@ describe("#361 openai-responses dispatch", () => {
   };
 
   test("a catalog api: openai-responses row dispatches the ResponsesRelayProvider", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, RESPONSES_OVERLAY);
+    const registry = RelayProviderRegistry.create(RESPONSES_OVERLAY);
     const provider = registry.providerFor({ providerId: "newapi", model: "glm-5.3-flash" });
     expect(provider).toBeInstanceOf(ResponsesRelayProvider);
   });
 
   test("the resolved config carries the face, base, and the rung-mapped effort", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, RESPONSES_OVERLAY);
+    const registry = RelayProviderRegistry.create(RESPONSES_OVERLAY);
     const resolution = registry.resolve({
       providerId: "newapi",
       model: "glm-5.3-flash",
@@ -320,7 +352,7 @@ describe("#361 openai-responses dispatch", () => {
   });
 
   test("an effort-unmappable rung on a responses row fails closed with the named 422", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, RESPONSES_OVERLAY);
+    const registry = RelayProviderRegistry.create(RESPONSES_OVERLAY);
     try {
       registry.resolve({ providerId: "newapi", model: "ultra-row", reasoningLevel: "ultra" });
       expect.unreachable();
@@ -332,7 +364,7 @@ describe("#361 openai-responses dispatch", () => {
   });
 
   test("a keyless responses row fails dispatch with the named credential error", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, {
+    const registry = RelayProviderRegistry.create({
       ...RESPONSES_OVERLAY,
       credentials: {},
     });
@@ -356,16 +388,19 @@ describe("#363 openai-completions dispatch", () => {
             defaultReasoningLevel: "none",
             contextWindow: 200_000,
             maxTokens: 8192,
+            thinkingBudgetTokens: 4096,
           },
           {
             id: "deepseek-v4-pro",
             reasoningLevels: ["none", "high", "xhigh"],
             reasoningEffortMap: { xhigh: "max" },
+            thinkingBudgetTokens: 4096,
           },
           {
             id: "ultra-row",
             reasoningLevels: ["none", "ultra"],
             defaultReasoningLevel: "none",
+            thinkingBudgetTokens: 4096,
           },
         ],
       },
@@ -375,13 +410,13 @@ describe("#363 openai-completions dispatch", () => {
   };
 
   test("a catalog api: openai-completions row dispatches the CompletionsRelayProvider", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, COMPLETIONS_OVERLAY);
+    const registry = RelayProviderRegistry.create(COMPLETIONS_OVERLAY);
     const provider = registry.providerFor({ providerId: "newapi", model: "glm-5.3-flash" });
     expect(provider).toBeInstanceOf(CompletionsRelayProvider);
   });
 
   test("the resolved config carries the face and the rung-mapped effort (per-model map wins)", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, COMPLETIONS_OVERLAY);
+    const registry = RelayProviderRegistry.create(COMPLETIONS_OVERLAY);
     const flash = registry.resolve({
       providerId: "newapi",
       model: "glm-5.3-flash",
@@ -398,7 +433,7 @@ describe("#363 openai-completions dispatch", () => {
   });
 
   test("an effort-unmappable rung on a completions row fails closed with the named 422", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, COMPLETIONS_OVERLAY);
+    const registry = RelayProviderRegistry.create(COMPLETIONS_OVERLAY);
     try {
       registry.resolve({ providerId: "newapi", model: "ultra-row", reasoningLevel: "ultra" });
       expect.unreachable();
@@ -410,7 +445,7 @@ describe("#363 openai-completions dispatch", () => {
   });
 
   test("a keyless completions row fails dispatch with the named credential error", () => {
-    const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, {
+    const registry = RelayProviderRegistry.create({
       ...COMPLETIONS_OVERLAY,
       credentials: {},
     });

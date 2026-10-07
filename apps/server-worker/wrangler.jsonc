@@ -89,7 +89,7 @@
     // #377: no composition identity vars. The provider journal DO is named
     // by a code constant, the binding default is the cloud placeholder, and
     // a daemon enroll mints its own host — the deployment fabricates no
-    // machine. (DAEMON_MACHINE_ID may be set deliberately to pin the harness
-    // host binding to a real machine name; unset = the placeholder.)
+    // machine. #500: the former deployment-channel scalars (relay config,
+    // machine pin, permission mode) are deleted — D1 rows/seats are the 正本.
   },
 }

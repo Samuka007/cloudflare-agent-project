@@ -274,11 +274,13 @@ export type SystemVersionQuery = z.infer<typeof systemVersionQuerySchema>;
 
 // --- Port-only surface (#266, #255 solution C) --------------------------------
 // GET /system/provider-projections: the read-only provider status face. Zero
-// secret values by construction — the harness row re-uses the secret-free
-// HarnessProjection (provider-app projectHarness, key PRESENCE only) plus the
-// relay host, and the web_search row carries engine ids and credential-gate
-// booleans only. The web_search WRITE face lives at /system/web-search below
-// (#449) — the D1 row is the sole 正本, this aggregate stays read-only.
+// secret values by construction — the web_search row carries engine ids and
+// credential-gate booleans only, and the catalog row names ids/state without
+// values. #500: the legacy deployment-channel `harness` row and its
+// `envConfigured` gate are deleted with the env scalars they projected — the
+// D1 provider_configs rows are the panel's sole provider 正本. The web_search
+// WRITE face lives at /system/web-search below (#449) — the D1 row is the
+// sole 正本, this aggregate stays read-only.
 
 export const providerWebSearchEngineProjectionSchema = z.object({
   engine: z.string(),
@@ -292,37 +294,6 @@ export type ProviderWebSearchEngineProjection = z.infer<
 >;
 
 export const systemProviderProjectionsResponseSchema = z.object({
-  /** The relay harness projection (projectHarness + relayBaseUrlHost). */
-  harness: z.object({
-    relayMode: z.string(),
-    /**
-     * #361/#363: the relay protocol face (anthropic-messages |
-     * openai-responses | openai-completions).
-     */
-    relayApi: z.string(),
-    relayBaseUrl: z.string(),
-    /** Host component of relayBaseUrl; null when the env URL does not parse. */
-    relayBaseUrlHost: z.string().nullable(),
-    relayKeyPresent: z.boolean(),
-    relayModel: z.string(),
-    relayMaxTokens: z.number(),
-    relayThinking: z.string(),
-    machineId: z.string(),
-    executionModel: z.string(),
-    executionServiceTier: z.string(),
-    executionReasoningLevel: z.string(),
-    permissionMode: z.string(),
-    /**
-     * #484: true iff the deployment set any legacy deployment-channel env
-     * (the MODEL_RELAY_* family, DAEMON_MACHINE_ID, HARNESS_PERMISSION_MODE;
-     * blank strings don't count). false = zero deployment input — since
-     * #450 the D1 provider_configs rows are the sole provider 正本, the
-     * deployment channel has no product meaning at zero env, and the panel
-     * must NOT render the block. #496: at zero env the rows are honestly
-     * empty (mode "unconfigured", model/baseUrl "") — nothing is synthesized.
-     */
-    envConfigured: z.boolean(),
-  }),
   webSearch: z.object({
     /** True when the D1 web_search row exists (false = ruled defaults). */
     configured: z.boolean(),
@@ -529,6 +500,28 @@ export const systemOriginAllowlistPutRequestSchema = z
 export type SystemOriginAllowlistPutRequest = z.infer<
   typeof systemOriginAllowlistPutRequestSchema
 >;
+
+/**
+ * #500 the permission-mode default face (the D1 `permission_mode` single-row
+ * seat, the sole 正本 — the HARNESS_PERMISSION_MODE env scalar is deleted,
+ * zero env fallback). `mode` is the posture turns without an explicit
+ * thread-level mode dispatch under; `configured` reports whether the row
+ * exists at all (false = the absent-row default, "full"). A write
+ * hot-applies on the next turn/defaults read (no redeploy).
+ */
+export const systemPermissionModeResponseSchema = z.object({
+  /** The stored default posture; "full" when no row exists. */
+  mode: permissionModeSchema,
+  /** True when the D1 row exists (false = the ruled "full" default). */
+  configured: z.boolean(),
+});
+export type SystemPermissionModeResponse = z.infer<typeof systemPermissionModeResponseSchema>;
+
+/** PUT /system/permission-mode: replace the seat's mode. */
+export const systemPermissionModePutRequestSchema = z
+  .object({ mode: permissionModeSchema })
+  .strict();
+export type SystemPermissionModePutRequest = z.infer<typeof systemPermissionModePutRequestSchema>;
 
 // --- #362/#450 provider configurable panel (port-only CRUD face) -------------
 // GET/POST/PUT/PATCH/DELETE /system/providers(+ /:id, /:id/test): the

@@ -60,15 +60,18 @@ export const relayReasoningLevelSchema = z.enum(relayReasoningLevelValues);
 /**
  * bb's custom-model default rung for "extended thinking on" (bb
  * thread-default-policy / customModels `defaultReasoningEffort: "medium"`).
- * The relay wire has one thinking knob (the deployment's budget token count,
- * MODEL_RELAY_THINKING_BUDGET_TOKENS) — until per-thread selection consumes
- * a ladder (#351), the honest projection of "budget on" is exactly this one
- * rung, not a multi-rung ladder the wire cannot distinguish.
+ * The relay wire has one thinking knob (the row's thinkingBudgetTokens) —
+ * until per-thread selection consumes a ladder (#351), the honest
+ * projection of "budget on" for a row that declares no ladder is exactly
+ * this one rung, not a multi-rung ladder the wire cannot distinguish.
  */
 export const DEFAULT_THINKING_REASONING_LEVEL: RelayReasoningLevel = "medium";
 
 export interface RelayReasoningDerivationInput {
-  /** Deployment thinking flag: MODEL_RELAY_THINKING_BUDGET_TOKENS set (>0). */
+  /**
+   * Thinking flag: the row's budget is on (thinkingBudgetTokens set > 0;
+   * #500: the deployment-wide env flag is deleted).
+   */
   thinkingEnabled: boolean;
   /** Model-declared ladder override (relayCatalogModelSchema.reasoningLevels). */
   declaredLevels?: readonly RelayReasoningLevel[];
@@ -308,17 +311,16 @@ export const relayCatalogModelSchema = relayModelEntrySchema
     /** bb AvailableModel.description (picker subtitle). */
     description: z.string().optional(),
     /**
-     * Per-model thinking budget (#362 scope absorption ①): the reasoning
-     * budget rides the model row, replacing the deployment-wide
-     * MODEL_RELAY_THINKING_BUDGET_TOKENS scalar for THIS row (the env
-     * scalar is the fallback for rows that do not declare one — deprecated,
-     * not removed). A panel edit hot-applies through the catalog overlay.
+     * Per-model thinking budget (#362 scope absorption ①; the ONLY budget
+     * source since #500 deleted the deployment-wide env scalar): the row's
+     * reasoning budget rides this field — absent = budget-off. A panel edit
+     * hot-applies through the catalog overlay.
      */
     thinkingBudgetTokens: z.number().int().positive().optional(),
     /**
      * Explicit ladder override. Unset → budget-derived (deriveRelayReasoning).
-     * Dormant while thinking is disabled: the wire cannot run any budget rung,
-     * so the projection stays `["none"]` regardless of the declaration.
+     * Dormant while the row's budget is off: the wire cannot run any budget
+     * rung, so the projection stays `["none"]` regardless of the declaration.
      */
     reasoningLevels: z.array(relayReasoningLevelSchema).min(1).optional(),
     /** Default rung of the declared ladder (must be a member when both set). */
@@ -449,9 +451,9 @@ const relayCatalogProviderShellFields = {
   displayName: z.string().min(1).optional(),
   /**
    * Public endpoint declaration (projection-grade — the same trust level the
-   * provider-projections harness row already emits for the relay base URL).
-   * The wire base stays MODEL_RELAY_BASE_URL_ANTHROPIC; this documents the
-   * bought channel and never carries a credential.
+   * read faces already project). This is the wire base every dispatch dials
+   * (#500: the retired env scalar is gone — the row IS the base); it
+   * documents the bought channel and never carries a credential.
    */
   baseUrl: z.string().min(1).optional(),
   /** bb ProviderCapabilities.supportsServiceTier projection. */
@@ -634,9 +636,18 @@ export interface RelaySelectionDirectory {
    * (#434: no first-key fill — an undeclared default fails closed).
    */
   defaultProviderId: string | null;
-  /** The model turns actually run (harness model) — a provider's default fill. */
+  /**
+   * The directory's default model — a provider's default fill for a
+   * model-less selection. Empty since #500: no deployment model is named
+   * (the thread selection is the model source), so a model-less selection
+   * fails closed and the caller must pass the model explicitly.
+   */
   defaultModelId: string;
-  /** Deployment thinking flag (MODEL_RELAY_THINKING_BUDGET_TOKENS > 0). */
+  /**
+   * Directory-wide thinking fallback for rows that predate the per-row
+   * budget seat (their `thinkingBudgetTokens` is undefined). The relay
+   * registry passes false since #500 (no deployment budget scalar).
+   */
   thinkingEnabled: boolean;
 }
 
@@ -653,9 +664,10 @@ export interface ResolvedRelaySelection {
  *   selection with neither is a named 422 (no sentinel, no first-key guess:
  *   #434 fail-closed, the declaration is the only configuration source);
  * - model: explicit (must sit in the resolved provider's rows) ?? the
- *   running model when the provider declares it — a provider without the
- *   running row has NO default and demands an explicit model (named error,
- *   not a guessed first row);
+ *   directory's defaultModelId when the provider declares it — since #500
+ *   that id is empty (no deployment model), so a model-less selection has
+ *   NO default and demands an explicit model (named error, not a guessed
+ *   first row);
  * - reasoning level: explicit (must sit in the row's runnable ladder) ?? the
  *   row's derived default. The ladder is budget-collapsed exactly like the
  *   picker face (deriveRelayReasoning) — budget off admits only "none",
@@ -699,7 +711,7 @@ export function resolveRelaySelection(
       "model",
       selection.model === undefined
         ? `provider "${providerId}" has no resolvable default model ` +
-            `(the running model "${directory.defaultModelId}" is not one of its rows: ` +
+            `(the directory default "${directory.defaultModelId}" is not one of its rows: ` +
             `${JSON.stringify(declared)}) — pass model explicitly`
         : `unknown model "${selection.model}" for provider "${providerId}" — ` +
             `declared models: ${JSON.stringify(declared)}`,

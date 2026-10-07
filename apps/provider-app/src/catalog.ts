@@ -3,12 +3,10 @@ import {
   DEFAULT_RELAY_API,
   IMAGE_SOURCE_API_FAMILY,
   type RelayApi,
-  type RelayCatalogModel,
   type RelayCatalogProvider,
   type ResponsesEffort,
   type RelayReasoningLevel,
 } from "@cap/agent-do";
-import type { ResolvedHarness } from "./harness.js";
 
 /**
  * Relay catalog resolution (#350 → #450) — the D1 provider-config 正本
@@ -18,11 +16,13 @@ import type { ResolvedHarness } from "./harness.js";
  * (routes/projects.ts). One resolution, several projections — the #319
  * dual-face pattern generalized to the catalog layer (roadmap §0.1/§2.3).
  *
- * Same-source stays by construction: the resolution carries the harness
- * resolution and folds the running model's directory row FROM the harness
- * output (model, maxTokens, contextWindow, image input) so the picker face
- * and the turns-actually-run truth cannot disagree — the assertion the
- * #350 ticket pinned ("harness 与目录对同一 env 求值一致").
+ * Same-source stays by construction: the resolution is a pure projection of
+ * the same D1 rows the dispatch registry resolves against — the picker face
+ * and the turns-actually-run truth cannot disagree. #500: the deployment
+ * channel (env scalars folded into a "running model" row) is deleted with
+ * the MODEL_RELAY_* family; every row carries its own declaration
+ * (maxTokens/contextWindow/input/thinkingBudgetTokens/api) and no row is a
+ * synthesized default.
  *
  * #450 (user ruling 2026-10-07): the env seed is GONE. There is no env
  * branch anywhere on the provider-selection path — the D1 rows are the sole
@@ -44,17 +44,16 @@ export interface RelayCatalogModelRow {
   reasoningLevels: RelayReasoningLevel[];
   defaultReasoningLevel: RelayReasoningLevel;
   /**
-   * Context window the row stands for. The running row carries the
-   * harness-resolved value (explicit env override + defaults folded);
-   * non-running rows carry their declaration, null when undeclared.
+   * Context window the row declares, null when undeclared (the dispatch
+   * half keeps a wire-safety fallback constant for the usage denominator).
    */
   contextWindow: number | null;
   maxTokens: number | null;
   /**
-   * The row's effective thinking budget (#362): the model-declared
-   * thinkingBudgetTokens winning over the deployment scalar; null when the
-   * row runs budget-off. The dispatch half (relay-registry) reads this so a
-   * panel budget edit rides the overlay without a redeploy.
+   * The row's effective thinking budget (#362 → #500): the row-declared
+   * thinkingBudgetTokens IS the budget (the deployment scalar is deleted);
+   * null when the row runs budget-off. The dispatch half (relay-registry)
+   * reads this so a panel budget edit rides the overlay without a redeploy.
    */
   thinkingBudgetTokens: number | null;
   imageInput: boolean;
@@ -62,7 +61,11 @@ export interface RelayCatalogModelRow {
   api: RelayApi;
   /** #361: the row's per-model effort map (responses face consumption). */
   reasoningEffortMap?: Partial<Record<RelayReasoningLevel, ResponsesEffort>>;
-  /** Exactly the running model's row (the model turns actually run). */
+  /**
+   * The picker's default row. Constantly false since #500: the deployment
+   * names no running model anymore (#434/#450: no first-key fill; legacy
+   * "running" rows do not exist) — kept as a wire-shape field.
+   */
   isDefault: boolean;
 }
 
@@ -96,8 +99,6 @@ export interface RelayCatalogResolution {
   defaultProviderId: string | null;
   providers: RelayCatalogProviderRow[];
   models: RelayCatalogModelRow[];
-  /** The running relay truth (resolveHarness) the default row projects. */
-  harness: ResolvedHarness;
 }
 
 /**
@@ -108,7 +109,6 @@ export interface RelayCatalogResolution {
  * synthesized: no default row, no running-model stand-in.
  */
 export function resolveOverlayCatalog(
-  harness: ResolvedHarness,
   overlayProviders: Record<string, RelayCatalogProvider>,
 ): RelayCatalogResolution {
   if (Object.keys(overlayProviders).length === 0) {
@@ -119,10 +119,9 @@ export function resolveOverlayCatalog(
       defaultProviderId: null,
       providers: [],
       models: [],
-      harness,
     };
   }
-  return projectCatalogDirectory(harness, overlayProviders, {
+  return projectCatalogDirectory(overlayProviders, {
     configured: true,
     decodeError: false,
     defaultProviderId: null,
@@ -136,12 +135,9 @@ export function resolveOverlayCatalog(
  * omission is configuration, never papered over with a synthesized row.
  */
 function projectCatalogDirectory(
-  harness: ResolvedHarness,
   providers: Record<string, RelayCatalogProvider>,
   flags: { configured: boolean; decodeError: boolean; defaultProviderId: string | null },
 ): RelayCatalogResolution {
-  const globalBudget =
-    harness.relay.thinking.type === "enabled" ? harness.relay.thinking.budget_tokens : null;
   const providerRows: RelayCatalogProviderRow[] = [];
   const models: RelayCatalogModelRow[] = [];
   for (const [providerId, provider] of Object.entries(providers)) {
@@ -152,16 +148,15 @@ function projectCatalogDirectory(
     // the Configured panel CRUD face instead.
     const providerApi = provider.api;
     if (providerApi === IMAGE_SOURCE_API_FAMILY) continue;
-    const rowBudgetOf = (entry: RelayCatalogModel): number | null =>
-      entry.thinkingBudgetTokens ?? globalBudget;
     const rows = provider.models.map((entry): RelayCatalogModelRow => {
-      const rowBudget = rowBudgetOf(entry);
+      // #500: the row's declared budget IS the effective budget (the
+      // deployment-wide scalar died with the channel); undeclared = off.
+      const rowBudget = entry.thinkingBudgetTokens ?? null;
       const derived = deriveRelayReasoning({
         thinkingEnabled: rowBudget !== null,
         declaredLevels: entry.reasoningLevels,
         declaredDefault: entry.defaultReasoningLevel,
       });
-      const isRunning = entry.id === harness.relay.model;
       return {
         providerId,
         id: entry.id,
@@ -170,20 +165,18 @@ function projectCatalogDirectory(
         description: entry.description ?? "",
         reasoningLevels: derived.levels,
         defaultReasoningLevel: derived.defaultLevel,
-        // The running row advertises the harness-resolved scalars (env
-        // overrides and defaults already folded) — the picker shows what
-        // turns actually run, not two parallel answers.
-        contextWindow: isRunning ? harness.relay.contextWindow : (entry.contextWindow ?? null),
-        maxTokens: isRunning ? harness.relay.maxTokens : (entry.maxTokens ?? null),
+        // Every row advertises exactly its own declaration — the picker
+        // shows what turns actually run, with no deployment fold.
+        contextWindow: entry.contextWindow ?? null,
+        maxTokens: entry.maxTokens ?? null,
         thinkingBudgetTokens: rowBudget,
-        imageInput: isRunning
-          ? harness.relay.supportsImageInput
-          : (entry.input?.includes("image") ?? false),
+        imageInput: entry.input?.includes("image") ?? false,
         // #361: the face this row dispatches under — model declaration,
         // then the provider's, then the incumbent anthropic face.
         api: entry.api ?? providerApi ?? DEFAULT_RELAY_API,
         reasoningEffortMap: entry.reasoningEffortMap,
-        isDefault: isRunning,
+        // #500: the deployment names no running model — no row is a default.
+        isDefault: false,
       };
     });
     models.push(...rows);
@@ -202,6 +195,5 @@ function projectCatalogDirectory(
     defaultProviderId: flags.defaultProviderId,
     providers: providerRows,
     models,
-    harness,
   };
 }

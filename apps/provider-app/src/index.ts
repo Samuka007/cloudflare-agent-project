@@ -1,6 +1,6 @@
 /**
  * @cap/provider-app — the provider application (ticket #28): manager DO
- * (durable session registry + harness minimal three keys), the edge-agent
+ * (durable session registry + D1 relay registry), the edge-agent
  * ProviderAdapter over the #27 seam, and per-thread agent DO orchestration.
  */
 
@@ -11,13 +11,11 @@ export {
   type ManagerFacade,
 } from "./adapter.js";
 export {
-  classifyHarnessProjection,
-  harnessFromSnapshot,
-  projectHarness,
-  resolveHarness,
-  snapshotHarness,
-} from "./harness.js";
-export type { HarnessEnv, HarnessProjection, ResolvedHarness, ThinkingConfig } from "./harness.js";
+  RELAY_FALLBACK_CONTEXT_WINDOW,
+  RELAY_FALLBACK_MAX_TOKENS,
+  defaultExecutionOptions,
+  permissionPolicyOf,
+} from "./execution-posture.js";
 export {
   resolveOverlayCatalog,
   type RelayCatalogModelRow,
@@ -62,10 +60,8 @@ export {
 } from "./models-yml-import.js";
 export { flattenPromptInputGroups } from "./flatten-input.js";
 
-import type { ManagerDoBindings } from "./manager-do.js";
 import type { ManagerFacade } from "./adapter.js";
 import { EdgeAgentProviderAdapter } from "./adapter.js";
-import { resolveHarness } from "./harness.js";
 
 /**
  * Wiring seam for the daemon worker's `setProviderAdapter` injection: the
@@ -74,10 +70,10 @@ import { resolveHarness } from "./harness.js";
  * config, host binding, and execution defaults stay one resolution.
  */
 export function createEdgeAgentAdapter(
-  bindings: ManagerDoBindings & { MANAGER: DurableObjectNamespace },
+  bindings: { MANAGER: DurableObjectNamespace },
 ): EdgeAgentProviderAdapter {
   const manager = bindings.MANAGER.get(
     bindings.MANAGER.idFromName("manager"),
   ) as unknown as ManagerFacade;
-  return new EdgeAgentProviderAdapter(manager, resolveHarness(bindings));
+  return new EdgeAgentProviderAdapter(manager);
 }

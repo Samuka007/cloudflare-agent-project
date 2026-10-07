@@ -242,8 +242,8 @@ export interface McpWireTool {
  * exact wire body, `outputTokens` the bytes/4 estimate of what the provider
  * streamed. The bb indicator labels estimated rows "Estimated context".
  *
- * `contextWindow` is the deployment-configured window for the model
- * (`MODEL_RELAY_CONTEXT_WINDOW`); null when the deployment doesn't know one —
+ * `contextWindow` is the model's configured window (the #500 row field /
+ * wire-safety fallback); null when the deployment doesn't know one —
  * consumers must not fabricate a percentage without it.
  */
 export interface ModelUsageReceipt {

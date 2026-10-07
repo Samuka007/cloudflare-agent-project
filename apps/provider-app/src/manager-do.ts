@@ -9,14 +9,7 @@ import type {
   AdapterCommand,
   AdapterCommandOutcome,
 } from "../../daemon-worker/src/provider-adapter.js";
-import {
-  classifyHarnessProjection,
-  harnessFromSnapshot,
-  projectHarness,
-  resolveHarness,
-  snapshotHarness,
-} from "./harness.js";
-import type { HarnessEnv } from "./harness.js";
+import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import {
   EMPTY_PROVIDER_OVERLAY,
   RelayProviderRegistry,
@@ -41,10 +34,14 @@ import { flattenPromptInputGroups } from "./flatten-input.js";
  *   threadId, so every caller must land on the same DO. The providerThreadId
  *   stays the provider-session registry key (bb `processKey` analogue) without
  *   being the DO name;
- * - harness config application: the resolved three keys are snapshotted per
- *   thread, drift is classified (live vs session) at each turn, and the
- *   relay client is (re)registered into the agent DO injection registry
- *   whenever the resolved relay fingerprint changes.
+ * - relay registry application (#450/#500): the D1 provider overlay is the
+ *   sole directory 正本 (the deployment channel env scalars are deleted),
+ *   and the registry is (re)registered into the agent DO injection registry
+ *   whenever the overlay content fingerprint changes. The host binding is
+ *   the #377 cloud placeholder constant (no deployment machine); the
+ *   session permission posture rides each command's options (the server
+ *   bridge reads the D1 permission_mode seat), so no per-thread snapshot
+ *   drift exists anymore.
  *
  * Consistency model: the registry row is the identity truth (ids, descriptor,
  * host binding); the agent DO remains the sole truth for turn/tool state —
@@ -53,7 +50,7 @@ import { flattenPromptInputGroups } from "./flatten-input.js";
  * SQLite); an evicted agent DO replays from its own log.
  */
 
-export interface ManagerDoBindings extends HarnessEnv, ProviderConfigEnv {
+export interface ManagerDoBindings extends ProviderConfigEnv {
   AGENT_DO: DurableObjectNamespace;
 }
 
@@ -70,7 +67,6 @@ interface SessionRow {
   activeTurnId: string | null;
   poisoned: boolean;
   archived: boolean;
-  harnessJson: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -107,7 +103,6 @@ function decodeRow(row: SessionRowDb): SessionRow {
     activeTurnId: row.active_turn_id,
     poisoned: row.poisoned === 1,
     archived: row.archived === 1,
-    harnessJson: row.harness_json,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -250,14 +245,14 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
   // -------------------------------------------------------------------------
 
   private initialize(): AdapterCommandOutcome {
-    const harness = resolveHarness(this.env);
     return {
       ok: true,
       result: {
         protocolVersion: 1,
         provider: "edge-agent",
-        relayMode: harness.relay.mode,
-        machineId: harness.hostBinding.machineId,
+        // #377/#500: no channel relay mode exists; the host binding is the
+        // cloud placeholder.
+        machineId: CLOUD_PLACEHOLDER_HOST_ID,
       },
     };
   }
@@ -269,41 +264,10 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
   }
 
   private modelList(): AdapterCommandOutcome {
-    const harness = resolveHarness(this.env);
-    // #496: no channel env = no channel — the face advertises nothing rather
-    // than a synthesized row (the D1 catalog is the selection 正本, #450).
-    if (harness.relay.model === "") {
-      return { ok: true, result: { models: [], selectedOnlyModels: [] } };
-    }
-    return {
-      ok: true,
-      result: {
-        models: [
-          {
-            id: "edge-agent-default",
-            model: harness.relay.model,
-            displayName: `Edge agent (${harness.relay.model})`,
-            description:
-              harness.relay.mode === "mock"
-                ? "Fixed-reply mock (relay key not configured)"
-                : harness.relay.api === "openai-responses"
-                  ? "OpenAI Responses-protocol relay model (#361 adaptor)"
-                  : harness.relay.api === "openai-completions"
-                    ? "OpenAI Chat Completions-protocol relay model (#363 adaptor)"
-                  : "Anthropic-protocol relay model (GLM coding plan)",
-            supportedReasoningEfforts: [
-              {
-                reasoningEffort: "none",
-                description: "Deterministic budget (thinking disabled by default)",
-              },
-            ],
-            defaultReasoningEffort: "none",
-            isDefault: true,
-          },
-        ],
-        selectedOnlyModels: [],
-      },
-    };
+    // #500: the deployment channel is deleted — the face advertises nothing
+    // rather than a synthesized row (the D1 catalog is the selection 正本,
+    // #450; the picker consumes GET /system/execution-options).
+    return { ok: true, result: { models: [], selectedOnlyModels: [] } };
   }
 
   private async startThread(
@@ -338,16 +302,15 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
     }
     const titleRaw = firstTextOf(command)?.slice(0, 120) ?? "";
     const title = titleRaw === "" ? `thread ${command.threadId}` : titleRaw;
-    // #288: the control plane's resolved binding wins; the harness hostBinding
-    // stays the fallback for commands that predate the field.
-    const machineId = command.machineId ?? resolveHarness(this.env).hostBinding.machineId;
+    // #288: the control plane's resolved binding wins; the #377 cloud
+    // placeholder is the honest fallback for commands that predate the field.
+    const machineId = command.machineId ?? CLOUD_PLACEHOLDER_HOST_ID;
     const created = await this.agentStub(command.threadId).createThread({
       threadId: command.threadId,
       title,
       machineId,
       ...(command.execution !== undefined ? { execution: command.execution } : {}),
     });
-    const harness = resolveHarness(this.env);
     this.ctx.storage.sql.exec(
       `INSERT INTO provider_sessions (
          thread_id, provider_thread_id, lifecycle, cwd, machine_id, title,
@@ -362,7 +325,9 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       title,
       providerThreadId,
       `agent-do://${providerThreadId}/events.jsonl`,
-      snapshotHarness(harness),
+      // #500: the deployment-channel snapshot is retired — the column stays
+      // (durable schema) and is written empty.
+      "",
       now,
       now,
     );
@@ -430,9 +395,8 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       const created = await this.agentStub(command.threadId).createThread({
         threadId: command.threadId,
         title,
-        machineId: resolveHarness(this.env).hostBinding.machineId,
+        machineId: CLOUD_PLACEHOLDER_HOST_ID,
       });
-      const harness = resolveHarness(this.env);
       this.ctx.storage.sql.exec(
         `INSERT INTO provider_sessions (
            thread_id, provider_thread_id, lifecycle, cwd, machine_id, title,
@@ -443,11 +407,12 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
         command.threadId,
         providerThreadId,
         command.cwd,
-        harness.hostBinding.machineId,
+        CLOUD_PLACEHOLDER_HOST_ID,
         title,
         command.ompRecovery.sessionId,
         command.ompRecovery.sessionFile,
-        snapshotHarness(harness),
+        // #500: the deployment-channel snapshot is retired — written empty.
+        "",
         now,
         now,
       );
@@ -480,13 +445,6 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
         `provider thread ${row.providerThreadId} is poisoned by an interrupted turn`,
       );
     }
-    const drift = this.classifyRowDrift(row);
-    if (drift === "session") {
-      return errorOutcome(
-        "host_binding_changed",
-        "host binding changed since thread start — rebuild the provider session (thread/resume)",
-      );
-    }
     const content = promptContentOf(command);
     if (content.length === 0) {
       return errorOutcome("invalid_input", "turn/start carries no input");
@@ -506,7 +464,6 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       lifecycle: "active",
       active_client_request_id: command.clientRequestId,
       active_turn_id: sent.turnId,
-      ...(drift === "live" ? { harness_json: snapshotHarness(resolveHarness(this.env)) } : {}),
     });
     return {
       ok: true,
@@ -615,47 +572,24 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
   // -------------------------------------------------------------------------
 
   /**
-   * Idempotent registration of the resolved relay into the agent DO injection
-   * registry (fallback key `*`; tests register exact thread keys above it).
-   * Re-registers only when the non-secret relay fingerprint changes. #362:
-   * the D1 provider overlay is loaded per registration attempt and its
-   * content fingerprint gates the re-registration — a panel-side provider
-   * edit hot-applies without a redeploy (co-hosted-isolate topology;
-   * composed deployments' agent DO isolates additionally refresh
-   * themselves at the turn boundary).
+   * Idempotent registration of the D1 relay registry into the agent DO
+   * injection registry (fallback key `*`; tests register exact thread keys
+   * above it). Re-registers only when the overlay content fingerprint
+   * changes: the D1 provider rows ARE the registry identity (#450), and a
+   * panel-side provider edit hot-applies without a redeploy (co-hosted-
+   * isolate topology; composed deployments' agent DO isolates additionally
+   * refresh themselves at the turn boundary). #500: no deployment env
+   * scalar takes part in the identity.
    */
   private async ensureAgentRuntime(): Promise<void> {
-    const harness = resolveHarness(this.env);
     const overlay = await loadProviderConfigOverlay(this.env);
-    const fingerprint = [
-      harness.relay.mode,
-      harness.relay.baseUrl,
-      harness.relay.model,
-      harness.relay.maxTokens,
-      harness.relay.contextWindow,
-      harness.relay.thinking.type,
-      harness.relay.supportsImageInput,
-      // #450: the D1 overlay content is the registry identity — a panel
-      // provider edit re-registers the providerId-keyed rows.
-      overlay?.fingerprint ?? "",
-    ].join("|");
+    const fingerprint = overlay?.fingerprint ?? "";
     if (this.registeredRelayFingerprint === fingerprint) return;
-    // #450: the D1 overlay is the sole directory 正本 — the registry is
-    // constructed over it directly (no env seed branch).
-    const registry = RelayProviderRegistry.create(
-      this.env,
-      overlay ?? EMPTY_PROVIDER_OVERLAY,
-    );
+    // #450/#500: the D1 overlay is the sole directory 正本 — the registry is
+    // constructed over it directly (no env branch exists).
+    const registry = RelayProviderRegistry.create(overlay ?? EMPTY_PROVIDER_OVERLAY);
     setAgentRuntime("*", relayAgentRuntime(registry));
     this.registeredRelayFingerprint = fingerprint;
-  }
-
-  /** Row harness snapshot vs current env resolution, via the three-key rules. */
-  private classifyRowDrift(row: SessionRow): "unchanged" | "live" | "session" {
-    const current = harnessFromSnapshot(row.harnessJson);
-    const next = projectHarness(resolveHarness(this.env));
-    if (current === null) return "live";
-    return classifyHarnessProjection(current, next);
   }
 
   // -------------------------------------------------------------------------
@@ -721,7 +655,6 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
         | "active_turn_id"
         | "poisoned"
         | "archived"
-        | "harness_json"
       >
     >,
   ): void {
