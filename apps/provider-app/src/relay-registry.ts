@@ -42,7 +42,6 @@ import {
 import type { RelayCatalogResolution } from "./catalog.js";
 import { resolveOverlayCatalog } from "./catalog.js";
 import {
-  relayProviderFrom,
   resolveHarness,
   type HarnessEnv,
   type ThinkingConfig,
@@ -264,9 +263,9 @@ export class RelayProviderRegistry {
     // #434 (point ⑦): no row-level mock degradation. A credential gap used
     // to serve the fixed-reply mock as a product mode; that was an implicit
     // default masquerading as the declared row — dispatch now fails with the
-    // named remedy instead. (The DEPLOYMENT-channel mock in harness.ts
-    // relayProviderFrom is a different, kept posture: the projections face
-    // reports it as relayMode "mock".)
+    // named remedy instead. #496: the deployment-channel mock provider is
+    // gone with it; the projections face still reports a configured but
+    // key-less channel as relayMode "mock".
     if (resolution.config.apiKey === "" || resolution.config.baseUrl === "") {
       throw new Error(
         `relay provider "${resolution.providerId}" (${resolution.modelId}) has no usable credential` +
@@ -291,15 +290,13 @@ export class RelayProviderRegistry {
 }
 
 /**
- * The composed AgentRuntime registration: the deployment default provider
- * (harness fold — the "*" fallback posture, unchanged for pre-#351
- * journals) plus the registry resolver every journal-selection dispatch
- * goes through. This is the one registration shape the composed worker, the
- * manager, and dev rigs install.
+ * The composed AgentRuntime registration (#496): the registry resolver every
+ * journal-selection dispatch goes through (the deployment-default provider
+ * member is retired). This is the one registration shape the composed worker
+ * and the manager install.
  */
-export function relayAgentRuntime(env: HarnessEnv, registry: RelayProviderRegistry): AgentRuntime {
+export function relayAgentRuntime(registry: RelayProviderRegistry): AgentRuntime {
   return {
-    provider: relayProviderFrom(resolveHarness(env)),
     resolveExecutionProvider: (selection: RelaySelection): ModelProvider =>
       registry.providerFor(selection),
   };

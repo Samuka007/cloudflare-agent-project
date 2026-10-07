@@ -270,6 +270,11 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
 
   private modelList(): AdapterCommandOutcome {
     const harness = resolveHarness(this.env);
+    // #496: no channel env = no channel — the face advertises nothing rather
+    // than a synthesized row (the D1 catalog is the selection 正本, #450).
+    if (harness.relay.model === "") {
+      return { ok: true, result: { models: [], selectedOnlyModels: [] } };
+    }
     return {
       ok: true,
       result: {
@@ -641,7 +646,7 @@ export class ManagerDo extends DurableObject<ManagerDoBindings> {
       this.env,
       overlay ?? EMPTY_PROVIDER_OVERLAY,
     );
-    setAgentRuntime("*", relayAgentRuntime(this.env, registry));
+    setAgentRuntime("*", relayAgentRuntime(registry));
     this.registeredRelayFingerprint = fingerprint;
   }
 

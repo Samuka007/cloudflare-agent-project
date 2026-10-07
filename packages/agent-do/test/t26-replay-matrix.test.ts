@@ -5,7 +5,7 @@ import { setupNetwork } from "@msw/cloudflare";
 import { abortAllDurableObjects, evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { newThreadId, parseThreadEvent, type TypedThreadEvent } from "@cap/protocol";
-import { createRig, resetRuntime, type Rig } from "./helpers.js";
+import { createRig, mockAgentRuntime, resetRuntime, type Rig } from "./helpers.js";
 import type { AgentDO } from "../src/agent-do.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";
 import { executionIdFor } from "../src/ids.js";
@@ -551,8 +551,8 @@ describe("M1.5 T26 — task/yield rows (background spawn chain over real child D
       { toolCalls: [{ name: "yield", arguments: matrixArgs("yield") }] },
       { deltas: ["submitted"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
     const sent = await rig.stub.sendMessage({
       clientRequestId: "t26-task",
@@ -595,8 +595,8 @@ describe("M1.5 T26 — task/yield rows (background spawn chain over real child D
       { toolCalls: [{ name: "yield", arguments: matrixArgs("yield") }] },
       { deltas: ["submitted"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
     const sent = await rig.stub.sendMessage({
       clientRequestId: "t26-yield",

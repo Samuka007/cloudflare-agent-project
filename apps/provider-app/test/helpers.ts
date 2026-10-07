@@ -7,7 +7,7 @@ import {
   setAgentRuntime,
   type AgentDO,
 } from "@cap/agent-do";
-import { MockModelProvider, type MockTurn } from "@cap/agent-do/testing";
+import { MockModelProvider, mockAgentRuntime, type MockTurn } from "@cap/agent-do/testing";
 import type {
   AdapterCommandOutcome,
   ProviderExecutionContext,
@@ -69,8 +69,17 @@ export function registerMock(
   turns: MockTurn[] = [{ deltas: ["ok"] }],
 ): MockModelProvider {
   const provider = new MockModelProvider(turns);
-  setAgentRuntime(threadId, { provider });
+  setAgentRuntime(threadId, mockAgentRuntime(provider));
   return provider;
+}
+
+/**
+ * #496: the DO never materializes a selection — every adapter-command rig
+ * pins the mock's row explicitly (the mock resolver ignores it; single-
+ * provider rigs dispatch everything through the registered provider).
+ */
+export function mockSelection(): { providerId: string; model: string } {
+  return { providerId: "omp", model: "mock-model" };
 }
 
 /** bb-shaped execution options with a full permission policy. */

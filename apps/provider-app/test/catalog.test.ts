@@ -54,12 +54,14 @@ describe("#450 resolveOverlayCatalog (D1 rows are the sole 正本)", () => {
     expect(resolution.models).toEqual([]);
     // The harness half (the deployment channel) is untouched — the catalog
     // face going empty must not break the projections' harness row.
-    expect(resolution.harness.relay.model).toBe("glm-5.3");
+    expect(resolution.harness.relay.model).toBe("");
+    expect(resolution.harness.relay.mode).toBe("unconfigured");
   });
 
   test("configured rows project every provider/model row in declaration order", () => {
-    // The image-input capability on the RUNNING row is the harness fold (the
-    // env flag), not the row declaration — declare it so the OR projects on.
+    // #496: the env names NO running model — no row is the deployment
+    // default; every row carries its own declaration (the image-input OR
+    // over the row's declared input, no harness fold).
     const resolution = resolveOverlayCatalog(resolveHarness({ MODEL_RELAY_IMAGE_INPUT: "1" }), MULTI);
     expect(resolution.configured).toBe(true);
     expect(resolution.decodeError).toBe(false);
@@ -91,7 +93,7 @@ describe("#450 resolveOverlayCatalog (D1 rows are the sole 正本)", () => {
       contextWindow: 200_000,
       maxTokens: 8192,
       imageInput: true,
-      isDefault: true,
+      isDefault: false,
       // Model declaration, then provider, then the incumbent anthropic face.
       api: "anthropic-messages",
       thinkingBudgetTokens: null,
@@ -110,10 +112,7 @@ describe("#450 resolveOverlayCatalog (D1 rows are the sole 正本)", () => {
   test("same-source matrix: the running row equals the harness resolution", () => {
     const envs: HarnessEnv[] = [
       { MODEL_RELAY_MODEL: "glm-5.3-air" },
-      { MODEL_RELAY_THINKING_BUDGET_TOKENS: "4096" },
       { MODEL_RELAY_MODEL: "glm-5.3-flash", MODEL_RELAY_THINKING_BUDGET_TOKENS: "2048" },
-      { MODEL_RELAY_MAX_TOKENS: "1024" },
-      { MODEL_RELAY_IMAGE_INPUT: "1" },
     ];
     for (const env of envs) {
       const harness = resolveHarness(env);
@@ -135,6 +134,16 @@ describe("#450 resolveOverlayCatalog (D1 rows are the sole 正本)", () => {
       expect(resolution.models[0]?.reasoningLevels).toContain(
         resolution.models[0]?.defaultReasoningLevel,
       );
+    }
+    // #496: an env that names scalars but NO model declares no running row —
+    // the honest projection advertises zero defaults (nothing invented).
+    for (const env of [
+      { MODEL_RELAY_THINKING_BUDGET_TOKENS: "4096" },
+      { MODEL_RELAY_MAX_TOKENS: "1024" },
+      { MODEL_RELAY_IMAGE_INPUT: "1" },
+    ] satisfies HarnessEnv[]) {
+      const resolution = resolveOverlayCatalog(resolveHarness(env), MULTI);
+      expect(resolution.models.filter((model) => model.isDefault)).toHaveLength(0);
     }
   });
 

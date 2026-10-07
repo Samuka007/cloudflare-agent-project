@@ -59,10 +59,10 @@ export class ComposedAgentDO extends AgentDO {
 
   constructor(ctx: DurableObjectState, env: AgentDoBindings) {
     super(ctx, env);
-    // #351: the default provider (harness fold, the "*" fallback posture for
-    // pre-#351 journals) plus the providerId-keyed registry resolver every
-    // journal-selection dispatch goes through — one registration shape
-    // shared with the manager and the dev rigs.
+    // #351/#496: the providerId-keyed registry resolver every
+    // journal-selection dispatch goes through (no deployment-default
+    // provider — the "*" fallback posture is retired) — one registration
+    // shape shared with the manager.
     const harnessEnv = env as AgentDoBindings & HarnessEnv;
     // #450: the D1 overlay is the sole directory 正本. The constructor is
     // synchronous and D1 is async, so the isolate starts on the honest
@@ -71,7 +71,7 @@ export class ComposedAgentDO extends AgentDO {
     const registry = RelayProviderRegistry.create(harnessEnv, EMPTY_PROVIDER_OVERLAY);
     this.relayRegistry = registry;
     setAgentRuntime("*", {
-      ...relayAgentRuntime(harnessEnv, registry),
+      ...relayAgentRuntime(registry),
       // #362 hot-reload: every driveTurn re-reads the D1 provider overlay
       // behind a content fingerprint, so panel-side provider edits reach
       // warm DO isolates without a redeploy.

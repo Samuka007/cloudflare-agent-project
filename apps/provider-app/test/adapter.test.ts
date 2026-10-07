@@ -16,6 +16,7 @@ import {
   expectOk,
   freshManagerName,
   managerFacadeByName,
+  mockSelection,
   registerMock,
   resetRuntime,
   stringField,
@@ -54,6 +55,7 @@ function startCommand(threadId: string): Extract<AdapterCommand, { type: "thread
     cwd: "/workspace",
     options: executionContext(),
     instructionMode: "append",
+    execution: mockSelection(),
   };
 }
 
@@ -84,7 +86,11 @@ test("full chain: thread/start → turn/start → event stream → relay parity"
   const managerName = freshManagerName();
   const threadId = `thr-${crypto.randomUUID()}`;
   const mock = registerMock(threadId, [{ deltas: ["hello ", "world"] }]);
-  const adapter = adapterFor(managerFacadeByName(managerName));
+  // #496: the model/list face advertises the channel the adapter's harness
+  // names — this chain names glm-5.3 (zero-env adapters advertise nothing).
+  const adapter = adapterFor(managerFacadeByName(managerName), {
+    MODEL_RELAY_MODEL: "glm-5.3",
+  });
 
   const init = await handle(adapter, { type: "initialize" });
   expect(expectOk(init)).toMatchObject({ protocolVersion: 1, provider: "edge-agent" });

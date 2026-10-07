@@ -1,12 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { CompletionsRelayProvider } from "@cap/agent-do";
+import { FixedReplyProvider } from "@cap/agent-do/testing";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import {
   classifyHarnessProjection,
-  FixedReplyProvider,
   harnessFromSnapshot,
   projectHarness,
-  relayProviderFrom,
   resolveHarness,
   snapshotHarness,
 } from "../src/harness.js";
@@ -25,23 +23,38 @@ import { executionOptions } from "./helpers.js";
  */
 
 describe("harness: three-key resolution", () => {
-  test("defaults to the ruled relay with mock mode when no key is present", () => {
+  test("zero channel env resolves the honest unconfigured channel (#496)", () => {
     const harness = resolveHarness({});
-    expect(harness.relay.mode).toBe("mock");
-    expect(harness.relay.baseUrl).toBe("https://open.bigmodel.cn/api/anthropic");
-    expect(harness.relay.model).toBe("glm-5.3");
+    // #496: NOTHING is invented — an unnamed channel is an unnamed channel.
+    expect(harness.relay.mode).toBe("unconfigured");
+    expect(harness.relay.baseUrl).toBe("");
+    expect(harness.relay.model).toBe("");
     expect(harness.relay.maxTokens).toBeGreaterThan(0);
     expect(harness.relay.contextWindow).toBe(200_000);
     expect(harness.relay.thinking).toEqual({ type: "disabled" });
     // #377: the honest default — no deployment machine is fabricated.
     expect(harness.hostBinding).toEqual({ machineId: CLOUD_PLACEHOLDER_HOST_ID });
     expect(harness.execution).toMatchObject({
-      model: "glm-5.3",
+      model: "",
       serviceTier: "default",
       reasoningLevel: "none",
       workflowsEnabled: false,
       permissionMode: "full",
     });
+  });
+
+  test("a configured but key-less channel keeps the honest mock mode (#496)", () => {
+    // The #28 posture survives ONLY for a channel the deployment explicitly
+    // named (env scalars present) — never as a synthesized default.
+    const harness = resolveHarness({ MODEL_RELAY_MODEL: "glm-5.3" });
+    expect(harness.relay.mode).toBe("mock");
+    expect(harness.relay.model).toBe("glm-5.3");
+    const keyed = resolveHarness({
+      MODEL_RELAY_MODEL: "glm-5.3",
+      MODEL_RELAY_BASE_URL_ANTHROPIC: "https://relay.example/anthropic",
+      MODEL_RELAY_API_KEY: "k",
+    });
+    expect(keyed.relay.mode).toBe("anthropic");
   });
 
   test("lifts relay config, host binding, and execution policy from env", () => {
@@ -189,25 +202,6 @@ describe("#363 fixed-reply completions face", () => {
     expect(reply).toEqual({ kind: "text-delta", text: "mock reply" });
   });
 
-  test("relayProviderFrom constructs the CompletionsRelayProvider for a completions face", () => {
-    const provider = relayProviderFrom({
-      relay: {
-        mode: "anthropic",
-        baseUrl: "https://newapi.test/v1",
-        apiKey: "k",
-        model: "glm-5.3-flash",
-        maxTokens: 8192,
-        contextWindow: 200_000,
-        thinking: { type: "disabled" },
-        supportsImageInput: false,
-        api: "openai-completions",
-        reasoningEffort: "none",
-      },
-      hostBinding: { machineId: "local" },
-      execution: executionOptions(),
-    });
-    expect(provider).toBeInstanceOf(CompletionsRelayProvider);
-  });
 });
 
 describe("classifyExecutionSettingsChange (bb face)", () => {
@@ -322,7 +316,9 @@ describe("adapter direct answers", () => {
     const list = await adapter.handleCommand({ type: "model/list" }, { timeoutMs: 1_000 });
     expect(list.ok).toBe(true);
     const result = list.ok ? (list.result as { models: { model: string }[] }) : undefined;
-    expect(result?.models[0]?.model).toBe("glm-5.3");
+    // #496: zero channel env → the face advertises nothing (no synthesized
+    // row); the D1 catalog is the selection 正本 (#450).
+    expect(result?.models).toEqual([]);
     expect(seen).toEqual([]);
   });
 });

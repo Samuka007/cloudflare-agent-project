@@ -6,6 +6,7 @@ import { SpawnSemaphore } from "./semaphore.js";
 import type { WaitWake } from "../wait.js";
 import { newThreadId } from "@cap/protocol";
 import type { AnyAgentEvent } from "../../fsm-events.js";
+import type { RelaySelection } from "../../provider-catalog.js";
 import {
   agentDefinitionFor,
   canSpawnAtDepth,
@@ -57,7 +58,17 @@ import type { SpawnIsolationInfo } from "./types.js";
  * composed deployment; injected fakes in tests). Kept structural so the
  * typed-stub mapping stays RPC-serializable. */
 export interface SubagentSpawnHost {
-  createThread(request: { threadId: string; title: string; machineId: string }): Promise<{
+  createThread(request: {
+    threadId: string;
+    title: string;
+    machineId: string;
+    /**
+     * #496: the child's inherited execution selection (the spawning turn's
+     * pin with the item's model override applied) — the child thread pins it
+     * at creation so its first turn dispatches explicitly.
+     */
+    execution?: RelaySelection;
+  }): Promise<{
     threadId: string;
     duplicated: boolean;
   }>;
@@ -268,6 +279,12 @@ export interface TaskToolContext {
   depth: number;
   /** The spawning thread's own agent id (nested `Parent.Child` prefix); undefined for Main. */
   parentAgentId: string | undefined;
+  /**
+   * #496: the spawning turn's pinned execution selection (null = the turn
+   * predates the pin discipline — a child spawned from it fails closed at
+   * dispatch rather than riding a deployment default).
+   */
+  turnExecution: RelaySelection | null;
   events(): Promise<AnyAgentEvent[]>;
   /** Journal-first CAS append of the spawn plan (DO dedups nothing here —
    * the executor checks {@link planForExecution} first). */
@@ -528,10 +545,20 @@ async function spawnOne(request: {
   });
 
   try {
+    // #496: the child pins the spawning turn's selection (the item's model
+    // override rides on top) — no deployment-default dispatch for children.
+    const childExecution: RelaySelection | null =
+      ctx.turnExecution === null
+        ? null
+        : {
+            ...ctx.turnExecution,
+            ...(item.model !== undefined ? { model: item.model } : {}),
+          };
     await host.createThread({
       threadId: spawnId,
       title: `task: ${agentId}`,
       machineId: ctx.machineId,
+      ...(childExecution !== null ? { execution: childExecution } : {}),
     });
     await host.runSubagent({
       spawnId,

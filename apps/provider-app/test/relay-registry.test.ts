@@ -234,15 +234,18 @@ describe("#351/#450 standalone credentials (D1 rows never ride deployment slots)
     );
   });
 
-  test("relayAgentRuntime installs the default provider plus the registry resolver", () => {
+  test("relayAgentRuntime installs the registry resolver (the one registration shape)", () => {
     const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, OVERLAY);
-    const runtime = relayAgentRuntime(DEPLOYMENT_ENV, registry);
+    const runtime = relayAgentRuntime(registry);
     expect(typeof runtime.resolveExecutionProvider).toBe("function");
-    const resolved = runtime.resolveExecutionProvider?.({
+    const resolved = runtime.resolveExecutionProvider({
       providerId: "backup",
       model: "flash-mini",
     });
     expect(resolved).toBeInstanceOf(AnthropicRelayProvider);
+    // #496: the runtime carries no materializer — the DO never maps a
+    // legacy selection; threads pin explicit rows or fail closed.
+    expect("materializeLegacySelection" in runtime).toBe(false);
     // The empty overlay is the honest zero-config construction the composed
     // worker boots with before the awaited D1 hot-apply.
     expect(EMPTY_PROVIDER_OVERLAY.providers).toEqual({});

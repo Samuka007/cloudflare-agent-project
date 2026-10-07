@@ -11,12 +11,9 @@ export {
   type ManagerFacade,
 } from "./adapter.js";
 export {
-  FixedReplyProvider,
-  HARNESS_DEFAULTS,
   classifyHarnessProjection,
   harnessFromSnapshot,
   projectHarness,
-  relayProviderFrom,
   resolveHarness,
   snapshotHarness,
 } from "./harness.js";

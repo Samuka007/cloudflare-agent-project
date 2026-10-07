@@ -4,9 +4,10 @@ import { newThreadId } from "@cap/protocol";
 import type { AgentDO } from "../src/agent-do.js";
 import type { AgentEventType, AnyAgentEvent } from "../src/fsm-events.js";
 import { clearAgentRuntimes, setAgentRuntime } from "../src/injection.js";
-import type { RelaySelection } from "../src/provider-catalog.js";
+import { SYNTHETIC_RELAY_PROVIDER_ID, type RelaySelection } from "../src/provider-catalog.js";
 import type { ModelProvider } from "../src/provider.js";
 import { MockModelProvider, type MockTurn } from "../src/testing/mock-provider.js";
+import { mockAgentRuntime } from "../src/testing/mock-runtime.js";
 import type { TestDaemonServiceStub } from "../src/testing/test-daemon-do.js";
 import { ensureMigrations } from "./migrate.js";
 
@@ -49,6 +50,9 @@ export interface Rig {
 const agentNamespace = (env as { AGENT_DO: DurableObjectNamespace }).AGENT_DO;
 const serviceNamespace = (env as { DAEMON_SERVICE: DurableObjectNamespace }).DAEMON_SERVICE;
 
+/** Re-exported for the rig test files (they register runtimes directly). */
+export { mockAgentRuntime };
+
 export async function createRig(options: RigOptions = {}): Promise<Rig> {
   // The rig DB carries the composed deployment's control-plane schema
   // (test/migrate.ts) — terminal turns settle `threads` rows for real
@@ -57,7 +61,7 @@ export async function createRig(options: RigOptions = {}): Promise<Rig> {
   await ensureMigrations();
   const threadId = options.threadId ?? newThreadId();
   const provider = options.provider ?? new MockModelProvider(options.turns ?? [{ deltas: ["ok"] }]);
-  setAgentRuntime(threadId, { provider });
+  setAgentRuntime(threadId, mockAgentRuntime(provider));
   /**
    * Stub factories, re-resolved on every access: `abortAllDurableObjects()`
    * poisons existing stub references permanently, so post-abort calls must go
@@ -72,11 +76,15 @@ export async function createRig(options: RigOptions = {}): Promise<Rig> {
   // machineId = threadId: the fake service DO stays per-thread-named (the
   // rig's service stubs resolve by threadId), matching the per-machine real
   // seam's naming rule — the DO name is the machineId either way.
+  // #496: the DO never materializes a selection — a rig without an explicit
+  // one pins the mock's single row at create (the send face refuses a
+  // pinless thread with the named selection_missing error).
   const created = await stubFor().createThread({
     threadId,
     title: "rig",
     machineId: threadId,
-    ...(options.execution !== undefined ? { execution: options.execution } : {}),
+    execution:
+      options.execution ?? { providerId: SYNTHETIC_RELAY_PROVIDER_ID, model: "mock-model" },
   });
   expect(created.duplicated).toBe(false);
   if (options.watchdog !== undefined) {

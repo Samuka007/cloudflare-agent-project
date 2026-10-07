@@ -8,26 +8,25 @@ import type { RelaySelection } from "./provider-catalog.js";
  * class, and constructor injection is unavailable on workerd-managed DOs, so
  * the deploying worker registers implementations here before traffic starts:
  *
- *   setAgentRuntime("*", { provider: relayProvider, daemon: serviceDoClient })
+ *   setAgentRuntime("*", { resolveExecutionProvider, daemon: serviceDoClient })
  *
  * Tests register per-thread mocks the same way. Key `"*"` is the fallback
  * for any thread without an exact registration.
  */
 
 export interface AgentRuntime {
-  provider: ModelProvider;
   /** Optional when the DO resolves the service via a binding instead. */
   daemon?: DaemonServiceClient;
   /**
    * #351 journal-selection dispatch: resolves a thread/turn's explicit
    * execution selection (providerId/model/reasoningLevel) onto the
-   * providerId-keyed relay registry the deploying worker built. Absent
-   * (single-provider deployments, test rigs) → every turn dispatches
-   * `provider`, exactly the pre-#351 single-line registration posture.
-   * Resolvers MUST fail closed (RelaySelectionError) on catalog drift —
-   * never silently re-route onto another row.
+   * providerId-keyed relay registry the deploying worker built. Required —
+   * #496 retired the deployment-default ("*") fallback, so every dispatch
+   * goes through the resolver. Resolvers MUST fail closed
+   * (RelaySelectionError) on catalog drift — never silently re-route onto
+   * another row.
    */
-  resolveExecutionProvider?: (selection: RelaySelection) => ModelProvider;
+  resolveExecutionProvider: (selection: RelaySelection) => ModelProvider;
   /**
    * #362 hot-reload seam: the deploying worker may re-read mutable provider
    * configuration (the D1 provider overlay) at the turn boundary — the DO

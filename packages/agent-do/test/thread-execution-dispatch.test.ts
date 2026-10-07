@@ -12,6 +12,7 @@ import {
 import { MockModelProvider } from "../src/testing/mock-provider.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";
 import type { RelaySelection } from "../src/provider-catalog.js";
+import { mockAgentRuntime } from "./helpers.js";
 
 /** Narrowed turn.input event (the pin assertions read its execution field). */
 type TurnInputEvent = Extract<AnyAgentEvent, { type: "turn.input" }>;
@@ -63,7 +64,6 @@ function registryRuntime(
   fallback: MockModelProvider,
 ): AgentRuntime {
   return {
-    provider: fallback,
     resolveExecutionProvider: (selection: RelaySelection) => {
       if (selection.model === undefined) return fallback;
       const row = rows[selection.model];
@@ -258,18 +258,29 @@ test("catalog drift fails the turn loudly instead of re-routing", async () => {
   expect(mockA.calls).toHaveLength(0);
 });
 
-test("a pre-#351 journal (no selection) dispatches the deployment default", async () => {
-  const fallback = new MockModelProvider([{ deltas: ["default"] }, { deltas: ["default-2"] }]);
+test("a pinless thread fails the send closed even when the catalog declares the legacy row (#496)", async () => {
+  const legacyRow = new MockModelProvider([{ deltas: ["legacy"] }, { deltas: ["legacy-2"] }]);
   const mockB = new MockModelProvider([{ deltas: ["never"] }]);
-  setAgentRuntime("*", registryRuntime({ "model-b": mockB }, fallback));
+  setAgentRuntime(
+    "*",
+    registryRuntime(
+      { "glm-5.3": legacyRow },
+      legacyRow,
+    ),
+  );
 
   const threadId = newThreadId();
   await createThread(threadId);
-  const sent = await send(threadId, "creq-legacy-1");
-  await waitTurnTerminal(threadId, sent.turnId);
-  expect(fallback.calls.length).toBeGreaterThan(0);
-  const input = (await eventsOf(threadId)).find((event) => event.type === "turn.input");
-  expect(input?.data.execution).toBeUndefined();
+  // The catalog declares the frozen legacy row, yet nothing materializes:
+  // the send refuses with the named selection_missing error (the routing
+  // maps it to 422 — create-face fail-closed semantics).
+  await expect(send(threadId, "creq-legacy-1")).rejects.toThrow(/selection_missing/);
+  expect(legacyRow.calls).toHaveLength(0);
+  expect(mockB.calls).toHaveLength(0);
+  const events = await eventsOf(threadId);
+  // Nothing landed: no selection row, no turn row, no dispatch.
+  expect(events.some((event) => event.type === "thread.execution_updated")).toBe(false);
+  expect(events.some((event) => event.type === "turn.input")).toBe(false);
 });
 
 test("exact per-thread registration still wins over the registry (mock rigs)", async () => {
@@ -277,7 +288,7 @@ test("exact per-thread registration still wins over the registry (mock rigs)", a
   const registryRow = new MockModelProvider([{ deltas: ["never"] }]);
   setAgentRuntime("*", registryRuntime({ "model-a": registryRow }, exact));
   const threadId = newThreadId();
-  setAgentRuntime(threadId, { provider: exact });
+  setAgentRuntime(threadId, mockAgentRuntime(exact));
 
   await createThread(threadId, { model: "model-a" });
   const sent = await send(threadId, "creq-exact-1");

@@ -159,7 +159,6 @@ function ensureRuntime(env: PocDriveEnv): void {
   // runs (dispatch never silently re-routes). The rig runs thinking
   // disabled, so the only runnable reasoning rung is "none".
   setAgentRuntime("*", {
-    provider,
     resolveExecutionProvider: (selection: RelaySelection): ModelProvider => {
       resolveRelaySelection(rigRelayDirectory(model), selection);
       return provider;
@@ -258,6 +257,11 @@ async function handleDriveRoute(
         }
         selection = candidate;
       }
+      // #496: the DO never materializes a selection — a drive without an
+      // explicit one pins the rig's single declared row here, at the rig
+      // boundary (create-time journal; the same fail-closed validation
+      // applies at dispatch).
+      selection ??= { providerId: SYNTHETIC_RELAY_PROVIDER_ID, model };
     }
     if (text === undefined || text === "") {
       return Response.json(

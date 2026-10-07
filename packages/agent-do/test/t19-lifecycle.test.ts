@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { env } from "cloudflare:workers";
 import { newThreadId } from "@cap/protocol";
-import { createRig, resetRuntime, type Rig } from "./helpers.js";
+import { createRig, mockAgentRuntime, resetRuntime, type Rig } from "./helpers.js";
 import type { AgentEventDataByType, AgentEventType } from "../src/fsm-events.js";
 import { parseAgentEvent, type AnyAgentEvent } from "../src/fsm-events.js";
 import { replayEvents } from "../src/turn-state.js";
@@ -522,8 +522,8 @@ async function spawnSettledChild(
     { toolCalls: [{ name: "yield", arguments: { data: { answer: 42 } } }] },
     { deltas: ["status fine"] },
   ]);
-  setAgentRuntime(parentThreadId, { provider: parentMock });
-  setAgentRuntime("*", { provider: childMock });
+  setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+  setAgentRuntime("*", mockAgentRuntime(childMock));
   const rig = await createRig({ threadId: parentThreadId, provider: parentMock, watchdog });
   const sent = await rig.stub.sendMessage({
     clientRequestId: "in-1",
@@ -601,8 +601,8 @@ describe("T19 DO chains — TTL park, revival, kill", () => {
       { toolCalls: [{ name: "yield", arguments: { data: { answer: 42 } } }] },
       { deltas: ["status fine, nothing new"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({
       threadId: parentThreadId,
       provider: parentMock,
@@ -696,8 +696,8 @@ describe("T19 DO chains — TTL park, revival, kill", () => {
     ]);
     // The child hangs mid-run: the kill must abort the live session.
     const childMock = new MockModelProvider([{ hang: true }, { deltas: ["unused"] }]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
     const first = await rig.stub.sendMessage({
       clientRequestId: "in-1",
@@ -818,8 +818,8 @@ describe("T19 DO chains — TTL park, revival, kill", () => {
       { toolCalls: [{ name: "yield", arguments: { data: { late: true } } }] },
       { deltas: ["done"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
     const sent = await rig.stub.sendMessage({
       clientRequestId: "in-1",

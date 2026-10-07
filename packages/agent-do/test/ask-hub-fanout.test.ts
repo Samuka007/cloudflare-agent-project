@@ -65,8 +65,10 @@ afterEach(() => {
 
 test("#225 register → interactions-changed(true); resolve → (false); listInteractions folds the row", async () => {
   const rig = await createRig({
-    // Pre-#351 journal shape (no execution): the interaction provenance
-    // carries the honest "unknown" — #434 retired the "omp" constant.
+    // The rig's default create-time pin (the mock's single row): the
+    // interaction provenance reads the journaled selection (#434 retired
+    // the "omp" sentinel; the honest "unknown" fallback is defensive-only
+    // now that #496 refuses pinless sends outright).
     turns: [
       { toolCalls: [{ name: "ask", arguments: { questions: [ASK_QUESTION] } }] },
       { deltas: ["ok"] },
@@ -102,7 +104,7 @@ test("#225 register → interactions-changed(true); resolve → (false); listInt
   expect(row.resolution).toBeNull();
   expect(row.origin).toEqual({
     kind: "provider",
-    providerId: "unknown",
+    providerId: "omp",
     providerThreadId: rig.threadId,
     providerRequestId: registered.data.executionId,
   });

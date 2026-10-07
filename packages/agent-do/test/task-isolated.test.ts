@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi, type Mock } from "vitest";
 import { newThreadId } from "@cap/protocol";
-import { createRig, resetRuntime, type Rig } from "./helpers.js";
+import { createRig, mockAgentRuntime, resetRuntime, type Rig } from "./helpers.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";
 import { replayEvents } from "../src/turn-state.js";
 import { setAgentRuntime } from "../src/injection.js";
@@ -64,8 +64,8 @@ describe("M1.5 T20 — isolated spawn over the real daemon seam", () => {
       { toolCalls: [{ name: "yield", arguments: { data: { done: true } } }] },
       { deltas: ["submitted"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
 
     const turnId = await driveParentTurn(rig, "in-1");
@@ -129,8 +129,8 @@ describe("M1.5 T20 — isolated spawn over the real daemon seam", () => {
       { toolCalls: [{ name: "yield", arguments: { data: "findings" } }] },
       { deltas: ["ok"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
 
     const turnId = await driveParentTurn(rig, "in-1");
@@ -165,7 +165,7 @@ describe("M1.5 T20 — isolated spawn over the real daemon seam", () => {
       { toolCalls: [{ name: "task", arguments: PARENT_TASK_ARGS }] },
       { deltas: ["ack"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
     await rig.service.setHostOnline(false);
 
@@ -265,6 +265,7 @@ function fakeContext(events: AnyAgentEvent[], seam: FakeSeam): FakeHarness {
     machineId: "th-p",
     depth: 0,
     parentAgentId: undefined,
+    turnExecution: null,
     events: () => Promise.resolve(events),
     recordSpawnPlan: () => Promise.resolve(),
     recordSpawnSettlement: () => Promise.resolve(),

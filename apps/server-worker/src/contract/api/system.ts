@@ -314,12 +314,11 @@ export const systemProviderProjectionsResponseSchema = z.object({
     /**
      * #484: true iff the deployment set any legacy deployment-channel env
      * (the MODEL_RELAY_* family, DAEMON_MACHINE_ID, HARNESS_PERMISSION_MODE;
-     * blank strings don't count). false = the relay rows in this object are
-     * pure HARNESS_DEFAULTS synthesis with zero deployment input — since
+     * blank strings don't count). false = zero deployment input — since
      * #450 the D1 provider_configs rows are the sole provider 正本, the
      * deployment channel has no product meaning at zero env, and the panel
-     * must NOT render the block (defaults like "mock / open.bigmodel.cn /
-     * glm-5.3" read as "my LLM provider is mock" next to the live rows).
+     * must NOT render the block. #496: at zero env the rows are honestly
+     * empty (mode "unconfigured", model/baseUrl "") — nothing is synthesized.
      */
     envConfigured: z.boolean(),
   }),

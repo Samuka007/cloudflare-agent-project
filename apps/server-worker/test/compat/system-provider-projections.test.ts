@@ -51,7 +51,7 @@ afterEach(async () => {
 });
 
 describe("GET /api/v1/system/provider-projections", () => {
-  it("serves a contract-valid default projection (mock relay, ruled chain)", async () => {
+  it("serves a contract-valid default projection (unconfigured channel, ruled chain)", async () => {
     // The default-projection shape is the UNCONFIGURED deployment; the rig
     // provider row is removed locally (the D1-row projection is covered
     // below).
@@ -62,22 +62,20 @@ describe("GET /api/v1/system/provider-projections", () => {
       );
       expect(response.status).toBe(200);
       const parsed = systemProviderProjectionsResponseSchema.parse(await response.json());
-      // No MODEL_RELAY_API_KEY in the test worker env → mock mode (mock-first
-      // ruling #28), key gate false, defaults from HARNESS_DEFAULTS.
-      expect(parsed.harness.relayMode).toBe("mock");
+      // Zero channel env in the test worker → the honest empty channel
+      // (#496: mode "unconfigured", nothing synthesized).
+      expect(parsed.harness.relayMode).toBe("unconfigured");
       // #450: the deployment channel is the incumbent anthropic face.
       expect(parsed.harness.relayApi).toBe("anthropic-messages");
       expect(parsed.harness.relayKeyPresent).toBe(false);
-      expect(parsed.harness.relayBaseUrlHost).toBe("open.bigmodel.cn");
-      expect(parsed.harness.relayModel).toBe("glm-5.3");
+      expect(parsed.harness.relayBaseUrlHost).toBeNull();
+      expect(parsed.harness.relayModel).toBe("");
       // #377: no DAEMON_MACHINE_ID var → the cloud placeholder is the honest
       // harness default (no deployment machine is fabricated).
       expect(parsed.harness.machineId).toBe(CLOUD_PLACEHOLDER_HOST_ID);
       expect(parsed.harness.permissionMode).toBe("full");
-      // #484: zero channel env → the harness rows above are pure
-      // HARNESS_DEFAULTS synthesis; the panel must hide the block (the
-      // "mock" relay rows next to the live D1 provider rows read as "my LLM
-      // provider is mock").
+      // #484: zero channel env → the panel hides the block (the empty rows
+      // next to the live D1 provider rows carry no channel information).
       expect(parsed.harness.envConfigured).toBe(false);
       // No D1 web_search row → ruled default chain: keyed API first,
       // credential-free aggregate as fallback (#144); not an env fallback
@@ -273,15 +271,16 @@ describe("GET /api/v1/system/provider-projections", () => {
 
   it("#450 reports the catalog status from the D1 rows (empty when unconfigured)", () => {
     // No configured rows → not configured, and NOTHING stands in (#434):
-    // the catalog ledger is honestly empty; the harness row keeps folding
-    // the deployment channel model. Rows never declare a default (#450),
-    // and the env-era decodeError state cannot arise.
+    // the catalog ledger is honestly empty; #496: the harness row is the
+    // honest empty channel (zero channel env → defaultModel ""). Rows never
+    // declare a default (#450), and the env-era decodeError state cannot
+    // arise.
     const built = buildProviderProjections({}, EMPTY_OVERLAY);
     const parsed = systemProviderProjectionsResponseSchema.parse(built);
     expect(parsed.catalog.configured).toBe(false);
     expect(parsed.catalog.decodeError).toBe(false);
     expect(parsed.catalog.defaultProviderId).toBeNull();
-    expect(parsed.catalog.defaultModel).toBe("glm-5.3");
+    expect(parsed.catalog.defaultModel).toBe("");
     expect(parsed.catalog.providers).toEqual([]);
     expect(parsed.catalog.models).toEqual([]);
   });

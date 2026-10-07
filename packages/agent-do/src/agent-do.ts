@@ -76,7 +76,7 @@ import {
 import { projectToUxEvents } from "./ux-projection.js";
 import { getAgentRuntime } from "./injection.js";
 import { modelRequestFromEvents } from "./translate.js";
-import type { RelaySelection } from "./provider-catalog.js";
+import { RelaySelectionError, type RelaySelection } from "./provider-catalog.js";
 import { normalizeRelaySelection, relaySelectionEquals } from "./turn-state.js";
 import { toolRegistryRow, type ToolRegistryRow } from "./tools/registry.js";
 import { resolveHostPathOverride, type HostPathResolution } from "./tools/host-path.js";
@@ -648,12 +648,25 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         `turn ${active.turnId} is active (${active.status}); use mode "auto" or "steer"`,
       );
     }
+    // #496: a thread whose journal never pinned a selection (pre-#351
+    // shape) fails closed at send — no deployment default, no legacy
+    // migration (create-face 422 semantics; the deployment-default dispatch
+    // is retired, never a silent mock).
+    if (pinned === null) {
+      throw new AgentRpcError(
+        "invalid",
+        "selection_missing: this thread has no journaled execution selection — send " +
+          "with providerId/model (fail-closed, #496)",
+      );
+    }
     const turnId = `turn_${crypto.randomUUID()}`;
     const record = await this.appendEvent("turn.input", {
       turnId,
       inputId: request.clientRequestId,
       content: request.content,
-      ...(pinned !== null ? { execution: pinned } : {}),
+      // #496: the block above guarantees a pin — explicit ride or thread
+      // state; a pinless turn can no longer exist.
+      execution: pinned,
     });
     this.armWatchdog();
     this.ctx.waitUntil(this.driveTurn(record.data.turnId));
@@ -751,6 +764,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       turnId,
       inputId,
       content: [{ type: "text", text: COMPACT_DIRECTIVE_TEXT }],
+      // #496: the compact turn dispatches through the same fail-closed
+      // resolver — it pins the thread's selection like any turn.
+      ...(this.state.execution !== null ? { execution: this.state.execution } : {}),
     });
     this.armWatchdog();
     this.ctx.waitUntil(this.runCompactTurnCore(turnId, plan, usage, "manual"));
@@ -916,6 +932,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         turnId,
         inputId: `compact-auto-${crypto.randomUUID()}`,
         content: [{ type: "text", text: COMPACT_DIRECTIVE_TEXT }],
+        ...(this.state.execution !== null ? { execution: this.state.execution } : {}),
       });
       this.armWatchdog();
       await this.runCompactTurnCore(turnId, plan, usage, "auto");
@@ -952,6 +969,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         turnId: compactTurnId,
         inputId: `compact-auto-${crypto.randomUUID()}`,
         content: [{ type: "text", text: COMPACT_DIRECTIVE_TEXT }],
+        ...(this.state.execution !== null ? { execution: this.state.execution } : {}),
       });
       this.armWatchdog();
       const outcome = await this.runCompactTurnCore(compactTurnId, plan, usage, "auto");
@@ -965,6 +983,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         turnId: retryTurnId,
         inputId: `${failedInput.data.inputId}#compact-retry`,
         content: failedInput.data.content,
+        ...(this.state.execution !== null ? { execution: this.state.execution } : {}),
       });
       this.armWatchdog();
       await this.driveTurn(retryTurnId);
@@ -4318,6 +4337,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       turnId: execution.turnId,
       threadId,
       machineId: this.state.machineId ?? CLOUD_PLACEHOLDER_HOST_ID,
+      // #496: the child inherits the spawning turn's pinned selection (the
+      // task tool's model override rides on top) — a child turn never falls
+      // back to a deployment default.
+      turnExecution: this.state.turns.get(execution.turnId)?.execution ?? null,
       // The spawning thread's own depth: Main is 0, a subagent reads its
       // journaled identity (replay-derived — recover() refolds it).
       depth: identity === null ? 0 : identity.depth,
@@ -4659,16 +4682,23 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * mocked rigs pin their provider — selection then resolves nowhere); a
    * journaled selection resolves through the registry the deploying worker
    * installed — fail-closed on catalog drift (RelaySelectionError surfaces
-   * as a turn failure, never a silent re-route); no selection dispatches the
-   * deployment default ("*") provider, the pre-#351 posture verbatim.
+   * as a turn failure, never a silent re-route). #496: no selection is the
+   * named fail-closed error — the deployment-default ("*") dispatch is
+   * retired and sends refuse a pinless thread first (selection_missing);
+   * only a recovery re-drive of a pre-#351 queued turn can land here.
    */
   private resolveTurnProvider(turnId: string): ModelProvider {
     const runtime = getAgentRuntime(this.requireThread());
     const selection = this.state.turns.get(turnId)?.execution ?? null;
-    if (selection !== null && runtime.resolveExecutionProvider !== undefined) {
-      return runtime.resolveExecutionProvider(selection);
+    if (selection === null) {
+      throw new RelaySelectionError(
+        "provider_default_undeclared",
+        "providerId",
+        `turn ${turnId} has no journaled execution selection (pre-#351 journal shape) — ` +
+          "the deployment-default dispatch is retired (#496); send with providerId/model",
+      );
     }
-    return runtime.provider;
+    return runtime.resolveExecutionProvider(selection);
   }
 
   /** Test/config seam: persist a watchdog config patch. */

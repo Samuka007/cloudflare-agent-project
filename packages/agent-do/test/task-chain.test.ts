@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { env } from "cloudflare:workers";
 import { newThreadId, parseThreadEvent } from "@cap/protocol";
-import { createRig, resetRuntime, type Rig } from "./helpers.js";
+import { createRig, mockAgentRuntime, resetRuntime, type Rig } from "./helpers.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";
 import { replayEvents } from "../src/turn-state.js";
 import { setAgentRuntime } from "../src/injection.js";
@@ -66,8 +66,8 @@ describe("M1.5 T16 — L1 chain over real child AgentDOs", () => {
       { toolCalls: [{ name: "yield", arguments: { data: { answer: 42 } } }] },
       { deltas: ["submitted"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
 
     const turnId = await driveParentTurn(rig, "in-1");
@@ -164,8 +164,8 @@ describe("M1.5 T16 — L1 chain over real child AgentDOs", () => {
       { toolCalls: [{ name: "yield", arguments: { data: { answer: 42 } } }] },
       { deltas: ["submitted"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
 
     const turnId = await driveParentTurn(rig, "in-1");
@@ -222,8 +222,8 @@ describe("M1.5 T16 — L1 chain over real child AgentDOs", () => {
       { toolCalls: [{ name: "yield", arguments: { data: "findings", type: "result" } }] },
       { deltas: ["ok"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
 
     const turnId = await driveParentTurn(rig, "in-1");
@@ -267,8 +267,8 @@ describe("M1.5 T16 — L1 chain over real child AgentDOs", () => {
       { deltas: ["noted"] },
     ]);
     const childMock = new MockModelProvider([{ deltas: ["wrote prose, never yielded"] }]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
 
     const turnId = await driveParentTurn(rig, "in-1");
@@ -298,8 +298,8 @@ describe("M1.5 T16 — L1 chain over real child AgentDOs", () => {
       { toolCalls: [{ name: "yield", arguments: { data: { ok: true } } }] },
       { deltas: ["done"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
 
     const turnId = await driveParentTurn(rig, "in-1");
@@ -338,8 +338,8 @@ describe("M1.5 T16 — L1 chain over real child AgentDOs", () => {
       { toolCalls: [{ name: "yield", arguments: { data: { answer: "OK" } } }] },
       { deltas: ["done"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
 
     const turnId = await driveParentTurn(rig, "in-1");
@@ -402,8 +402,8 @@ describe("M1.5 T16 — L1 chain over real child AgentDOs", () => {
       },
       { deltas: ["done"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
 
     const turnId = await driveParentTurn(rig, "in-1");
