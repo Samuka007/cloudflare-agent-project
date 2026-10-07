@@ -168,6 +168,7 @@ function fakeContext(overrides: {
     machineId: "th-p",
     depth: overrides.depth ?? 0,
     parentAgentId: undefined,
+    turnExecution: null,
     events: () => Promise.resolve(events),
     recordSpawnPlan,
     recordSpawnSettlement,

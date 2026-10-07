@@ -273,6 +273,7 @@ describe("M1.5 T16 — executionId re-adopt (recovery, never a second spawn)", (
       machineId: "th-p",
       depth: overrides.depth ?? 0,
       parentAgentId: undefined,
+      turnExecution: null,
       events: () => Promise.resolve(overrides.events),
       recordSpawnPlan,
       recordSpawnSettlement,

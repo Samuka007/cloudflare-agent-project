@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { env } from "cloudflare:workers";
 import { newThreadId } from "@cap/protocol";
-import { createRig, resetRuntime } from "./helpers.js";
+import { createRig, mockAgentRuntime, resetRuntime } from "./helpers.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";
 import { replayEvents } from "../src/turn-state.js";
 import { setAgentRuntime } from "../src/injection.js";
@@ -119,8 +119,8 @@ describe("M1.5 T17 — reminder ladder (≤3 tiers, forced finish, SYSTEM WARNIN
       { deltas: ["thinking 3"] },
       { deltas: ["still nothing"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
 
     const { turnId } = await rig.stub.sendMessage({
@@ -193,8 +193,8 @@ describe("M1.5 T17 — yield quality gate (3 consecutive empty submissions abort
       { toolCalls: [{ name: "yield", arguments: {} }] },
       { deltas: ["giving up"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
 
     await rig.stub.sendMessage({
@@ -264,8 +264,8 @@ describe("M1.5 T17 — outputSchema 3-strike override + sidecar + agent:// extra
       invalidYield, // 4th submission: prior failures = 3 → accepted, schemaOverridden
       { deltas: ["done"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
 
     const { turnId } = await rig.stub.sendMessage({
@@ -346,8 +346,8 @@ describe("M1.5 T17 — yield-supersession (late async-result voids the stale yie
     ]);
     // `void` as a type argument trips no-invalid-void-type; boolean sentinel.
     const gate = Promise.withResolvers<boolean>();
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: new ChoreographyProvider(gate.promise) });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(new ChoreographyProvider(gate.promise)));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
 
     await rig.stub.sendMessage({
@@ -462,8 +462,8 @@ describe("M1.5 T17 — agent://all broadcast and resolution edges", () => {
       { toolCalls: [{ name: "yield", arguments: { data: { answer: "42" } } }] },
       { deltas: ["done"] },
     ]);
-    setAgentRuntime(parentThreadId, { provider: parentMock });
-    setAgentRuntime("*", { provider: childMock });
+    setAgentRuntime(parentThreadId, mockAgentRuntime(parentMock));
+    setAgentRuntime("*", mockAgentRuntime(childMock));
     const rig = await createRig({ threadId: parentThreadId, provider: parentMock });
 
     const { turnId } = await rig.stub.sendMessage({

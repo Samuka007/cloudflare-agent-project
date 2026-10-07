@@ -141,6 +141,14 @@ export class EdgeAgentProviderAdapter implements ProviderAdapter {
       };
     }
     if (command.type === "model/list") {
+      // #496: no channel env = no channel — the face advertises nothing
+      // rather than a synthesized row (the D1 catalog is the 正本, #450).
+      if (this.harness.relay.model === "") {
+        return {
+          ok: true,
+          result: { models: [], selectedOnlyModels: [] } satisfies AdapterModelListResult,
+        };
+      }
       const models: AvailableModel[] = [
         {
           id: "edge-agent-default",

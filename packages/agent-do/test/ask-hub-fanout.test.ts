@@ -102,7 +102,7 @@ test("#225 register → interactions-changed(true); resolve → (false); listInt
   expect(row.resolution).toBeNull();
   expect(row.origin).toEqual({
     kind: "provider",
-    providerId: "unknown",
+    providerId: "omp",
     providerThreadId: rig.threadId,
     providerRequestId: registered.data.executionId,
   });

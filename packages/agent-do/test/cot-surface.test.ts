@@ -182,6 +182,7 @@ describe("#257 — ux projection: item/reasoning/textDelta", () => {
     // (first_token stays answer-bound), before call_completed.
     expect(typeList(events)).toEqual([
       "thread.created",
+      "thread.execution_updated",
       "turn.input",
       "model.call_started",
       "turn.phase",

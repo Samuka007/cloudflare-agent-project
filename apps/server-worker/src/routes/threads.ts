@@ -92,6 +92,7 @@ import {
   countNonWhitespaceChars,
 } from "../services/thread-search.js";
 import { deriveTitleFallback } from "../services/title-generation.js";
+
 import {
   requirePublicInteractionRow,
   toPublicPendingInteraction,
@@ -123,6 +124,26 @@ import { resolveThreadBinding } from "../services/thread-binding.js";
 import type { PromptInput } from "../contract/domain/shared-types.js";
 import type { PromptContent } from "@cap/protocol";
 import type { AppEnv, Env } from "../app-types.js";
+
+/**
+ * #496: the DO refuses a dispatch that would ride no selection (no journaled
+ * pin, nothing materializable) with the `selection_missing:` marker; the RPC
+ * boundary rethrows remote errors without their class (the compact route's
+ * message-match precedent), so the marker maps to the create-face 422 shape
+ * — the fail-closed refusal is a caller error, not a server fault.
+ */
+function mapSelectionMissing(error: unknown): unknown {
+  if (error instanceof Error && error.message.startsWith("selection_missing")) {
+    return new ApiError({
+      status: 422,
+      code: "selection_missing",
+      message: error.message,
+      retryable: false,
+    });
+  }
+  return error;
+}
+
 
 /** bb timeline.ts:163-165. */
 const THREAD_TIMELINE_DEFAULT_SEGMENT_LIMIT = 20;
@@ -393,11 +414,17 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
           )
           .join(""),
       });
-      const result = await agentDoFor(ctx.env, threadId).sendMessage({
-        clientRequestId,
-        content,
-        mode: "start",
-      });
+      let result;
+      try {
+        result = await agentDoFor(ctx.env, threadId).sendMessage({
+          clientRequestId,
+          content,
+          mode: "start",
+        });
+      } catch (error) {
+        // #496: same fail-closed refusal surface as the send face.
+        throw mapSelectionMissing(error);
+      }
       if (!result.duplicated) {
         // Coarse M0 status transition shared with the send route: the daemon
         // lifecycle (#30) owns the real starting→active path; without it the
@@ -643,11 +670,18 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     let executionRide: RelaySelection | undefined;
     if (payload.model !== undefined || payload.reasoningLevel !== undefined) {
       const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+      // #496: a reasoning-only change validates against the thread's STORED
+      // model (the row override), never a deployment default — the channel
+      // names no default model anymore; a row without an override still
+      // 422s with the named remedy.
       const next = validateThreadExecutionSelection(
         ctx.env,
         {
           providerId: row.providerId,
           ...(payload.model !== undefined ? { model: payload.model } : {}),
+          ...(payload.model === undefined && row.modelOverride !== null
+            ? { model: row.modelOverride }
+            : {}),
           ...(payload.reasoningLevel !== undefined
             ? { reasoningLevel: payload.reasoningLevel }
             : {}),
@@ -703,15 +737,25 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
         .join(""),
     });
     const content = promptContentFromInput(payload.input);
-    const result = await agentDoFor(ctx.env, row.id).sendMessage({
-      clientRequestId,
-      content,
-      mode,
-      // #499: both paths above leave a ride set — the send always pins the
-      // thread's stored selection (or the live explicit change that just
-      // rewrote it), never an empty selection.
-      execution: executionRide,
-    });
+    let result;
+    try {
+      result = await agentDoFor(ctx.env, row.id).sendMessage({
+        clientRequestId,
+        content,
+        mode,
+        // #499: both paths above leave a ride set — the send always pins the
+        // thread's stored selection (or the live explicit change that just
+        // rewrote it), never an empty selection.
+        execution: executionRide,
+      });
+    } catch (error) {
+      // #496: the DO refuses a send that would dispatch no selection (no
+      // journaled pin — no legacy materialization exists either) — the RPC
+      // boundary drops the error class, so the named marker maps to the
+      // create-face 422 shape. Unreachable while #499's ride construction
+      // holds; the backstop keeps the refusal named rather than a 500.
+      throw mapSelectionMissing(error);
+    }
     if (!result.duplicated) {
       // Coarse M0 status transition: the daemon lifecycle (#30) owns the real
       // starting→active path; without it the control plane flips active on

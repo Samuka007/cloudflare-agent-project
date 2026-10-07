@@ -66,7 +66,9 @@ describe("GET /api/v1/system/execution-options", () => {
     expect(parsed.modelLoadError).toBeNull();
     expect(parsed.selectedOnlyModels).toEqual([]);
     expect(parsed.models).toHaveLength(1);
-    expect(parsed.models[0]?.isDefault).toBe(true);
+    // #496: zero channel env names NO running model — no row is the
+    // deployment default (nothing invented).
+    expect(parsed.models[0]?.isDefault).toBe(false);
     // The declared ladder is the offer; budget off collapses it to "none".
     expect(
       parsed.models[0]?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort),
@@ -96,11 +98,14 @@ describe("GET /api/v1/system/execution-options", () => {
     // The same harness resolution the provider-app reads — the picker face
     // and the relay wire dispatch can never disagree.
     const declared = systemExecutionOptionsResponseSchema.parse(
-      buildExecutionOptions({ MODEL_RELAY_IMAGE_INPUT: "1" }, PROVIDERS),
+      buildExecutionOptions(
+        { MODEL_RELAY_MODEL: "glm-5.3", MODEL_RELAY_IMAGE_INPUT: "1" },
+        PROVIDERS,
+      ),
     );
     expect(declared.providers[0]?.capabilities.supportsImageInput).toBe(true);
     const undeclared = systemExecutionOptionsResponseSchema.parse(
-      buildExecutionOptions({}, PROVIDERS),
+      buildExecutionOptions({ MODEL_RELAY_MODEL: "glm-5.3" }, PROVIDERS),
     );
     expect(undeclared.providers[0]?.capabilities.supportsImageInput).toBe(false);
   });

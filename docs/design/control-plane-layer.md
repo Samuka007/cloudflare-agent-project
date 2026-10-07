@@ -128,8 +128,9 @@
 - **执行影响值走四层优先级链**，每层只能收窄/具体化，不能静默放宽：
 
 ```text
-部署 env（harness 三键：模型/中转/思考配置；resolveHarness 总解析，
-  秘密只存 env，快照只存 key 存在性投影 —— provider-app/harness.ts）
+部署 env（legacy 通道标量：模型/中转/思考配置；resolveHarness 总解析 =
+  纯 env 标量投影，零合成默认——#496 起零 env=无通道；秘密只存 env，
+  快照只存 key 存在性投影 —— provider-app/harness.ts）
   → app 单行（bb 四族，跨会话默认）
     → host 行操作字段（仅权限轴 ceiling，向下收敛）
       → thread 执行选项（#42，live/session 漂移分类同 harness）
@@ -144,7 +145,7 @@
 | ------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 工具开关（bb dynamicTools/disallowedTools 形状） | **不是设置**——注册表启用策略（§1.2）                         | provider 拥有工具面；设置面长出工具开关 = 第二裁决点                                                                                                                |
 | thread→host 绑定                                 | **不是设置**——路由数据（project 行字段 + thread 轨迹，§2.1） | 绑定是每 thread 一次性事实，不是可随时改的偏好；#50 里「personal 项目与 host:path 绑定纠缠」的查证不产生 per-host 设置，personal 行是 bb 逐字超集，保真偏差单独处置 |
-| 模型/中转/思考配置                               | 部署 env（harness 三键），不进 app_settings                  | 秘密与部署拓扑不落控制面 DB；快照投影已定义（harness.ts projectHarness）                                                                                            |
+| 模型/中转/思考配置                               | 部署 env（legacy 通道标量）+ D1 provider 行正本（#450），不进 app_settings | 秘密与部署拓扑不落控制面 DB；快照投影已定义（harness.ts projectHarness）；#496 起 env 通道零合成默认                                                                 |
 | xdev 开关、essential 集裁剪                      | 注册表策略输入（部署期）                                     | 同 §1.2，改它是发版行为不是改设置                                                                                                                                   |
 | 权限上限                                         | host 行 ceiling（唯一 per-host 值）                          | 操作上限语义，向下收敛                                                                                                                                              |
 

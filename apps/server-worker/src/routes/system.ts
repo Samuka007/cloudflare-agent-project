@@ -290,8 +290,9 @@ function webSearchProjectionRow(overlayRow: WebSearchOverlayRow | undefined): {
  * #484: did the deployment actually feed the legacy deployment channel?
  * Any non-blank member of the channel env family counts (the vars
  * resolveHarness reads plus its two execution pins). Zero members = the
- * harness row is pure HARNESS_DEFAULTS synthesis — the panel hides it
- * (#450: D1 provider_configs is the sole provider 正本, zero env fallback).
+ * harness row is the honest empty channel (mode "unconfigured", #496 —
+ * nothing synthesized) — the panel hides it (#450: D1 provider_configs is
+ * the sole provider 正本, zero env fallback).
  */
 function deploymentChannelEnvConfigured(env: HarnessEnv): boolean {
   const channelVars: (string | undefined)[] = [

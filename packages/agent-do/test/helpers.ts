@@ -7,6 +7,7 @@ import { clearAgentRuntimes, setAgentRuntime } from "../src/injection.js";
 import type { RelaySelection } from "../src/provider-catalog.js";
 import type { ModelProvider } from "../src/provider.js";
 import { MockModelProvider, type MockTurn } from "../src/testing/mock-provider.js";
+import { mockAgentRuntime } from "../src/testing/mock-runtime.js";
 import type { TestDaemonServiceStub } from "../src/testing/test-daemon-do.js";
 import { ensureMigrations } from "./migrate.js";
 
@@ -49,6 +50,9 @@ export interface Rig {
 const agentNamespace = (env as { AGENT_DO: DurableObjectNamespace }).AGENT_DO;
 const serviceNamespace = (env as { DAEMON_SERVICE: DurableObjectNamespace }).DAEMON_SERVICE;
 
+/** Re-exported for the rig test files (they register runtimes directly). */
+export { mockAgentRuntime };
+
 export async function createRig(options: RigOptions = {}): Promise<Rig> {
   // The rig DB carries the composed deployment's control-plane schema
   // (test/migrate.ts) — terminal turns settle `threads` rows for real
@@ -57,7 +61,7 @@ export async function createRig(options: RigOptions = {}): Promise<Rig> {
   await ensureMigrations();
   const threadId = options.threadId ?? newThreadId();
   const provider = options.provider ?? new MockModelProvider(options.turns ?? [{ deltas: ["ok"] }]);
-  setAgentRuntime(threadId, { provider });
+  setAgentRuntime(threadId, mockAgentRuntime(provider));
   /**
    * Stub factories, re-resolved on every access: `abortAllDurableObjects()`
    * poisons existing stub references permanently, so post-abort calls must go

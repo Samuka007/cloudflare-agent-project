@@ -2,8 +2,10 @@
  * Harness minimal three keys (#17 ruling Q4, #28 ruling 2026-10-03) — the
  * provider application's entire M0 configuration surface:
  *
- *   1. 模型中转配置 — Anthropic-protocol relay toward the GLM coding plan
- *      (`https://open.bigmodel.cn/api/anthropic`, model `glm-5.3`). The key
+ *   1. 模型中转配置 — the legacy deployment channel, a pure env scalar
+ *      projection (#496): the channel EXISTS only when the deployment named
+ *      it (MODEL_RELAY_* env); zero channel env = no channel, nothing is
+ *      invented. The key
  *      VALUE rides env (`.dev.vars` locally, Worker Secret in deployment) and
  *      never enters code, tests, or the durable registry snapshot.
  *   2. host 绑定声明 — which machine a thread's tool executions route to
@@ -13,33 +15,23 @@
  *      subset the M0 loop can honor (model/serviceTier/reasoningLevel plus a
  *      permission policy).
  *
- * `resolveHarness` is a total pure function over the worker env record:
- * missing values fall to the ruled defaults, and a missing API key degrades
- * the relay to the fixed-reply mock (mock-first ruling on #28) instead of
- * failing thread starts. #450 (user ruling 2026-10-07): the provider
- * DIRECTORY is not a harness concern anymore — the MODEL_RELAY_CATALOG /
- * MODEL_RELAY_PROVIDER_CREDENTIALS env seeds are deleted and the picker's
- * truth is the D1 provider_configs rows (catalog.ts resolveOverlayCatalog);
- * the harness carries the legacy deployment channel only.
+ * `resolveHarness` is a total pure function over the worker env record.
+ * #496 (user ruling 2026-10-07, no-special-case): NO invented defaults — an
+ * unnamed model/baseUrl stays empty, the channel reports `unconfigured`, and
+ * the key-less mock mode survives only for a channel the deployment
+ * explicitly configured. (The mock PROVIDER is gone entirely: turns dispatch
+ * through the fail-closed registry — relayProviderFrom is retired.) #450:
+ * the provider DIRECTORY is not a harness concern — the picker's truth is
+ * the D1 provider_configs rows (catalog.ts resolveOverlayCatalog).
  */
 
 import {
-  AnthropicRelayProvider,
-  CompletionsRelayProvider,
-  ResponsesRelayProvider,
-  anthropicRequestBody,
-  completionsRequestBody,
-  responsesRequestBody,
-  estimateWireRequestTokens,
   envFlag,
   deriveRelayReasoning,
   DEFAULT_RELAY_API,
   type RelayApi,
   type ResponsesEffort,
   type RelayReasoningLevel,
-  type ModelProvider,
-  type ModelRequest,
-  type ModelStreamChunk,
   type RelayConfig,
 } from "@cap/agent-do";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
@@ -47,16 +39,17 @@ import type { RuntimeThreadExecutionOptions } from "../../daemon-worker/src/prov
 
 /** Environment variables this harness reads (all optional). */
 export interface HarnessEnv {
-  /** Anthropic-protocol relay base (default: the ruled bigmodel endpoint). */
+  /** Anthropic-protocol relay base; unset = the channel names no endpoint. */
   MODEL_RELAY_BASE_URL_ANTHROPIC?: string;
   /** Relay key — presence flips the relay from mock to the real client. */
   MODEL_RELAY_API_KEY?: string;
-  /** Relay model (default `glm-5.3`). */
+  /** Relay model — the "running model" fill; unset = no default model. */
   MODEL_RELAY_MODEL?: string;
   /**
-   * #308 context window denominator for the usage percentage (default 200K —
-   * docs.bigmodel.cn GLM-5 family「上下文窗口 200K」; 1M variants
-   * (`glm-5.3[1m]`) and other providers override via this env).
+   * #308 context window denominator for the usage percentage (protocol
+   * scalar with the inline 200K fallback — docs.bigmodel.cn GLM-5
+   * family「上下文窗口 200K」; not a deployment identity: a wrong value only
+   * skews usage percentages, never routes a turn).
    */
   MODEL_RELAY_CONTEXT_WINDOW?: string;
   /** Per-call completion budget; reasoning counts against it on glm-5.3. */
@@ -80,7 +73,13 @@ export type ThinkingConfig = NonNullable<RelayConfig["thinking"]>;
 
 export interface ResolvedHarness {
   relay: {
-    mode: "anthropic" | "mock";
+    /**
+     * #496 honest channel vocabulary: `anthropic` = configured + keyed,
+     * `mock` = configured but key-less (the #28 posture, kept only for that
+     * explicit scenario), `unconfigured` = zero channel env (the panel hides
+     * the block, #484).
+     */
+    mode: "anthropic" | "mock" | "unconfigured";
     baseUrl: string;
     apiKey: string;
     model: string;
@@ -105,18 +104,6 @@ export interface ResolvedHarness {
   hostBinding: { machineId: string };
   execution: RuntimeThreadExecutionOptions;
 }
-
-export const HARNESS_DEFAULTS = {
-  baseUrl: "https://open.bigmodel.cn/api/anthropic",
-  model: "glm-5.3",
-  maxTokens: 8192,
-  /** docs.bigmodel.cn GLM-5 family page: 上下文窗口 200K. */
-  contextWindow: 200_000,
-  // #377: the "composition machine" default was a synthetic host; the
-  // placeholder binds honestly until a real host (or the tier-0/tier-1
-  // cloud carrier, #307) takes the thread.
-  machineId: CLOUD_PLACEHOLDER_HOST_ID,
-} as const;
 
 function executionOptionsOf(
   mode: string | undefined,
@@ -164,26 +151,25 @@ function executionOptionsOf(
 
 /** Key 1+2+3 in one total resolution. Never throws on env content. */
 export function resolveHarness(env: HarnessEnv): ResolvedHarness {
-  // #450: no catalog fold — the D1 正本 rows are the picker's truth; the
-  // harness carries the legacy deployment channel only (#17 Q4 scalars).
-  // Empty-after-trim counts as unset (same fallback `||` gave, kept explicit
-  // because `??` alone would let an empty string through).
+  // #496: the deployment channel is a pure env scalar projection — NOTHING
+  // is invented. An unnamed model/endpoint stays "" (the channel does not
+  // exist); the only inline fallbacks left are the wire-safety protocol
+  // scalars (maxTokens/contextWindow: a wrong value degrades a usage
+  // percentage or clamps a reply, it never routes a turn to another model).
+  // Empty-after-trim counts as unset (kept explicit — `??` alone would let
+  // an empty string through).
   const modelRaw = env.MODEL_RELAY_MODEL?.trim() ?? "";
-  const model = modelRaw !== "" ? modelRaw : HARNESS_DEFAULTS.model;
+  const model = modelRaw;
   const relayApi: RelayApi = DEFAULT_RELAY_API;
   const baseUrlRaw = env.MODEL_RELAY_BASE_URL_ANTHROPIC?.trim() ?? "";
-  const baseUrl = baseUrlRaw === "" ? HARNESS_DEFAULTS.baseUrl : baseUrlRaw;
+  const baseUrl = baseUrlRaw;
   const apiKey = env.MODEL_RELAY_API_KEY?.trim() ?? "";
   const maxTokensRaw = Number.parseInt(env.MODEL_RELAY_MAX_TOKENS ?? "", 10);
   const maxTokens =
-    Number.isFinite(maxTokensRaw) && maxTokensRaw > 0
-      ? maxTokensRaw
-      : HARNESS_DEFAULTS.maxTokens;
+    Number.isFinite(maxTokensRaw) && maxTokensRaw > 0 ? maxTokensRaw : 8192;
   const contextWindowRaw = Number.parseInt(env.MODEL_RELAY_CONTEXT_WINDOW ?? "", 10);
   const contextWindow =
-    Number.isFinite(contextWindowRaw) && contextWindowRaw > 0
-      ? contextWindowRaw
-      : HARNESS_DEFAULTS.contextWindow;
+    Number.isFinite(contextWindowRaw) && contextWindowRaw > 0 ? contextWindowRaw : 200_000;
   const budgetRaw = Number.parseInt(env.MODEL_RELAY_THINKING_BUDGET_TOKENS ?? "", 10);
   const machineIdRaw = env.DAEMON_MACHINE_ID?.trim() ?? "";
   const thinking: ThinkingConfig =
@@ -197,7 +183,15 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
   const reasoningEffort: ResponsesEffort = "none";
   return {
     relay: {
-      mode: apiKey === "" ? "mock" : "anthropic",
+      // #496: `unconfigured` = zero channel env (no model, no endpoint);
+      // `mock` survives only for a channel the deployment explicitly named
+      // but did not key — an honest projection, never a synthesized default.
+      mode:
+        model === "" && baseUrl === ""
+          ? "unconfigured"
+          : apiKey === ""
+            ? "mock"
+            : "anthropic",
       baseUrl,
       apiKey,
       model,
@@ -209,7 +203,10 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
       reasoningEffort,
     },
     hostBinding: {
-      machineId: machineIdRaw === "" ? HARNESS_DEFAULTS.machineId : machineIdRaw,
+      // #377: the placeholder binds honestly until a real host (or the
+      // tier-0/tier-1 cloud carrier, #307) takes the thread — a binding
+      // identity, not a channel default.
+      machineId: machineIdRaw === "" ? CLOUD_PLACEHOLDER_HOST_ID : machineIdRaw,
     },
     // M0 deterministic budget (relay thinking defaults off — glm-5.3 burns
     // completion budget on reasoning; re-enable via the thinking env only).
@@ -219,151 +216,6 @@ export function resolveHarness(env: HarnessEnv): ResolvedHarness {
     derivedLadder.defaultLevel,
   ),
   };
-}
-
-/**
- * The relay client a harness resolution stands for (ticket #28: mock first,
- * real endpoint swaps in without changing the bone). The mock is a product
- * mode here, not a test fixture: it keeps threads alive with a fixed reply
- * until a key is provisioned, and records calls for billing-parity probes.
- */
-export class FixedReplyProvider implements ModelProvider {
-  readonly calls: ModelRequest[] = [];
-
-  private readonly reply: string;
-  /** The relay resolution this mock stands in for (wire options + window). */
-  private readonly relay: {
-    model: string;
-    maxTokens: number;
-    thinking: ThinkingConfig;
-    contextWindow: number;
-    supportsImageInput?: boolean;
-    api?: RelayApi;
-    reasoningEffort?: ResponsesEffort;
-  };
-
-  constructor(
-    reply: string,
-    relay?: {
-      model: string;
-      maxTokens: number;
-      thinking: ThinkingConfig;
-      contextWindow: number;
-      supportsImageInput?: boolean;
-      api?: RelayApi;
-      reasoningEffort?: ResponsesEffort;
-    },
-  ) {
-    this.reply = reply;
-    this.relay = relay ?? {
-      model: HARNESS_DEFAULTS.model,
-      maxTokens: HARNESS_DEFAULTS.maxTokens,
-      thinking: { type: "disabled" },
-      contextWindow: HARNESS_DEFAULTS.contextWindow,
-    };
-  }
-
-  streamTurn(
-    request: ModelRequest,
-    _options: { signal: AbortSignal },
-  ): AsyncIterable<ModelStreamChunk> {
-    // Hand-rolled iterator: the ModelProvider signature demands AsyncIterable,
-    // but `async *` with no await trips require-await. Frame order: the #308
-    // usage estimate (bytes/4 over the exact wire body — the mock's
-    // "receipt"), then the fixed reply as the terminal answer text.
-    this.calls.push(request);
-    const body =
-      this.relay.api === "openai-responses"
-        ? JSON.stringify(
-            responsesRequestBody(request, {
-              model: this.relay.model,
-              maxTokens: this.relay.maxTokens,
-              reasoningEffort: this.relay.reasoningEffort ?? "none",
-              supportsImageInput: this.relay.supportsImageInput,
-            }),
-          )
-      : this.relay.api === "openai-completions"
-        ? JSON.stringify(
-            completionsRequestBody(request, {
-              model: this.relay.model,
-              maxTokens: this.relay.maxTokens,
-              reasoningEffort: this.relay.reasoningEffort,
-              supportsImageInput: this.relay.supportsImageInput,
-            }),
-          )
-        : JSON.stringify(anthropicRequestBody(request, this.relay));
-    const usage = {
-      inputTokens: estimateWireRequestTokens(body),
-      outputTokens: 0,
-      cacheReadInputTokens: 0,
-      cacheCreationInputTokens: 0,
-      contextWindow: this.relay.contextWindow,
-      estimated: true,
-    };
-    const frames: ModelStreamChunk[] = [
-      { kind: "usage", usage },
-      { kind: "text-delta", text: this.reply },
-    ];
-    let frame = 0;
-    return {
-      [Symbol.asyncIterator](): AsyncIterator<ModelStreamChunk> {
-        return {
-          next: (): Promise<IteratorResult<ModelStreamChunk>> => {
-            const current = frames[frame];
-            frame += 1;
-            if (current === undefined) {
-              return Promise.resolve({ done: true, value: undefined });
-            }
-            return Promise.resolve({ done: false, value: current });
-          },
-        };
-      },
-    };
-  }
-}
-
-/** Build the ModelProvider a resolved harness stands for. */
-export function relayProviderFrom(harness: ResolvedHarness): ModelProvider {
-  if (harness.relay.mode === "anthropic") {
-    if (harness.relay.api === "openai-responses") {
-      return new ResponsesRelayProvider({
-        baseUrl: harness.relay.baseUrl,
-        apiKey: harness.relay.apiKey,
-        model: harness.relay.model,
-        maxTokens: harness.relay.maxTokens,
-        contextWindow: harness.relay.contextWindow,
-        reasoningEffort: harness.relay.reasoningEffort,
-        supportsImageInput: harness.relay.supportsImageInput,
-        api: harness.relay.api,
-      });
-    }
-    if (harness.relay.api === "openai-completions") {
-      return new CompletionsRelayProvider({
-        baseUrl: harness.relay.baseUrl,
-        apiKey: harness.relay.apiKey,
-        model: harness.relay.model,
-        maxTokens: harness.relay.maxTokens,
-        contextWindow: harness.relay.contextWindow,
-        reasoningEffort: harness.relay.reasoningEffort,
-        supportsImageInput: harness.relay.supportsImageInput,
-        api: harness.relay.api,
-      });
-    }
-    return new AnthropicRelayProvider({
-      baseUrl: harness.relay.baseUrl,
-      apiKey: harness.relay.apiKey,
-      model: harness.relay.model,
-      maxTokens: harness.relay.maxTokens,
-      contextWindow: harness.relay.contextWindow,
-      thinking: harness.relay.thinking,
-      supportsImageInput: harness.relay.supportsImageInput,
-      api: harness.relay.api,
-    });
-  }
-  return new FixedReplyProvider(
-    "model relay not configured (MODEL_RELAY_API_KEY missing) — fixed-reply mock in service (ticket #28 M0)",
-    harness.relay,
-  );
 }
 
 // ---------------------------------------------------------------------------

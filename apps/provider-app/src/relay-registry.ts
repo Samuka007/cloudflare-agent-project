@@ -42,7 +42,6 @@ import {
 import type { RelayCatalogResolution } from "./catalog.js";
 import { resolveOverlayCatalog } from "./catalog.js";
 import {
-  relayProviderFrom,
   resolveHarness,
   type HarnessEnv,
   type ThinkingConfig,
@@ -118,6 +117,15 @@ export const EMPTY_PROVIDER_OVERLAY: RelayProviderOverlay = {
 function instanceKey(resolution: RelayProviderRegistryResolution): string {
   return `${resolution.providerId} ${resolution.modelId} ${resolution.reasoningLevel}`;
 }
+
+/**
+ * #496 materialization constant: the legacy deployment channel's frozen
+ * resolution — the model the pre-#450 channel served at freeze time
+ * (`glm-5.3`, the harness default of that era). The registry maps it onto a
+ * REAL catalog row (first declaration-order match); no such row → no
+ * materialization (the thread stays unselected and fails closed).
+ */
+const LEGACY_FROZEN_MODEL = "glm-5.3";
 
 export class RelayProviderRegistry {
   private readonly instances = new Map<string, ModelProvider>();
@@ -264,9 +272,9 @@ export class RelayProviderRegistry {
     // #434 (point ⑦): no row-level mock degradation. A credential gap used
     // to serve the fixed-reply mock as a product mode; that was an implicit
     // default masquerading as the declared row — dispatch now fails with the
-    // named remedy instead. (The DEPLOYMENT-channel mock in harness.ts
-    // relayProviderFrom is a different, kept posture: the projections face
-    // reports it as relayMode "mock".)
+    // named remedy instead. #496: the deployment-channel mock provider is
+    // gone with it; the projections face still reports a configured but
+    // key-less channel as relayMode "mock".
     if (resolution.config.apiKey === "" || resolution.config.baseUrl === "") {
       throw new Error(
         `relay provider "${resolution.providerId}" (${resolution.modelId}) has no usable credential` +
@@ -288,19 +296,32 @@ export class RelayProviderRegistry {
   providerIds(): string[] {
     return [...new Set(this.catalogResolution.models.map((row) => row.providerId))];
   }
+
+  /**
+   * #496 legacy materialization: the frozen legacy model mapped onto the
+   * current catalog's real row, or null when the catalog declares none (the
+   * DO then refuses the send with the named selection_missing error). The
+   * reasoning rung stays unset — the row's derived default fills at dispatch.
+   */
+  materializeLegacySelection(): RelaySelection | null {
+    const row = this.catalogResolution.models.find(
+      (candidate) => candidate.id === LEGACY_FROZEN_MODEL,
+    );
+    return row === undefined ? null : { providerId: row.providerId, model: row.id };
+  }
 }
 
 /**
- * The composed AgentRuntime registration: the deployment default provider
- * (harness fold — the "*" fallback posture, unchanged for pre-#351
- * journals) plus the registry resolver every journal-selection dispatch
- * goes through. This is the one registration shape the composed worker, the
- * manager, and dev rigs install.
+ * The composed AgentRuntime registration (#496): the registry resolver every
+ * journal-selection dispatch goes through (the deployment-default provider
+ * member is retired) plus the legacy materializer for pre-#351 journals.
+ * This is the one registration shape the composed worker and the manager
+ * install.
  */
-export function relayAgentRuntime(env: HarnessEnv, registry: RelayProviderRegistry): AgentRuntime {
+export function relayAgentRuntime(registry: RelayProviderRegistry): AgentRuntime {
   return {
-    provider: relayProviderFrom(resolveHarness(env)),
     resolveExecutionProvider: (selection: RelaySelection): ModelProvider =>
       registry.providerFor(selection),
+    materializeLegacySelection: () => registry.materializeLegacySelection(),
   };
 }

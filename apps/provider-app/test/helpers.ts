@@ -7,7 +7,7 @@ import {
   setAgentRuntime,
   type AgentDO,
 } from "@cap/agent-do";
-import { MockModelProvider, type MockTurn } from "@cap/agent-do/testing";
+import { MockModelProvider, mockAgentRuntime, type MockTurn } from "@cap/agent-do/testing";
 import type {
   AdapterCommandOutcome,
   ProviderExecutionContext,
@@ -69,7 +69,7 @@ export function registerMock(
   turns: MockTurn[] = [{ deltas: ["ok"] }],
 ): MockModelProvider {
   const provider = new MockModelProvider(turns);
-  setAgentRuntime(threadId, { provider });
+  setAgentRuntime(threadId, mockAgentRuntime(provider));
   return provider;
 }
 

@@ -234,15 +234,33 @@ describe("#351/#450 standalone credentials (D1 rows never ride deployment slots)
     );
   });
 
-  test("relayAgentRuntime installs the default provider plus the registry resolver", () => {
+  test("relayAgentRuntime installs the registry resolver plus the legacy materializer", () => {
     const registry = RelayProviderRegistry.create(DEPLOYMENT_ENV, OVERLAY);
-    const runtime = relayAgentRuntime(DEPLOYMENT_ENV, registry);
+    const runtime = relayAgentRuntime(registry);
     expect(typeof runtime.resolveExecutionProvider).toBe("function");
-    const resolved = runtime.resolveExecutionProvider?.({
+    const resolved = runtime.resolveExecutionProvider({
       providerId: "backup",
       model: "flash-mini",
     });
     expect(resolved).toBeInstanceOf(AnthropicRelayProvider);
+    // #496: the legacy materializer maps the frozen legacy model onto the
+    // catalog's real row (first declaration-order match).
+    expect(runtime.materializeLegacySelection?.()).toEqual({
+      providerId: "main",
+      model: "glm-5.3",
+    });
+    // A catalog without the frozen model materializes nothing — the thread
+    // stays unselected and the next send fails closed.
+    const bare = RelayProviderRegistry.create(DEPLOYMENT_ENV, {
+      ...OVERLAY,
+      providers: {
+        backup: {
+          displayName: "Backup",
+          models: [{ id: "flash-mini" }],
+        },
+      },
+    });
+    expect(relayAgentRuntime(bare).materializeLegacySelection?.()).toBeNull();
     // The empty overlay is the honest zero-config construction the composed
     // worker boots with before the awaited D1 hot-apply.
     expect(EMPTY_PROVIDER_OVERLAY.providers).toEqual({});
