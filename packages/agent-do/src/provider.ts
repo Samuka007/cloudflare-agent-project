@@ -185,9 +185,10 @@ export interface ModelRequest {
   toolChoice?: { name: string };
   /**
    * Deployment-time experimental tool gates (#150): the wire assembly filters
-   * think/context_notes/new_context/checkpoint/rewind/generate_image off the
-   * surface unless their gate is on (config.ts ExperimentalToolConfig, all
-   * default false).
+   * think/context_notes/new_context/checkpoint/rewind off the surface unless
+   * their env gate is on (config.ts ExperimentalToolConfig, all default
+   * false); `generateImage` folds from the 产图源 seat's presence (#448 —
+   * no selected source, no row; #450 zero env fallback).
    * Absent = the ungated default surfaces (mock/test passthrough).
    */
   experimentalGates?: {

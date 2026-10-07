@@ -341,16 +341,39 @@ export const systemProviderProjectionsResponseSchema = z.object({
     models: z.array(z.string()),
     /**
      * #362 scope absorption ②: generate_image availability, presence-only
-     * (zero-secret). True when an api=openai-images provider row is
-     * dispatchable (panel, hot) or the deployment env gate + source decode
-     * cleanly (the fallback posture).
+     * (zero-secret). #448: `providerId` is the panel's 产图源 seat (D1
+     * image_source, null = nothing selected — there is no env fallback,
+     * #450); `configured` is true only when that selection resolves to a
+     * dispatchable api=openai-images row.
      */
-    imageGeneration: z.object({ configured: z.boolean() }),
+    imageGeneration: z.object({
+      configured: z.boolean(),
+      providerId: z.string().nullable(),
+    }),
   }),
 });
 export type SystemProviderProjectionsResponse = z.infer<
   typeof systemProviderProjectionsResponseSchema
 >;
+
+/**
+ * #448 the explicit image-source face (the 产图源 正本, D1 image_source).
+ * `providerId` names the api=openai-images provider row that supplies
+ * generate_image; null = no source (the tool is unavailable — zero env
+ * fallback, #450). `candidates` lists the currently dispatchable
+ * api=openai-images row ids the panel can select from.
+ */
+export const systemImageSourceResponseSchema = z.object({
+  providerId: z.string().nullable(),
+  candidates: z.array(z.string()),
+});
+export type SystemImageSourceResponse = z.infer<typeof systemImageSourceResponseSchema>;
+
+/** PUT /system/image-source: select a row, or null to clear the seat. */
+export const systemImageSourcePutRequestSchema = z
+  .object({ providerId: z.string().min(1).nullable() })
+  .strict();
+export type SystemImageSourcePutRequest = z.infer<typeof systemImageSourcePutRequestSchema>;
 
 // --- #362 provider configurable panel (port-only CRUD face) ------------------
 // GET/POST/PUT/PATCH/DELETE /system/providers(+ /:id, /:id/test): the

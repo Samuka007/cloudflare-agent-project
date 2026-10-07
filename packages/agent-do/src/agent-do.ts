@@ -150,7 +150,6 @@ import {
 } from "./tools/web-search.js";
 import {
   HOST_FILE_RPC_TIMEOUT_MS,
-  decodeGenerateImageConfig,
   type GenerateImageConfig,
   type GenerateImageToolContext,
 } from "./tools/generate-image.js";
@@ -205,19 +204,6 @@ export interface AgentDoBindings {
   AGENT_DO_EXTERNAL_THINKING?: string;
   AGENT_DO_CONTEXT_NOTES?: string;
   AGENT_DO_CHECKPOINT?: string;
-  /**
-   * B2 #322: the omp `generate_image.enabled` gate twin (1/true/on).
-   * Gates the `generate_image` wire row (EXPERIMENTAL_TOOL_GATE); the
-   * image source credentials ride AGENT_DO_IMAGE_SOURCE below.
-   */
-  AGENT_DO_GENERATE_IMAGE?: string;
-  /**
-   * B2 #322: JSON patch configuring the OpenAI-compatible image source
-   * (`{baseUrl, apiKey, model, timeoutSeconds?}`). Decoded once at
-   * construction — shape violations fail the DO loudly (the web_search
-   * posture); the model-facing wire schema carries no endpoint field.
-   */
-  AGENT_DO_IMAGE_SOURCE?: string;
   /**
    * Optional JSON patch over the default web_search provider config (env
    * var, M1.5 T12). Decoded once at construction; a patch naming a
@@ -464,28 +450,25 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   /** Decoded once from `AGENT_DO_WEB_SEARCH` (M1.5 T12); deployment-time
    * input — the model-facing wire schema carries no engine field. */
   private readonly webSearchConfig: WebSearchConfig;
-  /** Decoded once from `AGENT_DO_IMAGE_SOURCE` (B2 #322); deployment-time
-   * input — the model-facing wire schema carries no endpoint field. */
-  private readonly generateImageConfig: GenerateImageConfig;
   /**
-   * #362 scope absorption ②: the panel-resolved image source (a provider
-   * row with api=openai-images). Non-null gates generate_image ON with the
-   * row's source regardless of the env gate; null = the env posture. The
-   * deploying worker's ComposedAgentDO refreshes it at the turn boundary
-   * (refreshRuntime seam), so a panel edit takes effect on the next real
-   * turn with zero redeploy.
+   * #448 the panel-resolved image source: the 产图源 seat (D1 image_source)
+   * resolved over the api=openai-images provider row. Non-null gates
+   * generate_image ON and carries the source; null = not configured — the
+   * tool is unavailable (no env fallback, #450). The deploying worker's
+   * ComposedAgentDO refreshes it at the turn boundary (refreshRuntime seam),
+   * so a panel edit takes effect on the next real turn with zero redeploy.
    */
-  private imageSourceOverride: GenerateImageConfig | null = null;
+  private imageSource: GenerateImageConfig | null = null;
   /** Decoded once from the #150 experimental-gate envs; deployment-time
    * input, all default OFF (omp tools/index.ts:766-772 posture). */
   private readonly experimentalGates: ExperimentalToolConfig;
   /**
-   * The panel-resolved image source wins over the deployment env: row
-   * presence is the user opt-in, so the gate opens and the source rides the
-   * row; null falls back to the env-decoded posture verbatim.
+   * The panel-resolved image source (the 产图源 seat) is the only gate +
+   * source (#448/#450): non-null opens the generate_image wire row and the
+   * source rides the seat's row; null keeps the tool off the wire.
    */
   applyImageGenerationSource(source: GenerateImageConfig | null): void {
-    this.imageSourceOverride = source;
+    this.imageSource = source;
   }
   private state: ReplayState = emptyReplayState();
   private threadId: string | null = null;
@@ -550,9 +533,6 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
       env.AGENT_DO_WEB_SEARCH,
       DEFAULT_WEB_SEARCH_CONFIG,
     );
-    // B2 #322: decoded once; a malformed source fails the DO loudly (the
-    // web_search posture — deployment-time input, never silent fallback).
-    this.generateImageConfig = decodeGenerateImageConfig(env.AGENT_DO_IMAGE_SOURCE);
     this.mcpSurface = new McpToolSurface(decodeMcpServersConfig(env.AGENT_DO_MCP_SERVERS));
     this.log = new EventLog(ctx.storage, env.BLOBS, this.cfg.r2BypassBytes);
     this.state = this.loadState();
@@ -2754,7 +2734,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     // replay tests (src/translate.ts).
     const { events } = await this.readAllEvents();
     const request = modelRequestFromEvents(events, turnId, modelCallId);
-    // #150 experimental gates: the wire assembly filters the five experimental
+    // #150 experimental gates: the wire assembly filters the experimental
     // tools by the deployment gates, then applies the omp supports(model)
     // verdict (sdk.ts:4275-4282) and derives the forceReasoningOff pin from
     // the RENDERED surface — the DO does not know the relay model id, so the
@@ -2763,13 +2743,13 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     // native CoT pathway for native-reasoning models like glm-5.3).
     const gated: ModelRequest = {
       ...request,
-      // #362: an image-source ROW gates generate_image on regardless of the
-      // env gate (row presence is the user opt-in) — read per request so a
-      // panel edit lands on the next turn without a redeploy.
-      experimentalGates:
-        this.imageSourceOverride !== null
-          ? { ...this.experimentalGates, generateImage: true }
-          : this.experimentalGates,
+      // #448: the 产图源 seat gates generate_image (its presence is the
+      // user opt-in; #450 — no env fallback) — read per request so a panel
+      // edit lands on the next turn without a redeploy.
+      experimentalGates: {
+        ...this.experimentalGates,
+        generateImage: this.imageSource !== null,
+      },
     };
     // Matrix C2 (#327): the discovered MCP surface rides every call — the
     // TTL cache inside McpToolSurface bounds the tools/list round-trips, a
@@ -4215,7 +4195,7 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   ): GenerateImageToolContext {
     const machineId = this.state.machineId ?? CLOUD_PLACEHOLDER_HOST_ID;
     return {
-      config: this.imageSourceOverride ?? this.generateImageConfig,
+      config: this.imageSource,
       signal,
       fetchImpl: (input, init) => fetch(input, init),
       writeThreadFile: async ({ filename, contentBase64 }) => {

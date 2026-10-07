@@ -1,4 +1,3 @@
-import { z } from "zod";
 import type { EdgeToolResult } from "./edge.js";
 
 /**
@@ -21,19 +20,13 @@ import type { EdgeToolResult } from "./edge.js";
  * openai-images.ts:103-113). The OpenAI-provider multipart branch is not
  * ported: the configured source is a relay-style endpoint (JSON in, JSON
  * out), the same population omp's JSON branch serves. Credentials/config
- * ride the deployment env (`AGENT_DO_IMAGE_SOURCE`) instead of omp's model
- * catalog — one resolved source, no candidate chain (omp's aggregate error
- * collapses to the single failure).
+ * ride the panel-resolved image source (the 产图源 seat, #448) instead of
+ * omp's model catalog — one resolved source, no candidate chain (omp's
+ * aggregate error collapses to the single failure).
  */
-
-// ---------------------------------------------------------------------------
-// Config — env JSON over defaults (#102 patch-over-defaults posture)
-// ---------------------------------------------------------------------------
 
 /** omp image-gen.ts:25 (IMAGE_TIMEOUT) — the per-request ceiling. */
 export const DEFAULT_IMAGE_TIMEOUT_SECONDS = 180;
-/** Deployment-env sanity ceiling (web-search.ts MAX posture). */
-export const MAX_IMAGE_TIMEOUT_SECONDS = 600;
 /** The host online-RPC window for the thread-file seams — the server-worker
  * HOST_COMMAND_TIMEOUT_MS twin (services/host-files.ts:21); the DO names its
  * own so the constant travels with the seam calls. */
@@ -49,41 +42,16 @@ export interface GenerateImageConfig {
   timeoutSeconds: number;
 }
 
-export const DEFAULT_GENERATE_IMAGE_CONFIG: GenerateImageConfig = {
-  baseUrl: "",
-  apiKey: "",
-  model: "",
-  timeoutSeconds: DEFAULT_IMAGE_TIMEOUT_SECONDS,
-};
-
-const generateImageConfigPatchSchema = z.object({
-  baseUrl: z.url(),
-  apiKey: z.string().min(1),
-  model: z.string().min(1),
-  timeoutSeconds: z.number().int().positive().optional(),
-});
-
 /**
- * Decode the `AGENT_DO_IMAGE_SOURCE` env JSON patch over `base`. Shape
- * violations throw (zod) — the DO constructor posture shared with
- * web_search: deployment-time input is validated once, at bring-up.
+ * The unconfigured source (no 产图源 seat, or a seat on an incomplete row):
+ * the executor answers honestly instead of guessing a default (#450 — zero
+ * env fallback; D1 image_source + the openai-images row are the only 正本).
  */
-export function decodeGenerateImageConfig(
-  raw: string | undefined,
-  base: GenerateImageConfig = DEFAULT_GENERATE_IMAGE_CONFIG,
-): GenerateImageConfig {
-  if (raw === undefined || raw === "") return base;
-  const patch = generateImageConfigPatchSchema.parse(JSON.parse(raw));
-  return {
-    baseUrl: patch.baseUrl.replace(/\/+$/, ""),
-    apiKey: patch.apiKey,
-    model: patch.model,
-    timeoutSeconds: Math.min(
-      patch.timeoutSeconds ?? base.timeoutSeconds,
-      MAX_IMAGE_TIMEOUT_SECONDS,
-    ),
-  };
-}
+const IMAGE_SOURCE_UNCONFIGURED_OUTPUT =
+  "generate_image is not configured: no usable image source. Select an " +
+  "api=openai-images provider row as the image source (产图源) in Settings → " +
+  "Providers — the row's baseUrl, stored key, and first model row are the " +
+  "source. There is no deployment-env fallback.";
 
 // ---------------------------------------------------------------------------
 // omp verbatim prompt assembly — image-gen.ts:68-81
@@ -277,7 +245,12 @@ async function decodeImageResponse(
 export type WriteThreadFile = (args: {
   filename: string;
   contentBase64: string;
-}) => Promise<{ kind: "ok"; path: string } | { kind: "error"; errorCode: string; errorMessage: string } | { kind: "host_offline" } | { kind: "timeout" }>;
+}) => Promise<
+  | { kind: "ok"; path: string }
+  | { kind: "error"; errorCode: string; errorMessage: string }
+  | { kind: "host_offline" }
+  | { kind: "timeout" }
+>;
 
 /** Result of one `host.read_file` round trip for `input[].path` legs. */
 export type ReadThreadFile = (args: {
@@ -290,13 +263,17 @@ export type ReadThreadFile = (args: {
 >;
 
 /**
- * DO-bound context: the AgentDO binds the decoded env config
- * (`AGENT_DO_IMAGE_SOURCE`), the owning call's cancel signal, the global
- * fetch (MSW-intercepted under the vitest workers pool) and the two host
- * file seams (agent-do/daemon.ts — the service-DO stub's B2 methods).
+ * DO-bound context: the AgentDO binds the panel-resolved source config
+ * (the 产图源 seat over an openai-images row), the owning call's cancel
+ * signal, the global fetch (MSW-intercepted under the vitest workers pool)
+ * and the two host file seams (agent-do/daemon.ts — the service-DO stub's
+ * B2 methods).
+ * `config` is null when no source is selected (the honest not-configured
+ * state, #450) — the executor answers with the remedy, never a guessed
+ * default.
  */
 export interface GenerateImageToolContext {
-  config: GenerateImageConfig;
+  config: GenerateImageConfig | null;
   signal: AbortSignal;
   fetchImpl: typeof fetch;
   writeThreadFile: WriteThreadFile;
@@ -352,13 +329,14 @@ async function resolveInputImage(
 
 async function postImageJson(
   ctx: GenerateImageToolContext,
+  config: GenerateImageConfig,
   endpoint: string,
   body: unknown,
 ): Promise<Response> {
-  return ctx.fetchImpl(`${ctx.config.baseUrl}${endpoint}`, {
+  return ctx.fetchImpl(`${config.baseUrl}${endpoint}`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${ctx.config.apiKey}`,
+      Authorization: `Bearer ${config.apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
@@ -384,6 +362,7 @@ async function parseImageApi(response: Response): Promise<unknown> {
 
 async function generateViaOpenAICompatible(
   ctx: GenerateImageToolContext,
+  config: GenerateImageConfig,
   prompt: string,
   inputImages: { data: string; mimeType: string }[],
   size: string | undefined,
@@ -397,7 +376,11 @@ async function generateViaOpenAICompatible(
     ...(size ? { size } : {}),
   };
   if (inputImages.length === 0) {
-    return decodeImageResponse(await parseImageApi(await postImageJson(ctx, "/images/generations", generationBody)), ctx.fetchImpl, ctx.signal);
+    return decodeImageResponse(
+      await parseImageApi(await postImageJson(ctx, config, "/images/generations", generationBody)),
+      ctx.fetchImpl,
+      ctx.signal,
+    );
   }
   // omp openai-images.ts:45-56, 93-113 (non-OpenAI JSON branch + the 404
   // fallback): edits first with input_references, generations retry.
@@ -409,9 +392,9 @@ async function generateViaOpenAICompatible(
       url: `data:${image.mimeType};base64,${image.data}`,
     })),
   };
-  let response = await postImageJson(ctx, "/images/edits", editBody);
+  let response = await postImageJson(ctx, config, "/images/edits", editBody);
   if (response.status === 404) {
-    response = await postImageJson(ctx, "/images/generations", editBody);
+    response = await postImageJson(ctx, config, "/images/generations", editBody);
   }
   return decodeImageResponse(await parseImageApi(response), ctx.fetchImpl, ctx.signal);
 }
@@ -428,21 +411,21 @@ export async function runGenerateImageTool(
   params: GenerateImageParams,
   ctx: GenerateImageToolContext,
 ): Promise<EdgeToolResult> {
-  if (ctx.config.baseUrl === "" || ctx.config.apiKey === "" || ctx.config.model === "") {
+  const config = ctx.config;
+  if (config === null || config.baseUrl === "" || config.apiKey === "" || config.model === "") {
     return {
       status: "error",
-      output:
-        "generate_image requires the deployment image source (AGENT_DO_IMAGE_SOURCE with baseUrl/apiKey/model).",
+      output: IMAGE_SOURCE_UNCONFIGURED_OUTPUT,
     };
   }
-  const timeoutMs = ctx.config.timeoutSeconds * 1000 || IMAGE_TIMEOUT_FALLBACK_MS;
+  const timeoutMs = config.timeoutSeconds * 1000 || IMAGE_TIMEOUT_FALLBACK_MS;
   // omp image-gen.ts:235 combineSignals(signal, IMAGE_TIMEOUT).
   const timeout = AbortSignal.timeout(timeoutMs);
   const signal = ctx.signal.aborted ? ctx.signal : AbortSignal.any([ctx.signal, timeout]);
 
   const prompt = assemblePrompt(params);
   const size = resolveOpenAIImageSize(params.aspect_ratio, params.image_size);
-  const model = params.model ?? ctx.config.model;
+  const model = params.model ?? config.model;
 
   const inputImages: { data: string; mimeType: string }[] = [];
   if (params.input?.length) {
@@ -463,7 +446,7 @@ export async function runGenerateImageTool(
 
   let images: GeneratedImage[];
   try {
-    images = await generateViaOpenAICompatible(ctx, prompt, inputImages, size, model);
+    images = await generateViaOpenAICompatible(ctx, config, prompt, inputImages, size, model);
   } catch (error) {
     if (ctx.signal.aborted) {
       // omp cancellation/timeout rethrow (image-gen.ts:323): abort maps to

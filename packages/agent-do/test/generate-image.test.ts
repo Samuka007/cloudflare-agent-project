@@ -6,10 +6,7 @@ import { createRig, resetRuntime } from "./helpers.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";
 import { executionIdFor } from "../src/ids.js";
 import {
-  DEFAULT_GENERATE_IMAGE_CONFIG,
-  MAX_IMAGE_TIMEOUT_SECONDS,
   assemblePrompt,
-  decodeGenerateImageConfig,
   resolveOpenAIImageSize,
   runGenerateImageTool,
   type GenerateImageToolContext,
@@ -18,11 +15,12 @@ import { M0_RENDER_FLAGS, wireToolSet } from "../src/tools/registry.js";
 
 /**
  * B2 (#322) — the generate_image edge tool: the omp imageGenTool surface
- * (image-gen.ts verbatim schema/description/prompt assembly) over one
- * env-resolved OpenAI-compatible image source, the `openai-images` JSON
- * transport (generations / edits+404 fallback), and the save leg through
- * the daemon-service thread-file write seam whose absolute path feeds the
- * B1 imageView journal fold (ingestResult — rows land before tool.result).
+ * (image-gen.ts verbatim schema/description/prompt assembly) over the
+ * panel-resolved OpenAI-compatible image source (the 产图源 seat, #448),
+ * the `openai-images` JSON transport (generations / edits+404 fallback),
+ * and the save leg through the daemon-service thread-file write seam whose
+ * absolute path feeds the B1 imageView journal fold (ingestResult — rows
+ * land before tool.result).
  */
 
 const network = setupNetwork();
@@ -59,8 +57,11 @@ const CONFIG = {
 
 interface Seams {
   writes: { filename: string; contentBase64: string }[];
-  writeResult?: { kind: "ok"; path: string } | { kind: "error"; errorCode: string; errorMessage: string };
-  readResult?: { kind: "ok"; content: string; contentEncoding: "base64"; mimeType: string } | { kind: "error"; errorCode: string; errorMessage: string };
+  writeResult?:
+    { kind: "ok"; path: string } | { kind: "error"; errorCode: string; errorMessage: string };
+  readResult?:
+    | { kind: "ok"; content: string; contentEncoding: "base64"; mimeType: string }
+    | { kind: "error"; errorCode: string; errorMessage: string };
 }
 
 function ctxFrom(seams: Seams, signal = new AbortController().signal): GenerateImageToolContext {
@@ -184,29 +185,6 @@ describe("B2 — omp imageGenTool surface is verbatim", () => {
   });
 });
 
-describe("B2 — env config (AGENT_DO_IMAGE_SOURCE)", () => {
-  test("absent env keeps the ruled default; a patch overrides; timeout clamps", () => {
-    expect(decodeGenerateImageConfig(undefined)).toEqual(DEFAULT_GENERATE_IMAGE_CONFIG);
-    const decoded = decodeGenerateImageConfig(
-      JSON.stringify({ baseUrl: `${IMAGE_API}/`, apiKey: "k", model: "m", timeoutSeconds: 9999 }),
-    );
-    expect(decoded).toEqual({
-      baseUrl: IMAGE_API,
-      apiKey: "k",
-      model: "m",
-      timeoutSeconds: MAX_IMAGE_TIMEOUT_SECONDS,
-    });
-  });
-
-  test("shape violations throw (the web_search construction posture)", () => {
-    expect(() => decodeGenerateImageConfig("{not-json")).toThrow();
-    expect(() => decodeGenerateImageConfig(JSON.stringify({ apiKey: "k" }))).toThrow();
-    expect(() =>
-      decodeGenerateImageConfig(JSON.stringify({ baseUrl: "not a url", apiKey: "k", model: "m" })),
-    ).toThrow();
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Executor — transport + save leg over the fake seams
 // ---------------------------------------------------------------------------
@@ -223,7 +201,9 @@ describe("B2 — runGenerateImageTool", () => {
       ctxFrom(seams),
     );
     expect(result.status).toBe("ok");
-    expect(result.images).toEqual([{ path: `/host/root/thr/Generated/${seams.writes[0]?.filename}` }]);
+    expect(result.images).toEqual([
+      { path: `/host/root/thr/Generated/${seams.writes[0]?.filename}` },
+    ]);
     expect(result.output).toBe(
       `Model: gpt-image-1\nGenerated 1 image(s):\n  /host/root/thr/Generated/${seams.writes[0]?.filename}`,
     );
@@ -248,14 +228,19 @@ describe("B2 — runGenerateImageTool", () => {
       HttpResponse.json({ data: [{ url: "https://cdn.example.com/pic.png" }] }),
     );
     network.use(
-      http.get("https://cdn.example.com/pic.png", () =>
-        new HttpResponse(new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer, {
-          headers: { "content-type": "image/png" },
-        }),
+      http.get(
+        "https://cdn.example.com/pic.png",
+        () =>
+          new HttpResponse(new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer, {
+            headers: { "content-type": "image/png" },
+          }),
       ),
     );
     const seams: Seams = { writes: [] };
-    const result = await runGenerateImageTool({ subject: "a cat", model: "other-img" }, ctxFrom(seams));
+    const result = await runGenerateImageTool(
+      { subject: "a cat", model: "other-img" },
+      ctxFrom(seams),
+    );
     expect(result.status).toBe("ok");
     expect(seams.writes[0]?.filename).toMatch(/\.png$/);
     expect(atob(seams.writes[0]?.contentBase64 ?? "")).toBe("\u0089PNG");
@@ -274,9 +259,7 @@ describe("B2 — runGenerateImageTool", () => {
     );
     const result = await runGenerateImageTool({ subject: "x" }, ctxFrom({ writes: [] }));
     expect(result.status).toBe("error");
-    expect(result.output).toBe(
-      "Error: gpt-image-1 image request failed (429): quota exhausted",
-    );
+    expect(result.output).toBe("Error: gpt-image-1 image request failed (429): quota exhausted");
   });
 
   test("edit flow: data inputs ride /images/edits with input_references; 404 falls back to generations", async () => {
@@ -294,9 +277,7 @@ describe("B2 — runGenerateImageTool", () => {
       ctxFrom(seams),
     );
     expect(result.status).toBe("ok");
-    expect(wireBodies.map((entry) => entry.url)).toEqual([
-      `${IMAGE_API}/images/edits`,
-    ]);
+    expect(wireBodies.map((entry) => entry.url)).toEqual([`${IMAGE_API}/images/edits`]);
     expect(wireBodies[0]?.body).toMatchObject({
       input_references: [{ type: "image_url", url: `data:image/png;base64,${PNG_B64}` }],
     });
@@ -320,7 +301,10 @@ describe("B2 — runGenerateImageTool", () => {
         readResult: { kind: "error", errorCode: "ENOENT", errorMessage: "Path does not exist" },
       }),
     );
-    expect(missing).toEqual({ status: "error", output: "Error: Image file not found: /host/gone.png" });
+    expect(missing).toEqual({
+      status: "error",
+      output: "Error: Image file not found: /host/gone.png",
+    });
   });
 
   test("a failed host write is the tool's error (the provider bytes exist nowhere else)", async () => {
@@ -372,12 +356,13 @@ describe("B2 — the edge execution folds imageView rows (B1 chain)", () => {
         { deltas: ["done"] },
       ],
     });
-    // The rig's DO has no deployment env: the image source is injected into
-    // the same private seam-poking channel the web-search L1 uses
-    // (dispatchExecution), because AGENT_DO_* reads once at construction.
+    // The rig's DO has no D1 overlay: the panel-resolved image source is
+    // injected into the same private seam-poking channel the web-search L1
+    // uses (dispatchExecution), mirroring the turn-boundary refreshRuntime
+    // application the composed worker performs.
     await runInDurableObject(rig.stub, (instance) => {
-      const configSeam = instance as unknown as { generateImageConfig: unknown };
-      configSeam.generateImageConfig = CONFIG;
+      const configSeam = instance as unknown as { imageSource: unknown };
+      configSeam.imageSource = CONFIG;
     });
     const sent = await rig.stub.sendMessage({
       clientRequestId: "b2-fold",
@@ -403,7 +388,9 @@ describe("B2 — the edge execution folds imageView rows (B1 chain)", () => {
       turnId: sent.turnId,
       parentToolCallId: executionId,
     });
-    expect(imageViewRows[0]?.data.path).toMatch(/^\/fake-host\/.*\/Generated\/agent-image-\d+-1\.png$/);
+    expect(imageViewRows[0]?.data.path).toMatch(
+      /^\/fake-host\/.*\/Generated\/agent-image-\d+-1\.png$/,
+    );
     expect(imageViewRows[0]?.seq).toBeLessThan(resultRow?.seq ?? 0);
     expect(resultRow?.data.output).toContain(imageViewRows[0]?.data.path);
     // Edge path: zero daemon dispatches (the write rode the RPC seam, not exec).
@@ -428,7 +415,8 @@ describe("B2 — the edge execution folds imageView rows (B1 chain)", () => {
         event.type === "tool.result",
     );
     expect(resultRow?.data.status).toBe("error");
-    expect(resultRow?.data.output).toContain("AGENT_DO_IMAGE_SOURCE");
+    expect(resultRow?.data.output).toContain("generate_image is not configured");
+    expect(resultRow?.data.output).not.toContain("AGENT_DO_IMAGE_SOURCE");
     expect(events.some((event) => event.type === "imageView")).toBe(false);
   });
 
@@ -445,8 +433,8 @@ describe("B2 — the edge execution folds imageView rows (B1 chain)", () => {
       ],
     });
     await runInDurableObject(rig.stub, (instance) => {
-      const configSeam = instance as unknown as { generateImageConfig: unknown };
-      configSeam.generateImageConfig = CONFIG;
+      const configSeam = instance as unknown as { imageSource: unknown };
+      configSeam.imageSource = CONFIG;
     });
     const sent = await rig.stub.sendMessage({
       clientRequestId: "b2-replay",
@@ -465,8 +453,8 @@ describe("B2 — the edge execution folds imageView rows (B1 chain)", () => {
     // Re-asking the terminal executionId answers from the journal (M1.5 edge
     // iron rule): the seam-poked dispatch re-run must not refetch.
     await runInDurableObject(rig.stub, async (instance) => {
-      const configSeam = instance as unknown as { generateImageConfig: unknown };
-      configSeam.generateImageConfig = CONFIG;
+      const configSeam = instance as unknown as { imageSource: unknown };
+      configSeam.imageSource = CONFIG;
       const seam = instance as unknown as {
         dispatchExecution: (turnId: string, executionId: string) => Promise<void>;
       };

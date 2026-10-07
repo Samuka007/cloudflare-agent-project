@@ -13,10 +13,11 @@ import type { ModelRequest } from "../src/provider.js";
 /**
  * #150 L1 — the experimental tools are gated OFF by default (omp
  * tools/index.ts:766-772 posture: cfgExternalThinking,
- * cfgCompactionExperimentalContextManagement, cfgCheckpointEnabled; B2
- * #322 adds generate_image behind omp's `generate_image.enabled`), flip on
+ * cfgCompactionExperimentalContextManagement, cfgCheckpointEnabled), flip on
  * per env gate, and the `think` gate pairs with the omp forceReasoningOff
- * reasoning pin (sdk.ts:4275-4282).
+ * reasoning pin (sdk.ts:4275-4282). generate_image's gate is NOT an env —
+ * it folds from the 产图源 seat (#448); the wire shape still carries it as
+ * the fourth boolean.
  */
 
 const FIVE = ["think", "context_notes", "new_context", "checkpoint", "rewind"];
@@ -71,7 +72,6 @@ describe("#150/#322 — gate map covers exactly the experimental tools", () => {
       externalThinking: false,
       contextNotes: false,
       checkpoint: false,
-      generateImage: false,
     });
     expect(
       decodeExperimentalToolConfig({
@@ -83,8 +83,6 @@ describe("#150/#322 — gate map covers exactly the experimental tools", () => {
       externalThinking: true,
       contextNotes: true,
       checkpoint: true,
-      // Only the three envs above were set — the gate twin stays off.
-      generateImage: false,
     });
     expect(
       decodeExperimentalToolConfig({
@@ -96,7 +94,6 @@ describe("#150/#322 — gate map covers exactly the experimental tools", () => {
       externalThinking: false,
       contextNotes: false,
       checkpoint: false,
-      generateImage: false,
     });
   });
 });
@@ -104,13 +101,15 @@ describe("#150/#322 — gate map covers exactly the experimental tools", () => {
 describe("#150 — default wire: the five are absent; gated wire: present", () => {
   test("default gates strip all five from the main and subagent surfaces", () => {
     const mainDefault = wireNames(
-      requestWith({ experimentalGates: DEFAULT_EXPERIMENTAL_TOOL_CONFIG }),
+      requestWith({
+        experimentalGates: { ...DEFAULT_EXPERIMENTAL_TOOL_CONFIG, generateImage: false },
+      }),
     );
     for (const name of FIVE) expect(mainDefault).not.toContain(name);
     const subDefault = wireNames(
       requestWith({
         toolSurface: "subagent",
-        experimentalGates: DEFAULT_EXPERIMENTAL_TOOL_CONFIG,
+        experimentalGates: { ...DEFAULT_EXPERIMENTAL_TOOL_CONFIG, generateImage: false },
       }),
     );
     for (const name of FIVE) expect(subDefault).not.toContain(name);
@@ -153,7 +152,9 @@ describe("#150/#257 — forceReasoningOff pairing (sdk.ts:4275-4282)", () => {
 
   test("without the pairing the caller's thinking config is respected", () => {
     const body = anthropicRequestBody(
-      requestWith({ experimentalGates: DEFAULT_EXPERIMENTAL_TOOL_CONFIG }),
+      requestWith({
+        experimentalGates: { ...DEFAULT_EXPERIMENTAL_TOOL_CONFIG, generateImage: false },
+      }),
       { model: "test-model", maxTokens: 64, thinking: { type: "enabled", budget_tokens: 1024 } },
     );
     expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 1024 });
