@@ -185,7 +185,6 @@ test(
 
     expect(typeList(events)).toEqual([
       "thread.created",
-      "thread.execution_updated",
       "turn.input",
       "model.call_started",
       "model.delta",

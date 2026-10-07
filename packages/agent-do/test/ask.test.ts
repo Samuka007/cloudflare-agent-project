@@ -476,8 +476,10 @@ describe("M1.5 T4 — ask DO integration (DO↔SPA pending-interaction channel)"
 
   test("the pending interaction is pushed over /ws as a pending-interaction change", async () => {
     const rig = await createRig({
-      // No journaled execution (the pre-#351 journal shape): the interaction
-      // row carries the honest "unknown" — never the retired "omp" sentinel.
+      // The rig's default create-time pin (the mock's single row): the
+      // interaction provenance reads the journaled selection. The defensive
+      // "unknown" fallback only has a pre-#351 journal to bite on, and the
+      // send face now refuses those outright (#496).
       turns: [
         { toolCalls: [{ name: "ask", arguments: { questions: [ASK_QUESTION] } }] },
         { deltas: ["ok"] },

@@ -28,16 +28,6 @@ export interface AgentRuntime {
    */
   resolveExecutionProvider: (selection: RelaySelection) => ModelProvider;
   /**
-   * #496 legacy materialization: the one-time mapping for threads whose
-   * journal never pinned a selection (pre-#351 shape). The deployment
-   * channel's frozen resolution mapped onto a REAL catalog row, or null
-   * when the catalog declares no such row (the send then fails closed with
-   * the named selection_missing error — the create-face 422 semantics).
-   * Absent = no materialization: the thread stays unselected and every
-   * selection-less send fails closed.
-   */
-  materializeLegacySelection?: () => RelaySelection | null;
-  /**
    * #362 hot-reload seam: the deploying worker may re-read mutable provider
    * configuration (the D1 provider overlay) at the turn boundary — the DO
    * awaits it once per driveTurn before the first dispatch. Optional and

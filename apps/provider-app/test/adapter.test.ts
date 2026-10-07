@@ -16,6 +16,7 @@ import {
   expectOk,
   freshManagerName,
   managerFacadeByName,
+  mockSelection,
   registerMock,
   resetRuntime,
   stringField,
@@ -54,6 +55,7 @@ function startCommand(threadId: string): Extract<AdapterCommand, { type: "thread
     cwd: "/workspace",
     options: executionContext(),
     instructionMode: "append",
+    execution: mockSelection(),
   };
 }
 

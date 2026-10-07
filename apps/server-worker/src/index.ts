@@ -61,9 +61,8 @@ export class ComposedAgentDO extends AgentDO {
     super(ctx, env);
     // #351/#496: the providerId-keyed registry resolver every
     // journal-selection dispatch goes through (no deployment-default
-    // provider — the "*" fallback posture is retired) plus the legacy
-    // materializer for pre-#351 journals — one registration shape shared
-    // with the manager.
+    // provider — the "*" fallback posture is retired) — one registration
+    // shape shared with the manager.
     const harnessEnv = env as AgentDoBindings & HarnessEnv;
     // #450: the D1 overlay is the sole directory 正本. The constructor is
     // synchronous and D1 is async, so the isolate starts on the honest

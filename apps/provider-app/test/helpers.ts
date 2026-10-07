@@ -73,6 +73,15 @@ export function registerMock(
   return provider;
 }
 
+/**
+ * #496: the DO never materializes a selection — every adapter-command rig
+ * pins the mock's row explicitly (the mock resolver ignores it; single-
+ * provider rigs dispatch everything through the registered provider).
+ */
+export function mockSelection(): { providerId: string; model: string } {
+  return { providerId: "omp", model: "mock-model" };
+}
+
 /** bb-shaped execution options with a full permission policy. */
 export function executionOptions(
   overrides?: Partial<

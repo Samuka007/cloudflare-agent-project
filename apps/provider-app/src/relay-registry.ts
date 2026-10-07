@@ -118,15 +118,6 @@ function instanceKey(resolution: RelayProviderRegistryResolution): string {
   return `${resolution.providerId} ${resolution.modelId} ${resolution.reasoningLevel}`;
 }
 
-/**
- * #496 materialization constant: the legacy deployment channel's frozen
- * resolution — the model the pre-#450 channel served at freeze time
- * (`glm-5.3`, the harness default of that era). The registry maps it onto a
- * REAL catalog row (first declaration-order match); no such row → no
- * materialization (the thread stays unselected and fails closed).
- */
-const LEGACY_FROZEN_MODEL = "glm-5.3";
-
 export class RelayProviderRegistry {
   private readonly instances = new Map<string, ModelProvider>();
   private catalogResolution: RelayCatalogResolution;
@@ -296,32 +287,17 @@ export class RelayProviderRegistry {
   providerIds(): string[] {
     return [...new Set(this.catalogResolution.models.map((row) => row.providerId))];
   }
-
-  /**
-   * #496 legacy materialization: the frozen legacy model mapped onto the
-   * current catalog's real row, or null when the catalog declares none (the
-   * DO then refuses the send with the named selection_missing error). The
-   * reasoning rung stays unset — the row's derived default fills at dispatch.
-   */
-  materializeLegacySelection(): RelaySelection | null {
-    const row = this.catalogResolution.models.find(
-      (candidate) => candidate.id === LEGACY_FROZEN_MODEL,
-    );
-    return row === undefined ? null : { providerId: row.providerId, model: row.id };
-  }
 }
 
 /**
  * The composed AgentRuntime registration (#496): the registry resolver every
  * journal-selection dispatch goes through (the deployment-default provider
- * member is retired) plus the legacy materializer for pre-#351 journals.
- * This is the one registration shape the composed worker and the manager
- * install.
+ * member is retired). This is the one registration shape the composed worker
+ * and the manager install.
  */
 export function relayAgentRuntime(registry: RelayProviderRegistry): AgentRuntime {
   return {
     resolveExecutionProvider: (selection: RelaySelection): ModelProvider =>
       registry.providerFor(selection),
-    materializeLegacySelection: () => registry.materializeLegacySelection(),
   };
 }

@@ -28,7 +28,6 @@ describe("smoke: worker wiring", () => {
     // canonical journal shape now.
     expect(typeList(events)).toEqual([
       "thread.created",
-      "thread.execution_updated",
       "turn.input",
       "model.call_started",
       "turn.phase",

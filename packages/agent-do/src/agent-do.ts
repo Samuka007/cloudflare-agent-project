@@ -648,34 +648,24 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         `turn ${active.turnId} is active (${active.status}); use mode "auto" or "steer"`,
       );
     }
-    // #496 legacy materialization: a thread whose journal never pinned a
-    // selection (pre-#351 shape) becomes an ordinary explicit-selection
-    // thread at its next send — the deployment channel's frozen resolution
-    // mapped onto a real catalog row rides `thread.execution_updated` once
-    // (replay folds the same state). No materializable row → the named
-    // fail-closed refusal (create-face 422 semantics; the deployment-default
-    // dispatch is retired, never a silent mock).
+    // #496: a thread whose journal never pinned a selection (pre-#351
+    // shape) fails closed at send — no deployment default, no legacy
+    // migration (create-face 422 semantics; the deployment-default dispatch
+    // is retired, never a silent mock).
     if (pinned === null) {
-      const materialized =
-        getAgentRuntime(this.requireThread()).materializeLegacySelection?.() ?? null;
-      if (materialized === null) {
-        throw new AgentRpcError(
-          "invalid",
-          "selection_missing: this thread has no journaled execution selection and the " +
-            "deployment materializes no legacy default — send with providerId/model " +
-            "(fail-closed, #496)",
-        );
-      }
-      await this.appendEvent("thread.execution_updated", materialized);
-      pinned = materialized;
+      throw new AgentRpcError(
+        "invalid",
+        "selection_missing: this thread has no journaled execution selection — send " +
+          "with providerId/model (fail-closed, #496)",
+      );
     }
     const turnId = `turn_${crypto.randomUUID()}`;
     const record = await this.appendEvent("turn.input", {
       turnId,
       inputId: request.clientRequestId,
       content: request.content,
-      // #496: the block above guarantees a pin — explicit ride, thread state,
-      // or materialization; a pinless turn can no longer exist.
+      // #496: the block above guarantees a pin — explicit ride or thread
+      // state; a pinless turn can no longer exist.
       execution: pinned,
     });
     this.armWatchdog();
@@ -4694,8 +4684,8 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * installed — fail-closed on catalog drift (RelaySelectionError surfaces
    * as a turn failure, never a silent re-route). #496: no selection is the
    * named fail-closed error — the deployment-default ("*") dispatch is
-   * retired (sends materialize first; only a recovery re-drive of a
-   * pre-#351 queued turn can land here).
+   * retired and sends refuse a pinless thread first (selection_missing);
+   * only a recovery re-drive of a pre-#351 queued turn can land here.
    */
   private resolveTurnProvider(turnId: string): ModelProvider {
     const runtime = getAgentRuntime(this.requireThread());

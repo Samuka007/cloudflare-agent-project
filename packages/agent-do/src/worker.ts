@@ -163,10 +163,6 @@ function ensureRuntime(env: PocDriveEnv): void {
       resolveRelaySelection(rigRelayDirectory(model), selection);
       return provider;
     },
-    // #496: the rig's drives ride no explicit selection — materialize the
-    // rig's single declared row (the same fail-closed validation applies at
-    // dispatch).
-    materializeLegacySelection: () => ({ providerId: SYNTHETIC_RELAY_PROVIDER_ID, model }),
   });
   runtimeRegistered = true;
 }
@@ -261,6 +257,11 @@ async function handleDriveRoute(
         }
         selection = candidate;
       }
+      // #496: the DO never materializes a selection — a drive without an
+      // explicit one pins the rig's single declared row here, at the rig
+      // boundary (create-time journal; the same fail-closed validation
+      // applies at dispatch).
+      selection ??= { providerId: SYNTHETIC_RELAY_PROVIDER_ID, model };
     }
     if (text === undefined || text === "") {
       return Response.json(

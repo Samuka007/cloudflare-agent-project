@@ -62,7 +62,6 @@ async function waitFor(
 function registryRuntime(
   rows: Record<string, MockModelProvider>,
   fallback: MockModelProvider,
-  materialize: RelaySelection | null = null,
 ): AgentRuntime {
   return {
     resolveExecutionProvider: (selection: RelaySelection) => {
@@ -77,7 +76,6 @@ function registryRuntime(
       }
       return row;
     },
-    ...(materialize !== null ? { materializeLegacySelection: () => materialize } : {}),
   };
 }
 
@@ -260,7 +258,7 @@ test("catalog drift fails the turn loudly instead of re-routing", async () => {
   expect(mockA.calls).toHaveLength(0);
 });
 
-test("a pre-#351 journal materializes the legacy row at its next send (#496)", async () => {
+test("a pinless thread fails the send closed even when the catalog declares the legacy row (#496)", async () => {
   const legacyRow = new MockModelProvider([{ deltas: ["legacy"] }, { deltas: ["legacy-2"] }]);
   const mockB = new MockModelProvider([{ deltas: ["never"] }]);
   setAgentRuntime(
@@ -268,44 +266,21 @@ test("a pre-#351 journal materializes the legacy row at its next send (#496)", a
     registryRuntime(
       { "glm-5.3": legacyRow },
       legacyRow,
-      { providerId: "legacy-provider", model: "glm-5.3" },
     ),
   );
 
   const threadId = newThreadId();
   await createThread(threadId);
-  const sent = await send(threadId, "creq-legacy-1");
-  await waitTurnTerminal(threadId, sent.turnId);
-  expect(legacyRow.calls.length).toBeGreaterThan(0);
+  // The catalog declares the frozen legacy row, yet nothing materializes:
+  // the send refuses with the named selection_missing error (the routing
+  // maps it to 422 — create-face fail-closed semantics).
+  await expect(send(threadId, "creq-legacy-1")).rejects.toThrow(/selection_missing/);
+  expect(legacyRow.calls).toHaveLength(0);
   expect(mockB.calls).toHaveLength(0);
   const events = await eventsOf(threadId);
-  // The materialization is thread data: an explicit selection row rides the
-  // journal once, and the turn pins it (replay folds the same dispatch).
-  const updates = events.filter((event) => event.type === "thread.execution_updated");
-  expect(updates).toHaveLength(1);
-  expect(updates[0]?.data).toEqual({ providerId: "legacy-provider", model: "glm-5.3" });
-  const input = events.find((event): event is TurnInputEvent => event.type === "turn.input");
-  expect(input?.data.execution).toEqual({ providerId: "legacy-provider", model: "glm-5.3" });
-
-  // The second send appends nothing further (the pin is already explicit).
-  const second = await send(threadId, "creq-legacy-2");
-  await waitTurnTerminal(threadId, second.turnId);
-  expect(
-    (await eventsOf(threadId)).filter((event) => event.type === "thread.execution_updated"),
-  ).toHaveLength(1);
-});
-
-test("no selection and no materializable row fails the send closed (#496)", async () => {
-  const fallback = new MockModelProvider([{ deltas: ["never"] }]);
-  setAgentRuntime("*", registryRuntime({}, fallback));
-
-  const threadId = newThreadId();
-  await createThread(threadId);
-  await expect(send(threadId, "creq-legacy-none")).rejects.toThrow(/selection_missing/);
-  // Nothing landed: no turn row, no fallback dispatch.
-  const events = await eventsOf(threadId);
+  // Nothing landed: no selection row, no turn row, no dispatch.
+  expect(events.some((event) => event.type === "thread.execution_updated")).toBe(false);
   expect(events.some((event) => event.type === "turn.input")).toBe(false);
-  expect(fallback.calls).toHaveLength(0);
 });
 
 test("exact per-thread registration still wins over the registry (mock rigs)", async () => {

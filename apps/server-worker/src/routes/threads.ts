@@ -127,8 +127,9 @@ import type { AppEnv, Env } from "../app-types.js";
 
 /**
  * #496: the DO refuses a dispatch that would ride no selection (no journaled
- * pin, nothing materializable) with the `selection_missing:` marker; the RPC
- * boundary rethrows remote errors without their class (the compact route's
+ * pin — no legacy materialization either) with the `selection_missing:`
+ * marker; the RPC boundary rethrows remote errors without their class (the
+ * compact route's
  * message-match precedent), so the marker maps to the create-face 422 shape
  * — the fail-closed refusal is a caller error, not a server fault.
  */
