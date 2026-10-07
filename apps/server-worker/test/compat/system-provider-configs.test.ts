@@ -1,10 +1,14 @@
 import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import type { z } from "zod";
-import { decryptProviderSecret, resolveRelayCatalogWithOverlay } from "@cap/provider-app";
+import {
+  decryptProviderSecret,
+  resolveOverlayCatalog,
+  resolveHarness,
+} from "@cap/provider-app";
 import type { AnyAgentEvent, RelayCatalogProvider } from "@cap/agent-do";
 import { ensureMigrations } from "../migrate.js";
-import { restoreRigRelayCatalog, unsetRigRelayCatalog } from "../helpers.js";
+import { ensureRigProviderRow, removeRigProviderRow } from "../helpers.js";
 import { insertProviderConfig, type ProviderConfigEnv } from "../../src/db/provider-configs.js";
 import {
   PROBE_RATE_LIMIT_MAX,
@@ -32,13 +36,12 @@ import {
  *   plaintext writes when the secret is missing (db-layer backstop).
  * - Bad rows skip WITH a warning and stay on the CRUD face unrepaired —
  *   never silently deleted; the effective catalog drops them only.
- * - The merged directory (env seed ⊕ D1 rows, same id → D1 wins) feeds
- *   execution-options / projections hot — a panel write appears on the
- *   next request — and the thread selection (#351 chain) consumes it,
+ * - The D1 directory (the SOLE 正本 since #450 — the env seed is retired)
+ *   feeds execution-options / projections hot — a panel write appears on
+ *   the next request — and the thread selection (#351 chain) consumes it,
  *   down to a keyless row's dispatch failing closed (#434 point ⑦: no
  *   row-level mock).
- * - The CRUD display face lists ONLY user rows (#434 point 6): the env
- *   seed's read faces are execution-options / provider-projections.
+ * - The CRUD display face lists ONLY user rows (#434 point 6).
  * - Zero-secret discipline (#266 extension): no projection face carries a
  *   stored key value; hasApiKey presence only.
  */
@@ -138,58 +141,19 @@ function stubProbeFetch(calls: { url: string; init: RequestInit }[]): void {
   });
 }
 
-/**
- * #388 the seed-face tests inject deployment vars onto the shared worker
- * env (isolate:false — restored in afterEach). The bindings type has no
- * index signature; the seam pins exactly the two seats the faces read.
- */
-function setEnvVar(key: "MODEL_RELAY_CATALOG" | "MODEL_RELAY_MODEL", value: string): void {
-  (env as unknown as Record<string, string>)[key] = value;
-}
-
 afterEach(async () => {
   // The suite shares one worker (isolate:false): a leftover D1 row would
   // leak onto later files' execution-options faces.
   await env.DB.prepare("DELETE FROM provider_configs").run();
+  // The rig's configured-deployment row is part of the shared state —
+  // re-seed it for the later files (#450: the rig row IS the binding).
+  await ensureRigProviderRow();
   // The #448 产图源 seat is separate 正本 state — the same leak discipline.
   await env.DB.prepare("DELETE FROM image_source").run();
-  // The display-face describe injects a seed catalog onto the worker env —
-  // restore the RIG declaration for later files (#434: the rig is a
-  // configured deployment).
-  restoreRigRelayCatalog();
-  delete (env as unknown as Record<string, string>).MODEL_RELAY_MODEL;
 });
 
 describe("#434 point 6: the CRUD display face lists ONLY user rows", () => {
-  // The #388 merged-face posture is retired: the env seed is redeploy-managed
-  // configuration, never a fake row on the write face.
-  const SEED = JSON.stringify({
-    defaultProvider: "omp",
-    providers: {
-      omp: {
-        displayName: "newapi",
-        baseUrl: "https://newapi.example.com/v1",
-        api: "openai-responses",
-        models: [{ id: "glm-5.3-flash", name: "GLM 5.3 Flash" }],
-      },
-    },
-  });
-
-  function injectSeed(): void {
-    setEnvVar("MODEL_RELAY_CATALOG", SEED);
-  }
-
-  it("an env seed alone lists NOTHING on the CRUD face; execution-options still serves it", async () => {
-    injectSeed();
-    const providers = await listProviders();
-    expect(providers).toEqual([]);
-    // The declared catalog still serves the picker face — the declaration is
-    // the seed's read face, not the CRUD list.
-    expect((await executionOptions()).providers.map((provider) => provider.id)).toEqual(["omp"]);
-  });
-
   it("a seed id is 404 on :id like any unknown id; the reserved id stays refused on create", async () => {
-    injectSeed();
     const single = await request("GET", "/api/v1/system/providers/omp");
     expect(single.status).toBe(404);
     expect((await single.json<{ code: string }>()).code).toBe("provider_config_not_found");
@@ -209,53 +173,15 @@ describe("#434 point 6: the CRUD display face lists ONLY user rows", () => {
     ).toBe(404);
     expect((await request("DELETE", "/api/v1/system/providers/omp")).status).toBe(404);
   });
-
-  it("user rows list alone; the D1 row shadows its env twin on execution-options", async () => {
-    injectSeed();
-    await postProvider({
-      id: "panelp",
-      api: "anthropic-messages",
-      models: [{ id: "panel-only" }],
-    });
-    let providers = await listProviders();
-    expect(providers.map((row) => row.id)).toEqual(["panelp"]);
-    // The same-id wholesale replacement half is proven with a seed provider
-    // the panel CAN shadow (id omp is reserved for the sentinel-era guard).
-    setEnvVar(
-      "MODEL_RELAY_CATALOG",
-      JSON.stringify({
-        defaultProvider: "panelp",
-        providers: {
-          panelp: { displayName: "Seed Panel", models: [{ id: "seed-panel-model" }] },
-        },
-      }),
-    );
-    providers = await listProviders();
-    expect(providers.map((row) => row.id)).toEqual(["panelp"]);
-    expect(providers[0]?.models).toEqual([{ id: "panel-only" }]);
-  });
-
-  it("a broken D1 row stays visible with its warning; the env row keeps serving the picker", async () => {
-    injectSeed();
-    // models column is not valid JSON → skip-with-warning, never in the
-    // effective overlay — the env declaration keeps serving the picker while
-    // the broken USER row stays visible for repair.
-    await insertRawRow("omp", '{"id": "half');
-    const providers = await listProviders();
-    expect(providers.map((row) => [row.id, row.status])).toEqual([["omp", "warning"]]);
-    expect((await executionOptions()).providers.map((provider) => provider.id)).toEqual(["omp"]);
-  });
-
-  it("no catalog anywhere: both faces are honestly empty", async () => {
-    unsetRigRelayCatalog();
-    setEnvVar("MODEL_RELAY_MODEL", "glm-5.3-flash");
+  it("no configured rows: both faces are honestly empty (#450 no env stand-in)", async () => {
+    await removeRigProviderRow();
     try {
       const providers = await listProviders();
       expect(providers).toEqual([]);
       expect((await executionOptions()).providers).toEqual([]);
       expect((await executionOptions()).models).toEqual([]);
     } finally {
-      restoreRigRelayCatalog();
+      await ensureRigProviderRow();
     }
   });
 });
@@ -573,45 +499,31 @@ describe("#362 bad rows skip-with-warning, never silently deleted", () => {
   });
 });
 
-describe("#362 merged directory: env seed ⊕ D1 rows (D1 wins)", () => {
-  // The env ⊕ overlay resolution is the exact production call the routes and
-  // the registry make (builder-level, per the projections-test precedent);
-  // the route wiring is covered by the hot add/remove case below.
-  const ENV_CATALOG = {
-    defaultProvider: "envp",
-    providers: {
-      envp: {
-        displayName: "Env Provider",
-        models: [{ id: "env-model", name: "Env Model" }],
-      },
-    },
-  };
+describe("#362/#450 the D1 directory (sole 正本, no env seed)", () => {
+  // The overlay resolution is the exact production call the routes and the
+  // registry make (builder-level, per the projections-test precedent); the
+  // route wiring is covered by the hot add/remove case below.
   const OVERLAY: Record<string, RelayCatalogProvider> = {
     envp: {
-      displayName: "Panel Override",
+      displayName: "Panel Row",
       api: "openai-responses",
       models: [{ id: "panel-model" }],
     },
     panelp: { api: "anthropic-messages", models: [{ id: "panel-only" }] },
   };
 
-  it("a same-id D1 row replaces the env declaration wholesale; new ids are added", () => {
-    const merged = resolveRelayCatalogWithOverlay(
-      { MODEL_RELAY_CATALOG: JSON.stringify(ENV_CATALOG) },
-      OVERLAY,
-    );
+  it("every decoded row projects verbatim; nothing else joins the directory", () => {
+    const merged = resolveOverlayCatalog(resolveHarness({}), OVERLAY);
+    expect(merged.configured).toBe(true);
+    expect(merged.decodeError).toBe(false);
     const byId = new Map(merged.providers.map((provider) => [provider.id, provider]));
-    expect(byId.get("envp")?.displayName).toBe("Panel Override");
+    expect(byId.get("envp")?.displayName).toBe("Panel Row");
     const modelRows = new Map(merged.models.map((model) => [model.id, model]));
     expect(modelRows.has("panel-model")).toBe(true);
     expect(modelRows.has("panel-only")).toBe(true);
-    // The env DECLARED row ("Env Model") is gone — the D1 models replaced it
-    // wholesale, and nothing is synthesized back (#434): no env-model row,
-    // no wire-truth prepend.
-    expect(merged.models.filter((model) => model.id === "env-model")).toHaveLength(0);
-    expect(merged.models.map((model) => model.displayName)).not.toContain("Env Model");
-    // The env catalog's default provider survives the overlay.
-    expect(merged.defaultProviderId).toBe("envp");
+    // Rows never declare a deployment-wide default (#434/#450) — a
+    // selection without an explicit provider fails closed at the resolver.
+    expect(merged.defaultProviderId).toBeNull();
   });
 
   it("hot effect: a panel write appears on the next request and a delete retracts it", async () => {
@@ -646,7 +558,7 @@ describe("#362 merged directory: env seed ⊕ D1 rows (D1 wins)", () => {
   });
 });
 
-describe("#362 thread selection consumes the merged directory (#351 chain)", () => {
+describe("#362 thread selection consumes the D1 directory (#351 chain)", () => {
   it("a panel provider is selectable at create and a keyless dispatch fails closed (#434 ⑦)", async () => {
     // No key and no baseUrl → NO row-level mock: the turn fails loudly with
     // the named credential error (standalone rows never fall back to

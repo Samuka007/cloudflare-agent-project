@@ -22,15 +22,14 @@ export {
 } from "./harness.js";
 export type { HarnessEnv, HarnessProjection, ResolvedHarness, ThinkingConfig } from "./harness.js";
 export {
-  resolveRelayCatalog,
-  resolveRelayCatalogWithOverlay,
+  resolveOverlayCatalog,
   type RelayCatalogModelRow,
   type RelayCatalogProviderRow,
   type RelayCatalogResolution,
 } from "./catalog.js";
 export {
   RelayProviderRegistry,
-  decodeRelayProviderCredentials,
+  EMPTY_PROVIDER_OVERLAY,
   imageGenerationSourceFromOverlay,
   relayAgentRuntime,
   type RelayProviderOverlay,

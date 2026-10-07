@@ -17,6 +17,7 @@ import {
   relayAgentRuntime,
   loadProviderConfigOverlay,
   imageGenerationSourceFromOverlay,
+  EMPTY_PROVIDER_OVERLAY,
   RelayProviderRegistry,
   type HarnessEnv,
   type ManagerDoBindings,
@@ -63,7 +64,11 @@ export class ComposedAgentDO extends AgentDO {
     // journal-selection dispatch goes through — one registration shape
     // shared with the manager and the dev rigs.
     const harnessEnv = env as AgentDoBindings & HarnessEnv;
-    const registry = RelayProviderRegistry.fromEnv(harnessEnv);
+    // #450: the D1 overlay is the sole directory 正本. The constructor is
+    // synchronous and D1 is async, so the isolate starts on the honest
+    // zero-config overlay; the awaited refreshRuntime at the turn boundary
+    // (agent-do.ts driveTurn) hot-applies the panel rows before dispatch.
+    const registry = RelayProviderRegistry.create(harnessEnv, EMPTY_PROVIDER_OVERLAY);
     this.relayRegistry = registry;
     setAgentRuntime("*", {
       ...relayAgentRuntime(harnessEnv, registry),

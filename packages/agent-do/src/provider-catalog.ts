@@ -2,17 +2,21 @@ import { z } from "zod";
 
 /**
  * Relay provider catalog declaration (#350, #305 roadmap §3/§4.4) — the L1
- * deployment-env source of truth for "what the relay deployment bought":
- * providers × models × capabilities × declared flags. Public, zero-secret:
- * credentials never enter this ledger (keys stay in their own env/secret
- * slots — #255 ruling C); only declaration-grade fields are representable.
+ * directory vocabulary for "what the relay deployment bought":
+ * providers × models × capabilities × declared flags. #450: the edge env
+ * seed (MODEL_RELAY_CATALOG) is retired — the D1 provider_configs rows
+ * (decoded by the server loader into this schema) are the sole directory
+ * 正本; the schema itself stays the shared vocabulary. Public, zero-secret:
+ * credentials never enter this ledger (keys live in the D1 encrypted column
+ * — #255 ruling C); only declaration-grade fields are representable.
  *
  * Two faces consume one declaration (#319 dual-face pattern generalized to
  * the catalog layer):
- * - edge `MODEL_RELAY_CATALOG` → the picker/directory faces
- *   (apps/server-worker routes/system.ts execution-options + the
- *   provider-projections catalog row) and the harness resolution
- *   (apps/provider-app harness.ts);
+ * - edge D1 provider_configs rows (this schema, via the server loader) →
+ *   the picker/directory faces (apps/server-worker routes/system.ts
+ *   execution-options + the provider-projections catalog row) and the
+ *   registry resolution (apps/provider-app relay-registry.ts); the harness
+ *   deployment channel no longer folds rows (#450);
  * - daemon `DAEMON_AGENT_AUTH.providers` → the judge/security ModelRegistry
  *   (packages/daemon-service agent-auth.ts).
  *

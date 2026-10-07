@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate.js";
-import { createThread } from "../helpers.js";
+import { createThread, ensureRigReady, RIG_MODEL_ID, RIG_PROVIDER_ID } from "../helpers.js";
 import {
   threadResponseSchema,
   threadWithIncludesResponseSchema,
@@ -22,14 +22,24 @@ import type { AgentDoRpc } from "../../src/seam/agent-do.js";
  * thread.rebound event (§2.1: system-side switching never happens).
  */
 
-beforeAll(ensureMigrations);
+beforeAll(async () => {
+  await ensureMigrations();
+  await ensureRigReady();
+});
 
 const apiErrorBodySchema = z.object({ code: z.string() });
 const createdThreadBodySchema = threadResponseSchema.pick({ id: true, environmentId: true });
 
 /** The helper's programmatic no-turn shape (originKind null would 422 on
  * empty input); explicit payloads use it so only the binding varies. */
-const NO_TURN_CREATE = { origin: "app", input: [], originKind: "fork" } as const;
+const NO_TURN_CREATE = {
+  origin: "app",
+  input: [],
+  originKind: "fork",
+  // #450: the explicit selection the fail-closed create validation demands.
+  providerId: RIG_PROVIDER_ID,
+  model: RIG_MODEL_ID,
+} as const;
 
 async function postJson(path: string, body: unknown): Promise<Response> {
   return exports.default.fetch(`https://example.com${path}`, {

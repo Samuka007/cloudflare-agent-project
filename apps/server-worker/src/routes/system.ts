@@ -18,8 +18,8 @@ import {
   loadProviderConfigOverlay,
   parseModelsYml,
   projectHarness,
-  resolveRelayCatalog,
-  resolveRelayCatalogWithOverlay,
+  resolveOverlayCatalog,
+  resolveHarness,
   type ProviderConfigCatalogOverlay,
   type HarnessEnv,
   type ModelsYmlImportParse,
@@ -142,14 +142,13 @@ export function buildSystemConfig(env: Env, requestUrl: URL) {
  * apps/server/src/routes/system.ts:347-349). bb resolves the catalog by
  * probing installed agents on the routed host
  * (services/system/execution-options.ts:395-491); the Worker port has no host
- * to probe, so the catalog is a deployment declaration instead (#350):
- * MODEL_RELAY_CATALOG (public, zero-secret JSON —
- * packages/agent-do/src/provider-catalog.ts) projected through ONE
- * resolution shared with the harness (provider-app resolveRelayCatalog —
+ * to probe, so the catalog is the D1 provider-config 正本 instead (#450:
+ * the env seed is deleted) — the panel rows projected through ONE
+ * resolution shared with the registry (provider-app resolveOverlayCatalog —
  * the #319 dual-face pattern generalized to the catalog layer, roadmap
- * §0.1/§2.3). #434: no declaration (or a broken one) → an EMPTY directory —
- * nothing is synthesized; the picker simply has no providers until the
- * deployment declares a catalog (or the panel adds user rows). The response
+ * §0.1/§2.3). #434/#450: no configured rows → an EMPTY directory —
+ * nothing is synthesized; the picker is honestly empty until the panel
+ * adds rows. The response
  * shape is bb-verbatim (server-contract/src/api/system.ts:35-58) so the SPA
  * picker consumes it unmodified (shape fixture:
  * apps/app/src/hooks/useThreadCreationOptions.test.tsx:44-114); the typed
@@ -158,12 +157,9 @@ export function buildSystemConfig(env: Env, requestUrl: URL) {
  */
 export function buildExecutionOptions(
   env: HarnessEnv,
-  overlayProviders?: Record<string, RelayCatalogProvider>,
+  overlayProviders: Record<string, RelayCatalogProvider>,
 ): SystemExecutionOptionsResponse {
-  const catalog =
-    overlayProviders === undefined
-      ? resolveRelayCatalog(env)
-      : resolveRelayCatalogWithOverlay(env, overlayProviders);
+  const catalog = resolveOverlayCatalog(resolveHarness(env), overlayProviders);
   return {
     providers: catalog.providers.map((provider) => ({
       id: provider.id,
@@ -264,17 +260,15 @@ function webSearchProjectionRow(overlayRow: WebSearchOverlayRow | undefined): {
  */
 export function buildProviderProjections(
   env: HarnessEnv,
-  overlay?: Pick<
+  overlay: Pick<
     ProviderConfigCatalogOverlay,
     "providers" | "imageSourceProviderId" | "webSearch"
   >,
 ) {
   // One resolution for both rows: the harness projection and the catalog
-  // status project the same evaluation (same-source, #350).
-  const resolution =
-    overlay === undefined
-      ? resolveRelayCatalog(env)
-      : resolveRelayCatalogWithOverlay(env, overlay.providers);
+  // status project the same evaluation (same-source; the D1 rows are the
+  // sole directory source, #450).
+  const resolution = resolveOverlayCatalog(resolveHarness(env), overlay.providers);
   const harness = projectHarness(resolution.harness);
   // Total over env content: a malformed relay URL degrades to a null host
   // instead of failing the whole read-only face.
@@ -284,15 +278,15 @@ export function buildProviderProjections(
   } catch {
     // env content, not a caller error
   }
-  const webSearch = webSearchProjectionRow(overlay?.webSearch);
+  const webSearch = webSearchProjectionRow(overlay.webSearch);
   // #448: generate_image availability, presence-only. The 产图源 seat is
   // the only gate (#450 — zero env fallback): configured iff the selection
   // resolves to a dispatchable api=openai-images row. A dangling selection
   // (row deleted after selection) reports configured:false with the seat id
   // intact, so the panel can show what to repair.
-  const imageSourceProviderId = overlay?.imageSourceProviderId ?? null;
+  const imageSourceProviderId = overlay.imageSourceProviderId;
   const imageSourceRow =
-    imageSourceProviderId === null ? undefined : overlay?.providers[imageSourceProviderId];
+    imageSourceProviderId === null ? undefined : overlay.providers[imageSourceProviderId];
   const imageGeneration = {
     providerId: imageSourceProviderId,
     configured: imageSourceRow?.api === IMAGE_SOURCE_API_FAMILY && imageSourceRow.models.length > 0,
@@ -300,10 +294,11 @@ export function buildProviderProjections(
   return {
     harness: { ...harness, relayBaseUrlHost },
     webSearch,
-    // Catalog declaration status (#350): ids and decode state only — the
-    // full declared values live on GET /system/execution-options. The
-    // decodeError flag is the loud signal when the strict catalog decode
-    // failed and the env-only synthesis is being served instead.
+    // Catalog status (#350 shape, #450 semantics): ids and decode state
+    // only — the full values live on GET /system/execution-options.
+    // decodeError is retired with the env seed (constant false — D1 rows
+    // carry per-row warnings on the CRUD face instead); defaultProviderId
+    // is null forever (no first-key fill, #434).
     catalog: {
       configured: resolution.configured,
       decodeError: resolution.decodeError,
@@ -433,25 +428,34 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
     // exclusive. The Worker has no host routing, so the parsed value is
     // discarded and the primary catalog is served regardless.
     parseOr422(systemExecutionOptionsQuerySchema, ctx.req.query());
-    // #362: the D1 provider overlay rides over the env seed — a panel-side
-    // provider appears here on the next request (no redeploy, no reload).
+    // #450: the D1 provider rows ARE the directory — a panel-side provider
+    // appears here on the next request (no redeploy, no reload); zero rows
+    // serve the honest empty picker.
     const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
     return ctx.json(
       systemExecutionOptionsResponseSchema.parse(
-        buildExecutionOptions(ctx.env, overlay?.providers),
+        buildExecutionOptions(ctx.env, overlay?.providers ?? {}),
       ),
     );
   });
 
   // Read-only projection face (#266). Since #362 the user-face write path is
   // /system/providers (the D1 正本); this face still has no PUT anywhere —
-  // the env-declared deployment seed stays redeploy-only (control-plane-layer
-  // §3.2), and POST /system/config/reload remains a deliberate no-op for it.
+  // POST /system/config/reload remains a deliberate no-op for it.
   routes.get("/system/provider-projections", async (ctx) => {
     const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
     return ctx.json(
       systemProviderProjectionsResponseSchema.parse(
-        buildProviderProjections(ctx.env, overlay ?? undefined),
+        buildProviderProjections(ctx.env, overlay ?? {
+          providers: {},
+          imageSourceProviderId: null,
+          webSearch: {
+            configured: false,
+            decodeError: false,
+            projection: null,
+            engines: null,
+          },
+        }),
       ),
     );
   });

@@ -3,7 +3,14 @@ import { exports } from "cloudflare:workers";
 import { DAEMON_PROTOCOL_VERSION } from "@cap/daemon-service";
 import { ensureMigrations } from "../migrate.js";
 import { projectAttachmentReader } from "../../src/services/attachment-pickup.js";
-import { env, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers.js";
+import {
+  ensureRigReady,
+  env,
+  RIG_MODEL_ID,
+  RIG_PROVIDER_ID,
+  TEST_ENROLL_KEY,
+  TEST_HOST_KEY,
+} from "../helpers.js";
 import type { Env } from "../../src/env.js";
 
 /**
@@ -16,7 +23,10 @@ import type { Env } from "../../src/env.js";
  * thread→project (403), thread→bound-host (403), and the A1 read face.
  */
 
-beforeAll(ensureMigrations);
+beforeAll(async () => {
+  await ensureMigrations();
+  await ensureRigReady();
+});
 
 const BOUND_HOST_ID = "local";
 
@@ -52,6 +62,8 @@ async function seedThread(projectId: string): Promise<string> {
       title: "pickup-thread",
       projectId,
       origin: "app",
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
       input: [{ type: "text", text: "pickup seed" }],
     }),
   });

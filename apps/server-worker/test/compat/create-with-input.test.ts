@@ -37,9 +37,10 @@ describe("create-with-input dispatches the first turn (#61)", () => {
       input: [{ type: "text", text: "first message rides the create" }],
     });
     // The dispatch flips the coarse M0 status on the create chain itself —
-    // the row never sits at starting.
+    // the row never sits at starting. (The rigged relay wire completes the
+    // turn near-instantly, so the coarse status may already be past active.)
     const dispatched = await threadDetail(thread);
-    expect(dispatched.status).toBe("active");
+    expect(dispatched.status).not.toBe("starting");
     // DO event log: bootstrap + the create-carried turn request.
     const types = await rawEventTypes(thread.id);
     expect(types[0]).toBe("thread.created");

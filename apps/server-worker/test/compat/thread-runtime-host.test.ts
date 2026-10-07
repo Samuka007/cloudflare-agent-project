@@ -1,7 +1,13 @@
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate.js";
-import { createThread, send, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers.js";
+import {
+  createThread,
+  holdRigWire,
+  send,
+  TEST_ENROLL_KEY,
+  TEST_HOST_KEY,
+} from "../helpers.js";
 import { threadResponseSchema } from "../../src/contract/api/threads.js";
 import type { ThreadDbRow } from "../../src/db/rows.js";
 import { resolveThreadRuntimeState } from "../../src/services/runtime-display.js";
@@ -120,14 +126,21 @@ describe("#148 wiring: an in-flight turn never banners, host state notwithstandi
   });
 
   it("no attached host: the active thread reads active — no waiting-for-host banner", async () => {
-    const thread = await createThread({ title: "runtime-host-orphan" });
-    await send(thread.id);
-    const body = await readThread(thread.id);
-    expect(body.status).toBe("active");
-    // #148 regression guard: #194's resolver read waiting-for-host here —
-    // the banner that preempted the streaming face on thr_jk45qe4786.
-    expect(body.runtime.displayStatus).toBe("active");
-    expect(body.runtime.hostReconnectGraceExpiresAt).toBeNull();
+    // Hold the rig wire: the display pin needs a deterministically IN-FLIGHT
+    // turn (the rigged wire settles faster than the read round-trips).
+    const gate = holdRigWire();
+    try {
+      const thread = await createThread({ title: "runtime-host-orphan" });
+      await send(thread.id);
+      const body = await readThread(thread.id);
+      expect(body.status).toBe("active");
+      // #148 regression guard: #194's resolver read waiting-for-host here —
+      // the banner that preempted the streaming face on thr_jk45qe4786.
+      expect(body.runtime.displayStatus).toBe("active");
+      expect(body.runtime.hostReconnectGraceExpiresAt).toBeNull();
+    } finally {
+      gate.release();
+    }
   });
 
   it("attached host: the active thread echoes active", async () => {
@@ -136,12 +149,17 @@ describe("#148 wiring: an in-flight turn never banners, host state notwithstandi
     socket = await openDaemonSocket(HOST_ID, sessionId);
     // The register-before-broadcast order (S1) means the hub state and the DO
     // liveness agree by the time the attach fetch resolves.
-    const thread = await createThread({ title: "runtime-host-live" });
-    await send(thread.id);
-    const body = await readThread(thread.id);
-    expect(body.status).toBe("active");
-    expect(body.runtime.displayStatus).toBe("active");
-    expect(body.runtime.hostReconnectGraceExpiresAt).toBeNull();
+    const gate = holdRigWire();
+    try {
+      const thread = await createThread({ title: "runtime-host-live" });
+      await send(thread.id);
+      const body = await readThread(thread.id);
+      expect(body.status).toBe("active");
+      expect(body.runtime.displayStatus).toBe("active");
+      expect(body.runtime.hostReconnectGraceExpiresAt).toBeNull();
+    } finally {
+      gate.release();
+    }
   });
 
   it("drop inside the 30s grace: the active row still reads active — no host-reconnecting banner", async () => {
@@ -162,21 +180,31 @@ describe("#148 wiring: an in-flight turn never banners, host state notwithstandi
 
     // The active row keeps the loading face while the host is mid-grace —
     // #194's resolver read host-reconnecting with the countdown here.
-    const graceThread = await createThread({ title: "runtime-host-grace-active" });
-    await send(graceThread.id);
-    const graceBody = await readThread(graceThread.id);
-    expect(graceBody.status).toBe("active");
-    expect(graceBody.runtime.displayStatus).toBe("active");
-    expect(graceBody.runtime.hostReconnectGraceExpiresAt).toBeNull();
+    const gate = holdRigWire();
+    try {
+      const graceThread = await createThread({ title: "runtime-host-grace-active" });
+      await send(graceThread.id);
+      const graceBody = await readThread(graceThread.id);
+      expect(graceBody.status).toBe("active");
+      expect(graceBody.runtime.displayStatus).toBe("active");
+      expect(graceBody.runtime.hostReconnectGraceExpiresAt).toBeNull();
+    } finally {
+      gate.release();
+    }
   });
 
   it("recovery: active still reads active", async () => {
     const reopened = await openSession(HOST_ID);
     socket = await openDaemonSocket(HOST_ID, reopened.sessionId);
-    const thread = await createThread({ title: "runtime-host-recovered" });
-    await send(thread.id);
-    const body = await readThread(thread.id);
-    expect(body.runtime.displayStatus).toBe("active");
-    expect(body.runtime.hostReconnectGraceExpiresAt).toBeNull();
+    const gate = holdRigWire();
+    try {
+      const thread = await createThread({ title: "runtime-host-recovered" });
+      await send(thread.id);
+      const body = await readThread(thread.id);
+      expect(body.runtime.displayStatus).toBe("active");
+      expect(body.runtime.hostReconnectGraceExpiresAt).toBeNull();
+    } finally {
+      gate.release();
+    }
   });
 });

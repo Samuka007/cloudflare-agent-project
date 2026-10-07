@@ -11,6 +11,7 @@ import {
 } from "../../src/contract/thread-timeline.js";
 import { uploadedPromptAttachmentSchema } from "../../src/contract/api/projects.js";
 import { exports } from "cloudflare:workers";
+import { ensureRigReady, RIG_MODEL_ID, RIG_PROVIDER_ID } from "../helpers.js";
 
 /**
  * #320 A5: the timeline projection feeds the user row's attachment block from
@@ -22,7 +23,10 @@ import { exports } from "cloudflare:workers";
  * M0 shape, upstream-equivalent: ConversationAttachments.tsx:128 renders
  * nothing for empty lists either way).
  */
-beforeAll(ensureMigrations);
+beforeAll(async () => {
+  await ensureMigrations();
+  await ensureRigReady();
+});
 
 const BASE = "https://example.com";
 const PROJECT = "proj_personal";
@@ -56,6 +60,9 @@ async function createWithInput(input: unknown[], overrides: Record<string, unkno
       projectId: PROJECT,
       origin: "app",
       environment: { type: "host", workspace: { type: "personal" } },
+      // #450: the explicit selection the fail-closed create validation demands.
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
       input,
       ...overrides,
     }),

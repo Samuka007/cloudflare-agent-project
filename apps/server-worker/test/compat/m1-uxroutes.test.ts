@@ -8,7 +8,14 @@ import {
 } from "../../src/contract/api/threads.js";
 import { buildTimelinePage, projectTimelineRows } from "../../src/services/timeline.js";
 import type { UxThreadEvent } from "../../src/seam/agent-do.js";
-import { BASE, createThread, send } from "../helpers.js";
+import {
+  BASE,
+  createThread,
+  ensureRigReady,
+  RIG_MODEL_ID,
+  RIG_PROVIDER_ID,
+  send,
+} from "../helpers.js";
 import { exports } from "cloudflare:workers";
 
 /**
@@ -28,7 +35,10 @@ import { exports } from "cloudflare:workers";
  *   (ThreadActionsProvider.tsx:208-237); a 404 makes requestDelete resolve
  *   null and the dialog silently never opens.
  */
-beforeAll(ensureMigrations);
+beforeAll(async () => {
+  await ensureMigrations();
+  await ensureRigReady();
+});
 
 let seqCounter = 0;
 
@@ -89,6 +99,9 @@ async function createThreadFixture(
       projectId: "proj_personal",
       origin: "app",
       environment: { type: "host", workspace: { type: "personal" } },
+      // #450: the explicit selection the fail-closed create validation demands.
+      providerId: RIG_PROVIDER_ID,
+      model: RIG_MODEL_ID,
       // originKind null + non-empty input is the assigned-child shape (the
       // create route maps parentThreadId → parent link only when originKind
       // is null; fork origin maps it to a source link instead).
