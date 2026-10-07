@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { expect } from "vitest";
-import { afterEach, beforeAll, describe, it } from "vitest";
+import { afterEach, describe, it } from "vitest";
 import type { RecordedHubCall } from "../src/testing/recording-hub.js";
 import { createRig, resetRuntime, type Rig } from "./helpers.js";
 
@@ -13,8 +13,9 @@ import { createRig, resetRuntime, type Rig } from "./helpers.js";
  * GET (reload's first render included) deriving "working" from a stale
  * `active` row.
  *
- * Schema note: only the settlement-touched columns are pinned here; the full
- * threads DDL is owned by apps/server-worker/migrations (compat tests).
+ * Schema note: the rig DB carries the REAL control-plane schema — helpers'
+ * ensureMigrations replays apps/server-worker/migrations (#375) — so seeds
+ * name the seeded `proj_personal` project row; no shadow DDL here.
  */
 
 interface SettlementRow {
@@ -47,17 +48,15 @@ interface RecordingHubStub {
   peekCalls(): Promise<RecordedHubCall[]>;
 }
 
-// D1 exec is single-statement per line here; keep the fixture on one line.
-const SCHEMA =
-  "CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL DEFAULT 'starting', deleted_at INTEGER, archived_at INTEGER, updated_at INTEGER NOT NULL);";
-
 async function seedThreadRow(threadId: string, status: string): Promise<void> {
+  const now = Date.now();
   await rigDb()
     .prepare(
-      "INSERT INTO threads (id, status, deleted_at, archived_at, updated_at) VALUES (?, ?, NULL, NULL, ?) " +
+      "INSERT INTO threads (id, project_id, provider_id, status, deleted_at, archived_at, latest_attention_at, created_at, updated_at) " +
+        "VALUES (?, 'proj_personal', 'rig', ?, NULL, NULL, ?, ?, ?) " +
         "ON CONFLICT(id) DO UPDATE SET status = excluded.status, deleted_at = NULL, archived_at = NULL",
     )
-    .bind(threadId, status, Date.now())
+    .bind(threadId, status, now, now, now)
     .run();
 }
 
@@ -91,13 +90,12 @@ async function statusChangedCall(threadId: string): Promise<RecordedHubCall | un
   const stub = hubNamespace.get(hubNamespace.idFromName("hub")) as unknown as RecordingHubStub;
   const calls: RecordedHubCall[] = await stub.peekCalls();
   return calls.find(
-    (call) => call.kind === "changed" && call.threadId === threadId && call.changes?.includes("status-changed"),
+    (call) =>
+      call.kind === "changed" &&
+      call.threadId === threadId &&
+      call.changes?.includes("status-changed"),
   );
 }
-
-beforeAll(async () => {
-  await rigDb().exec(SCHEMA);
-});
 
 afterEach(() => {
   resetRuntime();
@@ -109,10 +107,12 @@ describe("#238 terminal-turn control-plane settlement", () => {
     await seedThreadRow(rig.threadId, "active");
     await runTurnToCompletion(rig);
     await waitForRowStatus(rig.threadId, "idle");
-    await expect.poll(async () => (await statusChangedCall(rig.threadId)) !== undefined, {
-      timeout: 10_000,
-      interval: 100,
-    }).toBe(true);
+    await expect
+      .poll(async () => (await statusChangedCall(rig.threadId)) !== undefined, {
+        timeout: 10_000,
+        interval: 100,
+      })
+      .toBe(true);
   });
 
   it("settles a failed turn to error", async () => {
@@ -130,11 +130,16 @@ describe("#238 terminal-turn control-plane settlement", () => {
       expect((await readRow(rig.threadId))?.status).toBe(status);
     }
     await seedThreadRow(rig.threadId, "active");
-    await rigDb().prepare("UPDATE threads SET deleted_at = ? WHERE id = ?").bind(Date.now(), rig.threadId).run();
+    await rigDb()
+      .prepare("UPDATE threads SET deleted_at = ? WHERE id = ?")
+      .bind(Date.now(), rig.threadId)
+      .run();
     await runTurnToCompletion(rig);
-    await expect.poll(async () => (await readRow(rig.threadId))?.status, {
-      timeout: 5_000,
-      interval: 100,
-    }).toBe("active");
+    await expect
+      .poll(async () => (await readRow(rig.threadId))?.status, {
+        timeout: 5_000,
+        interval: 100,
+      })
+      .toBe("active");
   });
 });

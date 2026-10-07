@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { AnthropicRelayProvider, modelRequestFromEvents } from "../src/index.js";
 import { anthropicRequestBody } from "../src/relay/wire.js";
-import { createRig, typeList, type Rig } from "./helpers.js";
+import { createRig, waitForToolCallOrTerminal, typeList, type Rig } from "./helpers.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";
 
 /**
@@ -13,6 +13,12 @@ import type { AnyAgentEvent } from "../src/fsm-events.js";
  *
  * Skips itself when `.dev.vars` (gitignored) carries no MODEL_RELAY_* creds —
  * CI stays green without secrets.
+ *
+ * #375: a provider-side stream break (the newapi anthropic face truncates
+ * before message_stop when its upstream bridge is unhealthy) seals
+ * `turn.failed` mid-call — no tool.call ever arrives. The tool-call phase
+ * therefore waits for EITHER outcome and fails with the journal evidence,
+ * never a bare poll timeout.
  */
 
 const relayKey = __RELAY_ENV__.MODEL_RELAY_API_KEY;
@@ -60,9 +66,7 @@ test.skipIf(relayKey === undefined || relayKey === "" || relayBase === undefined
 
     // The REAL dispatch chain is the service lane's half; the reference fake
     // stands in: emit the canned bash output, then the exit.
-    const snapshot = await rig.waitFor((all) => all.some((event) => event.type === "tool.call"));
-    const toolCall = snapshot.find((event) => event.type === "tool.call");
-    if (toolCall === undefined) throw new Error("missing tool.call event");
+    const toolCall = await waitForToolCallOrTerminal(rig, sent.turnId);
     const executionId = `${rig.threadId}:${toolCall.seq}`;
     const canned = `${marker}\n`;
     await rig.service.clientEmitOutput(executionId, canned);

@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { CompletionsRelayProvider, modelRequestFromEvents } from "../src/index.js";
 import { completionsRequestBody } from "../src/relay/completions-wire.js";
-import { createRig, typeList, type Rig } from "./helpers.js";
+import { createRig, waitForToolCallOrTerminal, typeList, type Rig } from "./helpers.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";
 
 /**
@@ -78,9 +78,7 @@ test.skipIf(completionsKey === undefined || completionsKey === "" || completions
 
     // The REAL dispatch chain is the service lane's half; the reference fake
     // stands in: emit the canned bash output, then the exit.
-    const snapshot = await rig.waitFor((all) => all.some((event) => event.type === "tool.call"));
-    const toolCall = snapshot.find((event) => event.type === "tool.call");
-    if (toolCall === undefined) throw new Error("missing tool.call event");
+    const toolCall = await waitForToolCallOrTerminal(rig, sent.turnId);
     const executionId = `${rig.threadId}:${toolCall.seq}`;
     const canned = `${marker}\n`;
     await rig.service.clientEmitOutput(executionId, canned);

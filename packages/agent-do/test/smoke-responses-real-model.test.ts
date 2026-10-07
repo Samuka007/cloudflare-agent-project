@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { ResponsesRelayProvider, modelRequestFromEvents } from "../src/index.js";
 import { responsesRequestBody } from "../src/relay/responses-wire.js";
-import { createRig, typeList, type Rig } from "./helpers.js";
+import { createRig, waitForToolCallOrTerminal, typeList, type Rig } from "./helpers.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";
 
 /**
@@ -23,11 +23,7 @@ const responsesKey = __RELAY_ENV__.MODEL_RELAY_RESPONSES_API_KEY;
 const responsesBase = __RELAY_ENV__.MODEL_RELAY_RESPONSES_BASE_URL;
 const responsesModel = __RELAY_ENV__.MODEL_RELAY_RESPONSES_MODEL ?? "glm-5.3-flash";
 
-function transcriptOf(
-  rig: Rig,
-  provider: ResponsesRelayProvider,
-  events: AnyAgentEvent[],
-): string {
+function transcriptOf(rig: Rig, provider: ResponsesRelayProvider, events: AnyAgentEvent[]): string {
   return JSON.stringify(
     {
       threadId: rig.threadId,
@@ -42,12 +38,16 @@ function transcriptOf(
   );
 }
 
-test.skipIf(
-  responsesKey === undefined || responsesKey === "" || responsesBase === undefined,
-)("responses smoke: newapi glm-5.3-flash tool roundtrip terminates with response.completed",
+test.skipIf(responsesKey === undefined || responsesKey === "" || responsesBase === undefined)(
+  "responses smoke: newapi glm-5.3-flash tool roundtrip terminates with response.completed",
   { timeout: 240_000 },
   async () => {
-    if (responsesBase === undefined || responsesBase === "" || responsesKey === undefined || responsesKey === "") {
+    if (
+      responsesBase === undefined ||
+      responsesBase === "" ||
+      responsesKey === undefined ||
+      responsesKey === ""
+    ) {
       throw new Error("live responses relay env missing (MODEL_RELAY_RESPONSES_* in .dev.vars)");
     }
     const provider = new ResponsesRelayProvider({
@@ -72,9 +72,7 @@ test.skipIf(
 
     // The REAL dispatch chain is the service lane's half; the reference fake
     // stands in: emit the canned bash output, then the exit.
-    const snapshot = await rig.waitFor((all) => all.some((event) => event.type === "tool.call"));
-    const toolCall = snapshot.find((event) => event.type === "tool.call");
-    if (toolCall === undefined) throw new Error("missing tool.call event");
+    const toolCall = await waitForToolCallOrTerminal(rig, sent.turnId);
     const executionId = `${rig.threadId}:${toolCall.seq}`;
     const canned = `${marker}\n`;
     await rig.service.clientEmitOutput(executionId, canned);
