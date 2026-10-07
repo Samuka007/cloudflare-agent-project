@@ -7,7 +7,6 @@ interface __BaseEnv_Env {
 	DB: D1Database;
 	HOSTS_DB: D1Database;
 	ASSETS: Fetcher;
-	DATA_DIR: "/data";
 	HUB: DurableObjectNamespace<import("./src/index").NotificationHubDO>;
 	LEASES: DurableObjectNamespace<import("./src/index").LeaseStoreDO>;
 	AGENT_DO: DurableObjectNamespace<import("./src/index").ComposedAgentDO>;
@@ -27,7 +26,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "DATA_DIR">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, never>> {}
 }
 
 // Begin runtime types

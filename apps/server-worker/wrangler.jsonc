@@ -84,7 +84,8 @@
     // put`). Both present = JWT verification on /api/v1/* and /ws; either
     // missing = locked (503 access_gate_disabled) unless local-dev
     // (ACCESS_LOCAL_DEV, never set here). deploy-staging.sh asserts the pair.
-    "DATA_DIR": "/data",
+    // #504: DATA_DIR retired — the display label is the named constant
+    // BB_DATA_DIR_LABEL (shared/bb-display.ts), never a knob.
     // #377: no composition identity vars. The provider journal DO is named
     // by a code constant, the binding default is the cloud placeholder, and
     // a daemon enroll mints its own host — the deployment fabricates no
