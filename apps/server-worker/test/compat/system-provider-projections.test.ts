@@ -20,8 +20,10 @@ import { buildProviderProjections } from "../../src/routes/system.js";
  * the AGENT_DO_WEB_SEARCH env path is deleted (zero env fallback), edits
  * ride the /system/web-search write face. #450: the catalog row projects the
  * D1 provider_configs rows (the env seed is deleted — no decodeError state,
- * no defaultProviderId). Acceptance: zero secret values anywhere in the
- * response, and no PUT on this aggregate face.
+ * no defaultProviderId). #484: the harness row carries the `envConfigured`
+ * gate — at zero channel env the block is defaults synthesis and the panel
+ * hides it. Acceptance: zero secret values anywhere in the response, and no
+ * PUT on this aggregate face.
  */
 beforeAll(async () => {
   await ensureMigrations();
@@ -72,6 +74,11 @@ describe("GET /api/v1/system/provider-projections", () => {
       // harness default (no deployment machine is fabricated).
       expect(parsed.harness.machineId).toBe(CLOUD_PLACEHOLDER_HOST_ID);
       expect(parsed.harness.permissionMode).toBe("full");
+      // #484: zero channel env → the harness rows above are pure
+      // HARNESS_DEFAULTS synthesis; the panel must hide the block (the
+      // "mock" relay rows next to the live D1 provider rows read as "my LLM
+      // provider is mock").
+      expect(parsed.harness.envConfigured).toBe(false);
       // No D1 web_search row → ruled default chain: keyed API first,
       // credential-free aggregate as fallback (#144); not an env fallback
       // (#449 — the env path no longer exists).
@@ -126,6 +133,8 @@ describe("GET /api/v1/system/provider-projections", () => {
     expect(serialized).not.toContain(BRAVE_KEY);
     expect(serialized).not.toContain(SEARXNG_TOKEN);
     // Presence gates survive, values never do.
+    // #484: the channel env is set → the legacy block renders.
+    expect(wire.harness.envConfigured).toBe(true);
     expect(wire.harness.relayMode).toBe("anthropic");
     expect(wire.harness.relayApi).toBe("anthropic-messages");
     expect(wire.harness.relayKeyPresent).toBe(true);
@@ -222,10 +231,27 @@ describe("GET /api/v1/system/provider-projections", () => {
       ),
     );
     expect(host.harness.relayBaseUrlHost).toBe("relay.example.net");
+    // #484: one channel var is enough — the block renders.
+    expect(host.harness.envConfigured).toBe(true);
     const malformed = systemProviderProjectionsResponseSchema.parse(
       buildProviderProjections({ MODEL_RELAY_BASE_URL_ANTHROPIC: "not a url" }, EMPTY_OVERLAY),
     );
     expect(malformed.harness.relayBaseUrlHost).toBeNull();
+  });
+
+  it("#484 gates the legacy deployment channel on real env input (blank strings don't count)", () => {
+    expect(
+      systemProviderProjectionsResponseSchema.parse(
+        buildProviderProjections({ MODEL_RELAY_API_KEY: "   " }, EMPTY_OVERLAY),
+      ).harness.envConfigured,
+    ).toBe(false);
+    // The execution pins are channel members too: setting only them renders
+    // the block (the permission/machine rows are real env facts there).
+    expect(
+      systemProviderProjectionsResponseSchema.parse(
+        buildProviderProjections({ DAEMON_MACHINE_ID: "gpu-box-1" }, EMPTY_OVERLAY),
+      ).harness.envConfigured,
+    ).toBe(true);
   });
 
   it("carries the harness execution projection from the env", () => {
@@ -239,6 +265,7 @@ describe("GET /api/v1/system/provider-projections", () => {
         EMPTY_OVERLAY,
       ),
     );
+    expect(parsed.harness.envConfigured).toBe(true);
     expect(parsed.harness.permissionMode).toBe("accept-edits");
     expect(parsed.harness.machineId).toBe("gpu-box-1");
     expect(parsed.harness.relayThinking).toBe("enabled:2048");

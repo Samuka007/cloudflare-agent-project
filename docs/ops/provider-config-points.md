@@ -32,7 +32,7 @@
 
 - **edge 用户面 = 热生效（#362）**：D1 `provider_configs` 行经面板/API 写入 → 下一次请求的读面（execution-options / projections / CRUD list）即见；turn dispatch 走 overlay 内容指纹（`loadProviderConfigOverlay` → `RelayProviderRegistry.applyOverlay`，实例缓存清除——key 轮换/baseUrl 编辑不留 stale wire client）；AgentDO driveTurn 回合边界 best-effort `refreshRuntime`（失败续用 last-known 注册，配置读永不绝杀 turn）。
 - **产图源 seat = 热生效（#448）**：seat 读折进同一 overlay 内容指纹（provider 行 + seat 单批双 SELECT——回合边界 refresh 链上多一次独立 await 会翻转 L1 send→read 竞态的 DO 事件循环节拍，实测单批化后与基线一致）；PUT 后 `config-changed` 广播与 provider 行写同路。
-- **edge 部署标量 = 重部署**：`MODEL_RELAY_*` env 标量（base/model/key/maxTokens/budget）仍改 env → 重部署生效；#450 起目录/凭据 env seed 不存在（D1 面板行热生效，见 §2 播种引导）。`POST /system/config/reload` 是刻意 no-op（「Worker config source is env vars, so there is nothing to reload」，routes/system.ts）。
+- **edge 部署标量 = 重部署**：`MODEL_RELAY_*` env 标量（base/model/key/maxTokens/budget）仍改 env → 重部署生效；#450 起目录/凭据 env seed 不存在（D1 面板行热生效，见 §2 播种引导）。`POST /system/config/reload` 是刻意 no-op（「Worker config source is env vars, so there is nothing to reload」，routes/system.ts）。只读投影：`GET /system/provider-projections` 的 harness 行带 `harness.envConfigured` 门（#484）——channel env 全空时投影=HARNESS_DEFAULTS 合成（mock/open.bigmodel.cn/glm-5.3 非用户配置），Settings→Providers→Server 整块不渲染；仅当部署仍设 `MODEL_RELAY_*`（或 `DAEMON_MACHINE_ID`/`HARNESS_PERMISSION_MODE`）时显示，标注 legacy deployment relay channel，provider 配置正本始终是 Configured 行（D1）。
 - **daemon 侧 = 改 env + 重启 daemon client**。
 - **设置面的权威边界（#362 收窄后的形状）**：control-plane-layer §1.2——provider 配置 UI 不得长出工具/引擎启停的第二裁决点；§3.2 的「秘密不落控制面 DB」由 #362 以**加密列 + 专用 master key** 形式兑现——秘密进 `provider_configs.api_key_enc`（AES-GCM 密文），`app_settings` 仍不承载 provider 配置；部署拓扑（env seed/daemon 域）不进面板写路径（Server 节保持只读）。
 
