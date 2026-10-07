@@ -1,9 +1,9 @@
 /**
  * Watchdog / batching policy for the agent DO (unified-turn-state.md §5.1).
  *
- * All values are soft deadlines: the alarm is a backstop with ~1 minute of
- * scheduling jitter, never the real-time path. The config is persisted per DO
- * (`storage.kv`) so it survives eviction and replays deterministically.
+ * All values are soft deadlines: the alarm is a backstop with ~1 minute of jitter, never the
+ * real-time path. The 正本 is the per-DO `storage.kv` patch row over DEFAULT_WATCHDOG_CONFIG
+ * (#501: absent row/fields = defaults, no env channel) — eviction-durable, replay-deterministic.
  */
 
 import { z } from "zod";

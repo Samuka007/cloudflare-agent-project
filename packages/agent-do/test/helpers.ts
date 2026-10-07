@@ -47,7 +47,8 @@ export interface Rig {
   afterAbort<T>(operation: () => Promise<T>): Promise<T>;
 }
 
-const agentNamespace = (env as { AGENT_DO: DurableObjectNamespace }).AGENT_DO;
+/** Exported for tests that need the raw DO (e.g. configuring before create). */
+export const agentNamespace = (env as { AGENT_DO: DurableObjectNamespace }).AGENT_DO;
 const serviceNamespace = (env as { DAEMON_SERVICE: DurableObjectNamespace }).DAEMON_SERVICE;
 
 /** Re-exported for the rig test files (they register runtimes directly). */

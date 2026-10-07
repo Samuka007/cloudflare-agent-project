@@ -192,8 +192,6 @@ function capArtifactText(
  */
 
 export interface AgentDoBindings {
-  /** Optional JSON patch over the default watchdog config (env var). */
-  AGENT_DO_WATCHDOG?: string;
   /**
    * Optional JSON array of MCP servers (matrix C2, #327) — Streamable HTTP
    * endpoints the DO connects to in-process (edge do-local class, the same
@@ -546,7 +544,10 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
 
   constructor(ctx: DurableObjectState, env: AgentDoBindings) {
     super(ctx, env);
-    this.cfg = decodeWatchdogConfig(env.AGENT_DO_WATCHDOG, DEFAULT_WATCHDOG_CONFIG);
+    // #501: the constructor runs at the code defaults; the KV patch row (the
+    // sole watchdog config 正本) is adopted in recover() — single read layer,
+    // no env channel.
+    this.cfg = DEFAULT_WATCHDOG_CONFIG;
     this.mcpSurface = new McpToolSurface(decodeMcpServersConfig(env.AGENT_DO_MCP_SERVERS));
     this.log = new EventLog(ctx.storage, env.BLOBS, this.cfg.r2BypassBytes);
     this.state = this.loadState();
@@ -1837,12 +1838,16 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * drivers so partially completed turns converge.
    */
   private async recover(): Promise<void> {
-    if (this.threadId === null) return;
-    const persistedCfgRaw = this.ctx.storage.kv.get<string>(WATCHDOG_CONFIG_KV_KEY);
+    // #501: single-layer read — the KV patch row over the code defaults; an
+    // absent row (or absent fields) IS the default, one fallback, no env.
+    // Adopted before the thread guard: the write face serves threadless DOs
+    // too (the rig injects before its first create), so adoption must not
+    // depend on a thread existing yet.
     this.cfg = decodeWatchdogConfig(
-      persistedCfgRaw ?? this.env.AGENT_DO_WATCHDOG,
+      this.ctx.storage.kv.get<string>(WATCHDOG_CONFIG_KV_KEY),
       DEFAULT_WATCHDOG_CONFIG,
     );
+    if (this.threadId === null) return;
     // 1. Ruling A: seal model calls with no terminal event.
     for (const call of [...this.state.modelCalls.values()]) {
       if (call.status === "running") await this.sealModelCall(call.modelCallId);
@@ -4701,7 +4706,11 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     return runtime.resolveExecutionProvider(selection);
   }
 
-  /** Test/config seam: persist a watchdog config patch. */
+  /**
+   * Hot-patch seam: the KV row (`watchdog-config`) is the sole watchdog
+   * config 正本 (#501) — the patch is persisted for recovery decode, where
+   * absent fields fall back to the code defaults (single layer).
+   */
   async configureWatchdog(
     patch: Record<string, number | boolean>,
   ): Promise<{ config: Record<string, number> }> {
