@@ -37,11 +37,11 @@ export default defineConfig({
           // enroll/auth paths.
           ENROLL_KEY: "l1-rig-enroll-key",
           DAEMON_HOST_KEY: "l1-rig-host-key",
-          // SEC-W5-001 (#397): the gate is fail-closed, and wrangler.jsonc now
-          // ships "true". The L1 rig has no Access JWKS, so it runs the one
-          // sanctioned gate-off branch: explicit ACCESS_LOCAL_DEV marker (the
-          // same bindings-override seam as above).
-          ACCESS_CHECK_ENABLED: "false",
+          // SEC-W5-001 (#397) + #505: gate state derives from the
+          // ACCESS_TEAM_DOMAIN/ACCESS_AUD pair, and the L1 rig has neither —
+          // so it runs the one sanctioned gate-off branch: the explicit
+          // ACCESS_LOCAL_DEV marker (the same bindings-override seam as
+          // above; never set in deployed configs).
           ACCESS_LOCAL_DEV: "true",
         },
       },

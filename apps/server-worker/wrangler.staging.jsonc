@@ -83,13 +83,12 @@
     "crons": ["*/5 * * * *"],
   },
   "vars": {
-    // SEC-W5-001 (#397) fail-closed: the gate verifies Access JWTs on
-    // /api/v1/* and /ws. Requires the ACCESS_TEAM_DOMAIN + ACCESS_AUD Worker
-    // secrets (`wrangler secret put`); until the Access app fronts the
-    // worker, API callers are rejected (401 without a token — fail-closed by
-    // design; the SPA/static assets stay public). scripts/deploy-staging.sh
-    // asserts this stays "true" before every deploy.
-    "ACCESS_CHECK_ENABLED": "true",
+    // SEC-W5-001 (#397) fail-closed, #505: no gate flag — gate state IS the
+    // ACCESS_TEAM_DOMAIN + ACCESS_AUD Worker secret pair (`wrangler secret
+    // put`); both present = the gate verifies Access JWTs on /api/v1/* and
+    // /ws, either missing = the control plane locks (503
+    // access_gate_disabled; SPA/static assets stay public).
+    // scripts/deploy-staging.sh asserts the pair before every deploy.
     "DATA_DIR": "/data",
     // #377: identity vars removed — no synthetic host. Zero enrolled hosts
     // is a first-class state: the binding default is the cloud placeholder
