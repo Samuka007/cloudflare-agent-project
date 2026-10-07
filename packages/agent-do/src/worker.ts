@@ -34,7 +34,12 @@ export { AgentDO, TestDaemonServiceDO, DaemonServiceDO, RecordingHubDO };
 /** Route prefixes served by the landed daemon-service worker (#30). */
 const DAEMON_ROUTE_PREFIXES = ["/health", "/enroll", "/session/open", "/ws", "/agent/"];
 
-/** Relay + watchdog env the composed POC rig needs (repo-root .dev.vars shape). */
+/**
+ * Relay env the composed POC rig needs (repo-root .dev.vars shape). #501: the
+ * watchdog drill timings no longer ride an env var — the rig injects them
+ * through the drive surface (`POST /drive/:threadId/watchdog` → the DO's KV
+ * hot-patch seam).
+ */
 export interface PocDriveEnv {
   MODEL_RELAY_BASE_URL_ANTHROPIC?: string;
   /**
@@ -170,8 +175,11 @@ function ensureRuntime(env: PocDriveEnv): void {
 /**
  * Dev-rig turn drive (#34 external mile): `POST /drive/:threadId`
  * {text, clientRequestId?} → createThread (idempotent) + sendMessage(start);
- * `GET /drive/:threadId/events?sinceSeq=` → raw event log. Bearer-guarded by
- * the POC host key so a deployed staging rig is not an open relay front.
+ * `GET /drive/:threadId/events?sinceSeq=` → raw event log;
+ * `POST /drive/:threadId/watchdog` {patch} → the DO's KV hot-patch seam
+ * (#501: the rig injects watchdog drill timings through the write face, not
+ * env). Bearer-guarded by the POC host key so a deployed staging rig is not
+ * an open relay front.
  */
 async function handleDriveRoute(
   path: string,
@@ -293,6 +301,34 @@ async function handleDriveRoute(
     return Response.json(
       await stub.getEvents({ sinceSeq: Number.isFinite(sinceSeq) ? sinceSeq : 0 }),
     );
+  }
+  // #501: the watchdog config 正本 is the DO's KV patch row — the rig injects
+  // its drill timings through the existing write face (configureWatchdog),
+  // never an env patch layer. Same bearer guard as the turn verbs above.
+  if (request.method === "POST" && leaf === "watchdog") {
+    let raw: unknown;
+    try {
+      raw = await request.json();
+    } catch {
+      return Response.json({ code: "bad_request", message: "invalid json body" }, { status: 400 });
+    }
+    if (typeof raw !== "object" || raw === null) {
+      return Response.json(
+        { code: "validation_failed", message: "watchdog patch object required" },
+        { status: 422 },
+      );
+    }
+    try {
+      return Response.json(await stub.configureWatchdog(raw as Record<string, number | boolean>));
+    } catch (error) {
+      return Response.json(
+        {
+          code: "validation_failed",
+          message: error instanceof Error ? error.message : String(error),
+        },
+        { status: 422 },
+      );
+    }
   }
   return Response.json({ code: "not_found", message: `no drive route ${path}` }, { status: 404 });
 }

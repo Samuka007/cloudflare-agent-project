@@ -45,7 +45,11 @@ const STAGING_DATA_DIR = "/tmp/poc-full-chain-staging-data";
 /** Overridden by the staging leg (deployed workers.dev URL). */
 let baseUrl = `http://127.0.0.1:${PORT}`;
 let threadId = `thr_poc_full_${Date.now().toString(36)}`;
-/** Drill timing: re-ask fires at lastDispatchAt + execTimeoutMs + execGraceMs. */
+/**
+ * Drill timing: re-ask fires at lastDispatchAt + execTimeoutMs + execGraceMs.
+ * #501: injected through the rig drive surface (`POST /drive/:threadId/watchdog`
+ * → the DO's KV hot-patch seam) — there is no watchdog env channel.
+ */
 const WATCHDOG = {
   execTimeoutMs: 20_000,
   execGraceMs: 5_000,
@@ -171,6 +175,22 @@ async function driveTurn(text: string, clientRequestId: string): Promise<string>
     throw new Error(`drive POST HTTP ${status}: ${JSON.stringify(body).slice(0, 300)}`);
   }
   return (body as { turnId: string }).turnId;
+}
+
+/**
+ * #501: the watchdog drill timings are a KV hot-patch on the rig DO — the env
+ * patch channel is retired. POSTs the patch through the drive surface, which
+ * calls AgentDO.configureWatchdog on the current thread's DO instance.
+ */
+async function injectWatchdog(): Promise<void> {
+  const { status, body } = await fetchJson(`/drive/${threadId}/watchdog`, {
+    method: "POST",
+    body: JSON.stringify(WATCHDOG),
+  });
+  if (status !== 200) {
+    throw new Error(`watchdog inject HTTP ${status}: ${JSON.stringify(body).slice(0, 300)}`);
+  }
+  log("watchdog drill timings injected via the KV hot-patch route");
 }
 
 async function waitTurnTerminal(
@@ -369,7 +389,6 @@ async function main(): Promise<void> {
       `MODEL_RELAY_MODEL=${relayModel}`,
       `ENROLL_KEY=${ENROLL_KEY}`,
       `DAEMON_HOST_KEY=${HOST_KEY}`,
-      `AGENT_DO_WATCHDOG=${JSON.stringify(WATCHDOG)}`,
       "",
     ].join("\n"),
   );
@@ -389,6 +408,9 @@ async function main(): Promise<void> {
     90_000,
   );
   log("composed worker is up (AgentDO + real DaemonServiceDO)");
+
+  // 1b. #501: the drill timings ride the rig DO's KV hot-patch row.
+  await injectWatchdog();
 
   // 2. REAL daemon client process.
   log("starting real daemon client (bun process) …");
@@ -597,6 +619,8 @@ async function stagingLeg(vars: Record<string, string>, marker: string): Promise
     rmSync(STAGING_DATA_DIR, { recursive: true, force: true });
     client = startClient(url, STAGING_DATA_DIR);
     await waitFor(sessionSynced, "staging client enroll → sync", 60_000);
+    // #501: same KV hot-patch injection for the staging DO (no env channel).
+    await injectWatchdog();
     const stagingTurn = await driveTurn(
       "Use the bash tool to run exactly this command, then report the exact output line it printed: echo poc-staging-$(date +%s)",
       "poc-drive-staging",
@@ -639,7 +663,7 @@ async function stagingLeg(vars: Record<string, string>, marker: string): Promise
   }
 }
 
-/** `wrangler deploy` with the relay/watchdog vars inline; resolves the URL. */
+/** `wrangler deploy` with the relay vars inline; resolves the URL. */
 async function deployStaging(
   token: string,
   accountId: string,
@@ -661,8 +685,6 @@ async function deployStaging(
     `ENROLL_KEY:${ENROLL_KEY}`,
     "--var",
     `DAEMON_HOST_KEY:${HOST_KEY}`,
-    "--var",
-    `AGENT_DO_WATCHDOG:${JSON.stringify(WATCHDOG)}`,
   ];
   const out = await captureWrangler(args, token, accountId);
   const url = /https:\/\/[a-z0-9.-]+\.workers\.dev/.exec(out)?.[0];

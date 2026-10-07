@@ -256,3 +256,39 @@ test.skipIf(relayKey === undefined || relayKey === "" || relayBase === undefined
     expect(replay).toBe(provider.bodies[1]);
   },
 );
+
+test(
+  "hookup: /drive/:threadId/watchdog rides the KV hot-patch seam (#501)",
+  { timeout: 60_000 },
+  async () => {
+    const url = "https://hookup.test/drive/thr_hookup_watchdog/watchdog";
+    const headers = { "content-type": "application/json", authorization: `Bearer ${HOST_KEY}` };
+
+    // Wrong bearer → the same drive guard as the turn verbs.
+    const denied = await exports.default.fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer nope" },
+      body: JSON.stringify({ deltaFlushMs: 250 }),
+    });
+    expect(denied.status).toBe(401);
+
+    // Valid patch → the DO answers the merged config (patch over the defaults).
+    const applied = await exports.default.fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ deltaFlushMs: 250 }),
+    });
+    expect(applied.status).toBe(200);
+    const body = await applied.json<{ config: Record<string, number> }>();
+    expect(body.config.deltaFlushMs).toBe(250);
+    expect(body.config.turnWatchdogMs).toBe(30 * 60_000);
+
+    // Schema-invalid patch → fail-closed 422 (nothing applied).
+    const rejected = await exports.default.fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ deltaFlushMs: -5 }),
+    });
+    expect(rejected.status).toBe(422);
+  },
+);
