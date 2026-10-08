@@ -109,9 +109,10 @@
     // (join code, or the env key minting a fresh host).
     // #500: the deployment-channel vars (the relay scalars, the thinking
     // budget, the machine pin, the permission mode) are deleted — the D1
-    // provider_configs rows carry budget/window/input per model, and the
-    // permission_mode seat carries the posture. To keep the #303 walkthrough
-    // posture (budget on → one projected ladder rung) write
-    // thinkingBudgetTokens onto the row itself (hot-applied, no redeploy).
+    // provider_configs rows carry window/input per model, and the
+    // permission_mode seat carries the posture. #534: the ladder is the row's
+    // pi thinking seat (reasoning + thinking.efforts — no budget scalar
+    // anywhere; #303's one-rung posture = efforts: ["medium"], hot-applied,
+    // no redeploy).
   },
 }

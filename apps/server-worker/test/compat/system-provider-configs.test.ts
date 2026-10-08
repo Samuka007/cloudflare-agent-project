@@ -958,16 +958,15 @@ describe("SEC-W5-003: probe-face rate limit", () => {
 });
 
 describe("#362 scope absorption: per-model thinking budget + openai-images rows", () => {
-  it("a row budget opens the declared ladder without the env scalar, and hot-collapses when removed", async () => {
+  it("#534 the pi thinking seat drives the ladder hot, and removing it collapses the row to [none]", async () => {
     await postProvider({
       id: "budgeted",
       api: "anthropic-messages",
       models: [
         {
           id: "budget-model",
-          reasoningLevels: ["none", "high"],
-          defaultReasoningLevel: "high",
-          thinkingBudgetTokens: 4096,
+          reasoning: true,
+          thinking: { mode: "budget", efforts: ["high"], defaultLevel: "high" },
         },
       ],
     });
@@ -976,10 +975,10 @@ describe("#362 scope absorption: per-model thinking budget + openai-images rows"
       "high",
     );
 
-    // Hot: rewriting the row without the budget collapses the ladder on the
-    // next request (env scalar unset — the deprecated fallback is absent).
+    // Hot: rewriting the row without the thinking seat collapses the ladder
+    // on the next request (the capability declaration IS the switch).
     await request("PUT", "/api/v1/system/providers/budgeted", {
-      models: [{ id: "budget-model", reasoningLevels: ["none", "high"] }],
+      models: [{ id: "budget-model" }],
     });
     const collapsed = (await executionOptions()).models.find(
       (model) => model.id === "budget-model",
@@ -987,6 +986,33 @@ describe("#362 scope absorption: per-model thinking budget + openai-images rows"
     expect(collapsed?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)).toEqual([
       "none",
     ]);
+
+    // The compat read: a stored legacy row (budget number + rung list, the
+    // pre-#534 panel shape) still projects its ladder — the fold migrates it
+    // onto the pi shape at decode.
+    await request("PUT", "/api/v1/system/providers/budgeted", {
+      models: [
+        {
+          id: "budget-model",
+          reasoning: true,
+          reasoningLevels: ["none", "high"],
+          defaultReasoningLevel: "high",
+          thinkingBudgetTokens: 4096,
+        },
+      ],
+    });
+    const migrated = (await executionOptions()).models.find((model) => model.id === "budget-model");
+    expect(migrated?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)).toEqual([
+      "none",
+      "high",
+    ]);
+    expect(migrated?.defaultReasoningEffort).toBe("high");
+    // The write normalized the stored JSON: a re-read serves the pi shape.
+    const stored = await request("GET", "/api/v1/system/providers/budgeted");
+    const storedBody: { models: Record<string, unknown>[] } = await stored.json();
+    expect(storedBody.models[0]?.thinking).toMatchObject({ efforts: ["high"], defaultLevel: "high" });
+    expect(storedBody.models[0]?.reasoningLevels).toBeUndefined();
+    expect(storedBody.models[0]?.thinkingBudgetTokens).toBeUndefined();
   });
 
   it("openai-images rows become image sources ONLY through the explicit seat (#448)", async () => {

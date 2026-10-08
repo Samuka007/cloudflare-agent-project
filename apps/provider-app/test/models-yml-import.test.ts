@@ -238,9 +238,13 @@ providers:
       input: ["text", "image"],
       contextWindow: 1_000_000,
       maxTokens: 384_000,
-      // Legacy minLevel/maxLevel range → the inclusive ladder.
-      reasoningLevels: ["high", "xhigh"],
-      reasoningEffortMap: { high: "high", xhigh: "max" },
+      // #534: the pi thinking shape — the legacy range folds to efforts, the
+      // compat map rides effortMap, and the declared omp mode rides through.
+      thinking: {
+        mode: "effort",
+        efforts: ["high", "xhigh"],
+        effortMap: { high: "high", xhigh: "max" },
+      },
     });
   });
 
@@ -265,8 +269,11 @@ providers:
     const model = parse.providers[0]?.models[0];
     // `minimal` has no rung on the cloud ladder — dropped with a warning,
     // never clamped onto a neighbor.
-    expect(model?.reasoningLevels).toEqual(["low", "xhigh", "max"]);
-    expect(model?.defaultReasoningLevel).toBe("xhigh");
+    expect(model?.thinking?.efforts).toEqual(["low", "xhigh", "max"]);
+    expect(model?.thinking?.defaultLevel).toBe("xhigh");
+    // omp buildModel semantics: a thinking declaration reasons, even when
+    // the fragment omits the `reasoning` bit.
+    expect(model?.reasoning).toBe(true);
     expect(parse.providers[0]?.warnings.join("\n")).toContain("minimal");
     expect(parse.providers[0]?.warnings.join("\n")).toContain("outside the cloud ladder");
   });
@@ -285,8 +292,8 @@ providers:
 `,
     );
     const model = parse.providers[0]?.models[0];
-    expect(model?.reasoningLevels).toEqual(["low"]);
-    expect(model?.defaultReasoningLevel).toBeUndefined();
+    expect(model?.thinking?.efforts).toEqual(["low"]);
+    expect(model?.thinking?.defaultLevel).toBeUndefined();
     expect(parse.providers[0]?.warnings.join("\n")).toContain("defaultLevel");
   });
 
@@ -445,7 +452,7 @@ providers:
             high: low
 `,
     );
-    expect(parse.providers[0]?.models[0]?.reasoningEffortMap).toEqual({ high: "xhigh" });
+    expect(parse.providers[0]?.models[0]?.thinking?.effortMap).toEqual({ high: "xhigh" });
   });
 
   test("effort-map entries outside the vocabularies drop with warnings", () => {
@@ -456,6 +463,9 @@ providers:
     api: openai-responses
     models:
       - id: entries
+        thinking:
+          mode: effort
+          efforts: [low, high]
         compat:
           reasoningEffortMap:
             minimal: low
@@ -464,9 +474,59 @@ providers:
 `,
     );
     const model = parse.providers[0]?.models[0];
-    expect(model?.reasoningEffortMap).toEqual({ low: "low" });
+    expect(model?.thinking?.effortMap).toEqual({ low: "low" });
     const transcript = parse.providers[0]?.warnings.join("\n") ?? "";
     expect(transcript).toContain('"minimal" is not a cloud ladder rung');
     expect(transcript).toContain("bogus-effort");
+  });
+
+  test("#534 the glm pi shape imports verbatim and re-imports stable (no load-bearing hand-set field)", () => {
+    const fragment = `
+providers:
+  zai:
+    api: anthropic-messages
+    models:
+      - id: glm-5.3
+        name: GLM-5.3
+        reasoning: true
+        thinking:
+          mode: anthropic-budget-effort
+          efforts: [low, high, max]
+          defaultLevel: max
+          requiresEffort: true
+`;
+    const first = parseModelsYml(fragment);
+    const imported = first.providers[0]?.models[0];
+    expect(imported?.thinking).toEqual({
+      mode: "anthropic-budget-effort",
+      efforts: ["low", "high", "max"],
+      defaultLevel: "max",
+      requiresEffort: true,
+    });
+    // The acceptance mechanism: the SAME list re-imported (id collision
+    // aside) re-derives the identical row — the ladder lives in the
+    // declaration, not in a hand-set scalar that an import could wipe.
+    const second = parseModelsYml(fragment);
+    expect(second.providers[0]?.models[0]?.thinking).toEqual(imported?.thinking);
+    expect(first.warnings.join("\n")).not.toContain("thinkingBudgetTokens");
+  });
+
+  test("compat.reasoningEffortMap without a thinking block drops with the named remedy", () => {
+    const parse = parseModelsYml(
+      `
+providers:
+  mapless:
+    api: openai-responses
+    models:
+      - id: orphan-map
+        reasoning: true
+        compat:
+          reasoningEffortMap:
+            high: max
+`,
+    );
+    const model = parse.providers[0]?.models[0];
+    expect(model?.thinking).toBeUndefined();
+    expect(parse.providers[0]?.warnings.join("\n")).toContain("no ladder to remap");
   });
 });

@@ -1,8 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
-  DEFAULT_THINKING_REASONING_LEVEL,
   decodeRelayCatalog,
-  deriveRelayReasoning,
   findRelayCatalogModel,
   isImageGenerationModelId,
   isImageSourceProvider,
@@ -10,20 +8,26 @@ import {
   relayCatalogProviderSchema,
   relayCatalogSchema,
   relayModelEntrySchema,
+  relayReasoningLadder,
+  relayResponsesWireEffort,
+  relayAnthropicThinking,
+  relayWireModelId,
+  RELAY_ANTHROPIC_BUDGET_BY_EFFORT,
   resolveRelaySelection,
-  resolveResponsesEffort,
   RelaySelectionError,
-  RelayEffortMapError,
+  type RelaySelectionDirectory,
 } from "../src/provider-catalog.js";
 
 /**
  * #350 relay catalog declaration — L1 over the shared model-entry field
  * dictionary, the strict decode semantics (loud rejection, never silent
- * under-declaration), the budget-derived reasoning ladder, and the row
- * lookup order. #523 deleted the dictionary's last second consumer (the
- * daemon-side model registry imported from the retired agent-auth env
- * channel), leaving the edge catalog as the schema's only consumer —
- * these tests pin the vocabulary itself.
+ * under-declaration), and the row lookup order. #534: the reasoning domain
+ * is the pi-catalog 正本 — the row shape is `reasoning: boolean` +
+ * `thinking?: { mode, efforts, … }`, the ladder is pi's capability gate, and
+ * the retired thinkingBudgetTokens seat survives ONLY as the compat-read
+ * fold (存量行迁移钉). #523 deleted the dictionary's last second consumer
+ * (the daemon-side model registry), leaving the edge catalog as the schema's
+ * only consumer — these tests pin the vocabulary itself.
  */
 
 const FULL_CATALOG = {
@@ -45,8 +49,13 @@ const FULL_CATALOG = {
           maxTokens: 8192,
           cost: { input: 0.6, output: 2.2, cacheRead: 0.11, cacheWrite: 0 },
           description: "Flagship reasoning model",
-          reasoningLevels: ["none", "low", "medium", "high"],
-          defaultReasoningLevel: "high",
+          // The pi shape (models.dev zhipu-coding-plan glm-5.3 anchor).
+          thinking: {
+            mode: "anthropic-budget-effort",
+            efforts: ["low", "high", "max"],
+            defaultLevel: "max",
+            requiresEffort: true,
+          },
         },
         { id: "glm-5.3-air", name: "GLM-5.3-Air" },
       ],
@@ -62,7 +71,7 @@ describe("#350 MODEL_RELAY_CATALOG schema", () => {
     expect(decodeRelayCatalog("   ")).toBeNull();
   });
 
-  test("accepts the full declaration shape (dictionary + edge fields)", () => {
+  test("accepts the full declaration shape (dictionary + pi thinking)", () => {
     const catalog = decodeRelayCatalog(JSON.stringify(FULL_CATALOG));
     expect(catalog).not.toBeNull();
     expect(catalog?.defaultProvider).toBe("main");
@@ -70,6 +79,12 @@ describe("#350 MODEL_RELAY_CATALOG schema", () => {
     if (main === undefined || isImageSourceProvider(main)) throw new Error("expected chat branch");
     expect(main.models[0]?.input).toEqual(["text", "image"]);
     expect(main.models[0]?.cost?.cacheWrite).toBe(0);
+    expect(main.models[0]?.thinking).toEqual({
+      mode: "anthropic-budget-effort",
+      efforts: ["low", "high", "max"],
+      defaultLevel: "max",
+      requiresEffort: true,
+    });
     expect(catalog?.providers.backup?.models).toHaveLength(1);
   });
 
@@ -85,6 +100,17 @@ describe("#350 MODEL_RELAY_CATALOG schema", () => {
       providers: { omp: { models: [{ id: "glm-5.3" }] } },
     });
     expect(() => relayCatalogSchema.parse(JSON.parse(topTypo))).toThrow();
+    // The retired seats are DECLARED compat input — they fold, never fail.
+    const legacy = relayCatalogSchema.parse({
+      providers: { omp: { models: [{ id: "m", reasoningLevels: ["none", "high"] }] } },
+    });
+    const legacyOmp = legacy.providers.omp;
+    if (legacyOmp === undefined || isImageSourceProvider(legacyOmp)) throw new Error("chat branch");
+    expect(legacyOmp.models[0]?.thinking).toEqual({
+      mode: "budget",
+      efforts: ["high"],
+      defaultLevel: "high",
+    });
   });
 
   test("rejects empty providers, empty model rows, and a dangling defaultProvider", () => {
@@ -98,20 +124,31 @@ describe("#350 MODEL_RELAY_CATALOG schema", () => {
     ).toThrow();
   });
 
-  test("rejects unknown reasoning rungs and a default outside the declared ladder", () => {
-    const badRung = JSON.stringify({
-      providers: { omp: { models: [{ id: "m", reasoningLevels: ["medium", "megahigh"] }] } },
+  test("rejects out-of-vocabulary efforts, modes, and a dangling defaultLevel", () => {
+    const badEffort = JSON.stringify({
+      providers: { omp: { models: [{ id: "m", thinking: { mode: "budget", efforts: ["megahigh"] } }] } },
     });
-    expect(() => relayCatalogSchema.parse(JSON.parse(badRung))).toThrow();
+    expect(() => relayCatalogSchema.parse(JSON.parse(badEffort))).toThrow();
+    // `minimal` has no bb rung — the edge refuses it (the importer warns).
+    const minimal = JSON.stringify({
+      providers: { omp: { models: [{ id: "m", thinking: { mode: "effort", efforts: ["minimal"] } }] } },
+    });
+    expect(() => relayCatalogSchema.parse(JSON.parse(minimal))).toThrow();
+    const badMode = JSON.stringify({
+      providers: { omp: { models: [{ id: "m", thinking: { mode: "turbo", efforts: ["low"] } }] } },
+    });
+    expect(() => relayCatalogSchema.parse(JSON.parse(badMode))).toThrow();
     const danglingDefault = JSON.stringify({
       providers: {
-        omp: { models: [{ id: "m", reasoningLevels: ["low"], defaultReasoningLevel: "high" }] },
+        omp: {
+          models: [{ id: "m", thinking: { mode: "budget", efforts: ["low"], defaultLevel: "max" } }],
+        },
       },
     });
     expect(() => relayCatalogSchema.parse(JSON.parse(danglingDefault))).toThrow();
   });
 
-  test("rejects non-positive windows/budgets and negative cost rates", () => {
+  test("rejects non-positive windows and negative cost rates", () => {
     const zeroWindow = JSON.stringify({
       providers: { omp: { models: [{ id: "m", contextWindow: 0 }] } },
     });
@@ -137,58 +174,142 @@ describe("#350 MODEL_RELAY_CATALOG schema", () => {
     expect(() => relayCatalogSchema.parse(JSON.parse(modelKey))).toThrow();
   });
 
-  test("the dictionary is exactly the omp models.yml model vocabulary", () => {
-    // Field-set pin at the schema level: the shared dictionary must keep the
-    // omp models.yml field set (id/name/api/reasoning/input/contextWindow/
-    // maxTokens/cost) — #523 deleted the daemon-side importer; the edge
-    // catalog is the schema's only consumer.
+  test("the dictionary is the omp models.yml model vocabulary + the pi thinking seat", () => {
+    // Field-set pin at the schema level: the shared dictionary keeps the omp
+    // models.yml field set (id/name/api/reasoning/input/contextWindow/
+    // maxTokens/cost) plus #534's pi thinking seat.
     const keys = Object.keys(relayModelEntrySchema.shape).sort();
     expect(keys).toEqual(
-      ["api", "contextWindow", "cost", "id", "input", "maxTokens", "name", "reasoning"].sort(),
+      [
+        "api",
+        "contextWindow",
+        "cost",
+        "id",
+        "input",
+        "maxTokens",
+        "name",
+        "reasoning",
+        "thinking",
+      ].sort(),
     );
   });
 });
 
-describe("#350 reasoning ladder derivation", () => {
-  test("budget off → exactly [none] regardless of any declaration", () => {
-    // Extended thinking never runs — offering budget rungs would over-claim
-    // dispatch the wire ignores (roadmap §2.3 contradiction 2).
-    expect(deriveRelayReasoning({ thinkingEnabled: false })).toEqual({
+describe("#534 the pi ladder gate (relayReasoningLadder)", () => {
+  test("no capability seats → exactly [none]", () => {
+    expect(relayReasoningLadder({})).toEqual({ levels: ["none"], defaultLevel: "none" });
+    // reasoning bit without a controllable surface (pi: thinking undefined)
+    // still gates off — unknown is not a ladder.
+    expect(relayReasoningLadder({ reasoning: true })).toEqual({
       levels: ["none"],
       defaultLevel: "none",
     });
-    expect(
-      deriveRelayReasoning({
-        thinkingEnabled: false,
-        declaredLevels: ["low", "medium"],
-        declaredDefault: "medium",
-      }),
-    ).toEqual({ levels: ["none"], defaultLevel: "none" });
   });
 
-  test("budget on without a declaration → the single honest medium rung", () => {
-    expect(deriveRelayReasoning({ thinkingEnabled: true })).toEqual({
-      levels: [DEFAULT_THINKING_REASONING_LEVEL],
-      defaultLevel: DEFAULT_THINKING_REASONING_LEVEL,
+  test("gate on → [none, ...efforts] with the declared defaultLevel", () => {
+    // The glm anchor: [low,high,max] + default in the ladder (max).
+    expect(
+      relayReasoningLadder({
+        reasoning: true,
+        thinking: { mode: "effort", efforts: ["low", "high", "max"], defaultLevel: "max" },
+      }),
+    ).toEqual({ levels: ["none", "low", "high", "max"], defaultLevel: "max" });
+  });
+
+  test("no declared defaultLevel → pi defaultSupportedEffort (the lowest effort)", () => {
+    expect(
+      relayReasoningLadder({ reasoning: true, thinking: { mode: "budget", efforts: ["medium", "max"] } }),
+    ).toEqual({ levels: ["none", "medium", "max"], defaultLevel: "medium" });
+  });
+
+  test("the budget number is NOT a gate: declared efforts run regardless of effortBudgets", () => {
+    const withBudgets = relayReasoningLadder({
+      reasoning: true,
+      thinking: { mode: "budget", efforts: ["low", "max"], effortBudgets: { low: 4096 } },
     });
-    expect(DEFAULT_THINKING_REASONING_LEVEL).toBe("medium");
+    const withoutBudgets = relayReasoningLadder({
+      reasoning: true,
+      thinking: { mode: "budget", efforts: ["low", "max"] },
+    });
+    expect(withBudgets).toEqual(withoutBudgets);
+  });
+});
+
+describe("#534 the wire folds", () => {
+  test("relayResponsesWireEffort: identity for ladder rungs, the row's effortMap wins", () => {
+    expect(relayResponsesWireEffort("none")).toBe("none");
+    expect(relayResponsesWireEffort("high")).toBe("high");
+    expect(
+      relayResponsesWireEffort("xhigh", { mode: "effort", efforts: ["xhigh"], effortMap: { xhigh: "max" } }),
+    ).toBe("max");
   });
 
-  test("budget on with a declaration → the declaration verbatim", () => {
-    expect(
-      deriveRelayReasoning({
-        thinkingEnabled: true,
-        declaredLevels: ["none", "low", "high"],
-        declaredDefault: "high",
-      }),
-    ).toEqual({ levels: ["none", "low", "high"], defaultLevel: "high" });
-    // No declared default → medium when present, else the first rung.
-    expect(
-      deriveRelayReasoning({ thinkingEnabled: true, declaredLevels: ["low", "medium", "high"] }),
-    ).toEqual({ levels: ["low", "medium", "high"], defaultLevel: "medium" });
-    expect(deriveRelayReasoning({ thinkingEnabled: true, declaredLevels: ["low", "max"] })).toEqual(
-      { levels: ["low", "max"], defaultLevel: "low" },
-    );
+  test("relayAnthropicThinking: rung none → explicit disabled; budget rows ride effortBudgets", () => {
+    const row = {
+      reasoning: true,
+      thinking: {
+        mode: "budget",
+        efforts: ["low", "high", "max"],
+        defaultLevel: "max",
+        effortBudgets: { max: 65536 },
+      },
+    } as const;
+    expect(relayAnthropicThinking(row, "none").thinking).toEqual({ type: "disabled" });
+    expect(relayAnthropicThinking(row, "max")).toEqual({
+      thinking: { type: "enabled", budget_tokens: 65536 },
+    });
+    // An undeclared rung rides the named default ladder (pi-ai anchor).
+    expect(relayAnthropicThinking(row, "low")).toEqual({
+      thinking: { type: "enabled", budget_tokens: RELAY_ANTHROPIC_BUDGET_BY_EFFORT.low },
+    });
+  });
+
+  test("relayAnthropicThinking: adaptive rows map the effort through the pi 正本", () => {
+    const adaptive = {
+      reasoning: true,
+      thinking: {
+        mode: "anthropic-adaptive" as const,
+        efforts: ["low", "max"] as const,
+        defaultLevel: "high" as const,
+      },
+    };
+    expect(relayAnthropicThinking(adaptive, "max")).toEqual({
+      thinking: { type: "adaptive" },
+      outputConfig: { effort: "max" },
+    });
+    // budget-effort: the budget AND the mapped effort ride together.
+    const budgetEffort = {
+      reasoning: true,
+      thinking: {
+        mode: "anthropic-budget-effort" as const,
+        efforts: ["high", "max"] as const,
+        effortMap: { max: "xhigh" } as const,
+      },
+    };
+    expect(relayAnthropicThinking(budgetEffort, "max")).toEqual({
+      thinking: { type: "enabled", budget_tokens: RELAY_ANTHROPIC_BUDGET_BY_EFFORT.max },
+      outputConfig: { effort: "xhigh" },
+    });
+  });
+
+  test("relayWireModelId: effortRouting routes per rung (off included), else the row id", () => {
+    const routed = {
+      id: "gemini-3-flash",
+      reasoning: true,
+      thinking: {
+        mode: "google-level" as const,
+        efforts: ["low", "high"] as const,
+        effortRouting: {
+          low: "gemini-3-flash-low",
+          high: "gemini-3-flash",
+          off: "gemini-3-flash",
+        } as const,
+      },
+    };
+    expect(relayWireModelId(routed, "low")).toBe("gemini-3-flash-low");
+    expect(relayWireModelId(routed, "high")).toBe("gemini-3-flash");
+    expect(relayWireModelId(routed, "none")).toBe("gemini-3-flash");
+    expect(relayWireModelId({ id: "glm-5.3" }, "high")).toBe("glm-5.3");
   });
 });
 
@@ -214,72 +335,23 @@ describe("#350 findRelayCatalogModel", () => {
   });
 });
 
-describe("#361 relay api face + effort mapping", () => {
+describe("#361 relay api face", () => {
   test("the edge catalog validates api against the relay-speakable enum", () => {
     // The shared model dictionary stays free-form (daemon parity with omp's
     // api families); the EDGE face only accepts what the relay dials.
     const freeForm = relayModelEntrySchema.safeParse({ id: "m", api: "openai-completions" });
     expect(freeForm.success).toBe(true);
-    // #363: openai-completions is a speakable edge face now (the second
-    // protocol family — a completions row drives the chat.completions wire).
     const speakable = JSON.stringify({
       providers: { omp: { api: "openai-completions", models: [{ id: "m" }] } },
     });
-    expect(relayCatalogSchema.parse(JSON.parse(speakable)).providers.omp?.api).toBe(
-      "openai-completions",
-    );
+    const parsed = relayCatalogSchema.parse(JSON.parse(speakable));
+    const omp = parsed.providers.omp;
+    if (omp === undefined || isImageSourceProvider(omp)) throw new Error("chat branch");
+    expect(omp.api).toBe("openai-completions");
     const modelLevel = JSON.stringify({
       providers: { omp: { models: [{ id: "m", api: "google-generative-ai" }] } },
     });
     expect(() => relayCatalogSchema.parse(JSON.parse(modelLevel))).toThrow();
-  });
-
-  test("reasoningEffortMap decodes per-model with rung keys and effort values", () => {
-    const catalog = decodeRelayCatalog(
-      JSON.stringify({
-        providers: {
-          omp: {
-            api: "openai-responses",
-            models: [
-              {
-                id: "glm-5.3-flash",
-                reasoningEffortMap: { xhigh: "max", ultra: "high" },
-              },
-            ],
-          },
-        },
-      }),
-    );
-    const omp = catalog?.providers.omp;
-    if (omp === undefined || isImageSourceProvider(omp)) throw new Error("expected chat branch");
-    expect(omp.models[0]?.reasoningEffortMap).toEqual({
-      xhigh: "max",
-      ultra: "high",
-    });
-    // An unknown rung key or an off-vocabulary effort value fails decode.
-    const badKey = JSON.stringify({
-      providers: { omp: { models: [{ id: "m", reasoningEffortMap: { megahigh: "max" } }] } },
-    });
-    expect(() => relayCatalogSchema.parse(JSON.parse(badKey))).toThrow();
-    const badValue = JSON.stringify({
-      providers: { omp: { models: [{ id: "m", reasoningEffortMap: { high: "ultra" } }] } },
-    });
-    expect(() => relayCatalogSchema.parse(JSON.parse(badValue))).toThrow();
-  });
-
-  test("resolveResponsesEffort: identity defaults, per-model map wins, unmapped errors", () => {
-    // Identity for the rungs the official effort vocabulary also names.
-    expect(resolveResponsesEffort("none")).toBe("none");
-    expect(resolveResponsesEffort("low")).toBe("low");
-    expect(resolveResponsesEffort("high")).toBe("high");
-    expect(resolveResponsesEffort("xhigh")).toBe("xhigh");
-    expect(resolveResponsesEffort("max")).toBe("max");
-    // The per-model map wins over the default (omp models.yml deepseek
-    // anchor: compat.reasoningEffortMap {high: high, xhigh: max}).
-    expect(resolveResponsesEffort("xhigh", { xhigh: "max" })).toBe("max");
-    // Relay-only rungs without a map entry are honest errors, never clamps.
-    expect(() => resolveResponsesEffort("ultra")).toThrow(RelayEffortMapError);
-    expect(() => resolveResponsesEffort("ultracode")).toThrow(RelayEffortMapError);
   });
 
   test("#363 relayApiConsumesEffortMap: both openai faces fold, anthropic does not", () => {
@@ -287,48 +359,69 @@ describe("#361 relay api face + effort mapping", () => {
     expect(relayApiConsumesEffortMap("openai-completions")).toBe(true);
     expect(relayApiConsumesEffortMap("anthropic-messages")).toBe(false);
   });
+});
 
-  test("#363 an effort-unmappable rung fails closed on a completions row at selection", () => {
-    const directory = {
-      rows: [
-        {
-          providerId: "omp",
-          id: "ultra-row",
-          reasoningLevels: ["none", "ultra"] as const,
-          defaultReasoningLevel: "none" as const,
-          api: "openai-completions" as const,
-        },
-      ],
-      defaultProviderId: "omp",
-      defaultModelId: "ultra-row",
-      thinkingEnabled: true,
-    };
+describe("#351 selection resolution over the pi directory", () => {
+  const directory: RelaySelectionDirectory = {
+    rows: [
+      {
+        providerId: "main",
+        id: "glm-5.3",
+        reasoning: true,
+        reasoningLevels: ["none", "low", "high", "max"],
+        defaultReasoningLevel: "max",
+      },
+      {
+        providerId: "main",
+        id: "off-row",
+        reasoning: false,
+        reasoningLevels: ["none"],
+        defaultReasoningLevel: "none",
+      },
+    ],
+    defaultProviderId: "main",
+    defaultModelId: "glm-5.3",
+  };
+
+  test("a declared rung resolves; the default fills an absent rung", () => {
+    expect(resolveRelaySelection(directory, { model: "glm-5.3" })).toEqual({
+      providerId: "main",
+      modelId: "glm-5.3",
+      reasoningLevel: "max",
+    });
+    expect(
+      resolveRelaySelection(directory, { model: "glm-5.3", reasoningLevel: "high" }),
+    ).toMatchObject({ reasoningLevel: "high" });
+  });
+
+  test("a rung outside the row's pi ladder fails closed with the named 422", () => {
     try {
-      resolveRelaySelection(directory, { reasoningLevel: "ultra" });
+      resolveRelaySelection(directory, { model: "off-row", reasoningLevel: "high" });
       expect.unreachable();
     } catch (error) {
       expect(error).toBeInstanceOf(RelaySelectionError);
       expect((error as RelaySelectionError).code).toBe("reasoning_level_unknown");
+      expect((error as RelaySelectionError).message).toContain("runnable ladder");
     }
   });
 
   test("#434 the omp sentinel is retired: undeclared default and unknown ids fail closed", () => {
-    const directory = {
+    const open: RelaySelectionDirectory = {
       rows: [
         {
           providerId: "main",
           id: "m",
-          reasoningLevels: ["none"] as const,
-          defaultReasoningLevel: "none" as const,
+          reasoning: false,
+          reasoningLevels: ["none"],
+          defaultReasoningLevel: "none",
         },
       ],
       defaultProviderId: null,
       defaultModelId: "m",
-      thinkingEnabled: false,
     };
     // No selection and no declared default → the named 422 code.
     try {
-      resolveRelaySelection(directory, {});
+      resolveRelaySelection(open, {});
       expect.unreachable();
     } catch (error) {
       expect((error as RelaySelectionError).code).toBe("provider_default_undeclared");
@@ -336,15 +429,14 @@ describe("#361 relay api face + effort mapping", () => {
     // "omp" is no longer a seam: a selection naming it is provider_unknown
     // unless a row actually declares it.
     try {
-      resolveRelaySelection(directory, { providerId: "omp", model: "m" });
+      resolveRelaySelection(open, { providerId: "omp", model: "m" });
       expect.unreachable();
     } catch (error) {
       expect((error as RelaySelectionError).code).toBe("provider_unknown");
     }
     // A declared default still fills an absent selection — the explicit,
     // declared configuration path.
-    const declared = { ...directory, defaultProviderId: "main" as const };
-    expect(resolveRelaySelection(declared, {})).toEqual({
+    expect(resolveRelaySelection({ ...open, defaultProviderId: "main" }, {})).toEqual({
       providerId: "main",
       modelId: "m",
       reasoningLevel: "none",

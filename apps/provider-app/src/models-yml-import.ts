@@ -30,10 +30,11 @@ import {
   isImageGenerationModelId,
   relayApiValues,
   relayCatalogModelSchema,
-  relayReasoningLevelValues,
+  relayThinkingModeValues,
   responsesEffortValues,
   type RelayCatalogModel,
-  type RelayReasoningLevel,
+  type RelayEffort,
+  type RelayThinkingMode,
   type ResponsesEffort,
 } from "@cap/agent-do";
 import { isValidProviderConfigId } from "./provider-configs.js";
@@ -99,23 +100,22 @@ export const OMP_API_VOCABULARY = [
 /** omp's effort ladder + the legacy minLevel/maxLevel range order. */
 const OMP_EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
+/**
+ * #534 the edge effort ladder (pi Effort minus minimal): the mapped rungs a
+ * row can carry. omp's `minimal` has no bb rung and drops WITH a warning.
+ */
+const EDGE_EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max"] as const;
+
 const SUPPORTED_API_LIST = relayApiValues.join(", ");
 
 function isAdmittedRelayApi(value: string): boolean {
   return (relayApiValues as readonly string[]).includes(value);
 }
 
-/**
- * Vocabulary guards (narrowing type flows into the mapped row fields): a
- * label the relay cannot name is dropped with a warning at every call site,
- * never clamped onto a neighbor.
- */
-function isRelayRung(value: string): value is RelayReasoningLevel {
-  return (relayReasoningLevelValues as readonly string[]).includes(value);
-}
-
-function isWireEffort(value: string): value is ResponsesEffort {
-  return (responsesEffortValues as readonly string[]).includes(value);
+function isEdgeEffort(value: string): value is RelayEffort {
+  // Narrowing guard: a label the ladder cannot name drops with a warning at
+  // every call site, never clamps onto a neighbor.
+  return (EDGE_EFFORT_ORDER as readonly string[]).includes(value);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -135,7 +135,9 @@ export const OMP_UNADMITTED_API_VALUES = OMP_API_VOCABULARY.filter(
 /**
  * Normalize one omp `thinking` block per its pipe semantics: efforts beat
  * levels, levels beat the minLevel..maxLevel range (inclusive, EFFORT_ORDER).
- * The result keeps only rungs our relay ladder can name — omp's `minimal`
+ * The result is the pi thinking shape (#534, written verbatim onto the row):
+ * the declared omp `mode` rides through; rungs our relay ladder can name
+ * only — omp's `minimal`
  * has no rung on the cloud ladder and is dropped WITH a warning, never
  * silently clamped onto a neighboring rung.
  */
@@ -143,34 +145,45 @@ function normalizeThinking(
   raw: unknown,
   subject: string,
 ): {
-  levels: RelayReasoningLevel[];
-  defaultLevel?: RelayReasoningLevel;
-  effortMap?: Partial<Record<RelayReasoningLevel, ResponsesEffort>>;
+  mode: RelayThinkingMode;
+  efforts: RelayEffort[];
+  defaultLevel?: RelayEffort;
+  effortMap?: Partial<Record<RelayEffort, ResponsesEffort>>;
+  requiresEffort?: boolean;
   warnings: string[];
 } {
   const warnings: string[] = [];
   const thinking = asRecord(raw);
   if (thinking === null) {
     if (raw !== undefined) warnings.push(`${subject}: thinking is not a mapping — ignored`);
-    return { levels: [], warnings };
+    return { mode: "budget", efforts: [], warnings };
   }
-  const toRungs = (values: unknown[]): { rungs: RelayReasoningLevel[]; dropped: string[] } => {
-    const rungs: RelayReasoningLevel[] = [];
+  const declaredMode = typeof thinking.mode === "string" ? thinking.mode : undefined;
+  const mode =
+    declaredMode !== undefined &&
+    (relayThinkingModeValues as readonly string[]).includes(declaredMode)
+      ? (declaredMode as RelayThinkingMode)
+      : // The edge's incumbent anthropic transport; openai faces ignore the
+        // mode (their knob is the effort fold) — a defaulted mode never
+        // mis-wires them.
+        "budget";
+  const toEfforts = (values: unknown[]): { efforts: RelayEffort[]; dropped: string[] } => {
+    const efforts: RelayEffort[] = [];
     const dropped: string[] = [];
     for (const entry of values) {
-      if (typeof entry === "string" && isRelayRung(entry)) {
-        if (!rungs.includes(entry)) rungs.push(entry);
+      if (typeof entry === "string" && isEdgeEffort(entry)) {
+        if (!efforts.includes(entry)) efforts.push(entry);
       } else {
         dropped.push(typeof entry === "string" ? entry : "non-string");
       }
     }
-    return { rungs, dropped };
+    return { efforts, dropped };
   };
-  let resolved: { rungs: RelayReasoningLevel[]; dropped: string[] };
+  let resolved: { efforts: RelayEffort[]; dropped: string[] };
   if (Array.isArray(thinking.efforts)) {
-    resolved = toRungs(thinking.efforts);
+    resolved = toEfforts(thinking.efforts);
   } else if (Array.isArray(thinking.levels)) {
-    resolved = toRungs(thinking.levels);
+    resolved = toEfforts(thinking.levels);
   } else if (typeof thinking.minLevel === "string" && typeof thinking.maxLevel === "string") {
     const minIndex = OMP_EFFORT_ORDER.indexOf(
       thinking.minLevel as (typeof OMP_EFFORT_ORDER)[number],
@@ -182,14 +195,14 @@ function normalizeThinking(
       warnings.push(
         `${subject}: thinking minLevel/maxLevel "${thinking.minLevel}".."${thinking.maxLevel}" is not a usable range — ignored`,
       );
-      return { levels: [], warnings };
+      return { mode, efforts: [], warnings };
     }
-    resolved = toRungs(OMP_EFFORT_ORDER.slice(minIndex, maxIndex + 1));
+    resolved = toEfforts(OMP_EFFORT_ORDER.slice(minIndex, maxIndex + 1));
   } else {
     warnings.push(
       `${subject}: thinking has neither efforts nor a minLevel/maxLevel range — ignored`,
     );
-    return { levels: [], warnings };
+    return { mode, efforts: [], warnings };
   }
   if (resolved.dropped.length > 0) {
     warnings.push(
@@ -199,33 +212,33 @@ function normalizeThinking(
   const mergeEffortMap = (
     rawMap: unknown,
     source: string,
-  ): Partial<Record<RelayReasoningLevel, ResponsesEffort>> => {
+  ): Partial<Record<RelayEffort, ResponsesEffort>> => {
     const map = asRecord(rawMap);
-    const out: Partial<Record<RelayReasoningLevel, ResponsesEffort>> = {};
+    const out: Partial<Record<RelayEffort, ResponsesEffort>> = {};
     if (map === null) {
       if (rawMap !== undefined) warnings.push(`${subject}: ${source} is not a mapping — ignored`);
       return out;
     }
     for (const [key, value] of Object.entries(map)) {
-      if (!isRelayRung(key)) {
+      if (!isEdgeEffort(key)) {
         warnings.push(`${subject}: ${source} key "${key}" is not a cloud ladder rung — dropped`);
         continue;
       }
-      if (typeof value !== "string" || !isWireEffort(value)) {
+      if (typeof value !== "string" || ![...responsesEffortValues, "adaptive"].includes(value)) {
         warnings.push(
           `${subject}: ${source}["${key}"] = ${JSON.stringify(value)} is not a wire effort — dropped`,
         );
         continue;
       }
-      out[key] = value;
+      out[key] = value as ResponsesEffort;
     }
     return out;
   };
   const effortMap = mergeEffortMap(thinking.effortMap, "thinking.effortMap");
-  let defaultLevel: RelayReasoningLevel | undefined;
+  let defaultLevel: RelayEffort | undefined;
   if (typeof thinking.defaultLevel === "string") {
-    if (resolved.rungs.includes(thinking.defaultLevel as RelayReasoningLevel)) {
-      defaultLevel = thinking.defaultLevel as RelayReasoningLevel;
+    if (isEdgeEffort(thinking.defaultLevel) && resolved.efforts.includes(thinking.defaultLevel)) {
+      defaultLevel = thinking.defaultLevel;
     } else {
       warnings.push(
         `${subject}: thinking.defaultLevel "${thinking.defaultLevel}" is not a mapped rung — dropped`,
@@ -233,9 +246,11 @@ function normalizeThinking(
     }
   }
   return {
-    levels: resolved.rungs,
+    mode,
+    efforts: resolved.efforts,
     ...(defaultLevel !== undefined ? { defaultLevel } : {}),
     ...(Object.keys(effortMap).length > 0 ? { effortMap } : {}),
+    ...(thinking.requiresEffort === true ? { requiresEffort: true } : {}),
     warnings,
   };
 }
@@ -296,25 +311,25 @@ function foldEffortMap(
   subject: string,
   source: string,
   warnings: string[],
-): Partial<Record<RelayReasoningLevel, ResponsesEffort>> {
+): Partial<Record<RelayEffort, ResponsesEffort>> {
   const map = asRecord(rawMap);
-  const out: Partial<Record<RelayReasoningLevel, ResponsesEffort>> = {};
+  const out: Partial<Record<RelayEffort, ResponsesEffort>> = {};
   if (map === null) {
     if (rawMap !== undefined) warnings.push(`${subject}: ${source} is not a mapping — ignored`);
     return out;
   }
   for (const [key, value] of Object.entries(map)) {
-    if (!isRelayRung(key)) {
+    if (!isEdgeEffort(key)) {
       warnings.push(`${subject}: ${source} key "${key}" is not a cloud ladder rung — dropped`);
       continue;
     }
-    if (typeof value !== "string" || !isWireEffort(value)) {
+    if (typeof value !== "string" || ![...responsesEffortValues, "adaptive"].includes(value)) {
       warnings.push(
         `${subject}: ${source}["${key}"] = ${JSON.stringify(value)} is not a wire effort — dropped`,
       );
       continue;
     }
-    out[key] = value;
+    out[key] = value as ResponsesEffort;
   }
   return out;
 }
@@ -427,13 +442,32 @@ function mapModelEntry(
         `${subject}: cost is not a complete {input,output,cacheRead,cacheWrite} mapping — dropped`,
       );
   }
+  // The pi thinking seat under construction (typed local — `entry` stays a
+  // plain record until the seats are final).
+  let thinkingSeat: {
+    mode: RelayThinkingMode;
+    efforts: RelayEffort[];
+    defaultLevel?: RelayEffort;
+    effortMap?: Partial<Record<RelayEffort, ResponsesEffort>>;
+    requiresEffort?: boolean;
+  } | undefined;
   if (merged.thinking !== undefined) {
     const thinking = normalizeThinking(merged.thinking, subject);
     modelWarnings.push(...thinking.warnings);
-    if (thinking.levels.length > 0) {
-      entry.reasoningLevels = thinking.levels;
-      if (thinking.defaultLevel !== undefined) entry.defaultReasoningLevel = thinking.defaultLevel;
-      if (thinking.effortMap !== undefined) entry.reasoningEffortMap = thinking.effortMap;
+    if (thinking.efforts.length > 0) {
+      // #534: the omp fragment IS the pi shape — mode/efforts/defaultLevel/
+      // effortMap/requiresEffort ride through verbatim (no budget number is
+      // invented; the wire budget is the named default ladder). omp's own
+      // buildModel semantics: a thinking declaration reasons — when the
+      // fragment omits the `reasoning` bit, the ladder implies it.
+      thinkingSeat = {
+        mode: thinking.mode,
+        efforts: thinking.efforts,
+        ...(thinking.defaultLevel !== undefined ? { defaultLevel: thinking.defaultLevel } : {}),
+        ...(thinking.effortMap !== undefined ? { effortMap: thinking.effortMap } : {}),
+        ...(thinking.requiresEffort === true ? { requiresEffort: true } : {}),
+      };
+      if (merged.reasoning !== false) entry.reasoning = true;
     }
   }
   // compat: only the effort map is representable; extraBody and the omp wire
@@ -448,10 +482,19 @@ function mapModelEntry(
     );
     if (Object.keys(compatEffortMap).length > 0) {
       // thinking.effortMap (already seated) wins on conflicts — omp precedence.
-      const seated = entry.reasoningEffortMap as
-        | Partial<Record<RelayReasoningLevel, ResponsesEffort>>
-        | undefined;
-      entry.reasoningEffortMap = { ...compatEffortMap, ...(seated ?? {}) };
+      const seated = thinkingSeat?.effortMap;
+      const folded = { ...compatEffortMap, ...(seated ?? {}) };
+      if (thinkingSeat !== undefined) {
+        thinkingSeat.effortMap = folded;
+      } else if (Object.keys(folded).length > 0) {
+        // Zero invention: a remap without a declared ladder has no rungs to
+        // remap (the edge derives no implicit ladder) — dropped with the
+        // named remedy, never silently lost.
+        modelWarnings.push(
+          `${subject}: compat.reasoningEffortMap without a thinking block has no ladder to remap — ` +
+            `declare thinking.efforts alongside it`,
+        );
+      }
     }
     if (compat.extraBody !== undefined) {
       modelWarnings.push(
@@ -482,6 +525,7 @@ function mapModelEntry(
     const all = [...new Set([...droppedKeys, ...declaredModelOnlyKeys])];
     modelWarnings.push(`${subject}: omp-only declarations dropped (${all.join(", ")})`);
   }
+  if (thinkingSeat !== undefined) entry.thinking = thinkingSeat;
   // The acceptance mechanism: every produced row re-validates against the
   // SAME zod schema the env catalog and the loader apply (#350). A mapper
   // bug surfaces as a named skip, never a corrupt stored row.

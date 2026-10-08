@@ -118,11 +118,10 @@ function resolveRelayCatalogSelection(
     {
       rows: catalog.models,
       defaultProviderId: catalog.defaultProviderId,
-      // #500: no deployment model / thinking scalar exists — a model-less
-      // selection fails closed (named 422) and each row's ladder is decided
-      // by its own thinkingBudgetTokens.
+      // #500/#534: no deployment model exists — a model-less selection fails
+      // closed (named 422) and each row's ladder is its own pi capability
+      // projection.
       defaultModelId: "",
-      thinkingEnabled: false,
     },
     selection,
   );

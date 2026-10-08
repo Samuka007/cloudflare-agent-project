@@ -12,6 +12,8 @@ import {
   relayImageModelKeys,
   relayImageModelSchema,
   type RelayCatalogProvider,
+  type RelayCatalogModel,
+  type RelayImageModel,
 } from "@cap/agent-do";
 import type { WebSearchEngineProjection } from "@cap/agent-do";
 import {
@@ -207,12 +209,11 @@ export function buildExecutionOptions(
       model: model.model,
       displayName: model.displayName,
       description: model.description,
-      // The ladder is budget-derived (deriveRelayReasoning over the row's
-      // thinkingBudgetTokens, declared overrides folded): budget off →
-      // exactly "none" (bb's level for no extended thinking,
-      // domain/shared-types.ts:13-20); budget on → the runnable rungs the
-      // row declaration carries. #500: the deployment budget scalar is
-      // deleted — the row field is the only budget source.
+      // The ladder is the pi capability projection (#534, provider-app
+      // relayReasoningLadder): no capability seats → exactly "none" (bb's
+      // level for no extended thinking, domain/shared-types.ts:13-20);
+      // declared efforts → ["none", ...efforts]. No load-bearing budget
+      // field exists anywhere — re-importing a list re-derives the ladder.
       supportedReasoningEfforts: model.reasoningLevels.map((level) => ({
         reasoningEffort: level,
         description: "",
@@ -561,12 +562,12 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     api?: string;
     serviceTier?: boolean;
     models?: unknown[];
-  }): ProviderConfigWriteFields => ({
+  }, modelsOverride?: unknown[]): ProviderConfigWriteFields => ({
     displayName: payload.displayName ?? null,
     baseUrl: payload.baseUrl ?? null,
     api: payload.api ?? null,
     serviceTier: payload.serviceTier ?? false,
-    models: payload.models ?? [],
+    models: modelsOverride ?? payload.models ?? [],
   });
 
   /** The stored truth after a write (loader shape — status included). */
@@ -650,14 +651,28 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
    * into storage: 产图 model ids never enter a chat row (they cannot serve
    * chat turns), and the chat seats (reasoning/input/contextWindow/maxTokens/
    * thinking ladder/per-token cost) never enter an image row.
+   *
+   * #534: the gate RETURNS the validated chat entries — the schema's
+   * compat-read fold output (pi thinking shape), so a write NORMALIZES the
+   * stored JSON: legacy seats (thinkingBudgetTokens / reasoningLevels / …)
+   * rewrite to the pi shape on the very next save.
    */
-  const assertModelFamilyPairing = (models: unknown[], effectiveApi: string | null): void => {
+  const foldModelFamilyPairing = (
+    models: unknown[],
+    effectiveApi: string | null,
+  ): { family: "chat"; models: RelayCatalogModel[] } | { family: "image"; models: RelayImageModel[] } => {
     const imageFamily = effectiveApi === IMAGE_SOURCE_API_FAMILY;
+    const chatOut: RelayCatalogModel[] = [];
+    const imageOut: RelayImageModel[] = [];
     for (const [index, entry] of models.entries()) {
       const label = `model ${String(index + 1)}`;
       const keys = typeof entry === "object" && entry !== null ? Object.keys(entry) : [];
       if (imageFamily) {
-        if (relayImageModelSchema.safeParse(entry).success) continue;
+        const parsedImage = relayImageModelSchema.safeParse(entry);
+        if (parsedImage.success) {
+          imageOut.push(parsedImage.data);
+          continue;
+        }
         const crossSeats = keys.filter((key) => !relayImageModelKeys.includes(key));
         throw new ApiError({
           status: 422,
@@ -703,7 +718,11 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
             `Settings → Providers → Image Source`,
         });
       }
+      chatOut.push(parsedChat.data);
     }
+    // Per-family parse gates guarantee the entry types; the family picks the
+    // array (a flipped family fails the whole write above, never mixes).
+    return imageFamily ? { family: "image", models: imageOut } : { family: "chat", models: chatOut };
   };
 
   // #448 the 产图源 face: the explicit generate_image source seat. Distinct
@@ -1054,12 +1073,18 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         message: `provider config "${payload.id}" already exists (PUT/PATCH to edit)`,
       });
     }
+    let storedModels: unknown[] = [];
     if (payload.models !== undefined) {
-      assertModelFamilyPairing(payload.models, payload.api ?? null);
+      storedModels = foldModelFamilyPairing(payload.models, payload.api ?? null).models;
     }
     const credential = credentialOf(payload.apiKey);
     refuseKeyWithoutMasterKey(ctx.env, credential);
-    await insertProviderConfig(ctx.env, payload.id, writeFieldsOf(payload), credential);
+    await insertProviderConfig(
+      ctx.env,
+      payload.id,
+      writeFieldsOf(payload, payload.models !== undefined ? storedModels : undefined),
+      credential,
+    );
     // Hot-apply broadcast (#382): the merged directory feeds execution
     // options and the projection, so every write dirties the host's system
     // faces exactly like a settings write (system.ts:348 precedent).
@@ -1078,15 +1103,16 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         message: `provider config "${id}" not found (POST /system/providers to create)`,
       });
     }
-    if (payload.models !== undefined) {
-      assertModelFamilyPairing(payload.models, payload.api ?? null);
-    }
+    const storedPutModels =
+      payload.models !== undefined
+        ? foldModelFamilyPairing(payload.models, payload.api ?? null).models
+        : undefined;
     const credential = credentialOf(payload.apiKey);
     refuseKeyWithoutMasterKey(ctx.env, credential);
     // PUT writes the visible face wholesale (writeFieldsOf): an absent
     // baseUrl IS the next value (null), so the gate compares that target.
     refuseCredentialReplayAcrossBaseUrl(current, payload.baseUrl ?? null, credential);
-    await replaceProviderConfig(ctx.env, id, writeFieldsOf(payload), credential);
+    await replaceProviderConfig(ctx.env, id, writeFieldsOf(payload, storedPutModels), credential);
     await hub(ctx.env).notifySystem(["config-changed"]);
     return ctx.json(await rowAfterWrite(ctx.env, id));
   });
@@ -1094,6 +1120,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   routes.patch("/system/providers/:id", async (ctx) => {
     const id = requireValidId(ctx.req.param("id"));
     const payload = await requireJsonBody(ctx, providerConfigPatchRequestSchema);
+    let storedModels: unknown[] = [];
     const current = await getProviderConfigMutationContext(ctx.env, id);
     if (current === null) {
       throw new ApiError({
@@ -1111,10 +1138,11 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
       // on a freshly chat-ified row (or chat seats on a new image row).
       const effectiveModels =
         payload.models ?? (await getProviderConfigTarget(ctx.env, id))?.models ?? [];
-      assertModelFamilyPairing(
+      const storedPatchModels = foldModelFamilyPairing(
         effectiveModels,
         payload.api !== undefined ? payload.api : current.api,
       );
+      if (payload.models !== undefined) storedModels = storedPatchModels.models;
     }
     const credential = credentialOf(payload.apiKey);
     refuseKeyWithoutMasterKey(ctx.env, credential);
@@ -1133,7 +1161,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         ...(payload.baseUrl !== undefined ? { baseUrl: payload.baseUrl } : {}),
         ...(payload.api !== undefined ? { api: payload.api } : {}),
         ...(payload.serviceTier !== undefined ? { serviceTier: payload.serviceTier } : {}),
-        ...(payload.models !== undefined ? { models: payload.models } : {}),
+        ...(payload.models !== undefined ? { models: storedModels } : {}),
       },
       credential,
     );
@@ -1307,7 +1335,13 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
       // parser already refuses image ids in chat providers, so this is the
       // backstop that keeps one row-creating path from drifting.
       try {
-        assertModelFamilyPairing(candidate.models, candidate.api);
+        const folded = foldModelFamilyPairing(candidate.models, candidate.api);
+        // The parser refuses api=openai-images providers, so an import
+        // candidate is always the chat family (the guard keeps it honest).
+        if (folded.family !== "chat") {
+          throw new Error("unreachable: import candidates are chat-family");
+        }
+        candidate.models = folded.models;
       } catch (error) {
         entries.push({
           ...entryBase,

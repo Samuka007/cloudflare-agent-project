@@ -73,13 +73,30 @@ export interface AnthropicMessage {
   content: AnthropicUserBlock[] | AnthropicAssistantBlock[];
 }
 
-export type ThinkingConfig = { type: "disabled" } | { type: "enabled"; budget_tokens: number };
+/**
+ * #534: the anthropic thinking transports the relay speaks — `disabled`
+ * (explicit off; the probe-confirmed compat posture), `enabled` + budget
+ * (the classic budget knob every compat endpoint honors), and `adaptive`
+ * (rows declaring pi's "anthropic-adaptive" mode — the model decides the
+ * budget; the effort rides `output_config`).
+ */
+export type ThinkingConfig =
+  | { type: "disabled" }
+  | { type: "enabled"; budget_tokens: number }
+  | { type: "adaptive" };
+
+/** The `output_config.effort` seat (pi-ai anthropic-wire.ts OutputConfig). */
+export interface RelayOutputConfig {
+  effort: "low" | "medium" | "high" | "xhigh" | "max";
+}
 
 export interface AnthropicRequestBody {
   model: string;
   max_tokens: number;
   stream: true;
   thinking: ThinkingConfig;
+  /** Present only on adaptive-effort rows (mode anthropic-*): the rung's effort. */
+  output_config?: RelayOutputConfig;
   system: AnthropicTextBlock[];
   /** Omitted on the #309 `compaction` surface — a summary call offers no tools. */
   tools?: AnthropicToolDefinition[];
@@ -146,6 +163,8 @@ export interface WireCallOptions {
   model: string;
   maxTokens: number;
   thinking?: ThinkingConfig;
+  /** The selection's adaptive effort; dropped when reasoning pins off. */
+  outputConfig?: RelayOutputConfig;
   /**
    * A4 consumption dispatch: does the deployment's relay model accept image
    * input? Absent/false → every image part renders as the acp degradation
@@ -218,16 +237,21 @@ export function anthropicRequestBody(
   // reasoning must never coexist (ToC risk). An explicit
   // `request.forceReasoningOff` keeps the unconditional pin for callers that
   // decide the pairing upstream of the tool surface.
+  const pinnedOff = finalNames.includes("think") || request.forceReasoningOff === true;
   const thinking: ThinkingConfig =
-    finalNames.includes("think") || request.forceReasoningOff === true
+    pinnedOff
       ? { type: "disabled" }
       : (options.thinking ?? { type: "disabled" });
+  // The off pin is unconditional (ToC pairing, #150): an adaptive effort
+  // riding a pinned-off request would re-enable reasoning server-side.
+  const output_config: RelayOutputConfig | undefined = pinnedOff ? undefined : options.outputConfig;
 
   return {
     model: options.model,
     max_tokens: options.maxTokens,
     stream: true,
     thinking,
+    ...(output_config !== undefined ? { output_config } : {}),
     system: SYSTEM_PROMPT_BLOCKS.map((block) => ({ type: "text", text: block })),
     // Empty compaction surface: omit `tools` entirely — a tool-free request
     // never offers the model a tool_use escape hatch from summarization.

@@ -1,10 +1,10 @@
 import {
-  deriveRelayReasoning,
   DEFAULT_RELAY_API,
   IMAGE_SOURCE_API_FAMILY,
   type RelayApi,
   type RelayCatalogProvider,
-  type ResponsesEffort,
+  relayReasoningLadder,
+  type RelayModelThinking,
   type RelayReasoningLevel,
 } from "@cap/agent-do";
 
@@ -21,7 +21,7 @@ import {
  * and the turns-actually-run truth cannot disagree. #500: the deployment
  * channel (env scalars folded into a "running model" row) is deleted with
  * the MODEL_RELAY_* family; every row carries its own declaration
- * (maxTokens/contextWindow/input/thinkingBudgetTokens/api) and no row is a
+ * (maxTokens/contextWindow/input/thinking/api) and no row is a
  * synthesized default.
  *
  * #450 (user ruling 2026-10-07): the env seed is GONE. There is no env
@@ -41,6 +41,8 @@ export interface RelayCatalogModelRow {
   model: string;
   displayName: string;
   description: string;
+  /** The pi capability bit (the ladder gate input, projected verbatim). */
+  reasoning: boolean;
   reasoningLevels: RelayReasoningLevel[];
   defaultReasoningLevel: RelayReasoningLevel;
   /**
@@ -50,17 +52,14 @@ export interface RelayCatalogModelRow {
   contextWindow: number | null;
   maxTokens: number | null;
   /**
-   * The row's effective thinking budget (#362 → #500): the row-declared
-   * thinkingBudgetTokens IS the budget (the deployment scalar is deleted);
-   * null when the row runs budget-off. The dispatch half (relay-registry)
-   * reads this so a panel budget edit rides the overlay without a redeploy.
+   * #534 the pi thinking seat verbatim (relay-registry reads the wire
+   * transports off it; the ladder above is its capability projection).
+   * Absent = no controllable thinking surface.
    */
-  thinkingBudgetTokens: number | null;
+  thinking?: RelayModelThinking;
   imageInput: boolean;
   /** #361: the row's protocol face (model api ?? provider api ?? default). */
   api: RelayApi;
-  /** #361: the row's per-model effort map (responses face consumption). */
-  reasoningEffortMap?: Partial<Record<RelayReasoningLevel, ResponsesEffort>>;
   /**
    * The picker's default row. Constantly false since #500: the deployment
    * names no running model anymore (#434/#450: no first-key fill; legacy
@@ -149,32 +148,29 @@ function projectCatalogDirectory(
     const providerApi = provider.api;
     if (providerApi === IMAGE_SOURCE_API_FAMILY) continue;
     const rows = provider.models.map((entry): RelayCatalogModelRow => {
-      // #500: the row's declared budget IS the effective budget (the
-      // deployment-wide scalar died with the channel); undeclared = off.
-      const rowBudget = entry.thinkingBudgetTokens ?? null;
-      const derived = deriveRelayReasoning({
-        thinkingEnabled: rowBudget !== null,
-        declaredLevels: entry.reasoningLevels,
-        declaredDefault: entry.defaultReasoningLevel,
-      });
+      // #534: the ladder is the pi capability projection (getSupportedEfforts
+      // / defaultSupportedEffort through relayReasoningLadder) — no
+      // load-bearing budget field anywhere. A re-imported list re-derives
+      // the same ladder from the declaration, never from a hand-set scalar.
+      const derived = relayReasoningLadder(entry);
       return {
         providerId,
         id: entry.id,
         model: entry.id,
         displayName: entry.name ?? entry.id,
         description: entry.description ?? "",
+        reasoning: entry.reasoning === true,
         reasoningLevels: derived.levels,
         defaultReasoningLevel: derived.defaultLevel,
         // Every row advertises exactly its own declaration — the picker
         // shows what turns actually run, with no deployment fold.
         contextWindow: entry.contextWindow ?? null,
         maxTokens: entry.maxTokens ?? null,
-        thinkingBudgetTokens: rowBudget,
+        thinking: entry.thinking,
         imageInput: entry.input?.includes("image") ?? false,
         // #361: the face this row dispatches under — model declaration,
         // then the provider's, then the incumbent anthropic face.
         api: entry.api ?? providerApi ?? DEFAULT_RELAY_API,
-        reasoningEffortMap: entry.reasoningEffortMap,
         // #500: the deployment names no running model — no row is a default.
         isDefault: false,
       };

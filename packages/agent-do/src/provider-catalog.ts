@@ -1,4 +1,17 @@
 import { z } from "zod";
+// #534 the model-thinking 正本 (omp pi-catalog, npm-vendored exact pin):
+// the ladder/capability domain is pi's derivation, not a fork — runtime
+// helpers are field-readers over `{ reasoning, thinking }` (Workers-pure,
+// raw-TS package), imported per function with the omp anchor in the doc.
+import {
+  defaultSupportedEffort as piDefaultSupportedEffort,
+  getSupportedEfforts as piGetSupportedEfforts,
+  mapEffortToAnthropicAdaptiveEffort as piMapEffortToAnthropicAdaptiveEffort,
+  resolveWireModelId as piResolveWireModelId,
+} from "@oh-my-pi/pi-catalog/model-thinking";
+import type { Effort as PiEffort } from "@oh-my-pi/pi-catalog/effort";
+import type { ModelSpec } from "@oh-my-pi/pi-catalog/types";
+import type { RelayOutputConfig, ThinkingConfig } from "./relay/wire.js";
 
 /**
  * Relay provider catalog declaration (#350, #305 roadmap §3/§4.4) — the L1
@@ -31,6 +44,17 @@ import { z } from "zod";
  * (`contextwindow`, `displayName` on a model row) must fail the deployment
  * loudly at decode, not silently strip into capability under-declaration —
  * the exact disease this layer treats.
+ *
+ * #534 (user ruling 2026-10-08): the model reasoning domain is the omp
+ * pi-catalog 正本 — the row speaks pi's shape (`reasoning: boolean` +
+ * `thinking?: { mode, efforts, defaultLevel?, effortMap?, effortRouting?,
+ * effortBudgets?, requiresEffort? }`), imported from
+ * `@oh-my-pi/pi-catalog/model-thinking` (npm exact pin, Workers-pure). The
+ * retired `thinkingBudgetTokens` seat — one field that served as capability
+ * gate, ladder driver, and decorative number — is GONE from the output
+ * shape: its only remaining life is the compat-read fold below
+ * (foldLegacyModelRow), which migrates stored legacy rows onto the pi shape
+ * so a re-imported model list can never collapse a declared ladder again.
  */
 
 // ---------------------------------------------------------------------------
@@ -58,60 +82,176 @@ export type RelayReasoningLevel = (typeof relayReasoningLevelValues)[number];
 export const relayReasoningLevelSchema = z.enum(relayReasoningLevelValues);
 
 /**
- * bb's custom-model default rung for "extended thinking on" (bb
- * thread-default-policy / customModels `defaultReasoningEffort: "medium"`).
- * The relay wire has one thinking knob (the row's thinkingBudgetTokens) —
- * until per-thread selection consumes a ladder (#351), the honest
- * projection of "budget on" for a row that declares no ladder is exactly
- * this one rung, not a multi-rung ladder the wire cannot distinguish.
+ * The OpenAI effort target vocabulary (official current schema: none,
+ * minimal, low, medium, high, xhigh, max — the #361 protocol canon, not
+ * memory; #363 grounded the chat-completions `reasoning_effort` field
+ * against the same list, so one type serves both openai faces). Declared
+ * before the thinking schema: `effortMap` values validate against it.
  */
-export const DEFAULT_THINKING_REASONING_LEVEL: RelayReasoningLevel = "medium";
+export const responsesEffortValues = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+export type ResponsesEffort = (typeof responsesEffortValues)[number];
+export const responsesEffortSchema = z.enum(responsesEffortValues);
 
-export interface RelayReasoningDerivationInput {
+/**
+ * The pi Effort vocabulary MINUS `minimal` (pi-catalog/effort.ts THINKING_EFFORTS
+ * anchor): the edge ladder must stay expressible on the bb rung vocabulary
+ * (RelayReasoningLevel) the composer/selection grammar speaks, and bb names
+ * no minimal rung — the models.yml import drops a declared minimal WITH a
+ * warning (never a silent clamp onto a neighbor), exactly as it did against
+ * the retired reasoningLevels field.
+ */
+export const relayEffortValues = ["low", "medium", "high", "xhigh", "max"] as const;
+export type RelayEffort = (typeof relayEffortValues)[number];
+export const relayEffortSchema = z.enum(relayEffortValues);
+
+/**
+ * The pi ThinkingControlMode vocabulary verbatim (pi-catalog types.ts:68-74):
+ * the transport the wire uses to encode the selected effort. The edge relay
+ * consumes "budget" (anthropic `thinking.budget_tokens`) and the two
+ * anthropic adaptive modes (`output_config.effort`); "effort" names the
+ * openai effort faces' transport, "google-level" rides as declared
+ * vocabulary (an anthropic/openai row may carry it; the wire folds it to the
+ * face's own knob).
+ */
+export const relayThinkingModeValues = [
+  "effort",
+  "budget",
+  "google-level",
+  "anthropic-adaptive",
+  "anthropic-budget-effort",
+] as const;
+export type RelayThinkingMode = (typeof relayThinkingModeValues)[number];
+export const relayThinkingModeSchema = z.enum(relayThinkingModeValues);
+
+/**
+ * The pi ThinkingConfig shape (pi-catalog types.ts:77-134), subset admitted
+ * on the edge: every seat is capability metadata — the budget NUMBER is a
+ * wire detail (`effortBudgets`), never a capability gate. `efforts` is
+ * ordered least → most intensive and never empty when the seat is present
+ * (pi's own invariant: a reasoning model without a controllable effort
+ * surface carries `thinking: undefined`, not an empty list).
+ */
+export const relayModelThinkingSchema = z.strictObject({
+  mode: relayThinkingModeSchema,
+  efforts: z.array(relayEffortSchema).min(1),
+  /** Pi defaultLevel: the effort applied when the model is selected. */
+  defaultLevel: relayEffortSchema.optional(),
   /**
-   * Thinking flag: the row's budget is on (thinkingBudgetTokens set > 0;
-   * #500: the deployment-wide env flag is deleted).
+   * Pi effortMap: effort → provider wire-value remap (identity for omitted
+   * efforts). The edge constrains values to the official responses effort
+   * vocabulary PLUS the anthropic adaptive sentinel "adaptive" — one map
+   * serves both faces, so an off-vocabulary value has no honest consumer.
    */
-  thinkingEnabled: boolean;
-  /** Model-declared ladder override (relayCatalogModelSchema.reasoningLevels). */
-  declaredLevels?: readonly RelayReasoningLevel[];
-  /** Model-declared default rung (relayCatalogModelSchema.defaultReasoningLevel). */
-  declaredDefault?: RelayReasoningLevel;
-}
+  effortMap: z
+    .partialRecord(relayEffortSchema, z.union([responsesEffortSchema, z.literal("adaptive")]))
+    .optional(),
+  /**
+   * Pi effortRouting: per-effort upstream wire-id routing (collapsed
+   * effort-tier variants). `"off"` applies when thinking is disabled.
+   */
+  effortRouting: z
+    .partialRecord(z.enum([...relayEffortValues, "off"]), z.string().min(1))
+    .optional(),
+  /**
+   * Pi effortBudgets: per-effort `thinking.budget_tokens` wire values for
+   * budget-transport rows. The LADDER never derives from these — a missing
+   * entry rides the named default ladder (relayAnthropicThinking).
+   */
+  effortBudgets: z.partialRecord(relayEffortSchema, z.number().int().positive()).optional(),
+  /**
+   * Pi requiresEffort: thinking-off must be explicitly suppressed on the
+   * wire (the edge always sends an explicit off — `thinking.type:"disabled"`
+   * / effort "none" — so the seat rides as declared metadata).
+   */
+  requiresEffort: z.boolean().optional(),
+});
+export type RelayModelThinking = z.infer<typeof relayModelThinkingSchema>;
 
+/**
+ * The projected runnable ladder (#351 directory vocabulary): pi's gate —
+ * `reasoning === true && efforts.length > 0` — admits the effort rungs;
+ * everything else runs exactly ["none"]. "none" is the off state (bb's
+ * vocabulary for no extended thinking), always offered, never a capability.
+ */
 export interface RelayReasoningLadder {
   levels: RelayReasoningLevel[];
   defaultLevel: RelayReasoningLevel;
 }
 
+/** The `{ reasoning, thinking }` slice pi's model-thinking helpers read. */
+export interface RelayReasoningSource {
+  id?: string;
+  reasoning?: boolean;
+  // Readonly efforts (pi's own `readonly Effort[]` shape): mutable schema
+  // output assigns in; `as const` fixtures assign in too.
+  thinking?: Omit<RelayModelThinking, "efforts"> & { readonly efforts: readonly RelayEffort[] };
+}
+
 /**
- * Derive the runnable reasoning ladder a model row advertises:
- * - thinking disabled → exactly `["none"]`: extended thinking never runs, so
- *   offering budget rungs would over-claim dispatch the wire ignores
- *   (roadmap §2.3 contradiction 2 — the budget flag must reach the directory).
- * - thinking enabled, no declared ladder → the single honest rung
- *   (DEFAULT_THINKING_REASONING_LEVEL).
- * - thinking enabled + declared ladder → the declaration verbatim, defaulting
- *   to the declared default (schema guarantees membership) or the medium rung
- *   when the declaration names none.
+ * pi model view: the runtime helpers are field-readers over a catalog model
+ * (model-thinking.ts reads only `reasoning`/`thinking`/`id`-adjacent
+ * fields); the edge row projects onto that slice. The assertion is the
+ * documented seam — pi's ModelSpec required surface (provider/baseUrl/cost/
+ * …) is unread by these helpers.
  */
-export function deriveRelayReasoning(input: RelayReasoningDerivationInput): RelayReasoningLadder {
-  if (!input.thinkingEnabled) {
+function piModelView(row: RelayReasoningSource): ModelSpec {
+  return {
+    id: row.id ?? "",
+    reasoning: row.reasoning === true,
+    thinking: row.thinking,
+  } as unknown as ModelSpec;
+}
+
+/**
+ * The row's supported efforts through the pi 正本 (pi-catalog
+ * getSupportedEfforts): empty unless the gate (`reasoning === true` + a
+ * declared, non-empty effort surface) passes.
+ */
+export function relaySupportedEfforts(row: RelayReasoningSource): RelayEffort[] {
+  // The edge vocabulary is pi's minus `minimal`; a row can never carry a
+  // minimal effort (the schema refuses it), so the returned members are all
+  // edge-expressible by construction.
+  return [...piGetSupportedEfforts(piModelView(row))] as RelayEffort[];
+}
+
+/**
+ * The row's default effort through the pi 正本 (pi-catalog
+ * defaultSupportedEffort): the wire-route-matched effort when the row
+ * declares effortRouting + a default wire id, else the lowest supported
+ * effort. Undefined exactly when the gate fails.
+ */
+export function relayDefaultEffort(row: RelayReasoningSource): RelayEffort | undefined {
+  return piDefaultSupportedEffort(piModelView(row)) as RelayEffort | undefined;
+}
+
+/**
+ * The ladder a model row projects (#534): pi's capability gate —
+ * `reasoning === true && getSupportedEfforts(row).length > 0` — admits
+ * ["none", ...efforts] with the row's `thinking.defaultLevel` (when declared)
+ * else pi's defaultSupportedEffort; every other row runs exactly ["none"].
+ * This REPLACES deriveRelayReasoning: the budget number is no load-bearing
+ * gate anywhere — re-importing the same model list can never collapse a
+ * declared ladder again.
+ */
+export function relayReasoningLadder(row: RelayReasoningSource): RelayReasoningLadder {
+  const efforts = relaySupportedEfforts(row);
+  if (efforts.length === 0) {
     return { levels: ["none"], defaultLevel: "none" };
   }
-  const declared = input.declaredLevels;
-  if (declared === undefined) {
-    return {
-      levels: [DEFAULT_THINKING_REASONING_LEVEL],
-      defaultLevel: DEFAULT_THINKING_REASONING_LEVEL,
-    };
-  }
+  const declaredDefault = row.thinking?.defaultLevel;
   const defaultLevel =
-    input.declaredDefault ??
-    (declared.includes(DEFAULT_THINKING_REASONING_LEVEL)
-      ? DEFAULT_THINKING_REASONING_LEVEL
-      : (declared[0] ?? DEFAULT_THINKING_REASONING_LEVEL));
-  return { levels: [...declared], defaultLevel };
+    declaredDefault !== undefined && efforts.includes(declaredDefault)
+      ? declaredDefault
+      : (relayDefaultEffort(row) ?? efforts[0] ?? "none");
+  return { levels: ["none", ...efforts], defaultLevel };
 }
 
 // ---------------------------------------------------------------------------
@@ -173,73 +313,104 @@ export function resolveRelayApi(raw: string | undefined | null): RelayApi {
 }
 
 /**
- * The OpenAI effort target vocabulary (official current schema: none,
- * minimal, low, medium, high, xhigh, max — the #361 protocol canon, not
- * memory; #363 grounded the chat-completions `reasoning_effort` field
- * against the same list, so one type serves both openai faces).
+ * The wire effort the openai faces send for one selected rung (#534): the
+ * row's `thinking.effortMap` remap wins (omp models.yml deepseek anchor —
+ * {high: high, xhigh: max}), then identity. Total by construction: a
+ * selected rung is a RelayEffort (already an official effort value) and the
+ * schema constrains effortMap values to the official vocabulary, so the old
+ * unmappable-rung error class has no honest input anymore — the ladder
+ * simply cannot offer a rung the wire cannot express.
  */
-export const responsesEffortValues = [
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-] as const;
-export type ResponsesEffort = (typeof responsesEffortValues)[number];
-export const responsesEffortSchema = z.enum(responsesEffortValues);
-
-/**
- * Default relay-rung → effort mapping: identity for every rung the official
- * effort vocabulary also names. The relay-only rungs (`ultra`, `ultracode`)
- * are deliberately unmapped — a rung the wire cannot honestly express must
- * 422 at selection (the #351 fail-closed red line), never clamp silently.
- */
-export const DEFAULT_REASONING_EFFORT_BY_RUNG: Partial<
-  Record<RelayReasoningLevel, ResponsesEffort>
-> = {
-  none: "none",
-  low: "low",
-  medium: "medium",
-  high: "high",
-  xhigh: "xhigh",
-  max: "max",
-};
-
-/**
- * A ladder rung the responses face cannot express (no default mapping and
- * no per-model override). Named so the registry can translate it into the
- * #351 selection-grammar 422 instead of a wire-time surprise.
- */
-export class RelayEffortMapError extends Error {
-  constructor(
-    readonly rung: RelayReasoningLevel,
-    message?: string,
-  ) {
-    super(
-      message ??
-        `reasoning rung "${rung}" has no responses-effort mapping ` +
-          `(declare reasoningEffortMap["${rung}"] on the model row, ` +
-          `omp models.yml compat.reasoningEffortMap dictionary precedent)`,
-    );
-    this.name = "RelayEffortMapError";
-  }
+export function relayResponsesWireEffort(
+  rung: RelayReasoningLevel,
+  thinking?: RelayModelThinking,
+): ResponsesEffort {
+  if (rung === "none") return "none";
+  // The projected ladder admits RelayEffort rungs only; the selection
+  // resolver 422s anything else before the wire fold runs.
+  const effort = rung as RelayEffort;
+  return (thinking?.effortMap?.[effort] ?? effort) as ResponsesEffort;
 }
 
 /**
- * Resolve one relay rung to the Responses reasoning.effort string: the
- * model row's per-model map wins (omp models.yml compat.reasoningEffortMap
- * precedent — the deepseek rows map {high: high, xhigh: max}), then the
- * default identity mapping, then the honest RelayEffortMapError.
+ * The anthropic adaptive effort for one selected rung, through the pi 正本
+ * (pi-catalog mapEffortToAnthropicAdaptiveEffort: the row's effortMap
+ * remap, then identity, then the minimal→low clamp the adaptive wire
+ * vocabulary needs). "adaptive" (the sentinel a map may name) means the
+ * wire sends `thinking.type:"adaptive"` with NO output_config — the caller
+ * reads it off the return to pick that shape.
  */
-export function resolveResponsesEffort(
+export function relayAnthropicAdaptiveEffort(
+  row: RelayReasoningSource,
+  effort: RelayEffort,
+): "low" | "medium" | "high" | "xhigh" | "max" | "adaptive" {
+  // RelayEffort is pi's Effort minus `minimal` (string-compatible); the
+  // const-enum nominal typing is the only gap.
+  return piMapEffortToAnthropicAdaptiveEffort(piModelView(row), effort as unknown as PiEffort);
+}
+
+/**
+ * The upstream wire id for one selection (pi-catalog resolveWireModelId):
+ * the row's `thinking.effortRouting` routes collapsed effort-tier variants
+ * per rung ("off" when thinking is off); everything else keeps the row id.
+ */
+export function relayWireModelId(row: { id: string } & RelayReasoningSource, rung: RelayReasoningLevel): string {
+  return piResolveWireModelId(
+    piModelView(row),
+    (rung === "none" ? undefined : rung) as unknown as PiEffort | undefined,
+  );
+}
+
+/**
+ * The per-effort `thinking.budget_tokens` ladder a budget-transport row
+ * rides when its declared `thinking.effortBudgets` names no entry — pi-ai
+ * stream.ts:1613 ANTHROPIC_THINKING anchor (the same wire the relay
+ * speaks). Wire detail, not capability: the ladder NEVER derives from it.
+ */
+export const RELAY_ANTHROPIC_BUDGET_BY_EFFORT: Record<RelayEffort, number> = {
+  low: 4096,
+  medium: 8192,
+  high: 16384,
+  xhigh: 32768,
+  max: 32768,
+};
+
+/**
+ * The anthropic wire thinking fold for one selection (#534): the row's
+ * declared transport decides the shape —
+ * - rung "none" (or no thinking seat): explicit off (`type:"disabled"` —
+ *   the probe-confirmed compat posture; satisfies requiresEffort rows,
+ *   which need the explicit suppression);
+ * - "anthropic-adaptive": `type:"adaptive"` + `output_config.effort`
+ *   (pi-ai anthropic.ts: adaptive model, effort rides output_config);
+ * - "anthropic-budget-effort": `type:"enabled"` + budget AND the effort;
+ * - every other mode: the classic budget knob — the rung's
+ *   `effortBudgets` entry, else the named default ladder (pi-ai's own
+ *   precedence: per-effort lookup, no default-rung borrow). The budget
+ *   NUMBER is wire detail; the row id/rung decision stays with the ladder.
+ */
+export function relayAnthropicThinking(
+  row: RelayReasoningSource,
   rung: RelayReasoningLevel,
-  map?: Partial<Record<RelayReasoningLevel, ResponsesEffort>>,
-): ResponsesEffort {
-  const mapped = map?.[rung] ?? DEFAULT_REASONING_EFFORT_BY_RUNG[rung];
-  if (mapped === undefined) throw new RelayEffortMapError(rung);
-  return mapped;
+): { thinking: ThinkingConfig; outputConfig?: RelayOutputConfig } {
+  const meta = row.thinking;
+  if (rung === "none" || meta === undefined) {
+    return { thinking: { type: "disabled" } };
+  }
+  const effort = rung as RelayEffort;
+  const budget =
+    meta.effortBudgets?.[effort] ?? RELAY_ANTHROPIC_BUDGET_BY_EFFORT[effort];
+  if (meta.mode === "anthropic-adaptive" || meta.mode === "anthropic-budget-effort") {
+    const mapped = relayAnthropicAdaptiveEffort(row, effort);
+    const adaptive: ThinkingConfig =
+      meta.mode === "anthropic-adaptive"
+        ? { type: "adaptive" }
+        : { type: "enabled", budget_tokens: budget };
+    return mapped === "adaptive"
+      ? { thinking: adaptive }
+      : { thinking: adaptive, outputConfig: { effort: mapped } };
+  }
+  return { thinking: { type: "enabled", budget_tokens: budget } };
 }
 
 // ---------------------------------------------------------------------------
@@ -262,8 +433,14 @@ export const relayModelEntrySchema = z.strictObject({
   name: z.string().min(1).optional(),
   /** API family label (free-form omp vocabulary; provider rows use the strict enum). */
   api: z.string().min(1).optional(),
-  /** Reasoning capability bit (declarative; the ladder is budget-derived). */
+  /** Reasoning capability bit — the pi gate input (relayReasoningLadder). */
   reasoning: z.boolean().optional(),
+  /**
+   * #534 the pi ThinkingConfig seat (relayModelThinkingSchema): capability
+   * ladder + wire transport, one vocabulary with omp models.yml. Absent on
+   * rows with no controllable thinking surface.
+   */
+  thinking: relayModelThinkingSchema.optional(),
   /** Input modalities; `image` projects the #319 image-input capability. */
   input: z.array(z.enum(["text", "image"])).optional(),
   /** Declared context window (tokens). */
@@ -287,6 +464,100 @@ export type RelayModelEntry = z.infer<typeof relayModelEntrySchema>;
  * find judge footer pricing). */
 export type RelayModelCost = NonNullable<RelayModelEntry["cost"]>;
 
+const CANONICAL_EFFORT_ORDER: readonly RelayEffort[] = ["low", "medium", "high", "xhigh", "max"];
+
+/**
+ * #534 the compat read (存量行迁移): stored/pre-pi rows carry the retired
+ * seats (`thinkingBudgetTokens` budget + `reasoningLevels`/
+ * `defaultReasoningLevel` ladder + `reasoningEffortMap` remap). The fold
+ * migrates them onto the pi shape — the ladder becomes
+ * `thinking.efforts` (capability, NO budget gate), the budget number rides
+ * `thinking.effortBudgets` on the default rung (wire detail), the remap
+ * rides `thinking.effortMap`. pi-shaped `thinking` input wins verbatim and
+ * the retired seats strip from the output. Semantics preserved per the old
+ * deriveRelayReasoning: declared rungs keep their ladder; a budget number
+ * with no declared ladder becomes the single honest medium rung; rows with
+ * neither keep `thinking` absent (gate off).
+ */
+function foldLegacyModelRow(row: {
+  id: string;
+  name?: string;
+  api?: RelayApi;
+  reasoning?: boolean;
+  input?: ("text" | "image")[];
+  contextWindow?: number;
+  maxTokens?: number;
+  cost?: RelayModelCost;
+  description?: string;
+  thinking?: RelayModelThinking;
+  thinkingBudgetTokens?: number | null | undefined;
+  reasoningLevels?: readonly RelayReasoningLevel[] | null | undefined;
+  defaultReasoningLevel?: RelayReasoningLevel | null | undefined;
+  reasoningEffortMap?: Partial<Record<RelayReasoningLevel, ResponsesEffort>> | null | undefined;
+  // The OUTPUT shape (RelayModelEntry + the edge seats the extend narrows or
+  // adds) — spelled structurally, NOT via z.infer of the schema below: the
+  // fold sits inside that schema's transform, so inferring through it would
+  // cycle. `api` re-narrows to the relay enum (the extend's override).
+}): RelayModelEntry & { description?: string; api?: RelayApi } {
+  const {
+    thinkingBudgetTokens,
+    reasoningLevels,
+    defaultReasoningLevel,
+    reasoningEffortMap,
+    ...pi
+  } = row;
+  if (pi.thinking !== undefined) return pi;
+  // The remap: effort-keyed entries survive verbatim (value vocabulary is
+  // the same official effort set); rung keys the edge ladder cannot offer
+  // (none/ultra/ultracode) drop — they never projected a runnable rung.
+  const effortMap: Partial<Record<RelayEffort, ResponsesEffort>> = {};
+  for (const [key, value] of Object.entries(reasoningEffortMap ?? {})) {
+    if ((relayEffortValues as readonly string[]).includes(key)) {
+      effortMap[key as RelayEffort] = value;
+    }
+  }
+  // Legacy declarations may arrive unordered (and carry the off/fantasy
+  // rungs) — emit the ladder pi expects: canonical order (pi-catalog
+  // THINKING_EFFORTS, minus minimal), only edge-expressible efforts.
+  const declaredEfforts = CANONICAL_EFFORT_ORDER.filter((effort) =>
+    (reasoningLevels ?? []).includes(effort),
+  );
+  if (declaredEfforts.length === 0) {
+    // No declared ladder: the budget number was the old single-honest-rung
+    // gate (medium) — migrate it as exactly that, number intact.
+    if (thinkingBudgetTokens === undefined || thinkingBudgetTokens === null) return pi;
+    return {
+      ...pi,
+      thinking: {
+        mode: "budget",
+        efforts: ["medium"],
+        defaultLevel: "medium",
+        effortBudgets: { medium: thinkingBudgetTokens },
+      },
+    };
+  }
+  const budget = thinkingBudgetTokens === null ? undefined : thinkingBudgetTokens;
+  const declaredDefault =
+    defaultReasoningLevel != null &&
+    (relayEffortValues as readonly string[]).includes(defaultReasoningLevel)
+      ? (defaultReasoningLevel as RelayEffort)
+      : undefined;
+  // No declared default → pi defaultSupportedEffort semantics over the
+  // migrated ladder: the lowest supported effort (no routing to match —
+  // minimumSupportedEffort is the fallback the pi helper itself returns).
+  const defaultLevel = declaredDefault ?? (declaredEfforts[0] ?? "medium");
+  return {
+    ...pi,
+    thinking: {
+      mode: "budget",
+      efforts: declaredEfforts,
+      defaultLevel,
+      ...(Object.keys(effortMap).length > 0 ? { effortMap } : {}),
+      ...(budget !== undefined ? { effortBudgets: { [defaultLevel]: budget } } : {}),
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Edge catalog schema (MODEL_RELAY_CATALOG)
 // ---------------------------------------------------------------------------
@@ -306,41 +577,29 @@ export const relayCatalogModelSchema = relayModelEntrySchema
      * then anthropic-messages.
      */
     api: relayApiSchema.optional(),
-    /**
-     * Per-model reasoning-rung → Responses effort map (omp models.yml
-     * compat.reasoningEffortMap dictionary precedent, deepseek rows:
-     * {high: high, xhigh: max}). Consumed by the openai-responses face;
-     * unmapped rungs fail closed at selection (RelayEffortMapError → 422).
-     */
-    reasoningEffortMap: z
-      .partialRecord(relayReasoningLevelSchema, responsesEffortSchema)
-      .optional(),
     /** bb AvailableModel.description (picker subtitle). */
     description: z.string().optional(),
     /**
-     * Per-model thinking budget (#362 scope absorption ①; the ONLY budget
-     * source since #500 deleted the deployment-wide env scalar): the row's
-     * reasoning budget rides this field — absent = budget-off. A panel edit
-     * hot-applies through the catalog overlay.
+     * #534 the RETIRED seats, accepted as INPUT only (compat read): the
+     * transform below folds them onto the pi thinking shape and strips them
+     * from the output. Declaring them on a fresh row still works (the fold
+     * is the migration path), but nothing downstream reads them anymore —
+     * the stored JSON normalizes to the pi shape on the next write.
      */
-    thinkingBudgetTokens: z.number().int().positive().optional(),
-    /**
-     * Explicit ladder override. Unset → budget-derived (deriveRelayReasoning).
-     * Dormant while the row's budget is off: the wire cannot run any budget
-     * rung, so the projection stays `["none"]` regardless of the declaration.
-     */
-    reasoningLevels: z.array(relayReasoningLevelSchema).min(1).optional(),
-    /** Default rung of the declared ladder (must be a member when both set). */
-    defaultReasoningLevel: relayReasoningLevelSchema.optional(),
+    thinkingBudgetTokens: z.number().int().positive().nullish(),
+    reasoningLevels: z.array(relayReasoningLevelSchema).min(1).nullish(),
+    defaultReasoningLevel: relayReasoningLevelSchema.nullish(),
+    reasoningEffortMap: z.partialRecord(relayReasoningLevelSchema, responsesEffortSchema).nullish(),
   })
+  .transform(foldLegacyModelRow)
   .refine(
     (model) =>
-      model.defaultReasoningLevel === undefined ||
-      model.reasoningLevels === undefined ||
-      model.reasoningLevels.includes(model.defaultReasoningLevel),
-    { message: "defaultReasoningLevel must be a member of reasoningLevels" },
+      model.thinking?.defaultLevel == null ||
+      model.thinking.efforts.includes(model.thinking.defaultLevel),
+    { message: "thinking.defaultLevel must be a member of thinking.efforts" },
   );
 export type RelayCatalogModel = z.infer<typeof relayCatalogModelSchema>;
+export type RelayCatalogModelInput = z.input<typeof relayCatalogModelSchema>;
 
 /**
  * #362 scope absorption ②: the api family that marks a provider row as an
@@ -607,23 +866,23 @@ export class RelaySelectionError extends Error {
 export interface RelaySelectionDirectoryRow {
   providerId: string;
   id: string;
+  /** The projected capability bit (relayReasoningLadder's gate input). */
+  reasoning: boolean;
   reasoningLevels: readonly RelayReasoningLevel[];
   defaultReasoningLevel: RelayReasoningLevel;
   /**
    * #361: the row's protocol face (model api ?? provider api ?? default).
-   * The effort-mapping fail-closed check below applies only to
-   * openai-effort faces — the anthropic face keeps its budget semantics.
+   * The effort fold below applies only to openai-effort faces — the
+   * anthropic face keeps its budget/adaptive semantics.
    */
   api?: RelayApi;
-  /** The row's per-model effort map (RelayCatalogModel.reasoningEffortMap). */
-  reasoningEffortMap?: Partial<Record<RelayReasoningLevel, ResponsesEffort>>;
   /**
-   * The row's EFFECTIVE thinking budget (#362): model-declared budget
-   * winning over the deployment scalar. `undefined` = legacy row that
-   * predates the seat (falls back to `directory.thinkingEnabled`);
-   * `null` = explicitly budget-off; a number = enabled with that budget.
+   * #534 the pi thinking seat verbatim (RelayCatalogModel.thinking): the
+   * dispatch half reads the wire transports off it (effortBudgets /
+   * effortRouting / effortMap / mode) — never the ladder, which is the
+   * projected pair above.
    */
-  thinkingBudgetTokens?: number | null;
+  thinking?: RelayModelThinking;
 }
 
 export interface RelaySelectionDirectory {
@@ -640,12 +899,6 @@ export interface RelaySelectionDirectory {
    * fails closed and the caller must pass the model explicitly.
    */
   defaultModelId: string;
-  /**
-   * Directory-wide thinking fallback for rows that predate the per-row
-   * budget seat (their `thinkingBudgetTokens` is undefined). The relay
-   * registry passes false since #500 (no deployment budget scalar).
-   */
-  thinkingEnabled: boolean;
 }
 
 export interface ResolvedRelaySelection {
@@ -666,10 +919,10 @@ export interface ResolvedRelaySelection {
  *   NO default and demands an explicit model (named error, not a guessed
  *   first row);
  * - reasoning level: explicit (must sit in the row's runnable ladder) ?? the
- *   row's derived default. The ladder is budget-collapsed exactly like the
- *   picker face (deriveRelayReasoning) — budget off admits only "none",
- *   so a stored non-none rung from a budget-on era fails loudly on replay
- *   instead of silently downgrading (contradiction-2 discipline).
+ *   row's projected default. The ladder is the capability projection
+ *   (relayReasoningLadder) the picker face runs — one vocabulary, no second
+ *   derivation. A rung the row's pi gate does not admit fails loudly (the
+ *   #351 red line), never silently downgrades.
  */
 export function resolveRelaySelection(
   directory: RelaySelectionDirectory,
@@ -714,40 +967,14 @@ export function resolveRelaySelection(
             `declared models: ${JSON.stringify(declared)}`,
     );
   }
-  // #362: the ladder collapses per ROW budget, not the deployment scalar —
-  // a model row carrying thinkingBudgetTokens runs its declared rungs even
-  // when the env budget is unset (and stays ["none"] when it declares none).
-  const thinkingEnabled =
-    row.thinkingBudgetTokens === undefined
-      ? directory.thinkingEnabled
-      : row.thinkingBudgetTokens !== null;
-  const ladder = deriveRelayReasoning({
-    thinkingEnabled,
-    declaredLevels: row.reasoningLevels,
-    declaredDefault: row.defaultReasoningLevel,
-  });
-  const reasoningLevel = selection.reasoningLevel ?? ladder.defaultLevel;
-  if (!ladder.levels.includes(reasoningLevel)) {
+  const reasoningLevel = selection.reasoningLevel ?? row.defaultReasoningLevel;
+  if (!row.reasoningLevels.includes(reasoningLevel)) {
     throw new RelaySelectionError(
       "reasoning_level_unknown",
       "reasoningLevel",
       `reasoning level "${reasoningLevel}" is not in the runnable ladder ` +
-        `${JSON.stringify(ladder.levels)} for ${providerId}/${row.id}`,
+        `${JSON.stringify(row.reasoningLevels)} for ${providerId}/${row.id}`,
     );
-  }
-  // #361/#363 fail-closed effort mapping: on the openai-effort faces a rung
-  // the wire cannot honestly express (no default identity mapping and no
-  // per-model reasoningEffortMap entry) is a named 422 — never a silent
-  // clamp onto another effort value.
-  if (row.api !== undefined && relayApiConsumesEffortMap(row.api)) {
-    try {
-      resolveResponsesEffort(reasoningLevel, row.reasoningEffortMap);
-    } catch (error) {
-      if (error instanceof RelayEffortMapError) {
-        throw new RelaySelectionError("reasoning_level_unknown", "reasoningLevel", error.message);
-      }
-      throw error;
-    }
   }
   return { providerId, modelId: row.id, reasoningLevel };
 }

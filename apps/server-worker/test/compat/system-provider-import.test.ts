@@ -109,8 +109,10 @@ providers:
     expect(row?.dispatchable).toBe(true);
     expect(row?.models[0]).toMatchObject({
       id: "imported-model",
-      reasoningLevels: ["low", "high"],
-      defaultReasoningLevel: "high",
+      // #534: the pi thinking shape — the omp fragment rides through
+      // verbatim and the write stores the folded (pi) form.
+      reasoning: true,
+      thinking: { mode: "budget", efforts: ["low", "high"], defaultLevel: "high" },
     });
   });
 
