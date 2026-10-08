@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { AnthropicRelayProvider, type RelayConfig } from "../src/relay/anthropic-provider.js";
+import { parseFindNoulReply, splitFindAnswerLines } from "../src/tools/find-protocol.js";
 import type { ModelRequest, ModelStreamChunk, ModelUsageReceipt } from "../src/provider.js";
 
 /**
@@ -572,5 +573,46 @@ describe("relay client: usage receipt (#308)", () => {
     await expect(collect(provider)).rejects.toMatchObject({
       message: expect.stringContaining("max_tokens"),
     } satisfies Record<string, unknown>);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #529 judge-leg completeText: the wire must carry the explicit thinking-off
+// pin. The CT142 real-machine walkthrough (thr_8zbxvti5ep) showed the pinless
+// judge call letting a reasoning:true glm row run its DEFAULT thinking budget
+// inside the judge's 1024-token reply budget — 601 tokens burned, judged 0,
+// no failure row (the reply folded to nothing parseable, not a thrown error).
+// ---------------------------------------------------------------------------
+
+describe("judge leg completeText (#529 thinking pin)", () => {
+  test("wire pins thinking off; reply folds through the #523 parse contract", async () => {
+    const provider = new AnthropicRelayProvider({
+      ...CONFIG,
+      fetchImpl: () =>
+        Promise.resolve(
+          Response.json({
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: "p00: yes" }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          }),
+        ),
+    });
+    const result = await provider.completeText(
+      { system: "noul judge", user: "p00 passage", maxTokens: 1024 },
+      { signal: new AbortController().signal },
+    );
+    expect(result.text).toBe("p00: yes");
+    // End-to-end judged shape: the answer folds to a verdict, not undefined.
+    const answers = splitFindAnswerLines(result.text, ["p00"]);
+    expect(parseFindNoulReply(answers.get("p00") ?? "")).toBe(true);
+
+    const recorded = provider.bodies[0];
+    if (recorded === undefined) throw new Error("provider recorded no completion body");
+    const wire = JSON.parse(recorded) as {
+      thinking?: { type?: string };
+      max_tokens?: number;
+    };
+    expect(wire.thinking).toEqual({ type: "disabled" });
+    expect(wire.max_tokens).toBe(1024);
   });
 });

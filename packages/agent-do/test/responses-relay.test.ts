@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { ResponsesRelayProvider } from "../src/relay/responses-provider.js";
 import { responsesRequestBody } from "../src/relay/responses-wire.js";
+import { parseFindNoulReply, splitFindAnswerLines } from "../src/tools/find-protocol.js";
 import type { RelayConfig } from "../src/relay/anthropic-provider.js";
 import type { ModelRequest, ModelUsageReceipt } from "../src/provider.js";
 
@@ -522,5 +523,48 @@ describe("responses client: pre-first-byte classification", () => {
     await collect(provider);
     expect(seenUrl).toBe("https://newapi.test/v1/responses");
     expect(seenAuth).toBe("Bearer k-test");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #529 judge-leg completeText: the wire must carry the explicit reasoning-off
+// pin (effort "none" — the value the streaming face already speaks on this
+// adaptor). CT142 real machine (thr_8zbxvti5ep, newapi/glm-5.3-flash
+// openai-responses): the pinless judge call burned 601 tokens into default
+// thinking and folded to judged 0 with no failure row.
+// ---------------------------------------------------------------------------
+
+describe("judge leg completeText (#529 reasoning pin)", () => {
+  test("wire pins effort none; reply folds through the #523 parse contract", async () => {
+    const provider = new ResponsesRelayProvider({
+      ...CONFIG,
+      fetchImpl: () =>
+        Promise.resolve(
+          Response.json({
+            status: "completed",
+            output: [{ type: "message", content: [{ type: "output_text", text: "p00: yes" }] }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          }),
+        ),
+    });
+    const result = await provider.completeText(
+      { system: "noul judge", user: "p00 passage", maxTokens: 1024 },
+      { signal: new AbortController().signal },
+    );
+    expect(result.text).toBe("p00: yes");
+    // End-to-end judged shape: the answer folds to a verdict, not undefined.
+    const answers = splitFindAnswerLines(result.text, ["p00"]);
+    expect(parseFindNoulReply(answers.get("p00") ?? "")).toBe(true);
+
+    const recorded = provider.bodies[0];
+    if (recorded === undefined) throw new Error("provider recorded no completion body");
+    const wire = JSON.parse(recorded) as {
+      reasoning?: { effort?: string };
+      max_output_tokens?: number;
+      stream?: boolean;
+    };
+    expect(wire.reasoning).toEqual({ effort: "none" });
+    expect(wire.max_output_tokens).toBe(1024);
+    expect(wire.stream).toBe(false);
   });
 });
