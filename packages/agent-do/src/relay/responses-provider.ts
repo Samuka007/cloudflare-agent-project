@@ -343,8 +343,13 @@ export class ResponsesRelayProvider implements ModelProvider {
 
   /**
    * #523 judge leg: ONE non-streaming Responses call — instructions =
-   * system, one user message, no tools, no reasoning pin (the judge answers
-   * one-word-per-question lines). Same failure taxonomy as streamTurn.
+   * system, one user message, no tools (the judge answers one-word-per-
+   * question lines). Same failure taxonomy as streamTurn. #529: the
+   * reasoning pin rides explicitly at effort "none" — a reasoning row
+   * otherwise runs its DEFAULT thinking budget into the judge's reply budget
+   * and the folded answer never parses (CT142: 601 tokens, judged 0). The
+   * streaming face already speaks effort "none" on this adaptor (the
+   * deployment rows' default rung), so the field is proven accepted.
    */
   async completeText(
     request: TextCompletionRequest,
@@ -356,6 +361,8 @@ export class ResponsesRelayProvider implements ModelProvider {
       store: false,
       instructions: request.system,
       max_output_tokens: request.maxTokens ?? this.config.maxTokens,
+      // #529 judge posture: non-reasoning, explicitly — see the doc comment.
+      reasoning: { effort: "none" },
       input: [
         {
           type: "message",
@@ -365,6 +372,7 @@ export class ResponsesRelayProvider implements ModelProvider {
       ],
     };
     const serialized = JSON.stringify(body);
+    this.bodies.push(serialized);
     const url = `${this.config.baseUrl.replace(/\/+$/, "")}/responses`;
     let response: Response;
     try {

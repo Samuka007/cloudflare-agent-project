@@ -349,8 +349,12 @@ export class AnthropicRelayProvider implements ModelProvider {
 
   /**
    * #523 judge leg: ONE non-streaming Messages call — system top-level, one
-   * user message, no tools, no thinking pin. Same failure taxonomy as
-   * streamTurn; `max_tokens` stop reason fails (length 必停).
+   * user message, no tools. Same failure taxonomy as streamTurn; `max_tokens`
+   * stop reason fails (length 必停). #529: the thinking pin rides explicitly
+   * — a `reasoning:true` row (glm) otherwise runs its DEFAULT thinking budget
+   * into the judge's reply budget and the folded answer never parses (the
+   * CT142 walkthrough: 601 tokens burned, judged 0, no failure row). Same
+   * disabled-by-default posture the wire sends (anthropicRequestBody).
    */
   async completeText(
     request: TextCompletionRequest,
@@ -359,6 +363,8 @@ export class AnthropicRelayProvider implements ModelProvider {
     const body = {
       model: this.config.model,
       max_tokens: request.maxTokens ?? this.config.maxTokens,
+      // #529 judge posture: non-reasoning, explicitly — see the doc comment.
+      thinking: { type: "disabled" },
       system: request.system,
       messages: [
         {
@@ -368,6 +374,7 @@ export class AnthropicRelayProvider implements ModelProvider {
       ],
     };
     const serialized = JSON.stringify(body);
+    this.bodies.push(serialized);
     const url = `${this.config.baseUrl.replace(/\/+$/, "")}/v1/messages`;
     let response: Response;
     try {

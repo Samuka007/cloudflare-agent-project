@@ -315,9 +315,12 @@ export class CompletionsRelayProvider implements ModelProvider {
 
   /**
    * #523 judge leg: ONE non-streaming chat completion, system + user, no
-   * tools, no agent prompt, no reasoning pin. Same failure taxonomy as
-   * streamTurn (connect → retryable, HTTP status classes, [DONE] not
-   * applicable — a JSON body is its own seal).
+   * tools, no agent prompt. Same failure taxonomy as streamTurn (connect →
+   * retryable, HTTP status classes, [DONE] not applicable — a JSON body is
+   * its own seal). #529: the reasoning pin rides explicitly at "none" — a
+   * reasoning row otherwise runs its DEFAULT thinking budget into the
+   * judge's reply budget and the folded answer never parses (CT142: 601
+   * tokens, judged 0). Same always-present posture the wire sends.
    */
   async completeText(
     request: TextCompletionRequest,
@@ -326,6 +329,8 @@ export class CompletionsRelayProvider implements ModelProvider {
     const body = {
       model: this.config.model,
       stream: false,
+      // #529 judge posture: non-reasoning, explicitly — see the doc comment.
+      reasoning_effort: "none",
       messages: [
         { role: "system", content: request.system },
         { role: "user", content: request.user },
@@ -333,6 +338,7 @@ export class CompletionsRelayProvider implements ModelProvider {
       max_completion_tokens: request.maxTokens ?? this.config.maxTokens,
     };
     const serialized = JSON.stringify(body);
+    this.bodies.push(serialized);
     const url = `${this.config.baseUrl.replace(/\/+$/, "")}/chat/completions`;
     let response: Response;
     try {
