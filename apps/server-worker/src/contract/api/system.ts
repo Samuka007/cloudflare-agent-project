@@ -362,6 +362,7 @@ export const systemWebSearchResponseSchema = z.object({
   availableEngines: z.array(z.string()),
   engines: z.object({
     brave: z.object({ hasApiKey: z.boolean() }),
+    exa: z.object({ hasApiKey: z.boolean() }),
     searxng: z.object({
       endpoint: z.string().nullable(),
       categories: z.string().nullable(),
@@ -387,6 +388,10 @@ export const systemWebSearchPutRequestSchema = z
     engines: z
       .object({
         brave: z
+          .object({ apiKey: z.string().min(1).nullable().optional() })
+          .strict()
+          .optional(),
+        exa: z
           .object({ apiKey: z.string().min(1).nullable().optional() })
           .strict()
           .optional(),

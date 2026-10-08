@@ -5,8 +5,8 @@
  * `AGENT_DO_WEB_SEARCH` env path is deleted (#450 zero-env ruling): no row =
  * the ruled defaults, never an env override.
  *
- * Secret discipline mirrors provider_configs: the secret half (brave apiKey,
- * searxng token/basic*) is AES-GCM encrypted into `secrets_enc` with
+ * Secret discipline mirrors provider_configs: the secret half (brave/exa
+ * apiKey, searxng token/basic*) is AES-GCM encrypted into `secrets_enc` with
  * PROVIDER_CONFIG_MASTER_KEY and never read back; `secrets_meta` carries the
  * secret-PRESENCE map for the zero-secret read faces.
  */
@@ -39,6 +39,7 @@ export interface WebSearchWriteFields {
 export function webSearchHasSecrets(secrets: WebSearchStoredSecrets): boolean {
   return (
     secrets.brave?.apiKey !== undefined ||
+    secrets.exa?.apiKey !== undefined ||
     secrets.searxng?.token !== undefined ||
     secrets.searxng?.basicUsername !== undefined ||
     secrets.searxng?.basicPassword !== undefined

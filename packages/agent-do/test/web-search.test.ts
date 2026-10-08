@@ -11,6 +11,7 @@ import {
   BROWSER_BACKED_ENGINES,
   DEFAULT_WEB_SEARCH_CONFIG,
   MAX_WEB_SEARCH_TIMEOUT_SECONDS,
+  projectWebSearchConfig,
   resolveWebSearchConfig,
   runWebSearchTool,
   type WebSearchToolContext,
@@ -107,6 +108,28 @@ const SEARXNG_BODY = {
   unresponsive_engines: [],
 };
 
+/** omp providers/exa.ts response shape — summaries, text/highlights
+ * fallbacks, a past-the-answer-cap summary, and a url-less dropped result. */
+const EXA_BODY = {
+  requestId: "req-539",
+  results: [
+    { title: "Exa one", url: "https://example.com/exa-one", summary: "First summary prose." },
+    { title: "Exa two", url: "https://example.com/exa-two", summary: "Second summary prose." },
+    { title: "Exa three", url: "https://example.com/exa-three", summary: "Third summary prose." },
+    {
+      title: "Exa four",
+      url: "https://example.com/exa-four",
+      summary: "Fourth summary prose.",
+    },
+    {
+      title: "Exa five",
+      url: "https://example.com/exa-five",
+      text: "Text fallback snippet.",
+    },
+    { title: "No url", url: null, summary: "Dropped result." },
+  ],
+};
+
 /** Two call sites + one in the shared fixtures: lockstep brave stub. */
 function braveHandler(responder: () => Response | Promise<Response>) {
   return http.get("https://api.search.brave.com/res/v1/web/search", responder);
@@ -178,14 +201,14 @@ describe("M1.5/T12 — config-layer engine exclusion (classification §2.2/§6.1
   test("each browser-backed engine is refused with the structured policy error", () => {
     for (const engine of BROWSER_BACKED_ENGINES) {
       expect(() => resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, { chain: [engine] })).toThrow(
-        `web_search edge policy: engine "${engine}" is browser-backed (classification table §2.2/§6.1 — its anti-bot escalation can acquire a host Chromium) and is excluded from the DO-local provider set. Allowed engines: brave, duckduckgo, searxng, startpage, public.`,
+        `web_search edge policy: engine "${engine}" is browser-backed (classification table §2.2/§6.1 — its anti-bot escalation can acquire a host Chromium) and is excluded from the DO-local provider set. Allowed engines: brave, exa, duckduckgo, searxng, startpage, public.`,
       );
     }
   });
 
   test("an unknown engine is refused; a valid patch merges over the defaults", () => {
     expect(() => resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, { chain: ["askjeeves"] })).toThrow(
-      'web_search config: unknown engine "askjeeves". Allowed engines: brave, duckduckgo, searxng, startpage, public.',
+      'web_search config: unknown engine "askjeeves". Allowed engines: brave, exa, duckduckgo, searxng, startpage, public.',
     );
     const decoded = resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, {
         chain: ["searxng"],
@@ -411,6 +434,162 @@ describe("M1.5/T12 — engine allow/deny matrix (first success wins, failures ad
     // multi-failure summary).
     expect(result.output).toBe(
       "Error: DuckDuckGo blocked the request with a bot-detection challenge. DuckDuckGo throttles automated HTML searches from datacenter/shared-egress IPs; configure a credentialed provider such as Brave, Tavily, Exa, or Kagi for reliable web search.",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// exa (#539, omp providers/exa.ts) — the credentialed POST transport, result
+// parsing (sources/answer), and the apiKey availability gate.
+// ---------------------------------------------------------------------------
+
+describe("#539 — exa engine (credentialed, omp exa.ts port)", () => {
+  test("config gate: the patch round-trips and the projection reports the credential gate", () => {
+    const keyed = resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, {
+      chain: ["exa"],
+      engines: { exa: { apiKey: "exa-key-539" } },
+    });
+    expect(keyed.engines.exa?.apiKey).toBe("exa-key-539");
+    expect(projectWebSearchConfig(keyed).chain).toEqual([
+      { engine: "exa", credentialsRequired: true, credentialsPresent: true },
+    ]);
+    const unkeyed = projectWebSearchConfig(
+      resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, { chain: ["exa"] }),
+    );
+    expect(unkeyed.chain).toEqual([
+      { engine: "exa", credentialsRequired: true, credentialsPresent: false },
+    ]);
+  });
+
+  test("dials the credentialed POST with the omp body shape; parses sources and the capped answer", async () => {
+    let method = "";
+    let auth = "";
+    let contentType = "";
+    let body = "";
+    network.use(
+      http.post("https://api.exa.ai/search", async ({ request }) => {
+        method = request.method;
+        auth = request.headers.get("x-api-key") ?? "";
+        contentType = request.headers.get("Content-Type") ?? "";
+        body = await request.text();
+        return HttpResponse.json(EXA_BODY);
+      }),
+    );
+    const ctx = ctxWithConfig({
+      chain: ["exa"],
+      engines: { exa: { apiKey: "exa-key-539" } },
+    });
+    const result = await runWebSearchTool({ query: "durable objects", limit: 3 }, ctx);
+    expect(result.status).toBe("ok");
+    // omp callExaSearch wire shape: POST api.exa.ai/search, x-api-key, JSON
+    // body { query, numResults, type: "auto", contents.summary conditioned
+    // on the query } — the limit rides numResults AND the source slice.
+    expect(method).toBe("POST");
+    expect(auth).toBe("exa-key-539");
+    expect(contentType).toBe("application/json");
+    expect(JSON.parse(body)).toEqual({
+      query: "durable objects",
+      numResults: 3,
+      type: "auto",
+      contents: { summary: { query: "durable objects" } },
+    });
+    // omp formatForLLM: the synthesized answer leads (first three summaries
+    // — "Exa four" is past MAX_ANSWER_SUMMARIES and never answers), then the
+    // url-guarded sources trimmed to the limit.
+    expect(result.output).toBe(
+      [
+        "**Exa one**: First summary prose.",
+        "",
+        "**Exa two**: Second summary prose.",
+        "",
+        "**Exa three**: Third summary prose.",
+        "",
+        "## Sources",
+        "3 sources",
+        "[1] Exa one",
+        "    https://example.com/exa-one",
+        "    First summary prose.",
+        "[2] Exa two",
+        "    https://example.com/exa-two",
+        "    Second summary prose.",
+        "[3] Exa three",
+        "    https://example.com/exa-three",
+        "    Third summary prose.",
+      ].join("\n"),
+    );
+  });
+
+  test("without a limit the body carries the default numResults; text fallback answers and url-less results drop", async () => {
+    let body = "";
+    network.use(
+      http.post("https://api.exa.ai/search", async ({ request }) => {
+        body = await request.text();
+        return HttpResponse.json(EXA_BODY);
+      }),
+    );
+    const result = await runWebSearchTool(
+      { query: "fleet" },
+      ctxWithConfig({ chain: ["exa"], engines: { exa: { apiKey: "k" } } }),
+    );
+    expect(result.status).toBe("ok");
+    // omp buildExaRequestBody default: numResults ?? 10.
+    expect(JSON.parse(body)).toMatchObject({ query: "fleet", numResults: 10 });
+    // The text fallback snippet renders; the url-less result never does.
+    expect(result.output).toContain("[5] Exa five");
+    expect(result.output).toContain("    Text fallback snippet.");
+    expect(result.output).not.toContain("No url");
+    expect(result.output).not.toContain("Dropped result.");
+  });
+
+  test("a missing key skips the engine silently — the chain advances unchanged", async () => {
+    let exaHits = 0;
+    network.use(
+      http.post("https://api.exa.ai/search", () => {
+        exaHits += 1;
+        return HttpResponse.json(EXA_BODY);
+      }),
+      startpageHomeHandler,
+      startpageSearchHandler,
+      ddgHandler,
+    );
+    const result = await runWebSearchTool(
+      { query: "test" },
+      ctxWithConfig({ chain: ["exa", "public"] }),
+    );
+    expect(result.status).toBe("ok");
+    expect(exaHits).toBe(0);
+    expect(result.output).not.toContain("Error:");
+    expect(result.output).toContain("[1] Alpha result");
+  });
+
+  test("a 401 is a provider failure — the chain advances to the next engine", async () => {
+    network.use(
+      http.post("https://api.exa.ai/search", () => new HttpResponse("bad key", { status: 401 })),
+      startpageHomeHandler,
+      startpageSearchHandler,
+    );
+    const result = await runWebSearchTool(
+      { query: "q" },
+      ctxWithConfig({ chain: ["exa", "startpage"], engines: { exa: { apiKey: "k" } } }),
+    );
+    expect(result.status).toBe("ok");
+    // First success wins: the exa failure is dropped once startpage serves
+    // (omp executeSearch — failures render only when nothing answers).
+    expect(result.output).toContain("[1] Alpha result");
+    expect(result.output).not.toContain("Error:");
+  });
+
+  test("an exa-only 401 failure reports the normalized engine error", async () => {
+    network.use(
+      http.post("https://api.exa.ai/search", () => new HttpResponse("bad key", { status: 401 })),
+    );
+    const result = await runWebSearchTool(
+      { query: "q" },
+      ctxWithConfig({ chain: ["exa"], engines: { exa: { apiKey: "k" } } }),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.output).toBe(
+      "Error: exa authorization failed (401). Check API key or base URL.",
     );
   });
 });
