@@ -137,10 +137,11 @@ describe("#350 MODEL_RELAY_CATALOG schema", () => {
     expect(() => relayCatalogSchema.parse(JSON.parse(modelKey))).toThrow();
   });
 
-  test("the dictionary is exactly the daemon agent-auth model vocabulary", () => {
+  test("the dictionary is exactly the omp models.yml model vocabulary", () => {
     // Field-set pin at the schema level: the shared dictionary must keep the
     // omp models.yml field set (id/name/api/reasoning/input/contextWindow/
-    // maxTokens/cost) — daemon-service imports this same schema instance.
+    // maxTokens/cost) — #523 deleted the daemon-side importer; the edge
+    // catalog is the schema's only consumer.
     const keys = Object.keys(relayModelEntrySchema.shape).sort();
     expect(keys).toEqual(
       ["api", "contextWindow", "cost", "id", "input", "maxTokens", "name", "reasoning"].sort(),
