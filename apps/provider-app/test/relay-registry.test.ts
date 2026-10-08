@@ -17,17 +17,18 @@ import {
 } from "../src/execution-posture.js";
 
 /**
- * #351/#450/#500 relay provider registry: the providerId-keyed dispatch half
- * of the catalog layer. Since #450 the construction is D1-only — the overlay
- * (the decoded provider_configs rows) is the ENTIRE directory and the ONLY
- * credential source: every row is standalone (a user-authored baseUrl is
- * never hit with a deployment key), so a keyless row fails dispatch with the
- * named credential error (#434 point ⑦ — no row-level mock). #500: no
- * deployment env takes part at all — the row declarations (budget / window /
- * input) are the per-row truth, the wire-safety fallback constants cover
- * rows that declare none, and a model-less selection fails closed. Two
- * threads selecting two models resolve two DISTINCT RelayConfigs; unknown
- * selections throw RelaySelectionError — the fail-closed red line.
+ * #351/#450/#500/#534 relay provider registry: the providerId-keyed dispatch
+ * half of the catalog layer. Since #450 the construction is D1-only — the
+ * overlay (the decoded provider_configs rows) is the ENTIRE directory and
+ * the ONLY credential source: every row is standalone (a user-authored
+ * baseUrl is never hit with a deployment key), so a keyless row fails
+ * dispatch with the named credential error (#434 point ⑦ — no row-level
+ * mock). #500: no deployment env takes part at all. #534: the wire thinking
+ * rides the row's pi transports — the rung picks disabled / budget (the
+ * row's effortBudgets, else the named default ladder) / adaptive
+ * (+ output_config.effort), and the wire model id honors
+ * thinking.effortRouting. Unknown selections throw RelaySelectionError —
+ * the fail-closed red line.
  */
 
 const OVERLAY: RelayProviderOverlay = {
@@ -39,11 +40,15 @@ const OVERLAY: RelayProviderOverlay = {
           id: "glm-5.3",
           name: "GLM-5.3",
           input: ["text", "image"],
-          reasoningLevels: ["none", "low", "high"],
-          defaultReasoningLevel: "high",
+          reasoning: true,
           contextWindow: 200_000,
           maxTokens: 8192,
-          thinkingBudgetTokens: 4096,
+          thinking: {
+            mode: "budget",
+            efforts: ["low", "high"],
+            defaultLevel: "high",
+            effortBudgets: { high: 4096 },
+          },
         },
         { id: "glm-5.3-air", name: "GLM-5.3-Air", maxTokens: 4096 },
       ],
@@ -52,10 +57,12 @@ const OVERLAY: RelayProviderOverlay = {
       models: [
         {
           id: "flash-mini",
-          reasoningLevels: ["none", "medium"],
+          reasoning: true,
           contextWindow: 128_000,
           maxTokens: 2048,
-          thinkingBudgetTokens: 8192,
+          // No effortBudgets entry for "medium" — the named default ladder
+          // serves the wire budget (RELAY_ANTHROPIC_BUDGET_BY_EFFORT).
+          thinking: { mode: "budget", efforts: ["medium"] },
         },
       ],
     },
@@ -81,8 +88,8 @@ describe("#351 RelayProviderRegistry resolution over the D1 overlay", () => {
     expect(backup.config.maxTokens).toBe(2048);
     expect(backup.config.contextWindow).toBe(128_000);
     expect(main.config.maxTokens).toBe(8192);
-    // The budget knob rides any non-none rung; the rung decides, and the
-    // ROW's own thinkingBudgetTokens is the budget (#500).
+    // #534: the row's declared effortBudgets is the wire budget; an
+    // undeclared rung rides the named default ladder.
     expect(main.config.thinking).toEqual({ type: "enabled", budget_tokens: 4096 });
     expect(backup.config.thinking).toEqual({ type: "enabled", budget_tokens: 8192 });
   });
@@ -100,15 +107,15 @@ describe("#351 RelayProviderRegistry resolution over the D1 overlay", () => {
     const flagship = registry.resolve({ providerId: "main", model: "glm-5.3" });
     expect(flagship.modelId).toBe("glm-5.3");
     expect(flagship.config.supportsImageInput).toBe(true);
-    // The sibling row declares no image input and no budget — both stay
-    // honest negatives (budget-off collapses the ladder to [none]) and the
-    // maxTokens window come from the row itself, never a deployment fold.
+    // The sibling row declares no thinking seat — the ladder is exactly
+    // [none], and the maxTokens window comes from the row itself, never a
+    // deployment fold.
     const sibling = registry.resolve({ providerId: "main", model: "glm-5.3-air" });
     expect(sibling.config.supportsImageInput).toBe(false);
     expect(sibling.config.maxTokens).toBe(4096);
     expect(sibling.config.thinking).toEqual({ type: "disabled" });
-    // A budget-off row has exactly one runnable rung — asking for another
-    // fails closed with the named 422 (display and dispatch agree).
+    // A capability-less row has exactly one runnable rung — asking for
+    // another fails closed with the named 422 (display and dispatch agree).
     try {
       registry.resolve({ providerId: "main", model: "glm-5.3-air", reasoningLevel: "high" });
       expect.unreachable();
@@ -118,7 +125,7 @@ describe("#351 RelayProviderRegistry resolution over the D1 overlay", () => {
     }
   });
 
-  test("#500: rows that declare no window/budget fall back to the wire-safety constants", () => {
+  test("#500: rows that declare no window/thinking fall back to the wire-safety constants", () => {
     const registry = RelayProviderRegistry.create({
       providers: { bare: { models: [{ id: "bare-model" }] } },
       imageSourceProviderId: null,
@@ -146,11 +153,14 @@ describe("#351 RelayProviderRegistry resolution over the D1 overlay", () => {
     } catch (error) {
       expect((error as RelaySelectionError).code).toBe("model_unknown");
     }
+    // "ultra" is not a pi effort — a row ladder can never offer it, so the
+    // rung is outside every runnable ladder (the named 422).
     try {
       registry.resolve({ providerId: "backup", model: "flash-mini", reasoningLevel: "ultra" });
       expect.unreachable();
     } catch (error) {
       expect((error as RelaySelectionError).code).toBe("reasoning_level_unknown");
+      expect((error as RelaySelectionError).message).toContain("runnable ladder");
     }
     // #500: no deployment model is named — a provider-only selection has no
     // default to fall to; pass the model explicitly (named 422).
@@ -283,6 +293,108 @@ describe("#351/#450 standalone credentials (D1 rows never ride deployment slots)
   });
 });
 
+describe("#534 the pi transports on the anthropic face", () => {
+  test("adaptive rows dispatch thinking:adaptive + output_config.effort (the pi mapper)", () => {
+    const registry = RelayProviderRegistry.create({
+      providers: {
+        official: {
+          models: [
+            {
+              id: "claude-opus-4-7",
+              reasoning: true,
+              thinking: {
+                mode: "anthropic-adaptive",
+                efforts: ["low", "high", "max"],
+                defaultLevel: "high",
+              },
+            },
+          ],
+        },
+      },
+      imageSourceProviderId: null,
+      credentials: {
+        official: { apiKey: "k", baseUrl: "https://api.anthropic.example.com" },
+      },
+    });
+    const resolution = registry.resolve({
+      providerId: "official",
+      model: "claude-opus-4-7",
+      reasoningLevel: "max",
+    });
+    expect(resolution.config.thinking).toEqual({ type: "adaptive" });
+    expect(resolution.config.outputConfig).toEqual({ effort: "max" });
+    // The off rung carries no effort seat at all (explicit disabled only).
+    const off = registry.resolve({
+      providerId: "official",
+      model: "claude-opus-4-7",
+      reasoningLevel: "none",
+    });
+    expect(off.config.thinking).toEqual({ type: "disabled" });
+    expect(off.config.outputConfig).toBeUndefined();
+  });
+
+  test("anthropic-budget-effort rows send the budget AND the mapped effort", () => {
+    const registry = RelayProviderRegistry.create({
+      providers: {
+        zai: {
+          models: [
+            {
+              id: "glm-5.3",
+              reasoning: true,
+              thinking: {
+                mode: "anthropic-budget-effort",
+                efforts: ["low", "high", "max"],
+                defaultLevel: "max",
+                requiresEffort: true,
+                effortMap: { max: "xhigh" },
+              },
+            },
+          ],
+        },
+      },
+      imageSourceProviderId: null,
+      credentials: { zai: { apiKey: "k", baseUrl: "https://open.bigmodel.cn/api/anthropic" } },
+    });
+    const resolution = registry.resolve({
+      providerId: "zai",
+      model: "glm-5.3",
+      reasoningLevel: "max",
+    });
+    // Budget from the default ladder (no effortBudgets), effort through the
+    // row's effortMap (max → xhigh).
+    expect(resolution.config.thinking).toEqual({ type: "enabled", budget_tokens: 32768 });
+    expect(resolution.config.outputConfig).toEqual({ effort: "xhigh" });
+  });
+
+  test("effortRouting routes the upstream wire id per rung", () => {
+    const registry = RelayProviderRegistry.create({
+      providers: {
+        collapsed: {
+          models: [
+            {
+              id: "gemini-3-flash",
+              reasoning: true,
+              thinking: {
+                mode: "google-level",
+                efforts: ["low", "high"],
+                effortRouting: { low: "gemini-3-flash-low", high: "gemini-3-flash", off: "gemini-3-flash" },
+              },
+            },
+          ],
+        },
+      },
+      imageSourceProviderId: null,
+      credentials: { collapsed: { apiKey: "k", baseUrl: "https://cca.example.com" } },
+    });
+    const low = registry.resolve({ providerId: "collapsed", model: "gemini-3-flash", reasoningLevel: "low" });
+    expect(low.config.model).toBe("gemini-3-flash-low");
+    const high = registry.resolve({ providerId: "collapsed", model: "gemini-3-flash", reasoningLevel: "high" });
+    expect(high.config.model).toBe("gemini-3-flash");
+    const off = registry.resolve({ providerId: "collapsed", model: "gemini-3-flash", reasoningLevel: "none" });
+    expect(off.config.model).toBe("gemini-3-flash");
+  });
+});
+
 describe("#361 openai-responses dispatch", () => {
   const RESPONSES_OVERLAY: RelayProviderOverlay = {
     providers: {
@@ -293,28 +405,18 @@ describe("#361 openai-responses dispatch", () => {
         models: [
           {
             id: "glm-5.3-flash",
-            reasoningLevels: ["none", "low", "high", "xhigh"],
-            defaultReasoningLevel: "none",
+            reasoning: true,
             contextWindow: 200_000,
             maxTokens: 8192,
-            thinkingBudgetTokens: 4096,
+            thinking: { mode: "effort", efforts: ["low", "high", "xhigh"] },
           },
-          // Per-model override: identity face but a custom effort map
-          // (omp models.yml compat.reasoningEffortMap deepseek anchor).
+          // Per-model remap: the pi effortMap (omp models.yml compat
+          // .reasoningEffortMap deepseek anchor).
           {
             id: "deepseek-v4-pro",
             api: "openai-responses",
-            reasoningLevels: ["none", "high", "xhigh"],
-            reasoningEffortMap: { xhigh: "max" },
-            thinkingBudgetTokens: 4096,
-          },
-          // A rung the responses wire cannot express without a map entry —
-          // ladder-valid but effort-unmappable.
-          {
-            id: "ultra-row",
-            reasoningLevels: ["none", "ultra"],
-            defaultReasoningLevel: "none",
-            thinkingBudgetTokens: 4096,
+            reasoning: true,
+            thinking: { mode: "effort", efforts: ["high", "xhigh"], effortMap: { xhigh: "max" } },
           },
         ],
       },
@@ -351,18 +453,6 @@ describe("#361 openai-responses dispatch", () => {
     expect(deepseek.config.reasoningEffort).toBe("max");
   });
 
-  test("an effort-unmappable rung on a responses row fails closed with the named 422", () => {
-    const registry = RelayProviderRegistry.create(RESPONSES_OVERLAY);
-    try {
-      registry.resolve({ providerId: "newapi", model: "ultra-row", reasoningLevel: "ultra" });
-      expect.unreachable();
-    } catch (error) {
-      expect(error).toBeInstanceOf(RelaySelectionError);
-      expect((error as RelaySelectionError).code).toBe("reasoning_level_unknown");
-      expect((error as RelaySelectionError).message).toContain("responses-effort mapping");
-    }
-  });
-
   test("a keyless responses row fails dispatch with the named credential error", () => {
     const registry = RelayProviderRegistry.create({
       ...RESPONSES_OVERLAY,
@@ -384,23 +474,15 @@ describe("#363 openai-completions dispatch", () => {
         models: [
           {
             id: "glm-5.3-flash",
-            reasoningLevels: ["none", "low", "high"],
-            defaultReasoningLevel: "none",
+            reasoning: true,
             contextWindow: 200_000,
             maxTokens: 8192,
-            thinkingBudgetTokens: 4096,
+            thinking: { mode: "effort", efforts: ["low", "high"] },
           },
           {
             id: "deepseek-v4-pro",
-            reasoningLevels: ["none", "high", "xhigh"],
-            reasoningEffortMap: { xhigh: "max" },
-            thinkingBudgetTokens: 4096,
-          },
-          {
-            id: "ultra-row",
-            reasoningLevels: ["none", "ultra"],
-            defaultReasoningLevel: "none",
-            thinkingBudgetTokens: 4096,
+            reasoning: true,
+            thinking: { mode: "effort", efforts: ["high", "xhigh"], effortMap: { xhigh: "max" } },
           },
         ],
       },
@@ -430,18 +512,6 @@ describe("#363 openai-completions dispatch", () => {
       reasoningLevel: "xhigh",
     });
     expect(deepseek.config.reasoningEffort).toBe("max");
-  });
-
-  test("an effort-unmappable rung on a completions row fails closed with the named 422", () => {
-    const registry = RelayProviderRegistry.create(COMPLETIONS_OVERLAY);
-    try {
-      registry.resolve({ providerId: "newapi", model: "ultra-row", reasoningLevel: "ultra" });
-      expect.unreachable();
-    } catch (error) {
-      expect(error).toBeInstanceOf(RelaySelectionError);
-      expect((error as RelaySelectionError).code).toBe("reasoning_level_unknown");
-      expect((error as RelaySelectionError).message).toContain("responses-effort mapping");
-    }
   });
 
   test("a keyless completions row fails dispatch with the named credential error", () => {

@@ -33,7 +33,7 @@ beforeAll(async () => {
 });
 
 const PROVIDERS: Record<string, RelayCatalogProvider> = {
-  declared: { models: [{ id: "glm-5.3", reasoningLevels: ["none"], defaultReasoningLevel: "none" }] },
+  declared: { models: [{ id: "glm-5.3" }] },
 };
 
 describe("GET /api/v1/system/execution-options", () => {
@@ -71,7 +71,7 @@ describe("GET /api/v1/system/execution-options", () => {
     // #500: no deployment model is named — no row is the default (nothing
     // invented).
     expect(parsed.models[0]?.isDefault).toBe(false);
-    // The declared ladder is the offer; budget off collapses it to "none".
+    // No capability seats → the pi gate fails → exactly "none" is offered.
     expect(
       parsed.models[0]?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort),
     ).toEqual(["none"]);
@@ -106,8 +106,8 @@ describe("GET /api/v1/system/execution-options", () => {
                 name: "GLM-5.3",
                 description: "Flagship",
                 input: ["text", "image"],
-                reasoningLevels: ["none", "low", "high"],
-                defaultReasoningLevel: "high",
+                reasoning: true,
+                thinking: { mode: "budget", efforts: ["low", "high"], defaultLevel: "high" },
               },
               { id: "glm-5.3-air", name: "GLM-5.3-Air" },
             ],
@@ -127,28 +127,32 @@ describe("GET /api/v1/system/execution-options", () => {
       "GLM-5.3-Air",
       "glm-5.3-flash",
     ]);
-    // Budget off → every ladder collapses to [none]; the wire cannot run
-    // any budget rung (roadmap §2.3 contradiction 2).
+    // The air/flash rows declare no capability seats → every such ladder is
+    // exactly [none]; the flagship row carries its declared ladder.
     expect(parsed.models.map((model) => model.defaultReasoningEffort)).toEqual([
-      "none",
+      "high",
       "none",
       "none",
     ]);
   });
 
-  it("#362 reflects the thinking budget in the ladder and honors the declared default", () => {
-    // #500: the row's thinkingBudgetTokens is the budget — budget on +
-    // declared default → the picker offers the declared ladder with the
-    // declared rung (the same derivation the dispatch registry runs).
+  it("#534 reflects the pi thinking ladder and honors the declared defaultLevel", () => {
+    // The row's pi thinking IS the capability — the picker offers
+    // ["none", ...efforts] with the declared defaultLevel (the same
+    // derivation the dispatch registry runs; no budget scalar anywhere).
     const declared = systemExecutionOptionsResponseSchema.parse(
       buildExecutionOptions({
         omp: {
           models: [
             {
               id: "glm-5.3",
-              reasoningLevels: ["none", "low", "medium", "high"],
-              defaultReasoningLevel: "high",
-              thinkingBudgetTokens: 4096,
+              reasoning: true,
+              thinking: {
+                mode: "anthropic-budget-effort",
+                efforts: ["low", "high", "max"],
+                defaultLevel: "max",
+                requiresEffort: true,
+              },
             },
           ],
         },
@@ -156,8 +160,8 @@ describe("GET /api/v1/system/execution-options", () => {
     );
     expect(
       declared.models[0]?.supportedReasoningEfforts.map((effort) => effort.reasoningEffort),
-    ).toEqual(["none", "low", "medium", "high"]);
-    expect(declared.models[0]?.defaultReasoningEffort).toBe("high");
+    ).toEqual(["none", "low", "high", "max"]);
+    expect(declared.models[0]?.defaultReasoningEffort).toBe("max");
     // No configured rows → NO rows at all (#434: nothing is synthesized).
     const undeclared = systemExecutionOptionsResponseSchema.parse(
       buildExecutionOptions({}),

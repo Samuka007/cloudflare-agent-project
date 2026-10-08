@@ -42,6 +42,7 @@ export {
   type AnthropicToolResultBlock,
   type AnthropicToolUseBlock,
   type AnthropicUserBlock,
+  type RelayOutputConfig,
   type ThinkingConfig,
   type WireCallOptions,
 } from "./wire.js";

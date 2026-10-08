@@ -4,10 +4,10 @@ import { AnthropicRelayProvider } from "./relay/anthropic-provider.js";
 import { CompletionsRelayProvider } from "./relay/completions-provider.js";
 import { ResponsesRelayProvider } from "./relay/responses-provider.js";
 import {
-  deriveRelayReasoning,
   resolveRelayApi,
   resolveRelaySelection,
   RelaySelectionError,
+  type RelaySelectionDirectory,
   type ModelProvider,
   type RelaySelection,
 } from "./index.js";
@@ -77,20 +77,21 @@ let runtimeRegistered = false;
  * disagree on what a selection means. An in-code declaration, not a default:
  * the row exists only because the rig env named the model (ensureRuntime).
  */
-function rigRelayDirectory(model: string) {
-  const ladder = deriveRelayReasoning({ thinkingEnabled: false });
+function rigRelayDirectory(model: string): RelaySelectionDirectory {
   return {
     rows: [
       {
         providerId: SYNTHETIC_RELAY_PROVIDER_ID,
         id: model,
-        reasoningLevels: ladder.levels,
-        defaultReasoningLevel: ladder.defaultLevel,
+        // #534: no capability seats — the pi gate fails, the ladder is
+        // exactly ["none"] (the rig runs thinking disabled).
+        reasoning: false,
+        reasoningLevels: ["none"],
+        defaultReasoningLevel: "none",
       },
     ],
     defaultProviderId: SYNTHETIC_RELAY_PROVIDER_ID,
     defaultModelId: model,
-    thinkingEnabled: false,
   };
 }
 

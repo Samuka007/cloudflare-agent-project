@@ -29,9 +29,9 @@ import {
   isImageSourceProvider,
   ResponsesRelayProvider,
   resolveRelaySelection,
-  RelaySelectionError,
-  RelayEffortMapError,
-  resolveResponsesEffort,
+  relayAnthropicThinking,
+  relayResponsesWireEffort,
+  relayWireModelId,
   relayApiConsumesEffortMap,
   type AgentRuntime,
   type GenerateImageConfig,
@@ -48,7 +48,6 @@ import { resolveOverlayCatalog } from "./catalog.js";
 import {
   RELAY_FALLBACK_CONTEXT_WINDOW,
   RELAY_FALLBACK_MAX_TOKENS,
-  type ThinkingConfig,
 } from "./execution-posture.js";
 
 /** One provider's credential slot (decrypted D1 row secret — never a face). */
@@ -165,11 +164,10 @@ export class RelayProviderRegistry {
       {
         rows: this.catalogResolution.models,
         defaultProviderId: this.catalogResolution.defaultProviderId,
-        // #500: the deployment names no running model and no thinking
-        // budget — a model-less selection fails closed (named 422), and
-        // each row's ladder is decided by its own thinkingBudgetTokens.
+        // #500/#534: the deployment names no running model — a model-less
+        // selection fails closed (named 422), and each row's ladder is its
+        // own pi capability projection.
         defaultModelId: "",
-        thinkingEnabled: false,
       },
       selection,
     );
@@ -181,21 +179,13 @@ export class RelayProviderRegistry {
     // provider ?? incumbent anthropic face), resolved with the same
     // precedence the catalog rows were built under.
     const api = row?.api ?? DEFAULT_RELAY_API;
-    // #361/#363: the rung → OpenAI effort fold. resolveRelaySelection already
-    // 422s an unmappable rung on openai-effort rows (fail-closed effort
-    // mapping); this re-resolution is belt over the row path whose rows may
-    // predate that grammar. An anthropic-face row keeps its budget semantics
-    // — no effort fold. The selection-default effort is the "none" identity.
+    // #361/#363: the rung → OpenAI effort fold (the row's thinking.effortMap
+    // remap, then identity — the projected ladder cannot offer a rung the
+    // official vocabulary cannot express). An anthropic-face row keeps its
+    // budget/adaptive semantics — no effort fold.
     let reasoningEffort: ResponsesEffort = "none";
     if (relayApiConsumesEffortMap(api)) {
-      try {
-        reasoningEffort = resolveResponsesEffort(resolved.reasoningLevel, row?.reasoningEffortMap);
-      } catch (error) {
-        if (error instanceof RelayEffortMapError) {
-          throw new RelaySelectionError("reasoning_level_unknown", "reasoningLevel", error.message);
-        }
-        throw error;
-      }
+      reasoningEffort = relayResponsesWireEffort(resolved.reasoningLevel, row?.thinking);
     }
     // #450: every row is D1-standalone — the wire identity is the user's
     // row (baseUrl + decrypted apiKeyEnc); deployment channel scalars are
@@ -207,14 +197,16 @@ export class RelayProviderRegistry {
       this.overlay.credentials[resolved.providerId]?.baseUrl ??
       this.overlay.providers[resolved.providerId]?.baseUrl ??
       "";
-    // #362/#500 scope absorption: the row's thinkingBudgetTokens IS the
-    // budget (null/absent = budget-off — the deployment scalar is deleted).
-    // A panel budget edit rides the overlay hot.
-    const rowBudget = row?.thinkingBudgetTokens ?? null;
-    const budgetThinking: ThinkingConfig =
-      rowBudget !== null ? { type: "enabled", budget_tokens: rowBudget } : { type: "disabled" };
-    const thinking: ThinkingConfig =
-      resolved.reasoningLevel === "none" ? { type: "disabled" } : budgetThinking;
+    // #534: the wire thinking rides the row's pi transports — the rung
+    // picks disabled / budget / adaptive(+effort); the pi model id routing
+    // (effortRouting) names the upstream wire id when the row declares it.
+    const anthropicThinking =
+      api === "anthropic-messages"
+        ? relayAnthropicThinking(
+            { id: resolved.modelId, reasoning: row?.reasoning, thinking: row?.thinking },
+            resolved.reasoningLevel,
+          )
+        : undefined;
     return {
       providerId: resolved.providerId,
       modelId: resolved.modelId,
@@ -222,13 +214,17 @@ export class RelayProviderRegistry {
       config: {
         baseUrl: rowBaseUrl,
         apiKey: rowApiKey,
-        model: resolved.modelId,
+        model: relayWireModelId(
+          { id: resolved.modelId, reasoning: row?.reasoning, thinking: row?.thinking },
+          resolved.reasoningLevel,
+        ),
         // Wire-safety fallbacks when the row declares none (#496 ruling):
         // a wrong budget clamps a reply, a wrong window skews a usage
         // percentage — neither routes a turn.
         maxTokens: row?.maxTokens ?? RELAY_FALLBACK_MAX_TOKENS,
         contextWindow: row?.contextWindow ?? RELAY_FALLBACK_CONTEXT_WINDOW,
-        thinking,
+        thinking: anthropicThinking?.thinking ?? { type: "disabled" },
+        outputConfig: anthropicThinking?.outputConfig,
         supportsImageInput: row?.imageInput ?? false,
         api,
         reasoningEffort,
@@ -287,7 +283,6 @@ export class RelayProviderRegistry {
         rows: this.catalogResolution.models,
         defaultProviderId: this.catalogResolution.defaultProviderId,
         defaultModelId: "",
-        thinkingEnabled: false,
       },
       selection,
     );

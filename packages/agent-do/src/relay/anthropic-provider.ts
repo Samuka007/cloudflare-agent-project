@@ -9,7 +9,12 @@ import {
   type TextCompletionResult,
 } from "../provider.js";
 import type { RelayApi, ResponsesEffort } from "../provider-catalog.js";
-import { anthropicRequestBody, estimateWireRequestTokens, type ThinkingConfig } from "./wire.js";
+import {
+  anthropicRequestBody,
+  estimateWireRequestTokens,
+  type RelayOutputConfig,
+  type ThinkingConfig,
+} from "./wire.js";
 import { parseSseStream } from "./sse.js";
 
 /**
@@ -50,6 +55,12 @@ export interface RelayConfig {
    */
   contextWindow?: number;
   thinking?: ThinkingConfig;
+  /**
+   * #534: the adaptive-effort seat for rows declaring pi's anthropic
+   * adaptive transports (registry fold through relayAnthropicThinking).
+   * Absent = the request carries no output_config.
+   */
+  outputConfig?: RelayOutputConfig;
   /**
    * A4: the deployment's verdict on whether the relay model accepts image
    * input — rides every call as the wire's consumption dispatch gate.
@@ -105,6 +116,7 @@ export class AnthropicRelayProvider implements ModelProvider {
       model: this.config.model,
       maxTokens: this.config.maxTokens,
       thinking: this.config.thinking,
+      outputConfig: this.config.outputConfig,
       supportsImageInput: this.config.supportsImageInput,
     });
     const serialized = JSON.stringify(body);
