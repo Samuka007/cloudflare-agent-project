@@ -803,6 +803,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
       availableEngines: [...SEARCH_ENGINE_IDS],
       engines: ws?.engines ?? {
         brave: { hasApiKey: false },
+        exa: { hasApiKey: false },
         searxng: {
           endpoint: null,
           categories: null,
@@ -839,6 +840,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
       next: string | null | undefined,
     ): string | undefined => (next === undefined ? priorValue : (next ?? undefined));
     const braveApiKey = tri(prior?.engines.brave?.apiKey, payload.engines?.brave?.apiKey);
+    const exaApiKey = tri(prior?.engines.exa?.apiKey, payload.engines?.exa?.apiKey);
     const sxToken = tri(prior?.engines.searxng?.token, payload.engines?.searxng?.token);
     const sxUser = tri(
       prior?.engines.searxng?.basicUsername,
@@ -860,6 +862,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         : (payload.engines.searxng.safesearch ?? undefined);
     const effectiveEngines = {
       ...(braveApiKey !== undefined ? { brave: { apiKey: braveApiKey } } : {}),
+      ...(exaApiKey !== undefined ? { exa: { apiKey: exaApiKey } } : {}),
       searxng: {
         ...(sxEndpoint !== undefined && { endpoint: sxEndpoint }),
         ...(sxToken !== undefined && { token: sxToken }),
@@ -892,6 +895,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     // the zero-secret meta column.
     const secrets: WebSearchStoredSecrets = {
       ...(braveApiKey !== undefined ? { brave: { apiKey: braveApiKey } } : {}),
+      ...(exaApiKey !== undefined ? { exa: { apiKey: exaApiKey } } : {}),
       ...(sxToken !== undefined || sxUser !== undefined || sxPass !== undefined
         ? {
             searxng: {
@@ -919,6 +923,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     };
     const meta: WebSearchSecretsMeta = {
       ...(secrets.brave !== undefined ? { brave: { apiKey: true } } : {}),
+      ...(secrets.exa !== undefined ? { exa: { apiKey: true } } : {}),
       ...(secrets.searxng !== undefined
         ? {
             searxng: {

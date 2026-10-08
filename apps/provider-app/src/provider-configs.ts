@@ -163,12 +163,14 @@ export interface WebSearchStoredEngines {
 /** Secret engine settings as stored (the AES-GCM `secrets_enc` payload). */
 export interface WebSearchStoredSecrets {
   brave?: { apiKey?: string };
+  exa?: { apiKey?: string };
   searxng?: { token?: string; basicUsername?: string; basicPassword?: string };
 }
 
 /** Secret-PRESENCE map as stored (plaintext `secrets_meta` column). */
 export interface WebSearchSecretsMeta {
   brave?: { apiKey?: boolean };
+  exa?: { apiKey?: boolean };
   searxng?: { token?: boolean; basic?: boolean };
 }
 
@@ -190,6 +192,7 @@ export interface WebSearchOverlayRow {
 /** Zero-secret engine detail for the panel write face (#449). */
 export interface WebSearchFaceEngines {
   brave: { hasApiKey: boolean };
+  exa: { hasApiKey: boolean };
   searxng: {
     endpoint: string | null;
     categories: string | null;
@@ -288,6 +291,7 @@ async function assembleWebSearch(
     ...(row.timeout_seconds !== null ? { timeoutSeconds: row.timeout_seconds } : {}),
     engines: {
       ...(secrets?.brave?.apiKey !== undefined ? { brave: { apiKey: secrets.brave.apiKey } } : {}),
+      ...(secrets?.exa?.apiKey !== undefined ? { exa: { apiKey: secrets.exa.apiKey } } : {}),
       searxng: { ...storedEngines?.searxng, ...secrets?.searxng },
     },
   };
@@ -309,6 +313,10 @@ async function assembleWebSearch(
         options.decrypt
           ? secrets?.brave?.apiKey !== undefined
           : meta?.brave?.apiKey === true,
+    },
+    exa: {
+      hasApiKey:
+        options.decrypt ? secrets?.exa?.apiKey !== undefined : meta?.exa?.apiKey === true,
     },
     searxng: {
       endpoint: storedEngines?.searxng?.endpoint ?? null,
@@ -335,6 +343,7 @@ async function assembleWebSearch(
           ...config,
           engines: {
             brave: meta?.brave?.apiKey === true ? { apiKey: "(stored)" } : config.engines.brave,
+            exa: meta?.exa?.apiKey === true ? { apiKey: "(stored)" } : config.engines.exa,
             searxng: config.engines.searxng,
           },
         }),

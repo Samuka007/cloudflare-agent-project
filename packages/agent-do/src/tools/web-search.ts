@@ -28,7 +28,7 @@ import type { EdgeToolResult } from "./edge.js";
  * - Deliberate reduction: the raw query string passes through verbatim.
  *   omp re-formats parsed Google-style directives per engine; the engines
  *   carried here parse the operator set inline (brave/startpage) or accept
- *   the raw query (ddg/searxng) — docs/tools/web_search.md §Inputs ("the
+ *   the raw query (ddg/searxng/exa) — docs/tools/web_search.md §Inputs ("the
  *   original string remains available to adapters"). `max_tokens` /
  *   `temperature` stay in the schema (omp verbatim) and are ignored — only
  *   model-backed adapters consume them (§Inputs).
@@ -58,10 +58,11 @@ const BROWSER_BACKED_ENGINE_TABLE: Record<BrowserBackedEngineId, true> = {
  * Engines carried by the DO-local provider surface — pure HTTPS, no
  * browser escalation (omp docs/tools/web_search.md §Side Effects).
  */
-export type SearchEngineId = "brave" | "duckduckgo" | "searxng" | "startpage" | "public";
+export type SearchEngineId = "brave" | "exa" | "duckduckgo" | "searxng" | "startpage" | "public";
 
 const SEARCH_ENGINE_ID_TABLE: Record<SearchEngineId, true> = {
   brave: true,
+  exa: true,
   duckduckgo: true,
   searxng: true,
   startpage: true,
@@ -94,6 +95,11 @@ export interface BraveEngineSettings {
   apiKey?: string;
 }
 
+export interface ExaEngineSettings {
+  /** Exa API key (omp: EXA_API_KEY / authStorage "exa"). */
+  apiKey?: string;
+}
+
 export interface SearxngEngineSettings {
   /** Instance base URL, e.g. `https://searx.example.com` (omp: SEARXNG_ENDPOINT). */
   endpoint?: string;
@@ -109,6 +115,7 @@ export interface SearxngEngineSettings {
 
 export interface WebSearchEngineSettings {
   brave?: BraveEngineSettings;
+  exa?: ExaEngineSettings;
   searxng?: SearxngEngineSettings;
 }
 
@@ -147,6 +154,11 @@ export const engineSettingsPatchSchema = z.object({
       categories: z.string().min(1).optional(),
       language: z.string().min(1).optional(),
       safesearch: z.union([z.literal(0), z.literal(1), z.literal(2)]).optional(),
+    })
+    .optional(),
+  exa: z
+    .object({
+      apiKey: z.string().min(1).optional(),
     })
     .optional(),
 });
@@ -195,6 +207,7 @@ export function resolveWebSearchConfig(
     timeoutSeconds,
     engines: {
       brave: validated.engines?.brave ?? base.engines.brave,
+      exa: validated.engines?.exa ?? base.engines.exa,
       searxng: validated.engines?.searxng ?? base.engines.searxng,
     },
   };
@@ -253,6 +266,13 @@ export function projectWebSearchConfig(config: WebSearchConfig): WebSearchProjec
         present: endpoint !== undefined && endpoint !== "",
       });
     }
+    if (engine === "exa") {
+      const apiKey = config.engines.exa?.apiKey;
+      return engineProjection(engine, {
+        required: true,
+        present: apiKey !== undefined && apiKey !== "",
+      });
+    }
     // duckduckgo / startpage / public are credential-free plain fetch.
     return engineProjection(engine, { required: false, present: true });
   });
@@ -285,6 +305,7 @@ export class SearchEngineError extends Error {
 /** omp SEARCH_PROVIDER_LABELS subset — error/no-content texts carry labels. */
 const ENGINE_LABELS: Record<SearchEngineId, string> = {
   brave: "Brave",
+  exa: "Exa",
   duckduckgo: "DuckDuckGo",
   searxng: "SearXNG",
   startpage: "Startpage",
@@ -567,6 +588,163 @@ async function searchBrave(
   }
 
   return { engine: "brave", sources: sources.slice(0, numResults) };
+}
+
+// -- exa (omp providers/exa.ts) ---------------------------------------------
+
+const EXA_API_URL = "https://api.exa.ai/search";
+/** omp providers/exa.ts:286 — the request-body default (numResults). */
+const EXA_DEFAULT_NUM_RESULTS = 10;
+/** omp providers/exa.ts:24 (MAX_EXA_SNIPPET_CHARS). */
+const EXA_MAX_SNIPPET_CHARS = 500;
+/** omp providers/exa.ts:263 (MAX_ANSWER_SUMMARIES). */
+const EXA_MAX_ANSWER_SUMMARIES = 3;
+// House byte caps (the brave transport precedent): an oversize/invalid body
+// is a provider failure, never a silent truncate.
+const EXA_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const EXA_MAX_ERROR_BYTES = 8 * 1024;
+
+/** omp providers/exa.ts:131 (ExaSearchResult) — `author` drops with the edge
+ * SearchSource subset (title/url/snippet/publishedDate/ageSeconds only). */
+interface ExaSearchResult {
+  title?: string | null;
+  url?: string | null;
+  publishedDate?: string | null;
+  text?: string | null;
+  highlights?: string[] | null;
+  summary?: string | null;
+}
+
+interface ExaSearchResponse {
+  requestId?: string;
+  results?: ExaSearchResult[];
+}
+
+/**
+ * omp providers/exa.ts:270 (synthesizeAnswer) — the per-result summaries
+ * requested through `contents.summary` synthesize into ONE `answer` string
+ * (first EXA_MAX_ANSWER_SUMMARIES with a summary); no summaries → undefined,
+ * exactly like the other providers.
+ */
+function synthesizeAnswer(results: readonly ExaSearchResult[]): string | undefined {
+  const parts: string[] = [];
+  for (const result of results) {
+    if (parts.length >= EXA_MAX_ANSWER_SUMMARIES) break;
+    const summary = result.summary?.trim();
+    if (!summary) continue;
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- omp exa.ts:276 verbatim: an empty trimmed title falls through to the url
+    const title = result.title?.trim() || result.url || "Untitled";
+    parts.push(`**${title}**: ${summary}`);
+  }
+  return parts.length > 0 ? parts.join("\n\n") : undefined;
+}
+
+/**
+ * omp providers/exa.ts:283 (buildExaRequestBody) verbatim over the live
+ * param set: query, numResults (default 10), `type: "auto"` (omp
+ * normalizeSearchType(undefined)), and the query-conditioned summary
+ * extraction. The includeDomains/excludeDomains/start/endPublishedDate
+ * arms never fire here — they are populated only by omp's query-directive
+ * layer (site:/-site:/after:/before:), which the edge does not port (the
+ * raw query passes through verbatim, the ddg/searxng precedent).
+ */
+function buildExaRequestBody(
+  query: string,
+  numResults: number | undefined,
+): Record<string, unknown> {
+  return {
+    query,
+    numResults: numResults ?? EXA_DEFAULT_NUM_RESULTS,
+    type: "auto",
+    contents: {
+      summary: { query },
+    },
+  };
+}
+
+/**
+ * omp providers/exa.ts:310 (callExaSearch) — the credentialed POST: JSON
+ * body, `x-api-key` header, per-transport hard timeout. omp's request
+ * pacing (`exa.searchDelayMs`, default 1s, module-global) is a deliberate
+ * reduction: the edge fires one POST per web_search call (no MCP-fallback
+ * retry ladder — the engine is credentialed-only), and a 429 surfaces
+ * through the classifier as a chain-advancing provider failure.
+ */
+async function callExaSearch(
+  params: EngineSearchParams,
+  apiKey: string,
+): Promise<ExaSearchResponse> {
+  const body = buildExaRequestBody(params.query, params.numSearchResults ?? params.limit);
+
+  const response = await params.fetchImpl(EXA_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+    },
+    body: JSON.stringify(body),
+    signal: withHardTimeout(params.signal, params.timeoutMs),
+  });
+
+  if (!response.ok) {
+    const errorText = await readLimitedText(response, "exa", EXA_MAX_ERROR_BYTES);
+    const classified = classifyEngineHttpError("exa", response.status, errorText);
+    if (classified) throw classified;
+    throw new SearchEngineError(
+      "exa",
+      `Exa API error (${response.status}): ${errorText}`,
+      response.status,
+    );
+  }
+
+  const raw = await readLimitedText(response, "exa", EXA_MAX_RESPONSE_BYTES);
+  let data: ExaSearchResponse;
+  try {
+    data = JSON.parse(raw) as ExaSearchResponse;
+  } catch {
+    throw new SearchEngineError("exa", "Exa API returned invalid JSON", 500);
+  }
+  return data;
+}
+
+/**
+ * omp providers/exa.ts:430 (searchExa) — result parsing verbatim over the
+ * edge subset: url-guarded, snippet = summary || text || joined highlights
+ * sliced to MAX_EXA_SNIPPET_CHARS, publishedDate/ageSeconds carried, the
+ * answer synthesized from the url-guarded results' summaries. omp's
+ * `num_results ? sources.slice(...) : sources` limit rides the same field
+ * the request body already carried.
+ */
+async function searchExa(
+  params: EngineSearchParams,
+  settings: ExaEngineSettings,
+): Promise<SearchResponse> {
+  const response = await callExaSearch(params, settings.apiKey ?? "");
+
+  const sources: SearchSource[] = [];
+  for (const result of response.results ?? []) {
+    if (!result.url) continue;
+    sources.push({
+      title: result.title ?? result.url,
+      url: result.url,
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- omp exa.ts:454 verbatim: empty summary/text fall through to the next candidate
+      snippet: (result.summary || result.text || result.highlights?.join(" ") || undefined)?.slice(
+        0,
+        EXA_MAX_SNIPPET_CHARS,
+      ),
+      publishedDate: result.publishedDate ?? undefined,
+      ageSeconds: dateToAgeSeconds(result.publishedDate ?? undefined),
+    });
+  }
+
+  const numResults = params.numSearchResults ?? params.limit;
+  const limitedSources = numResults ? sources.slice(0, numResults) : sources;
+
+  return {
+    engine: "exa",
+    answer: synthesizeAnswer((response.results ?? []).filter((result) => !!result.url)),
+    sources: limitedSources,
+  };
 }
 
 // -- duckduckgo (omp providers/duckduckgo.ts) --------------------------------
@@ -1124,10 +1302,10 @@ interface SearxngResponsePayload {
  * omp's order (startpage leads — Google-index quality; duckduckgo breaks
  * ties with its independent crawl).
  */
-const PUBLIC_ENGINE_IDS: readonly Exclude<SearchEngineId, "public" | "brave" | "searxng">[] = [
-  "startpage",
-  "duckduckgo",
-];
+const PUBLIC_ENGINE_IDS: readonly Exclude<
+  SearchEngineId,
+  "public" | "brave" | "searxng" | "exa"
+>[] = ["startpage", "duckduckgo"];
 
 /** omp providers/public.ts:25 — aggregates get a wider window. */
 const PUBLIC_DEFAULT_NUM_RESULTS = 15;
@@ -1327,13 +1505,15 @@ function formatForLLM(response: SearchResponse, notes: readonly string[] = []): 
  * skipped silently by the automatic chain (docs/tools/web_search.md §Flow 3
  * — "An unavailable non-explicit candidate is skipped silently"). The edge
  * chain is config-layer (every entry is explicit by construction), but the
- * credential gates keep omp's semantics: brave needs a key, searxng needs
- * an endpoint; scrapers and the aggregate are always available.
+ * credential gates keep omp's semantics: brave and exa need a key, searxng
+ * needs an endpoint; scrapers and the aggregate are always available.
  */
 function engineAvailable(engine: SearchEngineId, settings: WebSearchEngineSettings): boolean {
   switch (engine) {
     case "brave":
       return (settings.brave?.apiKey ?? "").length > 0;
+    case "exa":
+      return (settings.exa?.apiKey ?? "").length > 0;
     case "searxng":
       return (settings.searxng?.endpoint ?? "").length > 0;
     case "duckduckgo":
@@ -1351,6 +1531,8 @@ async function runEngineSearch(
   switch (engine) {
     case "brave":
       return searchBrave(params, ctx.config.engines.brave ?? {});
+    case "exa":
+      return searchExa(params, ctx.config.engines.exa ?? {});
     case "duckduckgo":
       return searchDuckDuckGo(params);
     case "searxng":

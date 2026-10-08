@@ -32,6 +32,7 @@ const BASE = "https://example.com";
 const RIG_MASTER_KEY = "l1-rig-master-key";
 const BRAVE_KEY = "brave-secret-449-value";
 const BRAVE_KEY_ROTATED = "brave-secret-449-rotated";
+const EXA_KEY = "exa-secret-539-value";
 const SEARXNG_TOKEN = "searxng-secret-449-token";
 
 async function request(method: string, path: string, body?: unknown): Promise<Response> {
@@ -95,10 +96,18 @@ describe("GET /api/v1/system/web-search", () => {
     expect(face.decodeError).toBe(false);
     expect(face.chain.map((entry) => entry.engine)).toEqual(["brave", "public"]);
     expect(face.timeoutSeconds).toBe(60);
-    expect(face.availableEngines).toEqual(["brave", "duckduckgo", "searxng", "startpage", "public"]);
+    expect(face.availableEngines).toEqual([
+      "brave",
+      "exa",
+      "duckduckgo",
+      "searxng",
+      "startpage",
+      "public",
+    ]);
     expect(face.browserBackedEngines).toEqual(["google", "ecosia", "mojeek"]);
     expect(face.engines).toEqual({
       brave: { hasApiKey: false },
+      exa: { hasApiKey: false },
       searxng: {
         endpoint: null,
         categories: null,
@@ -158,6 +167,7 @@ describe("GET /api/v1/system/web-search", () => {
     // renders the unavailable row, never a writable editor over broken data.
     expect(face.engines).toEqual({
       brave: { hasApiKey: false },
+      exa: { hasApiKey: false },
       searxng: {
         endpoint: null,
         categories: null,
@@ -213,17 +223,23 @@ describe("PUT /api/v1/system/web-search", () => {
     expect(row.timeout_seconds).toBe(300);
   });
 
-  it("stores secrets tri-state and AES-GCM at rest", async () => {
+  it("stores secrets tri-state and AES-GCM at rest (brave + exa)", async () => {
     // Set.
     const first = await putFace({
-      chain: ["brave", "public"],
-      engines: { brave: { apiKey: BRAVE_KEY }, searxng: { token: SEARXNG_TOKEN } },
+      chain: ["brave", "exa", "public"],
+      engines: {
+        brave: { apiKey: BRAVE_KEY },
+        exa: { apiKey: EXA_KEY },
+        searxng: { token: SEARXNG_TOKEN },
+      },
     });
     expect(first.status).toBe(200);
     expect(first.face?.engines.brave.hasApiKey).toBe(true);
+    expect(first.face?.engines.exa.hasApiKey).toBe(true);
     expect(first.face?.engines.searxng.hasToken).toBe(true);
     expect(first.face?.chain).toEqual([
       { engine: "brave", credentialsRequired: true, credentialsPresent: true },
+      { engine: "exa", credentialsRequired: true, credentialsPresent: true },
       { engine: "public", credentialsRequired: false, credentialsPresent: true },
     ]);
     // Encryption at rest: the D1 column never carries plaintext.
@@ -232,16 +248,20 @@ describe("PUT /api/v1/system/web-search", () => {
     expect(row.secrets_enc).not.toBeNull();
     if (row.secrets_enc === null) throw new Error("secrets_enc must be stored");
     expect(row.secrets_enc).not.toContain(BRAVE_KEY);
+    expect(row.secrets_enc).not.toContain(EXA_KEY);
     expect(row.secrets_enc).not.toContain(SEARXNG_TOKEN);
     const decrypted = JSON.parse(await decryptProviderSecret(RIG_MASTER_KEY, row.secrets_enc)) as {
       brave?: { apiKey?: string };
+      exa?: { apiKey?: string };
       searxng?: { token?: string };
     };
     expect(decrypted.brave?.apiKey).toBe(BRAVE_KEY);
+    expect(decrypted.exa?.apiKey).toBe(EXA_KEY);
     expect(decrypted.searxng?.token).toBe(SEARXNG_TOKEN);
     // Keep: a reorder that omits the key fields preserves them.
     const kept = await putFace({ chain: ["public", "brave"] });
     expect(kept.face?.engines.brave.hasApiKey).toBe(true);
+    expect(kept.face?.engines.exa.hasApiKey).toBe(true);
     expect(kept.face?.engines.searxng.hasToken).toBe(true);
     // Rotate.
     const rotated = await putFace({ engines: { brave: { apiKey: BRAVE_KEY_ROTATED } } });
@@ -257,10 +277,17 @@ describe("PUT /api/v1/system/web-search", () => {
     // Clear: null wipes the field (and drops the ciphertext when empty).
     const cleared = await putFace({ engines: { brave: { apiKey: null } } });
     expect(cleared.face?.engines.brave.hasApiKey).toBe(false);
+    // Exa is untouched by brave's clear — the tri-state scope is per engine.
+    expect(cleared.face?.engines.exa.hasApiKey).toBe(true);
     expect(cleared.face?.engines.searxng.hasToken).toBe(true);
     // Zero-secret discipline: the wire never carries a value.
     expect(JSON.stringify(cleared.face)).not.toContain(BRAVE_KEY_ROTATED);
+    expect(JSON.stringify(cleared.face)).not.toContain(EXA_KEY);
     expect(JSON.stringify(cleared.face)).not.toContain(SEARXNG_TOKEN);
+
+    // Exa clears on its own null write.
+    const exaCleared = await putFace({ engines: { exa: { apiKey: null } } });
+    expect(exaCleared.face?.engines.exa.hasApiKey).toBe(false);
   });
 
   it("guards the master-key gate at the db layer (fail-closed)", async () => {
