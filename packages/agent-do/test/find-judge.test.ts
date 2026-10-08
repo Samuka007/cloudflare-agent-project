@@ -133,6 +133,125 @@ describe("find judge leg (#523)", () => {
     expect(result.output).toContain("judged 3 ·");
   });
 
+  // The bare REPLY from the #529 four-round root cause (PM wire repro
+  // 2026-10-08): real provider class + real renderJudgmentPrompt on
+  // glm-5.3-flash answers a single-passage batch with a bare "YES" — no
+  // `p00:` line — so the id-line split parses nothing and every batch
+  // scores judged 0 → "[tool error]".
+  const bare = (text: string): TextCompletionResult => ({
+    text,
+    usage: {
+      inputTokens: 500,
+      outputTokens: 5,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      contextWindow: 32_768,
+      estimated: false,
+    },
+  });
+
+  /** The single-passage production shape: one batch, one asked passage. */
+  function singleBatchPayload(): FindExecPayload {
+    return payloadFixture({
+      files: [{ rel: "src/session.ts", totalLines: 80, truncated: true }],
+      batches: [
+        {
+          rel: "src/session.ts",
+          system: "SYS-session",
+          user: "STATE-session p00",
+          passages: [
+            { key: "p00", start: 5, end: 9, snippet: "class SessionManager", bytes: 200 },
+          ],
+        },
+      ],
+    });
+  }
+
+  test("bare-answer tolerance: a single-passage batch judges from a bare YES/NO (#529)", async () => {
+    const yes = await runFindJudged(
+      { query: "login flow" },
+      ctxFixture(singleBatchPayload(), () => bare("YES")),
+    );
+    expect(yes.status).toBe("ok");
+    expect(yes.output).toContain("judged 1 ·");
+    expect(yes.output).toContain('1 hit(s) for "login flow"');
+    expect(yes.output).toContain("src/session.ts  1.00  5 lines judged, partial");
+    expect(yes.output).toContain("src/session.ts:5-9  1.00  class SessionManager");
+
+    const no = await runFindJudged(
+      { query: "login flow" },
+      ctxFixture(singleBatchPayload(), () => bare("no")),
+    );
+    expect(no.status).toBe("ok");
+    expect(no.output).toContain("judged 1 ·");
+    expect(no.output).toContain('no hits for "login flow" (τ 0.20)');
+    expect(no.output).not.toContain("requests failed");
+  });
+
+  test("bare-answer tolerance composes with the think-leak sanitize (#529)", async () => {
+    const result = await runFindJudged(
+      { query: "login flow" },
+      ctxFixture(singleBatchPayload(), () => bare("the passage matches the request.</think>YES")),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.output).toContain("judged 1 ·");
+    expect(result.output).toContain('1 hit(s) for "login flow"');
+  });
+
+  test("multi-passage batches stay strict: a bare verdict is not applied (#529)", async () => {
+    const login = payloadFixture().batches[0];
+    if (login === undefined) throw new Error("fixture lost its multi-passage batch");
+    const result = await runFindJudged(
+      { query: "login flow" },
+      ctxFixture(
+        payloadFixture({
+          files: [{ rel: "src/login.ts", totalLines: 40, truncated: false }],
+          batches: [login],
+        }),
+        () => bare("YES"),
+      ),
+    );
+    // Tolerance is single-passage only: a bare "YES" is ambiguous across
+    // two asked passages, so nothing parses → judged 0 + the zero-parse
+    // evidence row with the raw reply.
+    expect(result.output).toContain("judged 0 ·");
+    expect(result.output).toContain("parse miss (src/login.ts): YES");
+    expect(result.output).not.toContain("hit(s)");
+  });
+
+  test("zero-parse self-evidence: excerpt, whitespace collapse, 160 cap, empty marker (#529)", async () => {
+    const run = (text: string) =>
+      runFindJudged({ query: "login flow" }, ctxFixture(singleBatchPayload(), () => bare(text)));
+
+    // Prose without a verdict word: the one request failed → the error
+    // face + the excerpt row (the #524 "parse miss only counts" gap closed).
+    const prose = await run("The passage seems unrelated to the request at hand.");
+    expect(prose.status).toBe("error");
+    expect(prose.output).toContain("1 of 1 requests failed:");
+    expect(prose.output).toContain(
+      "parse miss (src/session.ts): The passage seems unrelated to the request at hand.",
+    );
+
+    // Newlines/tabs collapse so the row stays one report line.
+    const collapsed = await run("unsure\n  about\tthis one");
+    expect(collapsed.output).toContain("parse miss (src/session.ts): unsure about this one");
+
+    // Capped at 160 collapsed characters; the tail never renders.
+    const long = "filler ".repeat(40);
+    const capped = await run(long);
+    const whole = long.trim().replace(/\s+/g, " ");
+    expect(whole.length).toBeGreaterThan(160);
+    expect(capped.output).toContain(`parse miss (src/session.ts): ${whole.slice(0, 160)}`);
+    expect(capped.output).not.toContain(whole);
+
+    // Empty replies (including a think-only leak cut) mark explicitly.
+    const empty = await run("");
+    expect(empty.status).toBe("error");
+    expect(empty.output).toContain("parse miss (src/session.ts): empty reply");
+    const thinkOnly = await run("reasoning about the passage...</think>");
+    expect(thinkOnly.output).toContain("parse miss (src/session.ts): empty reply");
+  });
+
   test("judged ranking: hits strongest first, merged heat ranges, omp report shape", async () => {
     const result = await runFindJudged(
       { query: "login flow", grep_keywords: ["login"] },
