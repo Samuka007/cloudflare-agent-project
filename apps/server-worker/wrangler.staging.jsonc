@@ -82,13 +82,13 @@
   "vpc_services": [
     {
       // #535: the searxng web_search leg rides the Workers VPC service
-      // (01a11aa1-4c8a-7d90-a189-9fec20cdecac = searxng @
+      // (01a11b8f-59b1-7000-9167-3a64006252c9 = searxng @
       // http://10.120.16.22:8888, tunnel 55b914a6). AgentDO routes only the
       // searxng leg (URL host = the D1 seat's engines.searxng.endpoint host)
       // through SEARXNG_VPC; every other engine keeps global fetch, and
       // unbound deployments (local rig, unit tests) are untouched.
       "binding": "SEARXNG_VPC",
-      "service_id": "01a11aa1-4c8a-7d90-a189-9fec20cdecac",
+      "service_id": "01a11b8f-59b1-7000-9167-3a64006252c9",
     },
   ],
   "triggers": {
