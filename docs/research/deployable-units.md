@@ -48,7 +48,7 @@
 - **实际启动方式**：从 TS 源直跑 `bun src/client/index.ts --url …`，cwd=packages/daemon-service——scripts/poc-full-chain.ts:295-297、packages/daemon-service/scripts/poc-smoke-service.ts:139-141 两处一致。**无 package.json bin/script、无 flake app、无编译产物**。
 - **tool-runtime**：vendored omp 经 npm 精确 pin `@oh-my-pi/pi-coding-agent` 18.6.0 + `@oh-my-pi/pi-natives` 18.6.0（package.json:17-18）；"omp executes ONLY under Bun"（raw TS + bun built-ins，Node 仅过 tsc 类型面）——client/process 必须以 Bun 启动（src/client/tool-runtime.ts:20-26）；vendoring=依赖钉版而非拷贝树（:11-18）。
 - **CI 门**：`pnpm --dir packages/daemon-service test:runtime`（package.json:12，五套 Bun-only 语义件）在 setup-bun@v2 下跑（ci.yml:36-42）。
-- **env 面**：`DAEMON_TASK_ISOLATION`（#110）、`DAEMON_AGENT_AUTH`（#145）已进入口（client/index.ts:35-36）；`.staging-daemon.env` 在 .gitignore（:7）但**全仓无任何脚本/文档消费它**。
+- **env 面**：`DAEMON_TASK_ISOLATION`（#110）已进入口（client/index.ts:96）；provider/judge 模型注册 env 通道（原 #145 agent-auth 腿）已随 #523 整删——宿主零模型注册表，daemon env 面仅剩拓扑/enroll/CF Access 凭据（client/index.ts:46-50）；`.staging-daemon.env` 在 .gitignore（:7）但**全仓无任何脚本/文档消费它**。
 
 **U3 缺口**：零打包（无 bin、无版本戳、无 release 产物）；env 命名仍 POC_* 且缺省密钥是 dev 值；omp 为 native addon（pi-natives）→ 未来若产出二进制则**天然平台相关**（[INFERENCE]：pi-natives 为原生模块性质，未验证具体分发形态）；staging 对接的鉴权 env 面（CF Access service token，cf-access-agent-compat.md:184-188 规划）未落地进任何入口。
 

@@ -17,13 +17,13 @@ import {
 } from "../src/provider-catalog.js";
 
 /**
- * #350 relay catalog declaration — L1 over the shared field dictionary, the
- * strict decode semantics (loud rejection, never silent under-declaration),
- * the budget-derived reasoning ladder, and the row lookup order. The same
- * dictionary object is the daemon-side DAEMON_AGENT_AUTH model schema
- * (packages/daemon-service agent-auth.ts imports THIS zod instance), so
- * dictionary drift is structurally impossible — these tests pin the
- * vocabulary itself.
+ * #350 relay catalog declaration — L1 over the shared model-entry field
+ * dictionary, the strict decode semantics (loud rejection, never silent
+ * under-declaration), the budget-derived reasoning ladder, and the row
+ * lookup order. #523 deleted the dictionary's last second consumer (the
+ * daemon-side model registry imported from the retired agent-auth env
+ * channel), leaving the edge catalog as the schema's only consumer —
+ * these tests pin the vocabulary itself.
  */
 
 const FULL_CATALOG = {

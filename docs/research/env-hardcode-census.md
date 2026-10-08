@@ -66,7 +66,7 @@
 | `DAEMON_ENROLL_KEY` \| `DAEMON_JOIN_CODE`（二选一） | client/index.ts:69-82 | 凭据（#258 一次性码 / 静态键；#378 有身份则免凭据） | **合格保留**。fail-closed 已落地（POC 字面缺省已死，cap-verify.md 换代表） |
 | `DAEMON_DATA_DIR`（缺省 `~/.local/state/cap-daemon`）、`DAEMON_SANDBOX_ROOT`（缺省 `/tmp/cap-sandbox`） | client/index.ts:71-74,93 | 宿主拓扑（该机器自己的文件系统位置） | **合格保留**。宿主侧路径天然部署期；XDG 缺省合理。备注（安全观察，非本票产物）：可预测 `/tmp` 沙箱根在多用户宿主有 pre-create/symlink 面，建议将来随 workspace 多根改造（#472 关联）收进 `/var/lib` 或 per-user 根 |
 | `DAEMON_CF_ACCESS_CLIENT_ID/_SECRET` | client/cf-access.ts:16-36 | 凭据对（both-or-neither，启动期拒绝单腿） | **合格保留** |
-| `DAEMON_AGENT_AUTH`（providers/runtimeKeys/judgeRole） | client/agent-auth.ts:11-95 | 产品配置+凭据（daemon 侧模型注册表→物化 models.yml） | **待用户裁决 → #507**：与 edge D1 正本构成两台注册表；单源化 vs 本地自治（#378 同构取舍）三方向待裁。2026-10-08 处置（#522）：security_scan 宿主面禁用，`securityModel` 腿删除（enablement pin 已删，omp 默认关=工具不在 map；残留 env 值被 schema 剥除不拒收） |
+| `DAEMON_AGENT_AUTH`（providers/runtimeKeys/judgeRole） | client/agent-auth.ts:11-95（**文件已删除**） | 产品配置+凭据（daemon 侧模型注册表→物化 models.yml） | **已退役（#523 整删，env 整亡，2026-10-08）**：#522 先删 `securityModel` 腿（security_scan 宿主面禁用，enablement pin 已删，omp 默认关=工具不在 map）；#523 判相腿归 edge（线程 pinned selection 经 D1 `provider_configs` 正本链 `resolveTurnModel`→`provider.completeText`）后主体整删（agent-auth.ts + identity/connection 腿净删）——宿主零模型注册表、零 auth 形状配置（find=纯执行相，回 find-protocol v1 候选载荷），本行不再有活 env，「两台注册表」问题随第二台注销终结 |
 | `DAEMON_TASK_ISOLATION` | client/task-isolation.ts（#110） | 拓扑（宿主隔离后端能力选择） | **合格保留**（宿主知道自己有什么，控制面不知道） |
 | `DAEMON_EXEC_MARKER` / `DAEMON_EXECUTION_ID` | executor.ts:65-70 | 运行时管道标记（孤儿识别/kill 名单），非配置 | **合格保留**（内部协议；SEC-W5-006 env 继承面已由安全审记录） |
 
