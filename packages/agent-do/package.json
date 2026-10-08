@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./provider-catalog": "./src/provider-catalog.ts",
+    "./find-protocol": "./src/tools/find-protocol.ts",
     "./testing": "./src/testing/index.ts"
   },
   "scripts": {

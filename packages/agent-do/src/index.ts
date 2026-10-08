@@ -177,6 +177,7 @@ export type {
   RelayChatCatalogProvider,
   RelayImageModel,
   RelayImageSourceProvider,
+  RelayModelCost,
   RelayModelEntry,
   ProviderModelFamily,
   RelayReasoningLadder,

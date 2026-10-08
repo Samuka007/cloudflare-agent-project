@@ -26,6 +26,7 @@ import {
   DEFAULT_IMAGE_TIMEOUT_SECONDS,
   DEFAULT_RELAY_API,
   IMAGE_SOURCE_API_FAMILY,
+  isImageSourceProvider,
   ResponsesRelayProvider,
   resolveRelaySelection,
   RelaySelectionError,
@@ -37,6 +38,7 @@ import {
   type ModelProvider,
   type RelayCatalogProvider,
   type RelayConfig,
+  type RelayModelCost,
   type RelayReasoningLevel,
   type RelaySelection,
   type ResponsesEffort,
@@ -210,9 +212,7 @@ export class RelayProviderRegistry {
     // A panel budget edit rides the overlay hot.
     const rowBudget = row?.thinkingBudgetTokens ?? null;
     const budgetThinking: ThinkingConfig =
-      rowBudget !== null
-        ? { type: "enabled", budget_tokens: rowBudget }
-        : { type: "disabled" };
+      rowBudget !== null ? { type: "enabled", budget_tokens: rowBudget } : { type: "disabled" };
     const thinking: ThinkingConfig =
       resolved.reasoningLevel === "none" ? { type: "disabled" } : budgetThinking;
     return {
@@ -274,6 +274,27 @@ export class RelayProviderRegistry {
   providerIds(): string[] {
     return [...new Set(this.catalogResolution.models.map((row) => row.providerId))];
   }
+
+  /**
+   * The resolved row's declared per-token cost, when it declares one (#523
+   * find judge footer pricing) — read from the overlay's chat-branch model
+   * entries (the directory rows carry no pricing; the overlay is the D1
+   * 正本). Same fail-closed selection resolution as providerFor.
+   */
+  rowCost(selection: RelaySelection): RelayModelCost | undefined {
+    const resolved = resolveRelaySelection(
+      {
+        rows: this.catalogResolution.models,
+        defaultProviderId: this.catalogResolution.defaultProviderId,
+        defaultModelId: "",
+        thinkingEnabled: false,
+      },
+      selection,
+    );
+    const provider = this.overlay.providers[resolved.providerId];
+    if (provider === undefined || isImageSourceProvider(provider)) return undefined;
+    return provider.models.find((entry) => entry.id === resolved.modelId)?.cost;
+  }
 }
 
 /**
@@ -286,5 +307,12 @@ export function relayAgentRuntime(registry: RelayProviderRegistry): AgentRuntime
   return {
     resolveExecutionProvider: (selection: RelaySelection): ModelProvider =>
       registry.providerFor(selection),
+    // #523: the judge leg prices its footer from the row's declared cost.
+    resolveExecutionModel: (selection: RelaySelection) => {
+      return {
+        provider: registry.providerFor(selection),
+        cost: registry.rowCost(selection),
+      };
+    },
   };
 }

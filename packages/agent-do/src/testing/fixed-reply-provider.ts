@@ -3,6 +3,8 @@ import type {
   ModelProvider,
   ModelRequest,
   ModelStreamChunk,
+  TextCompletionRequest,
+  TextCompletionResult,
 } from "../provider.js";
 import {
   anthropicRequestBody,
@@ -75,16 +77,16 @@ export class FixedReplyProvider implements ModelProvider {
               supportsImageInput: this.relay.supportsImageInput,
             }),
           )
-      : this.relay.api === "openai-completions"
-        ? JSON.stringify(
-            completionsRequestBody(request, {
-              model: this.relay.model,
-              maxTokens: this.relay.maxTokens,
-              reasoningEffort: this.relay.reasoningEffort,
-              supportsImageInput: this.relay.supportsImageInput,
-            }),
-          )
-        : JSON.stringify(anthropicRequestBody(request, this.relay));
+        : this.relay.api === "openai-completions"
+          ? JSON.stringify(
+              completionsRequestBody(request, {
+                model: this.relay.model,
+                maxTokens: this.relay.maxTokens,
+                reasoningEffort: this.relay.reasoningEffort,
+                supportsImageInput: this.relay.supportsImageInput,
+              }),
+            )
+          : JSON.stringify(anthropicRequestBody(request, this.relay));
     const usage = {
       inputTokens: estimateWireRequestTokens(body),
       outputTokens: 0,
@@ -112,5 +114,25 @@ export class FixedReplyProvider implements ModelProvider {
         };
       },
     };
+  }
+
+  /** #523 judge leg: the fixed reply as the raw completion text. */
+  completeText(
+    request: TextCompletionRequest,
+    _options: { signal: AbortSignal },
+  ): Promise<TextCompletionResult> {
+    return Promise.resolve({
+      text: this.reply,
+      usage: {
+        inputTokens: Math.ceil(
+          new TextEncoder().encode(request.system + request.user).byteLength / 4,
+        ),
+        outputTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        contextWindow: this.relay.contextWindow,
+        estimated: true,
+      },
+    });
   }
 }

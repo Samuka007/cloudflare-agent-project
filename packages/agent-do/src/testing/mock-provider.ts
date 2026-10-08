@@ -4,6 +4,8 @@ import {
   type ModelRequest,
   type ModelStreamChunk,
   type ModelUsageReceipt,
+  type TextCompletionRequest,
+  type TextCompletionResult,
 } from "../provider.js";
 
 /**
@@ -33,8 +35,21 @@ export interface MockTurn {
   hang?: boolean;
 }
 
+/** One scripted raw completion (#523 judge leg). */
+export interface MockCompletion {
+  text: string;
+  usage?: ModelUsageReceipt;
+  /** Throw before any byte (the judge call fails). */
+  fail?: { message: string };
+}
+
 export class MockModelProvider implements ModelProvider {
   readonly calls: ModelRequest[] = [];
+  /** Scripted raw completions; the last repeats. `completions` records them. */
+  readonly completions: TextCompletionRequest[] = [];
+  private completionCursor = 0;
+  /** Judge-leg script; unset = completeText fails closed (no mock judge). */
+  completionScript: MockCompletion[] = [];
   private cursor = 0;
 
   constructor(public turns: MockTurn[]) {}
@@ -132,5 +147,30 @@ export class MockModelProvider implements ModelProvider {
   /** Total call attempts — the billing probe for I11. */
   callCount(): number {
     return this.calls.length;
+  }
+
+  completeText(
+    request: TextCompletionRequest,
+    options: { signal: AbortSignal },
+  ): Promise<TextCompletionResult> {
+    this.completions.push(request);
+    const entry =
+      this.completionScript[Math.min(this.completionCursor, this.completionScript.length - 1)];
+    this.completionCursor += 1;
+    if (entry === undefined || entry.fail !== undefined) {
+      throw new ModelProviderError({
+        message: entry?.fail?.message ?? "mock provider serves no judge completions",
+        retryable: false,
+        afterFirstByte: false,
+      });
+    }
+    if (options.signal.aborted) {
+      throw new ModelProviderError({
+        message: "aborted",
+        retryable: false,
+        afterFirstByte: false,
+      });
+    }
+    return Promise.resolve({ text: entry.text, usage: entry.usage ?? null });
   }
 }

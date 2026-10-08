@@ -94,6 +94,20 @@ export interface DaemonServiceClient {
    */
   queryUnacked(threadId: string): Promise<{ executionId: string; result: ToolResultPayload }[]>;
   /**
+   * #523: find's execution leg — ONE synchronous host-tool RPC that runs
+   * the judge-less find cascade and resolves THIS call with the candidate
+   * payload (agent-do find-protocol v1) the edge judges. The isolationOp
+   * posture: no agent-side execution state, no journal rows on the agent
+   * DO, the service DO owns the waiter; the result payload carries the
+   * structured execution error (host_offline/timeout) verbatim.
+   */
+  findExec(request: {
+    machineId: string;
+    threadId: string;
+    arguments: Record<string, unknown>;
+    timeoutMs: number;
+  }): Promise<ToolResultPayload>;
+  /**
    * T20 #110 task-isolation op (synchronous host-op RPC): prepare or release
    * an isolated workspace for a child spawn. Unlike `dispatch` the result
    * resolves THIS call — there is no agent-side execution state and no

@@ -19,7 +19,7 @@
 import { runClient } from "./connection.js";
 import { hasPersistedIdentity, type ClientConfig } from "./identity.js";
 import { decodeCfAccessConfig } from "./cf-access.js";
-import { decodeAgentAuthConfig } from "./agent-auth.js";
+
 import { decodeTaskIsolationConfig } from "./task-isolation.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -94,7 +94,6 @@ const config: ClientConfig = {
   enrollKey: enrollKey ?? "",
   joinCode: joinCode ?? null,
   taskIsolation: decodeTaskIsolationConfig(process.env.DAEMON_TASK_ISOLATION),
-  agentAuth: decodeAgentAuthConfig(process.env.DAEMON_AGENT_AUTH),
   // #420: --cf-client-id/--cf-client-secret mirror the env pair (arg wins,
   // the --server/--join-code convention); decode enforces both-or-neither.
   cfAccess: decodeCfAccessConfig(

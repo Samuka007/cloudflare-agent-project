@@ -571,7 +571,6 @@ function toolRuntimeOf(runtime: ClientRuntime, config: ClientConfig): ToolRuntim
     agentDir: join(config.dataDir, "omp-agent"),
     machineId: runtime.machineId ?? "",
     taskIsolation: config.taskIsolation,
-    agentAuth: config.agentAuth,
   }));
 }
 

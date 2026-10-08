@@ -118,6 +118,12 @@ export class TestDaemonServiceDO extends DurableObject<TestDaemonEnv> {
     return this.service.isolationOp(request);
   }
 
+  /** #523: the synchronous find execution leg, forwarded verbatim (the same
+   * DI-boundary forwarder shape as isolationOp). */
+  findExec(request: Parameters<DaemonServiceClient["findExec"]>[0]): Promise<ToolResultPayload> {
+    return this.service.findExec(request);
+  }
+
   hostThreadFileWrite(
     request: Parameters<DaemonServiceClient["hostThreadFileWrite"]>[0],
   ): Promise<HostThreadFileWriteOutcome> {

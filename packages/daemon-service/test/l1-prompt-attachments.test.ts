@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } fr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PromptContent } from "@cap/protocol";
-import { decodeAgentAuthConfig } from "../src/client/agent-auth.js";
 import { decodeTaskIsolationConfig } from "../src/client/task-isolation.js";
 import {
   clientFrameSchema,
@@ -348,7 +347,6 @@ describe("dispatchToolExec attachment leg (#318)", () => {
       enrollKey: "",
       joinCode: null,
       taskIsolation: decodeTaskIsolationConfig(undefined),
-      agentAuth: decodeAgentAuthConfig(undefined),
     };
   }
 

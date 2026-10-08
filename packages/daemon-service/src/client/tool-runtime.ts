@@ -8,13 +8,14 @@ import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { EvalKernelRuntime } from "./eval-kernel.js";
 import { threadIdFromExecutionId } from "../execution-id.js";
 import { IsolationManager, type TaskIsolationConfig } from "./task-isolation.js";
-import { installAgentAuth, type AgentAuthConfig } from "./agent-auth.js";
+import { createFindExecTool } from "./find-exec.js";
 
 /**
  * Vendored omp tool runtime (M1.5/T5' #128): host construction, native-addon
  * version gate, and the dispatch-frame adapter. The host tools
  * (read/glob/grep/find/write/edit + manage_skill, T6 #96 / T11 #101) execute
- * through omp's own `execute()` path —
+ * through omp's own `execute()` path — find since #523 as the judge-less
+ * execution phase (find-exec.ts; the LLM leg lives on the edge) —
  * spike evidence docs/research/omp-runtime-embedding.md §1–§3; the vendoring
  * mechanism is npm dependency pinning (@oh-my-pi 18.6.0, exact in
  * package.json + pnpm-lock.yaml), so the runtime is the release artifact of
@@ -186,13 +187,12 @@ export function assertNativeAddonCurrent(status: NativeAddonIdentity): void {
 
 /**
  * Host constructions are serialized process-wide (#290 C4): every host —
- * base and per-workspace alike — installs the SHARED daemon-private
- * agentDir's models.yml (installAgentAuth) and re-pins the process-global
- * agent-dir resolver (setAgentDir). The pins are value-idempotent (one
- * agentDir per process), but concurrent constructions would interleave the
- * file writes; one-at-a-time keeps the discipline the single base host has
- * always run under. The chain never poisons: a failed build must not block
- * later workspaces.
+ * base and per-workspace alike — re-pins the process-global agent-dir
+ * resolver (setAgentDir). The pins are value-idempotent (one agentDir per
+ * process), but concurrent constructions would interleave the isolated
+ * settings loads; one-at-a-time keeps the discipline the single base host
+ * has always run under. The chain never poisons: a failed build must not
+ * block later workspaces.
  */
 let hostBuildChain: Promise<unknown> = Promise.resolve();
 function serializedHostBuild<T>(build: () => Promise<T>): Promise<T> {
@@ -211,7 +211,6 @@ export async function createToolHost(
   cwd: string,
   agentDir: string,
   machineId: string,
-  agentAuth: AgentAuthConfig | null = null,
 ): Promise<ToolHost> {
   // Agent-dir isolation (T6 #96): process-global omp paths — the
   // managed-skills store (getManagedSkillsDir → getAgentDir()), auth,
@@ -237,7 +236,6 @@ export async function createToolHost(
     { Settings },
     { ArtifactManager },
     { EditTool },
-    { FindTool },
     { GlobTool },
     { GrepTool },
     { ReadTool },
@@ -250,7 +248,6 @@ export async function createToolHost(
     import("@oh-my-pi/pi-coding-agent/config/settings"),
     import("@oh-my-pi/pi-coding-agent/session/artifacts"),
     import("@oh-my-pi/pi-coding-agent/edit"),
-    import("@oh-my-pi/pi-coding-agent/tools/jfind"),
     import("@oh-my-pi/pi-coding-agent/tools/glob"),
     import("@oh-my-pi/pi-coding-agent/tools/grep"),
     import("@oh-my-pi/pi-coding-agent/tools/read"),
@@ -260,39 +257,14 @@ export async function createToolHost(
     import("@oh-my-pi/pi-coding-agent/tools/security-scan"),
     import("@oh-my-pi/pi-coding-agent/tools/settings"),
   ]);
-  // #145: the judge role pins the provider channel the find cascade
-  // resolves through (deployment-time input; the model-facing schemas stay
-  // omp-verbatim).
+  // #523: the judge model leg belongs to the edge (provider-app relay over
+  // the D1 provider_configs chain) — the host settings carry no judge role
+  // and the host process holds no provider credentials at all.
   const settings = await Settings.loadIsolated({
     cwd,
     agentDir,
-    overrides: agentAuth?.judgeRole
-      ? { ...HOST_SETTINGS_OVERRIDES, "modelRoles.judge": agentAuth.judgeRole }
-      : HOST_SETTINGS_OVERRIDES,
+    overrides: HOST_SETTINGS_OVERRIDES,
   });
-  // #145: materialize the provider channel into the daemon-private agentDir
-  // (models.yml is the canonical omp custom-provider config — baseUrl +
-  // apiKey + models land there), then build the ModelRegistry over the
-  // agent-dir auth store. find's ChainJudge resolves through this registry;
-  // without it every find degrades with "find has no model registry".
-  await installAgentAuth(agentDir, agentAuth);
-  const [{ discoverAuthStorage }, { ModelRegistry }] = await Promise.all([
-    import("@oh-my-pi/pi-coding-agent/session/auth-broker-config"),
-    import("@oh-my-pi/pi-coding-agent/config/model-registry"),
-  ]);
-  // Explicit agentDir: the local SQLite store (<agentDir>/agent.db) — never
-  // the operator's ~/.omp credentials.
-  const authStorage = await discoverAuthStorage(agentDir);
-  // modelsPath is EXPLICIT: the registry's default resolves getAgentDir(),
-  // which is frozen at the first omp import (the static Settings import at
-  // this module's top — before the PI_CODING_AGENT_DIR pin lands) and would
-  // silently read the operator's ~/.omp/models.yml instead of the
-  // daemon-private one.
-  const modelRegistry = new ModelRegistry(authStorage, join(agentDir, "models.yml"), { settings });
-  await modelRegistry.refresh();
-  for (const [provider, apiKey] of Object.entries(agentAuth?.runtimeKeys ?? {})) {
-    authStorage.keys.setRuntime(provider, apiKey);
-  }
   // T9 #99 shim 3 (artifact allocator): omp's OutputSink middle-truncates
   // inline output at 50 KiB; the full bytes are recoverable only when the
   // session allocates artifacts. omp's own ArtifactManager (numeric ids,
@@ -305,14 +277,6 @@ export async function createToolHost(
     cwd,
     hasUI: false,
     settings,
-    // #145: the judge channel. FindTool resolves `resolveJudge` from
-    // here; absent, every find dies with "find has no model registry".
-    modelRegistry,
-    // The host credential registry: runtimeKeys install at top cascade
-    // precedence (the judge chain resolves provider keys through the
-    // registry's copy). Credentials stay on the daemon host; nothing
-    // auth-shaped crosses the dispatch frame.
-    authStorage,
     getSessionFile: () => null,
     getSessionSpawns: () => null,
     getArtifactsDir: () => artifacts.dir,
@@ -329,11 +293,13 @@ export async function createToolHost(
     const candidates: OmpTool[] = [
       new GlobTool(session),
       new GrepTool(session),
-      // T11 (#101) + #145: the judge role resolves through the
-      // session's model registry (always wired — see the auth block above);
-      // with NO credential configured the chain resolves to zero candidates
-      // and find degrades with "judgment: no judge model available".
-      new FindTool(session),
+      // #523: find's execution phase — the judge-less cascade that returns
+      // verification candidates for the edge to judge. No omp FindTool on
+      // the host: that class resolves a judge from the session registry,
+      // and the host carries no registry (zero ModelRegistry dependency).
+      // The execution phase reads only workspaceRoot + session off the host
+      // seam (find-exec.ts) — the same view session the omp tools get.
+      createFindExecTool({ workspaceRoot: sessionCwd, session: viewBase }),
       new ReadTool(session),
       new WriteTool(session),
       new EditTool(session),
@@ -573,8 +539,6 @@ export interface ToolRuntimeConfig {
   machineId: string;
   /** T20 #110 isolation policy (omp defaults; DAEMON_TASK_ISOLATION patch). */
   taskIsolation: TaskIsolationConfig;
-  /** #145 provider channel (DAEMON_AGENT_AUTH; null = agentDir only). */
-  agentAuth: AgentAuthConfig | null;
 }
 
 export class ToolRuntime {
@@ -596,12 +560,7 @@ export class ToolRuntime {
     this.hostPromise ??= (async () => {
       assertNativeAddonCurrent(await readNativeAddonStatus());
       return serializedHostBuild(() =>
-        createToolHost(
-          this.config.workspaceRoot,
-          this.config.agentDir,
-          this.config.machineId,
-          this.config.agentAuth,
-        ),
+        createToolHost(this.config.workspaceRoot, this.config.agentDir, this.config.machineId),
       );
     })();
     return this.hostPromise;
@@ -729,12 +688,7 @@ export class ToolRuntime {
    */
   private workspaceHost(binding: WorkspaceBinding): Promise<ToolHost> {
     binding.hostPromise ??= serializedHostBuild(() =>
-      createToolHost(
-        binding.path,
-        this.config.agentDir,
-        this.config.machineId,
-        this.config.agentAuth,
-      ),
+      createToolHost(binding.path, this.config.agentDir, this.config.machineId),
     );
     return binding.hostPromise;
   }

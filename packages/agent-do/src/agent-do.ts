@@ -82,6 +82,9 @@ import { toolRegistryRow, type ToolRegistryRow } from "./tools/registry.js";
 import { resolveHostPathOverride, type HostPathResolution } from "./tools/host-path.js";
 import { scheduleBatch, type BatchScheduleItem } from "./tools/batch-scheduler.js";
 import { latestContextNotes, runEdgeTool, type EdgeToolContext } from "./tools/edge.js";
+import { runFindJudged } from "./tools/find-judge.js";
+import type { RelayModelCost } from "./provider-catalog.js";
+import type { TextCompletionRequest } from "./provider.js";
 import {
   projectJobs,
   projectInbox,
@@ -536,6 +539,14 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * owning call's signal so an in-flight image request surfaces as a
    * cancelled tool result, not an Error text. */
   private readonly generateImageAborts = new Map<string, AbortController>();
+  /** In-flight composite find runs (executionId → run), #523: one judged
+   * find per executionId (the taskRuns posture); re-asks answer nothing —
+   * the registered run owns the result. */
+  private readonly findRuns = new Map<string, Promise<void>>();
+  /** In-flight find judge transports (executionId → cancel), #523. Same
+   * vocabulary as webSearchAborts: killNonTerminalExecutions aborts the
+   * judge legs (the host leg owns its service-side timeout). */
+  private readonly findAborts = new Map<string, AbortController>();
   /**
    * The DO's MCP face (tools/mcp.ts): discovery cache + connection pool +
    * wire-name routes. Empty server config = inert (no fetch, no surface).
@@ -3046,6 +3057,24 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         return;
       }
     }
+    if (toolName === "find" && row !== undefined) {
+      // #523 composite find (user ruling 2026-10-08): the execution leg
+      // rides the daemon (the synchronous findExec RPC — an ssh:// scope
+      // override rides along with its rewritten arguments + target), the
+      // judgment leg rides the edge relay (the thread's pinned selection
+      // through the D1 provider_configs registry). The model still sees
+      // ONE find tool: the registry row and wire schema are untouched.
+      await this.executeFindJudged(
+        execution,
+        override !== null
+          ? override.arguments
+          : callData?.type === "tool.call"
+            ? callData.data.arguments
+            : {},
+        overriddenMachineId ?? boundMachineId,
+      );
+      return;
+    }
     let outcome: DispatchOutcome;
     try {
       outcome = await this.daemonFor(overriddenMachineId ?? boundMachineId).dispatch({
@@ -3102,6 +3131,66 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
               ),
       });
     }
+  }
+
+  /**
+   * #523 composite find: run the host execution leg (judge-less cascade)
+   * and the edge judgment leg (relay verification), then ingest the final
+   * report. Idempotent per executionId (the taskRuns posture): a watchdog
+   * re-ask while a run is live answers nothing — the registered run owns
+   * the result. The whole leg rides the execution's policy deadline plus
+   * the business-cancel controller.
+   */
+  private async executeFindJudged(
+    execution: ExecutionRuntime,
+    args: Record<string, unknown>,
+    machineId: string,
+  ): Promise<void> {
+    if (executionTerminal(execution)) return;
+    if (this.findRuns.has(execution.executionId)) return;
+    const threadId = this.requireThread();
+    const controller = new AbortController();
+    this.findAborts.set(execution.executionId, controller);
+    const signal = AbortSignal.any([
+      controller.signal,
+      AbortSignal.timeout(Math.max(execution.timeoutMs, 1)),
+    ]);
+    // One resolution: provider + declared row cost (footer pricing).
+    const { provider, cost } = this.resolveTurnModel(execution.turnId);
+    const run = runFindJudged(args, {
+      execHost: () =>
+        this.daemonFor(machineId).findExec({
+          machineId,
+          threadId,
+          arguments: args,
+          timeoutMs: execution.timeoutMs,
+        }),
+      judge: (request: TextCompletionRequest) => {
+        const complete = provider.completeText?.bind(provider);
+        if (complete === undefined) {
+          return Promise.reject(
+            new Error(
+              "the resolved relay provider cannot serve the find judge leg (no raw completion seam)",
+            ),
+          );
+        }
+        return complete(request, { signal });
+      },
+      ...(cost !== undefined ? { cost } : {}),
+    })
+      .then((result) =>
+        this.ingestResult(
+          execution,
+          { status: result.status, exitCode: null, output: result.output },
+          { ack: false },
+        ),
+      )
+      .finally(() => {
+        this.findRuns.delete(execution.executionId);
+        this.findAborts.delete(execution.executionId);
+      });
+    this.findRuns.set(execution.executionId, run);
+    await run;
   }
 
   /**
@@ -3920,6 +4009,14 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         this.mcpAborts.get(executionId)?.abort();
         continue;
       }
+      if (execution.tool === "find") {
+        // #523 composite: the model-visible id never reached the daemon as
+        // a dispatch row — kill = abort the in-flight judge legs (the host
+        // leg owns its service-side timeout); the executor journals the
+        // cancelled tool.result row.
+        this.findAborts.get(executionId)?.abort();
+        continue;
+      }
       try {
         await this.daemon().kill(executionId);
       } catch {
@@ -4694,6 +4791,16 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * only a recovery re-drive of a pre-#351 queued turn can land here.
    */
   private resolveTurnProvider(turnId: string): ModelProvider {
+    return this.resolveTurnModel(turnId).provider;
+  }
+
+  /**
+   * #523 judge-model resolution — the thread selection 同源: the same
+   * journaled selection the turn's own model dispatches ride, through the
+   * same fail-closed registry (D1 provider_configs 正本链). No judge pin
+   * exists anywhere else: the driving model judges, zero new config surface.
+   */
+  private resolveTurnModel(turnId: string): { provider: ModelProvider; cost?: RelayModelCost } {
     const runtime = getAgentRuntime(this.requireThread());
     const selection = this.state.turns.get(turnId)?.execution ?? null;
     if (selection === null) {
@@ -4704,7 +4811,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           "the deployment-default dispatch is retired (#496); send with providerId/model",
       );
     }
-    return runtime.resolveExecutionProvider(selection);
+    return runtime.resolveExecutionModel !== undefined
+      ? runtime.resolveExecutionModel(selection)
+      : { provider: runtime.resolveExecutionProvider(selection) };
   }
 
   /**

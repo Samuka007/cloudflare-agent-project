@@ -82,6 +82,11 @@ const MATRIX: Record<string, MatrixRow> = {
   edit: { args: { input: "+ t26 matrix line\n" }, status: "ok" },
   glob: { args: { path: "." }, status: "ok" },
   grep: { args: { pattern: "agent" }, status: "ok" },
+  // #523: find is the composite row — the execution leg rides the daemon's
+  // synchronous findExec RPC (the fake answers a canned empty payload), the
+  // judgment leg rides the edge relay. Its matrix contract lives in the
+  // dedicated composite section below (no daemon spawn on the model-visible
+  // id, so the host-row spawnAck assertions do not apply).
   find: { args: { query: "replay", grep_keywords: ["journal"] }, status: "ok" },
   security_scan: { args: { action: "preflight" }, status: "ok" },
   write: { args: { path: "notes/t26-matrix.md", content: "matrix" }, status: "ok" },
@@ -120,7 +125,9 @@ const MATRIX: Record<string, MatrixRow> = {
   generate_image: { args: { subject: "matrix image" }, status: "error" },
 };
 
-const HOST_ROWS = TOOL_REGISTRY.filter((row) => row.class === "host").map((row) => row.name);
+const HOST_ROWS = TOOL_REGISTRY.filter((row) => row.class === "host" && row.name !== "find").map(
+  (row) => row.name,
+);
 const EDGE_ROWS = TOOL_REGISTRY.filter(
   (row) => row.class === "edge" && !["ask", "web_search", "task", "yield"].includes(row.name),
 ).map((row) => row.name);
@@ -334,6 +341,56 @@ describe("M1.5 T26 — host rows × replay/eviction matrix", () => {
       await hostRowContract(name, args);
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// find — the composite row (#523): the execution leg rides the synchronous
+// findExec RPC (the fake answers a canned empty candidate payload → the
+// judge leg runs zero requests → the honest "no hits" report), the
+// model-visible id NEVER spawns on the daemon, and replay/re-dispatch are
+// the standard journal faces.
+// ---------------------------------------------------------------------------
+
+describe("M1.5 T26 — find row (composite face #523)", () => {
+  test("one judged report per execution; zero daemon spawn; replay identical", async () => {
+    const rig = await createRig({
+      turns: [
+        {
+          toolCalls: [{ name: "find", arguments: matrixArgs("find") }],
+        },
+        { deltas: ["done"] },
+      ],
+    });
+    const sent = await rig.stub.sendMessage({
+      clientRequestId: "t26-find",
+      content: [{ type: "text", text: "run it" }],
+      mode: "auto",
+    });
+    const snapshot = await rig.waitFor((all) => all.some((event) => event.type === "tool.call"));
+    const call = snapshot.find(
+      (event): event is Extract<AnyAgentEvent, { type: "tool.call" }> => event.type === "tool.call",
+    );
+    if (call === undefined) throw new Error("find never called");
+    const executionId = executionIdFor(rig.threadId, call.seq);
+    const done = await rig.waitTurnComplete(sent.turnId);
+    const result = resultEventOf(done, executionId);
+    expect(result.data.status).toBe("ok");
+    // The judge-less canned payload has zero batches → the honest no-hits
+    // report with a zero-request footer (the judge leg never fired).
+    expect(result.data.output).toContain('no hits for "replay"');
+    expect(result.data.output).toContain("0 requests");
+    // The model-visible id never spawned on the daemon (composite face) and
+    // the fake journals nothing for the synchronous leg.
+    expect(await rig.service.spawnAckCount(executionId)).toBe(0);
+    await expect(rig.service.journal()).resolves.toEqual([]);
+
+    // Completed face: identical replay + terminal re-dispatch no-op.
+    await abortAllDurableObjects();
+    const after = await rig.afterAbort(() => rig.events());
+    expect(fingerprint(after)).toEqual(fingerprint(done));
+    await redispatch(rig.stub, sent.turnId, executionId);
+    expect(fingerprint(await rig.events())).toEqual(fingerprint(after));
+  });
 });
 
 // ---------------------------------------------------------------------------

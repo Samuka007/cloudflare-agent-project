@@ -84,6 +84,26 @@ export type JournalOp =
       status: ToolResultPayload["status"];
       output: string;
     }
+  /**
+   * #523 find execution-leg audit (the isolation_op twin): the synchronous
+   * host RPC that runs find's judge-less cascade for the edge. Same
+   * posture — no ExecutionRecord, never re-forwarded, invisible to the
+   * agent DO's execution state; rows exist for the journal audit trail.
+   */
+  | {
+      kind: "find_exec";
+      at: number;
+      executionId: string;
+      threadId: string;
+      argumentsJson: string;
+    }
+  | {
+      kind: "find_result";
+      at: number;
+      executionId: string;
+      status: ToolResultPayload["status"];
+      output: string;
+    }
   | { kind: "output"; at: number; executionId: string; offset: number; text: string }
   | { kind: "output_dup_dropped"; at: number; executionId: string; offset: number }
   | { kind: "output_gap"; at: number; executionId: string; from: number; to: number }
@@ -269,6 +289,12 @@ export function foldOp(state: ServiceStateData, op: JournalOp): void {
     case "isolation_op":
       return;
     case "isolation_result":
+      return;
+    case "find_exec":
+      // #523 audit-only rows: the synchronous leg carries no execution
+      // state (the isolation_op posture).
+      return;
+    case "find_result":
       return;
     case "spawn_ack": {
       const record = recordOf(state, op);

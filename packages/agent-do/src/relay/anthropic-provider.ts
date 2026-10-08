@@ -5,6 +5,8 @@ import {
   type ModelStreamChunk,
   type ModelToolCall,
   type ModelUsageReceipt,
+  type TextCompletionRequest,
+  type TextCompletionResult,
 } from "../provider.js";
 import type { RelayApi, ResponsesEffort } from "../provider-catalog.js";
 import { anthropicRequestBody, estimateWireRequestTokens, type ThinkingConfig } from "./wire.js";
@@ -343,6 +345,104 @@ export class AnthropicRelayProvider implements ModelProvider {
     if (toolCalls.length > 0) {
       yield { kind: "tool-calls", toolCalls };
     }
+  }
+
+  /**
+   * #523 judge leg: ONE non-streaming Messages call — system top-level, one
+   * user message, no tools, no thinking pin. Same failure taxonomy as
+   * streamTurn; `max_tokens` stop reason fails (length 必停).
+   */
+  async completeText(
+    request: TextCompletionRequest,
+    options: { signal: AbortSignal },
+  ): Promise<TextCompletionResult> {
+    const body = {
+      model: this.config.model,
+      max_tokens: request.maxTokens ?? this.config.maxTokens,
+      system: request.system,
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: request.user }],
+        },
+      ],
+    };
+    const serialized = JSON.stringify(body);
+    const url = `${this.config.baseUrl.replace(/\/+$/, "")}/v1/messages`;
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": this.config.apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: serialized,
+        signal: options.signal,
+      });
+    } catch (error) {
+      throw new ModelProviderError({
+        message: `relay connect failed: ${describeError(error)}`,
+        retryable: !options.signal.aborted,
+        afterFirstByte: false,
+      });
+    }
+    if (!response.ok) {
+      const detail = await errorDetail(response);
+      throw new ModelProviderError({
+        message: `relay http ${response.status}: ${detail}`,
+        retryable: RETRYABLE_STATUS.has(response.status),
+        afterFirstByte: false,
+      });
+    }
+    interface CompletionBody {
+      stop_reason?: string | null;
+      content?: { type?: string; text?: string }[];
+      usage?: MessageUsageFrame | null;
+    }
+    let payload: CompletionBody;
+    try {
+      const body: unknown = await response.json();
+      payload = body as CompletionBody;
+    } catch {
+      throw new ModelProviderError({
+        message: "relay sent malformed completion JSON",
+        retryable: false,
+        afterFirstByte: true,
+      });
+    }
+    if (payload.stop_reason === "max_tokens") {
+      throw new ModelProviderError({
+        message: "relay stop_reason=max_tokens (length truncation — never continued)",
+        retryable: false,
+        afterFirstByte: true,
+      });
+    }
+    const text = (payload.content ?? [])
+      .filter((block) => block.type === "text" && typeof block.text === "string")
+      .map((block) => block.text)
+      .join("");
+    const usageFrame = payload.usage ?? null;
+    const usage: ModelUsageReceipt =
+      usageFrame !== null
+        ? {
+            inputTokens: usageFrame.input_tokens ?? 0,
+            outputTokens: usageFrame.output_tokens ?? 0,
+            cacheReadInputTokens: usageFrame.cache_read_input_tokens ?? 0,
+            cacheCreationInputTokens: usageFrame.cache_creation_input_tokens ?? 0,
+            contextWindow: this.config.contextWindow ?? null,
+            estimated: false,
+          }
+        : {
+            inputTokens: estimateWireRequestTokens(serialized),
+            outputTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            contextWindow: this.config.contextWindow ?? null,
+            estimated: true,
+          };
+    return { text, usage };
   }
 }
 

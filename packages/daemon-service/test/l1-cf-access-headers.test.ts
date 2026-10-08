@@ -9,7 +9,6 @@ import {
   decodeCfAccessConfig,
   type CfAccessConfig,
 } from "../src/client/cf-access.js";
-import { decodeAgentAuthConfig } from "../src/client/agent-auth.js";
 import { decodeTaskIsolationConfig } from "../src/client/task-isolation.js";
 import { Executor } from "../src/client/executor.js";
 
@@ -69,7 +68,6 @@ function clientConfig(cfAccess: CfAccessConfig | undefined, dataDir: string): Cl
     enrollKey: "l1-rig-enroll-key",
     joinCode: null,
     taskIsolation: decodeTaskIsolationConfig(undefined),
-    agentAuth: decodeAgentAuthConfig(undefined),
     cfAccess,
   };
 }

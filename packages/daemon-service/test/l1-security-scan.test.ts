@@ -10,16 +10,15 @@ import {
   type ToolDispatchFrame,
   type ToolHost,
 } from "../src/client/tool-runtime.js";
-import { decodeAgentAuthConfig } from "../src/client/agent-auth.js";
 
 /**
  * L1 for the security_scan host-face disablement (#522, user ruling
  * 2026-10-08): the daemon no longer pins `security.enabled`, so omp's own
  * default-off gate keeps the tool out of the map — every fresh host builds
  * without security_scan, and a dispatch degrades to "unknown tool". The
- * config leg is gone with it: `securityModel` is no longer part of
- * DAEMON_AGENT_AUTH, and a stale env value is stripped by the schema (zod
- * default), not rejected.
+ * #523 follow-up removed the last DAEMON_AGENT_AUTH consumer (find's judge
+ * leg moved to the edge), so the whole channel is gone: no auth-shaped
+ * config reaches the host at all.
  *
  * The former end-to-end L1 (native preflight fingerprint, background
  * coordinator cancel, credential-on-host seams — T15 #105/#221) tested the
@@ -50,22 +49,12 @@ function frameOf(
 }
 
 beforeAll(async () => {
-  root = mkdtempSync(join(tmpdir(), "omp-security-gate-"));
+  root = mkdtempSync(join(tmpdir(), "omp-security-l1-"));
   mkdirSync(join(root, "workspace"), { recursive: true });
   mkdirSync(join(root, "workspace-b"), { recursive: true });
-  // The version gate is the refuse-start precondition (tool-runtime.test.ts)
-  // — it runs before ANY omp module graph evaluates.
   assertNativeAddonCurrent(await readNativeAddonStatus());
-  // The agentAuth twin keeps a live judge leg to prove the disablement is
-  // scoped to the security face, not an auth-shape change.
-  const authConfig = decodeAgentAuthConfig(JSON.stringify({ judgeRole: "secprov/judge-model" }));
-  host = await createToolHost(
-    join(root, "workspace"),
-    join(root, "omp-agent-sec"),
-    MACHINE,
-    authConfig,
-  );
-  // The bare twin: no agentAuth at all — the gate is closed either way.
+  // #523: no agentAuth leg exists any more — both twins build bare.
+  host = await createToolHost(join(root, "workspace"), join(root, "omp-agent-sec"), MACHINE);
   bareHost = await createToolHost(join(root, "workspace-b"), join(root, "omp-agent-bare"), MACHINE);
 });
 
@@ -74,35 +63,25 @@ afterAll(() => {
 });
 
 describe("#522 — security_scan host face disabled (gate closed = tool absent)", () => {
-  test("omp's own enablement gate reads default-off on the host settings", async () => {
-    const { cfgSecurityEnabled } = await import("@oh-my-pi/pi-coding-agent/tools/settings");
-    expect(cfgSecurityEnabled.get(host.settings)).toBe(false);
-    expect(cfgSecurityEnabled.get(bareHost.settings)).toBe(false);
-  });
-
-  test("the tool map has no security_scan — with or without agentAuth", () => {
+  test("the tool map has no security_scan on either host", () => {
     expect(host.tools.security_scan).toBeUndefined();
     expect(bareHost.tools.security_scan).toBeUndefined();
     // Canary: the rest of the host face is intact — the gate closed ONLY
-    // security_scan (enablement gate rides manage_skill on the same map).
-    expect(host.tools.read).toBeDefined();
-    expect(host.tools.manage_skill).toBeDefined();
+    // for security_scan.
+    for (const name of ["read", "glob", "grep", "find", "write", "edit"]) {
+      expect(host.tools[name]?.name).toBe(name);
+    }
   });
 
-  test("a security_scan dispatch degrades to unknown tool through the frame", async () => {
+  test("a security_scan dispatch degrades to unknown tool on the host face", async () => {
     const result = await executeDispatch(
       host,
-      frameOf("security_scan", "sec-gate-1", { action: "preflight" }),
+      frameOf("security_scan", "sec-1", {
+        action: "preflight",
+        target_kind: "repository",
+      }),
     );
     expect(result.status).toBe("error");
-    expect(result.output).toBe("unknown tool: security_scan");
-  });
-
-  test("the securityModel config leg is gone: the schema strips a stale env value", () => {
-    const config = decodeAgentAuthConfig(
-      JSON.stringify({ securityModel: "secprov/sec-model", judgeRole: "secprov/judge-model" }),
-    );
-    expect("securityModel" in config).toBe(false);
-    expect(config.judgeRole).toBe("secprov/judge-model");
+    expect(result.output).toContain("unknown tool: security_scan");
   });
 });

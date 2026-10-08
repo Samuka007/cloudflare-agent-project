@@ -440,6 +440,85 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
   }
 
   /**
+   * #523: find's execution leg — the isolationOp twin. ONE synchronous
+   * host-tool RPC that runs the judge-less find cascade (execution phase)
+   * and resolves THIS call with the candidate payload the edge judges. No
+   * execution state (no agent-DO journal rows, no onExecutionUpdate round
+   * trip — the pending RPC resolves on the daemon's tool.exited frame,
+   * the same isolationWaiters channel); the timeout is this RPC's own
+   * timer; a request that dies with its session resolves error, never
+   * hangs. Lost legs self-heal: the edge renders a structured error and
+   * the watchdog re-ask re-runs the whole find call.
+   */
+  async findExec(request: {
+    machineId: string;
+    threadId: string;
+    arguments: Record<string, unknown>;
+    timeoutMs: number;
+  }): Promise<ToolResultPayload> {
+    await this.ready();
+    const session = this.state.session;
+    if (session === null || this.liveSocket() === null || request.machineId !== session.hostId) {
+      return {
+        status: "error",
+        exitCode: null,
+        output: "host_offline: no live daemon session for the find execution leg",
+      };
+    }
+    const socket = this.liveSocket();
+    if (socket === null) {
+      return {
+        status: "error",
+        exitCode: null,
+        output: "host_offline: no live daemon session for the find execution leg",
+      };
+    }
+    const executionId = `${request.threadId}:find-${crypto.randomUUID()}`;
+    const timeoutMs = request.timeoutMs > 0 ? request.timeoutMs : DEFAULT_EXEC_TIMEOUT_MS;
+    this.journal({
+      kind: "find_exec",
+      at: Date.now(),
+      executionId,
+      threadId: request.threadId,
+      argumentsJson: JSON.stringify(request.arguments),
+    });
+    const { promise, resolve } = Promise.withResolvers<ToolResultPayload>();
+    const timer = setTimeout(() => {
+      if (this.isolationWaiters.delete(executionId)) {
+        resolve({
+          status: "timeout",
+          exitCode: null,
+          output: `find execution leg timed out after ${timeoutMs}ms`,
+        });
+      }
+    }, timeoutMs);
+    this.isolationWaiters.set(executionId, { resolve, timer });
+    this.send(socket, {
+      type: "tool.exec",
+      requestId: crypto.randomUUID(),
+      threadId: request.threadId,
+      executionId,
+      tool: "find",
+      arguments: request.arguments,
+      timeoutMs,
+    });
+    try {
+      const result = await promise;
+      this.journal({
+        kind: "find_result",
+        at: Date.now(),
+        executionId,
+        status: result.status,
+        output: clampInlineOutput(result.output),
+      });
+      return result;
+    } finally {
+      clearTimeout(timer);
+      this.isolationWaiters.delete(executionId);
+    }
+  }
+
+  /**
    * #302: host online RPC (bb hub.requestHostOnlineRpc, ws/hub.ts:634-668 +
    * services/hosts/online-rpc.ts): one control-plane question over the live
    * daemon socket, resolved by the daemon's `host-rpc.response` frame. Like
