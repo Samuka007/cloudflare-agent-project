@@ -5,7 +5,6 @@ import { pathToFileURL } from "node:url";
 import { log } from "./log.js";
 import type { WorkspaceRef } from "../protocol.js";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import type { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { EvalKernelRuntime } from "./eval-kernel.js";
 import { threadIdFromExecutionId } from "../execution-id.js";
 import { IsolationManager, type TaskIsolationConfig } from "./task-isolation.js";
@@ -111,21 +110,14 @@ export interface ToolHost {
   viewFor(cwd: string): ToolHost;
 }
 
-/** The omp chat-model surface (ModelRegistry.find's return), derived through
- * the registry type — the type owner (@oh-my-pi/pi-ai `Model`) is not a
- * direct dependency of this package and no omp entrypoint re-exports it, so
- * a named import is impossible; this derivation is the only non-inventive
- * spelling. */
-type SecurityHostModel = NonNullable<ReturnType<InstanceType<typeof ModelRegistry>["find"]>>;
-
 /**
  * Host settings overrides (agent enablement + policy pins):
  * - `autolearn.enabled` (T6 #96) admits omp's own ManageSkillTool.createIf
  *   gate — the same flag omp checks, pinned host-side in the isolated
  *   settings (no daemon capability negotiation, control-plane §1.2).
- * - `security.enabled` (T15 #105) admits omp's own cfgSecurityEnabled gate —
- *   the tool's execute() re-checks it (security-scan.ts:124), so the pin is
- *   the host-side enablement twin of the registry row, not a bypass.
+ * - `security.enabled` is deliberately NOT pinned (#522, user ruling
+ *   2026-10-08): omp's default-off gate keeps security_scan out of the tool
+ *   map — the host face stays disabled until a revival ruling (#507).
  * - `tools.maxTimeout` (T9 #99 shim 1): omp's bash clamps 1–3600 s natively;
  *   the 600 s pin restores the M0 ceiling the wire schema promises
  *   (registry bashSchema: "nonzero values are clamped to 1-600"). Probe
@@ -133,7 +125,6 @@ type SecurityHostModel = NonNullable<ReturnType<InstanceType<typeof ModelRegistr
  */
 const HOST_SETTINGS_OVERRIDES: Record<string, unknown> = {
   "autolearn.enabled": true,
-  "security.enabled": true,
   "tools.maxTimeout": 600,
 };
 
@@ -302,32 +293,6 @@ export async function createToolHost(
   for (const [provider, apiKey] of Object.entries(agentAuth?.runtimeKeys ?? {})) {
     authStorage.keys.setRuntime(provider, apiKey);
   }
-  // T15 #105: the security_scan host model — deployment-time input (the
-  // judgeRole twin). Preflight freezes provider/model into the plan
-  // fingerprint next to the exact OAuth credential, and the embedded host has
-  // no chat session to derive an active model from, so an unset pin stays
-  // fail-closed at dispatch (omp: "Security scan preflight requires an active
-  // model") while a pinned-but-unresolvable one refuses host construction —
-  // a typo must not surface as a mid-turn tool error.
-  let securityModel: SecurityHostModel | undefined;
-  if (agentAuth?.securityModel !== undefined) {
-    const sep = agentAuth.securityModel.indexOf("/");
-    const provider = sep > 0 ? agentAuth.securityModel.slice(0, sep) : agentAuth.securityModel;
-    const modelId = sep > 0 ? agentAuth.securityModel.slice(sep + 1) : "";
-    const resolved = modelRegistry.find(provider, modelId);
-    if (resolved === undefined) {
-      // A missing model can be a typo — or a models.yml the registry rejected
-      // at load (getError() holds that ConfigError, e.g. a provider defined
-      // with models but no apiKey). Surface it; silent config loss here would
-      // otherwise strand the pin with no diagnostic.
-      const configError = modelRegistry.getError();
-      throw new Error(
-        `securityModel ${agentAuth.securityModel} does not resolve in the daemon-private model registry (${join(agentDir, "models.yml")})` +
-          (configError ? `; registry config error: ${configError.message}` : ""),
-      );
-    }
-    securityModel = resolved;
-  }
   // T9 #99 shim 3 (artifact allocator): omp's OutputSink middle-truncates
   // inline output at 50 KiB; the full bytes are recoverable only when the
   // session allocates artifacts. omp's own ArtifactManager (numeric ids,
@@ -343,13 +308,11 @@ export async function createToolHost(
     // #145: the judge channel. FindTool resolves `resolveJudge` from
     // here; absent, every find dies with "find has no model registry".
     modelRegistry,
-    // T15 #105: the host credential registry — security_scan's coordinator
-    // pins the exact OAuth credential into the plan and the cloud client
-    // resolves its bearer token from here at request time. Both stay on the
-    // daemon host; nothing auth-shaped crosses the dispatch frame.
+    // The host credential registry: runtimeKeys install at top cascade
+    // precedence (the judge chain resolves provider keys through the
+    // registry's copy). Credentials stay on the daemon host; nothing
+    // auth-shaped crosses the dispatch frame.
     authStorage,
-    // T15 #105: the preflight model (omp session.getActiveModel twin).
-    ...(securityModel !== undefined ? { getActiveModel: () => securityModel } : {}),
     getSessionFile: () => null,
     getSessionSpawns: () => null,
     getArtifactsDir: () => artifacts.dir,
@@ -381,9 +344,9 @@ export async function createToolHost(
     // on above); when the gate closes the tool is simply absent from the map.
     const manageSkill = ManageSkillTool.createIf(session);
     if (manageSkill !== null) tools[manageSkill.name] = manageSkill;
-    // security_scan rides omp's own enablement gate (security.enabled pinned
-    // on above); when the gate closes the tool is absent from the map, same
-    // as manage_skill.
+    // security_scan rides omp's own enablement gate (security.enabled —
+    // #522 dropped the daemon pin, so omp's default-off closes the gate and
+    // the tool is absent from the map, same as manage_skill).
     if (cfgSecurityEnabled.get(settings)) {
       const securityScan = new SecurityScanTool(session);
       tools[securityScan.name] = securityScan;
