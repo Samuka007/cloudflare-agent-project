@@ -30,6 +30,10 @@ const RANGES_SHOWN = 3;
 /** Reply budget per judged batch — one-word-per-question lines (pi-ai
  * LOCAL_REASONING_MAX_TOKENS anchor; reasoning models need headroom). */
 const JUDGE_MAX_TOKENS = 1024;
+/** Zero-parse excerpt length per failed batch (#529): enough of the raw
+ * reply to answer "why judged 0" from the report alone, small enough to
+ * stay one report line. */
+const PARSE_MISS_EXCERPT_CHARS = 160;
 /** Requests in flight per judge wave (jfind cascade.ts:28 PARALLEL). */
 const PARALLEL = 16;
 
@@ -164,11 +168,22 @@ export async function runFindJudged(
       const judgeText = result.text.includes("</think>")
         ? result.text.slice(result.text.lastIndexOf("</think>") + "</think>".length)
         : result.text;
-      const answers = splitFindAnswerLines(
-        judgeText,
-        batch.passages.map((passage) => passage.key),
-      );
+      const ids = batch.passages.map((passage) => passage.key);
+      const answers = splitFindAnswerLines(judgeText, ids);
+      // Bare-answer tolerance (#529 four-round real-machine root cause):
+      // glm answers a single-passage batch with a bare "YES"/"NO" — no
+      // `p00:` line at all — so splitFindAnswerLines parses nothing and
+      // the production face is judged 0 → "[tool error]". A one-passage
+      // batch can take the whole trimmed reply as its verdict; multi-
+      // passage batches stay strict (a bare yes/no is ambiguous across
+      // passages).
+      const only = batch.passages.length === 1 ? batch.passages[0] : undefined;
+      if (answers.size === 0 && only !== undefined) {
+        const verdict = parseFindNoulReply(judgeText.trim());
+        if (verdict !== undefined) answers.set(only.key, verdict ? "yes" : "no");
+      }
       const perBatch = new Map<string, number | undefined>();
+      let batchJudged = 0;
       for (const passage of batch.passages) {
         const reply = answers.get(passage.key);
         const verdict = reply === undefined ? undefined : parseFindNoulReply(reply);
@@ -178,7 +193,22 @@ export async function runFindJudged(
           continue;
         }
         judgedPassages += 1;
+        batchJudged += 1;
         perBatch.set(passage.key, verdict ? 1 : 0);
+      }
+      // Zero-parse self-evidence (#529, the #524 "parse miss only counts"
+      // gap): a reply that yields no verdict for ANY passage is
+      // indistinguishable from a relay outage in the report — push the
+      // judge-text excerpt so the failure is answerable from the
+      // tool.result row alone.
+      if (batchJudged === 0 && batch.passages.length > 0 && failures.length < 5) {
+        const collapsed = judgeText.trim().replace(/\s+/g, " ");
+        const excerpt =
+          collapsed.length === 0
+            ? "empty reply"
+            : collapsed.slice(0, PARSE_MISS_EXCERPT_CHARS);
+        const row = `parse miss (${batch.rel}): ${excerpt}`;
+        if (!failures.includes(row)) failures.push(row);
       }
       judged.set(`#${batchIndex}`, perBatch);
     } catch (error) {
