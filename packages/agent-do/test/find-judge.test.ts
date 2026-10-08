@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { runFindJudged } from "../src/tools/find-judge.js";
+import { RETRY_VERDICT_CUE, runFindJudged } from "../src/tools/find-judge.js";
 import {
   parseFindNoulReply,
   splitFindAnswerLines,
@@ -219,37 +219,123 @@ describe("find judge leg (#523)", () => {
     expect(result.output).not.toContain("hit(s)");
   });
 
-  test("zero-parse self-evidence: excerpt, whitespace collapse, 160 cap, empty marker (#529)", async () => {
+  test("multi-passage zero-parse never re-asks: the cue is single-passage only (#529)", async () => {
+    const login = payloadFixture().batches[0];
+    if (login === undefined) throw new Error("fixture lost its multi-passage batch");
+    let calls = 0;
+    const result = await runFindJudged(
+      { query: "login flow" },
+      {
+        execHost: () =>
+          Promise.resolve({
+            status: "ok",
+            output: JSON.stringify(
+              payloadFixture({
+                files: [{ rel: "src/login.ts", totalLines: 40, truncated: false }],
+                batches: [login],
+              }),
+            ),
+          }),
+        judge: () => {
+          calls += 1;
+          return Promise.resolve(bare("YES"));
+        },
+      },
+    );
+    // Conservative scope: a bare "YES" is ambiguous across passages, so
+    // the batch stays unjudged and the hard cue never fires — exactly
+    // one judge call.
+    expect(calls).toBe(1);
+    expect(result.output).toContain("judged 0 ·");
+    // No retry → the failure row carries no marker.
+    expect(result.output).toContain("parse miss (src/login.ts): YES");
+    expect(result.output).not.toContain("after retry");
+  });
+
+  test("miss re-ask: prose reply + hard cue retry buys the verdict (#529)", async () => {
+    // The S1 wire sample (PM five-round repro 2026-10-08): glm-5.3-flash
+    // answers the real fib.js judgment prompt in prose — semantically
+    // yes, zero parseable verdict words (this string must stay free of
+    // yes/no/true/false whole words).
+    const prose =
+      "The passage contains: js — This is a recursive fibonacci implementation — " +
+      "the function calls itself on smaller inputs, exactly the pattern asked about.";
+    expect(parseFindNoulReply(prose)).toBeUndefined();
+    const asked: string[] = [];
+    const result = await runFindJudged(
+      { query: "login flow" },
+      {
+        execHost: () =>
+          Promise.resolve({ status: "ok", output: JSON.stringify(singleBatchPayload()) }),
+        judge: (request) => {
+          asked.push(request.user);
+          if (request.user.endsWith(RETRY_VERDICT_CUE)) {
+            return Promise.resolve(bare("yes"));
+          }
+          return Promise.resolve(bare(prose));
+        },
+      },
+    );
+    // Exactly one re-ask, carrying the hard cue verbatim.
+    expect(asked).toEqual(["STATE-session p00", `STATE-session p00\n\n${RETRY_VERDICT_CUE}`]);
+    // The one-word answer lands: judged 1, the hit presents.
+    expect(result.status).toBe("ok");
+    expect(result.output).toContain("judged 1 ·");
+    expect(result.output).toContain('1 hit(s) for "login flow"');
+    expect(result.output).toContain("src/session.ts  1.00  5 lines judged, partial");
+    expect(result.output).toContain("src/session.ts:5-9  1.00  class SessionManager");
+    expect(result.output).not.toContain("requests failed");
+  });
+
+  test("miss re-ask: prose that survives the retry reports '(after retry)' (#529)", async () => {
+    const prose = "The passage seems unrelated to the request at hand.";
+    const result = await runFindJudged(
+      { query: "login flow" },
+      ctxFixture(singleBatchPayload(), () => bare(prose)),
+    );
+    // Still zero verdicts → the same degradation ladder (error face),
+    // with the row marked so the extra call is answerable.
+    expect(result.status).toBe("error");
+    expect(result.output).toContain("1 of 1 requests failed:");
+    expect(result.output).toContain(`parse miss (src/session.ts, after retry): ${prose}`);
+  });
+
+  test("zero-parse self-evidence: excerpt, whitespace collapse, 400 cap, empty marker (#529)", async () => {
     const run = (text: string) =>
       runFindJudged({ query: "login flow" }, ctxFixture(singleBatchPayload(), () => bare(text)));
 
-    // Prose without a verdict word: the one request failed → the error
-    // face + the excerpt row (the #524 "parse miss only counts" gap closed).
+    // Prose without a verdict word: the miss re-ask fires and the stub
+    // answers prose again → the error face + the marked excerpt row (the
+    // #524 "parse miss only counts" gap stays closed).
     const prose = await run("The passage seems unrelated to the request at hand.");
     expect(prose.status).toBe("error");
     expect(prose.output).toContain("1 of 1 requests failed:");
     expect(prose.output).toContain(
-      "parse miss (src/session.ts): The passage seems unrelated to the request at hand.",
+      "parse miss (src/session.ts, after retry): The passage seems unrelated to the request at hand.",
     );
 
     // Newlines/tabs collapse so the row stays one report line.
     const collapsed = await run("unsure\n  about\tthis one");
-    expect(collapsed.output).toContain("parse miss (src/session.ts): unsure about this one");
+    expect(collapsed.output).toContain(
+      "parse miss (src/session.ts, after retry): unsure about this one",
+    );
 
-    // Capped at 160 collapsed characters; the tail never renders.
-    const long = "filler ".repeat(40);
+    // Capped at 400 collapsed characters; the tail never renders.
+    const long = "filler ".repeat(70);
     const capped = await run(long);
     const whole = long.trim().replace(/\s+/g, " ");
-    expect(whole.length).toBeGreaterThan(160);
-    expect(capped.output).toContain(`parse miss (src/session.ts): ${whole.slice(0, 160)}`);
+    expect(whole.length).toBeGreaterThan(400);
+    expect(capped.output).toContain(
+      `parse miss (src/session.ts, after retry): ${whole.slice(0, 400)}`,
+    );
     expect(capped.output).not.toContain(whole);
 
     // Empty replies (including a think-only leak cut) mark explicitly.
     const empty = await run("");
     expect(empty.status).toBe("error");
-    expect(empty.output).toContain("parse miss (src/session.ts): empty reply");
+    expect(empty.output).toContain("parse miss (src/session.ts, after retry): empty reply");
     const thinkOnly = await run("reasoning about the passage...</think>");
-    expect(thinkOnly.output).toContain("parse miss (src/session.ts): empty reply");
+    expect(thinkOnly.output).toContain("parse miss (src/session.ts, after retry): empty reply");
   });
 
   test("judged ranking: hits strongest first, merged heat ranges, omp report shape", async () => {
