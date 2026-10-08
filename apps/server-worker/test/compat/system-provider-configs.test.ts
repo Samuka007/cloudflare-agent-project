@@ -1009,9 +1009,7 @@ describe("#362 scope absorption: per-model thinking budget + openai-images rows"
     expect(migrated?.defaultReasoningEffort).toBe("high");
     // The write normalized the stored JSON: a re-read serves the pi shape.
     const stored = await request("GET", "/api/v1/system/providers/budgeted");
-    const storedBody = (await stored.json()) as {
-      models: Record<string, unknown>[];
-    };
+    const storedBody: { models: Record<string, unknown>[] } = await stored.json();
     expect(storedBody.models[0]?.thinking).toMatchObject({ efforts: ["high"], defaultLevel: "high" });
     expect(storedBody.models[0]?.reasoningLevels).toBeUndefined();
     expect(storedBody.models[0]?.thinkingBudgetTokens).toBeUndefined();
