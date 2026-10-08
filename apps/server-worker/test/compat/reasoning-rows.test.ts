@@ -227,4 +227,76 @@ describe("#303 — reasoning operation rows (bb #3250 parity)", () => {
     expect(detail.startsWith("x".repeat(32_000))).toBe(true);
     expect(detail).toContain("[500 more characters truncated]");
   });
+
+  // #543: the Thought row sorts at its STREAM position (first thinking
+  // delta's seq), not at the completion's. The ux completion shares the
+  // journal seq with the answer completion (ux-projection extraUx), so
+  // ordering by the completion's seq sank every Thought below the answer it
+  // preceded — the reported "CoT 渲染不顺序" (live repro thr_bwcjzpvg9p:
+  // thinking deltas at seq 5/20, answer deltas at 7-11/22-26, rows rendered
+  // [assistant][Thought]).
+  it("renders the Thought row before the answer it precedes when deltas interleave", () => {
+    const rows = projectTimelineRows([
+      uxEvent(5, "item/reasoning/textDelta", {
+        turnId: "t1",
+        itemId: "itm-rs-t1:3",
+        delta: "Simple: ",
+      }),
+      uxEvent(7, "item/agentMessage/delta", {
+        turnId: "t1",
+        itemId: "itm-am-t1:3",
+        delta: "17 × 23",
+      }),
+      uxEvent(10, "item/reasoning/textDelta", {
+        turnId: "t1",
+        itemId: "itm-rs-t1:3",
+        delta: "391.",
+      }),
+      // Same journal seq pair the ux projection emits at model.call_completed.
+      uxEvent(11, "item/completed", {
+        turnId: "t1",
+        item: { type: "reasoning", id: "itm-rs-t1:3", summary: [], content: ["Simple: 391."] },
+      }),
+      uxEvent(11, "item/completed", {
+        turnId: "t1",
+        item: { type: "agentMessage", id: "itm-am-t1:3", text: "17 × 23 = 391", parentToolCallId: undefined },
+      }),
+    ]);
+    const thoughtIndex = rows.findIndex(isReasoningRow);
+    const assistantIndex = rows.findIndex(
+      (row) => row.kind === "conversation" && row.role === "assistant",
+    );
+    expect(thoughtIndex).toBeGreaterThanOrEqual(0);
+    expect(assistantIndex).toBeGreaterThanOrEqual(0);
+    expect(thoughtIndex).toBeLessThan(assistantIndex);
+  });
+
+  it("seals an interrupted Thought at its stream position, not at the turn terminal", () => {
+    const rows = projectTimelineRows([
+      uxEvent(1, "item/reasoning/textDelta", {
+        turnId: "t1",
+        itemId: "itm-rs-t1:1",
+        delta: "cut mid-thought",
+      }),
+      uxEvent(2, "item/started", {
+        turnId: "t1",
+        item: {
+          type: "toolCall",
+          id: "call_x",
+          tool: "read",
+          arguments: { path: "a.txt" },
+          status: "pending",
+          output: "",
+          completedAt: null,
+        },
+      }),
+      uxEvent(9, "turn/completed", { turnId: "t1", status: "interrupted", error: null }),
+    ]);
+    const thoughtIndex = rows.findIndex(isReasoningRow);
+    const toolIndex = rows.findIndex(
+      (row) => row.kind === "work" && row.workKind === "tool",
+    );
+    expect(thoughtIndex).toBeGreaterThanOrEqual(0);
+    expect(toolIndex).toBeGreaterThan(thoughtIndex);
+  });
 });

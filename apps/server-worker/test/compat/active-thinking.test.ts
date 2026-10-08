@@ -9,8 +9,9 @@ import type { UxThreadEvent } from "../../src/seam/agent-do.js";
 /**
  * #257 CoT surface (timeline half): the ux stream folds into the response's
  * `activeThinking` tail field — bb reasoning-lifecycle semantics ported to
- * the M0 fold (seq-latest open lifecycle, answer delta closes, thread-status
- * gate). Since #303 (upstream #3250 port, J6 档 2) the SPA renders it through
+ * the M0 fold (seq-latest open lifecycle, reasoning completion closes — #543,
+ * answer delta kept as the unfinished-stream sweep, thread-status gate).
+ * Since #303 (upstream #3250 port, J6 档 2) the SPA renders it through
  * the reasoning-styled working indicator — same live face, canonical id shared
  * with the persistent Thought rows (test/compat/reasoning-rows.test.ts).
  */
@@ -72,6 +73,61 @@ describe("#257 — buildActiveThinking (bb parity)", () => {
       }),
     ];
     expect(buildActiveThinking(events, "active")).toBeNull();
+  });
+
+  // #543: bb's close point is the reasoning item's completion (thread-view
+  // assistant-event-projection.ts:174-187), not the first answer delta. The
+  // old answer-delta-only close double-showed the completed text (durable
+  // Thought row + live indicator) in the completion→first-delta window and
+  // stuck the stale thinking on the indicator for tool-call-only calls.
+  it("closes the call's lifecycle at its own reasoning completion", () => {
+    const events = [
+      uxEvent(1, "item/reasoning/textDelta", {
+        turnId: "t1",
+        itemId: "itm-rs-t1:1",
+        delta: "reasoning",
+      }),
+      uxEvent(2, "item/completed", {
+        turnId: "t1",
+        item: { type: "reasoning", id: "itm-rs-t1:1", summary: [], content: ["reasoning"] },
+      }),
+    ];
+    expect(buildActiveThinking(events, "active")).toBeNull();
+  });
+
+  it("keeps a later open lifecycle while earlier ones complete (multi-call turn)", () => {
+    const events = [
+      uxEvent(1, "item/reasoning/textDelta", {
+        turnId: "t1",
+        itemId: "itm-rs-t1:1",
+        delta: "call-1",
+      }),
+      uxEvent(2, "item/completed", {
+        turnId: "t1",
+        item: { type: "reasoning", id: "itm-rs-t1:1", summary: [], content: ["call-1"] },
+      }),
+      uxEvent(3, "item/reasoning/textDelta", {
+        turnId: "t1",
+        itemId: "itm-rs-t1:2",
+        delta: "call-2",
+      }),
+    ];
+    expect(buildActiveThinking(events, "active")?.id).toBe("itm-rs-t1:2");
+  });
+
+  it("drops non-reasoning completions without touching lifecycles", () => {
+    const events = [
+      uxEvent(1, "item/reasoning/textDelta", {
+        turnId: "t1",
+        itemId: "itm-rs-t1:1",
+        delta: "reasoning",
+      }),
+      uxEvent(2, "item/completed", {
+        turnId: "t1",
+        item: { type: "toolCall", id: "call_x", tool: "read", arguments: {}, status: "completed", output: "x", completedAt: 1_000 },
+      }),
+    ];
+    expect(buildActiveThinking(events, "active")?.text).toBe("reasoning");
   });
 
   it("returns null when the thread is not active and when nothing streams", () => {

@@ -249,8 +249,9 @@ function truncateReasoningDetail(detail: string): string {
 /**
  * bb ActiveThinkingLifecycle (reasoning-lifecycle-projection.ts:19-28) M0
  * shape: one open reasoning stream per ux itemId. `#3250` materializes it as
- * an operation row only at completion — the live text keeps flowing through
- * `activeThinking`, so no pending reasoning row ever doubles the indicator.
+ * an operation row only at completion, and the completion also closes the
+ * lifecycle (#543) — the durable row owns the display from that instant, so
+ * no pending reasoning row ever doubles the indicator.
  */
 interface ReasoningLifecycle {
   itemId: string;
@@ -276,13 +277,16 @@ interface ThinkingLifecycle {
  * surfaced only while the thread has an active turn. One lifecycle per
  * reasoning item (`itm-rs-<turnId>:<modelCallId>`, folded from the ux
  * projection of the journal's `model.thinking` rows); `item/reasoning/
- * textDelta` appends; the same call's answer delta closes it — bb closes at
- * the reasoning item's completion — the journal has carried the separate
- * completion row since #276, and since #303 (upstream #3250 port) the same
- * completion materializes the persistent Thought row (see the reasoning
- * projection below). The latest lifecycle by last delta seq wins (bb
- * isNewerActiveThinkingLifecycle seq tie-break); everything drops when the
- * thread leaves `active` (bb threadStatus gate).
+ * textDelta` appends; the same call's `item/completed` reasoning closes it —
+ * bb's close point (assistant-event-projection.ts:174-187), and since #303
+ * (upstream #3250 port) the same completion materializes the persistent
+ * Thought row that then owns the display (#543: the earlier answer-delta-only
+ * close double-showed the completed text and stuck on tool-call-only turns).
+ * The answer-delta sweep remains as the unfinished-stream fallback (an
+ * aborted call never completes; its text dies with the turn). The latest
+ * lifecycle by last delta seq wins (bb isNewerActiveThinkingLifecycle seq
+ * tie-break); everything drops when the thread leaves `active` (bb
+ * threadStatus gate).
  */
 export function buildActiveThinking(
   events: readonly UxThreadEvent[],
@@ -307,6 +311,21 @@ export function buildActiveThinking(
         updatedAt: event.createdAt,
         lastSeq: event.seq,
       });
+      continue;
+    }
+    if (event.type === "item/completed") {
+      // #543: bb closes the lifecycle at the reasoning item's completion
+      // (thread-view assistant-event-projection.ts:174-187 — finalize at
+      // item/completed reasoning). The answer-delta sweep below was the M0
+      // pin-semantics deviation: between the reasoning terminal and the first
+      // answer delta, a refetch showed BOTH the durable Thought row and the
+      // live indicator with identical text; a tool-call-only call (no answer
+      // ever) kept the stale thinking on the indicator for the whole tool
+      // run. Once the terminal row exists it owns the display.
+      const parsed = threadEventDataSchemas["item/completed"].safeParse(rawEventData(event));
+      if (parsed.success && parsed.data.item.type === "reasoning") {
+        lifecycles.delete(parsed.data.item.id);
+      }
       continue;
     }
     if (event.type === "item/agentMessage/delta") {
@@ -472,7 +491,15 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
       detail: truncateReasoningDetail(text),
       status,
       completedAt: event.createdAt,
-      __order: event.seq,
+      // #543: the row sorts at its stream position — the FIRST thinking
+      // delta's seq — not at the completion's. The ux completion shares the
+      // journal row with the answer's own completion (ux-projection extraUx
+      // same-seq precedent), so ordering by event.seq sank every Thought
+      // below the answer it preceded (live repro: thinking deltas at seq
+      // 5/20, answer deltas at 7-11/22-26, yet the rows rendered
+      // [assistant][Thought]). firstSeq is monotone per call and interleaves
+      // correctly with tool/answer rows.
+      __order: lifecycle.firstSeq,
       ...(lifecycle.parentCallId !== undefined
         ? { __parentCallId: lifecycle.parentCallId }
         : {}),
