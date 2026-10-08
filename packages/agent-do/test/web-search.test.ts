@@ -5,6 +5,7 @@ import { abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
 import { createRig, resetRuntime } from "./helpers.js";
 import type { AnyAgentEvent } from "../src/fsm-events.js";
 import { executionIdFor } from "../src/ids.js";
+import { webSearchFetchImpl } from "../src/agent-do.js";
 import { M0_RENDER_FLAGS, toolRegistryRow, wireToolSet } from "../src/tools/registry.js";
 import {
   BROWSER_BACKED_ENGINES,
@@ -93,6 +94,9 @@ const DDG_HTML = `<!doctype html><html><body>
 </div>
 </body></html>`;
 
+/** The private searxng the staging VPC service fronts (#535). */
+const SEARXNG_VPC_ENDPOINT = "http://10.120.16.22:8888";
+
 const SEARXNG_BODY = {
   results: [
     { title: "SearXNG hit", url: "https://searx.example.com/hit", content: "content snippet" },
@@ -117,6 +121,23 @@ const startpageSearchHandler = http.post("https://www.startpage.com/sp/search", 
 const ddgHandler = http.post("https://html.duckduckgo.com/html/", () =>
   HttpResponse.html(DDG_HTML),
 );
+
+/**
+ * Fetcher-shaped stand-in for the SEARXNG_VPC binding: records every dial
+ * and serves the searxng JSON body. Structural — cast at the injection
+ * point; the runtime Fetcher surface (RPC etc.) is never exercised here.
+ */
+class RecordingVpcBinding {
+  readonly calls: { input: RequestInfo | URL; init?: RequestInit }[] = [];
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    this.calls.push({ input, init });
+    return Promise.resolve(
+      new Response(JSON.stringify(SEARXNG_BODY), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Pure layer — registry row + config policy (L1: exclusion is effective)
@@ -391,6 +412,101 @@ describe("M1.5/T12 — engine allow/deny matrix (first success wins, failures ad
     expect(result.output).toBe(
       "Error: DuckDuckGo blocked the request with a bot-detection challenge. DuckDuckGo throttles automated HTML searches from datacenter/shared-egress IPs; configure a credentialed provider such as Brave, Tavily, Exa, or Kagi for reliable web search.",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// searxng VPC leg (#535) — the binding is deployment-shaped (staging only),
+// so the wrapper is exercised directly at the ctx seam: bound searxng dials
+// ride the binding, every other leg — and the whole surface when the
+// binding is absent (local rig) — keeps the MSW-intercepted global fetch.
+// ---------------------------------------------------------------------------
+
+describe("searxng VPC leg routing (#535)", () => {
+  test("with the binding, the searxng leg dials the binding fetcher with the auth-carrying init", async () => {
+    let mswSawSearxng = false;
+    network.use(
+      http.get(`${SEARXNG_VPC_ENDPOINT}/search`, () => {
+        mswSawSearxng = true;
+        return HttpResponse.json(SEARXNG_BODY);
+      }),
+    );
+    const binding = new RecordingVpcBinding();
+    const config = resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, {
+      chain: ["searxng"],
+      engines: { searxng: { endpoint: SEARXNG_VPC_ENDPOINT, token: "tunnel-bearer" } },
+    });
+    const ctx = testCtx({
+      config,
+      fetchImpl: webSearchFetchImpl(config, { SEARXNG_VPC: binding as unknown as Fetcher }),
+    });
+
+    const result = await runWebSearchTool({ query: "q" }, ctx);
+
+    expect(result.status).toBe("ok");
+    expect(result.output).toContain("[1] SearXNG hit");
+    expect(mswSawSearxng).toBe(false);
+    expect(binding.calls).toHaveLength(1);
+    const call = binding.calls[0];
+    if (call === undefined) throw new Error("missing binding dial");
+    const dialed =
+      typeof call.input === "string"
+        ? call.input
+        : call.input instanceof URL
+          ? call.input.href
+          : call.input.url;
+    expect(dialed).toBe(`${SEARXNG_VPC_ENDPOINT}/search?q=q&format=json&pageno=1`);
+    // The binding forwards the engine transport's own init — auth included.
+    expect(new Headers(call.init?.headers).get("Authorization")).toBe("Bearer tunnel-bearer");
+  });
+
+  test("with the binding, the brave leg stays on global fetch", async () => {
+    let braveHits = 0;
+    network.use(
+      braveHandler(() => {
+        braveHits += 1;
+        return HttpResponse.json(BRAVE_BODY);
+      }),
+    );
+    const binding = new RecordingVpcBinding();
+    const config = resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, {
+      chain: ["brave", "searxng"],
+      engines: {
+        brave: { apiKey: "brv-key" },
+        searxng: { endpoint: SEARXNG_VPC_ENDPOINT },
+      },
+    });
+    const ctx = testCtx({
+      config,
+      fetchImpl: webSearchFetchImpl(config, { SEARXNG_VPC: binding as unknown as Fetcher }),
+    });
+
+    const result = await runWebSearchTool({ query: "durable objects" }, ctx);
+
+    expect(result.status).toBe("ok");
+    expect(braveHits).toBe(1);
+    expect(binding.calls).toHaveLength(0);
+  });
+
+  test("no binding keeps the searxng leg on global fetch (local rig unchanged)", async () => {
+    let mswSawSearxng = false;
+    network.use(
+      http.get(`${SEARXNG_VPC_ENDPOINT}/search`, () => {
+        mswSawSearxng = true;
+        return HttpResponse.json(SEARXNG_BODY);
+      }),
+    );
+    const config = resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, {
+      chain: ["searxng"],
+      engines: { searxng: { endpoint: SEARXNG_VPC_ENDPOINT } },
+    });
+    const ctx = testCtx({ config, fetchImpl: webSearchFetchImpl(config, {}) });
+
+    const result = await runWebSearchTool({ query: "q" }, ctx);
+
+    expect(result.status).toBe("ok");
+    expect(result.output).toContain("[1] SearXNG hit");
+    expect(mswSawSearxng).toBe(true);
   });
 });
 
