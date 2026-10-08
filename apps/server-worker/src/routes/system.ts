@@ -197,7 +197,12 @@ export function buildExecutionOptions(
         // entry the port's composer has always declared.
         supportedPermissionModes: ["full"],
       },
-      composerActions: [],
+      // #546: the slash-command trigger surface (bb agent-providers catalog:
+      // every provider ships the skills composer action, PI_COMPOSER_ACTIONS
+      // shape). Without it the SPA typeahead never arms (buildProviderPromptActionProps
+      // derives skillsTrigger from this array) and the builtin /compact command
+      // is unreachable from the composer.
+      composerActions: [{ kind: "skills", trigger: "/" }],
       available: true,
     })),
     // "full" is bb's value when the machine is uncapped or none routed
