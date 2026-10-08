@@ -252,3 +252,23 @@ nix (Nix) 2.34.8 / root / cap-verify-smoke-ok-…` →
 重建/更新路径亦实跑两轮（`nix flake update cap` + rsync + `nixos-rebuild
 switch --build-host nixos-pve`），switch 后 daemon 凭 dataDir 身份秒级
 回线——即「日常重建」一节的命令原样可用。
+
+## 重建证据（2026-10-08，#524 无 agent-auth env 真机验）
+
+house 锁 re-pin 到 main `44a336dad`（#523 find judge 边缘化已并——daemon
+agent-auth 通道整删）后按「日常重建」实跑：switch 68s，daemon 重启链
+`boot → native addon gate: current → identity restored → session.ready →
+sync.complete generation=1`；`staging-daemon.env` 仅 5 键（SERVICE_URL/
+DATA_DIR/SANDBOX_ROOT/CF_ACCESS 双键），**零 auth 形状配置**。
+
+- 工具面：`ct142-smoke.sh` PASS（bash roundtrip exit 0，bootId
+  `c1e88092…49772` 与单元 journal 一致，NRestarts=0）。
+- find 判相真 turn 走查（线程 `thr_8zbxvti5ep`，pin=newapi/glm-5.3-flash，
+  项目 data 绑定本机）：宿主 bash 落 marker 文件后模型两次调用 find，
+  judged footer 经 edge 渲染：`listed 1 · judged 0 · read 1 files (84 B) ·
+1 requests · 601 tokens · $0.0000 · 3.3s wall / 3.1s api`——request/token
+  计数只能来自 edge 判相腿（#523 后宿主无任何拨号器/注册表），链路实证。
+- 观察移交：judged=0 系判相应答折叠 miss（glm-5.3-flash 回复未折叠成
+  per-passage 判词，非 host 执行缺位）——#523 judge 鲁棒性后续素材，非
+  #524 范围。house 锁 commit `01ba44a`（本地；origin 推送待远端工作区
+  清理后补推，#378 同款先例）。
