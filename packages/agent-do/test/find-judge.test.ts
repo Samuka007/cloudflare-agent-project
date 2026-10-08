@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { runFindJudged } from "../src/tools/find-judge.js";
-import type { FindExecPayload } from "../src/tools/find-protocol.js";
+import {
+  parseFindNoulReply,
+  splitFindAnswerLines,
+  type FindExecPayload,
+} from "../src/tools/find-protocol.js";
 import type { TextCompletionRequest, TextCompletionResult } from "../src/provider.js";
 
 /**
@@ -83,6 +87,52 @@ function yesNo(request: TextCompletionRequest, yesKeys: string[]): TextCompletio
 }
 
 describe("find judge leg (#523)", () => {
+  // The leaked REPLY from the #529 root-cause reproduction (PM isolation
+  // run): newapi's glm-5.3-flash leaks its thinking text into output_text
+  // even with effort:none, and the answer lines glue right after
+  // "</think>" with no newline — the production judged-0 face (CT142).
+  const leakedReply =
+    "the passage mentions find but does not implement it. Answer: no.</think>p00: no\np01: no";
+
+  test("glm think-leak: the raw reply parses only p01; the post-think tail parses both (#529)", () => {
+    // Before the strip the glued line is line-granular: its first
+    // separator yields a prose id, so p00 is welded to the thinking tail
+    // and never matches — only p01 survives.
+    expect([...splitFindAnswerLines(leakedReply, ["p00", "p01"]).keys()]).toEqual(["p01"]);
+    // The consumption-point sanitize takes the post-think tail.
+    const judgeText = leakedReply.includes("</think>")
+      ? leakedReply.slice(leakedReply.lastIndexOf("</think>") + "</think>".length)
+      : leakedReply;
+    const answers = splitFindAnswerLines(judgeText, ["p00", "p01"]);
+    expect([...answers.keys()].sort()).toEqual(["p00", "p01"]);
+    for (const reply of answers.values()) {
+      expect(parseFindNoulReply(reply)).toBe(false);
+    }
+  });
+
+  test("glm think-leak: sanitized judge text still judges every passage (#529)", async () => {
+    const result = await runFindJudged(
+      { query: "login flow" },
+      ctxFixture(payloadFixture(), () => ({
+        text: leakedReply,
+        usage: {
+          inputTokens: 500,
+          outputTokens: 66,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          contextWindow: 32_768,
+          estimated: false,
+        },
+      })),
+    );
+    // Pre-fix both batches lost their glued p00 → errors === requests →
+    // "[tool error] no hits". Post-fix every passage parses (all "no").
+    expect(result.status).toBe("ok");
+    expect(result.output).not.toContain("[tool error]");
+    expect(result.output).toContain('no hits for "login flow" (τ 0.20)');
+    expect(result.output).toContain("judged 3 ·");
+  });
+
   test("judged ranking: hits strongest first, merged heat ranges, omp report shape", async () => {
     const result = await runFindJudged(
       { query: "login flow", grep_keywords: ["login"] },
