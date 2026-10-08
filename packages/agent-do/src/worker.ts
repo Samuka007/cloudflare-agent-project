@@ -8,7 +8,6 @@ import {
   resolveRelayApi,
   resolveRelaySelection,
   RelaySelectionError,
-  SYNTHETIC_RELAY_PROVIDER_ID,
   type ModelProvider,
   type RelaySelection,
 } from "./index.js";
@@ -22,6 +21,14 @@ import {
   requireDaemonCredentials,
   type WorkerEnv,
 } from "@cap/daemon-service";
+
+/**
+ * #508: the compose rig's own provider id. Retired from the shared surface —
+ * production has no reserved ids and no synthetic rows — the vocabulary now
+ * lives only here, naming the rig's single declared directory row
+ * (rigRelayDirectory below).
+ */
+const SYNTHETIC_RELAY_PROVIDER_ID = "omp";
 
 /**
  * Wrangler mains. `AgentDO` must be exported from the deployed entry; the
@@ -64,7 +71,7 @@ export interface PocDriveEnv {
 let runtimeRegistered = false;
 
 /**
- * The rig's single declared directory row (the reserved id "omp", thinking
+ * The rig's single declared directory row (the rig's own id "omp", thinking
  * disabled → the only runnable reasoning rung is "none"). Shared verbatim by
  * the runtime resolver and the drive-surface validation so the two can never
  * disagree on what a selection means. An in-code declaration, not a default:

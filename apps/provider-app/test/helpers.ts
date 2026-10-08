@@ -74,7 +74,9 @@ export function registerMock(
  * provider rigs dispatch everything through the registered provider).
  */
 export function mockSelection(): { providerId: string; model: string } {
-  return { providerId: "omp", model: "mock-model" };
+  // The mock resolver ignores it (#496) — a neutral fixture id, not the
+  // retired sentinel vocabulary (#508).
+  return { providerId: "mock-relay", model: "mock-model" };
 }
 
 /** bb-shaped execution options with a full permission policy. */

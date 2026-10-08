@@ -218,7 +218,7 @@ describe("#351 selection consumption", () => {
     });
   });
 
-  it("#434 point 8: a selection naming the retired omp sentinel is 422 provider_unknown", async () => {
+  it("#508 net-delete: a selection naming the purged sentinel id is 422 provider_unknown", async () => {
     const response = await createThread({
       providerId: "omp",
       model: RIG_MODEL_ID,

@@ -168,7 +168,6 @@ export {
   DEFAULT_REASONING_EFFORT_BY_RUNG,
   responsesEffortSchema,
   responsesEffortValues,
-  SYNTHETIC_RELAY_PROVIDER_ID,
 } from "./provider-catalog.js";
 export type {
   RelayApi,

@@ -3,6 +3,9 @@ import controlPlaneSql from "../../../apps/server-worker/migrations/0001_control
 import environmentsSql from "../../../apps/server-worker/migrations/0002_environments.sql";
 import providerConfigsSql from "../../../apps/server-worker/migrations/0003_provider_configs.sql";
 import cloudPlaceholderHostSql from "../../../apps/server-worker/migrations/0004_cloud_placeholder_host.sql";
+// #508: pure data purge (no schema) — registered to keep the replay set
+// honest; a no-op over the rig D1, which never stores omp threads rows.
+import purgeOmpSentinelSql from "../../../apps/server-worker/migrations/0009_purge_omp_sentinel.sql";
 
 /**
  * The agent-do rig binds `DB` in the composed deployment's shape (wrangler.jsonc
@@ -22,6 +25,7 @@ export const MIGRATION_FILES: string[] = [
   environmentsSql,
   providerConfigsSql,
   cloudPlaceholderHostSql,
+  purgeOmpSentinelSql,
 ];
 
 /** Statement splitter shared with the deploy replay: one statement per `;\n`

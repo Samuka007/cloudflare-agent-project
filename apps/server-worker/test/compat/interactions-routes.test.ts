@@ -44,7 +44,9 @@ async function seedPendingAsk(thread: CreatedThread, tag: string): Promise<Seed>
       interactionId,
       turnId,
       executionId,
-      providerId: "omp",
+      // Journal provenance is a passthrough — the fixture rides the thread's
+      // real provider (#508: the omp sentinel vocabulary is retired).
+      providerId: "rig",
       providerThreadId: thread.id,
       providerRequestId: executionId,
       expiresAt: null,
@@ -95,7 +97,7 @@ describe("#225 thread interactions faces", () => {
       status: "pending",
       statusReason: null,
       resolvedAt: null,
-      providerId: "omp",
+      providerId: "rig",
       providerThreadId: thread.id,
       providerRequestId: seed.executionId,
       resolution: null,

@@ -340,7 +340,8 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // write lands (ROADMAP red line: never silently relax). #434 (point 3):
     // no selection fields resolve against the DECLARED defaultProvider —
     // and a deployment that declares none fails the create with the named
-    // 422 (provider_default_undeclared) instead of storing an "omp" sentinel.
+    // 422 (provider_default_undeclared) — nothing stores without a resolved
+    // explicit selection (the retired synthetic default is net-deleted, #508).
     // #362/#450: the selection validates against the D1 directory (the sole
     // 正本 — a panel-side provider is selectable the moment it exists; no
     // rows → the fail-closed empty directory).

@@ -152,16 +152,10 @@ afterEach(async () => {
 });
 
 describe("#434 point 6: the CRUD display face lists ONLY user rows", () => {
-  it("a seed id is 404 on :id like any unknown id; the reserved id stays refused on create", async () => {
+  it("an id without a config row is 404 on every face (#508: no reserved ids)", async () => {
     const single = await request("GET", "/api/v1/system/providers/omp");
     expect(single.status).toBe(404);
     expect((await single.json<{ code: string }>()).code).toBe("provider_config_not_found");
-    const reserved = await request("POST", "/api/v1/system/providers", {
-      id: "omp",
-      models: [{ id: "m" }],
-    });
-    expect(reserved.status).toBe(409);
-    expect((await reserved.json<{ code: string }>()).code).toBe("provider_config_reserved");
     expect(
       (
         await request("PUT", "/api/v1/system/providers/omp", {
@@ -225,7 +219,7 @@ describe("#362 CRUD face", () => {
     expect(JSON.stringify(row)).not.toContain(PANEL_KEY);
   });
 
-  it("rejects duplicates, the reserved seam id, malformed ids, and unknown fields", async () => {
+  it("rejects duplicates, malformed ids, and unknown fields", async () => {
     await postProvider({ id: "dup", models: [{ id: "m" }] });
     const duplicate = await request("POST", "/api/v1/system/providers", {
       id: "dup",
@@ -233,13 +227,6 @@ describe("#362 CRUD face", () => {
     });
     expect(duplicate.status).toBe(409);
     expect((await duplicate.json<{ code: string }>()).code).toBe("provider_config_exists");
-
-    const reserved = await request("POST", "/api/v1/system/providers", {
-      id: "omp",
-      models: [{ id: "m" }],
-    });
-    expect(reserved.status).toBe(409);
-    expect((await reserved.json<{ code: string }>()).code).toBe("provider_config_reserved");
 
     await expect422(
       await request("POST", "/api/v1/system/providers", { id: "has space", models: [] }),

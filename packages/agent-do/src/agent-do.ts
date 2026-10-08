@@ -3701,8 +3701,9 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         expiresAt: number | null;
       }) => {
         // The owning provider id comes from the turn's journaled execution
-        // (#434: never the retired "omp" sentinel); a pre-#351 journal
-        // without an execution carries the honest "unknown".
+        // (#434: never a synthetic default — retired and net-deleted, #508);
+        // a pre-#351 journal without an execution carries the honest
+        // "unknown".
         const providerId =
           this.state.turns.get(execution.turnId)?.execution?.providerId ?? "unknown";
         await this.appendEvent("interaction.registered", {
