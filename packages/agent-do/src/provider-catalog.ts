@@ -10,22 +10,22 @@ import { z } from "zod";
  * credentials never enter this ledger (keys live in the D1 encrypted column
  * — #255 ruling C); only declaration-grade fields are representable.
  *
- * Two faces consume one declaration (#319 dual-face pattern generalized to
- * the catalog layer):
- * - edge D1 provider_configs rows (this schema, via the server loader) →
- *   the picker/directory faces (apps/server-worker routes/system.ts
- *   execution-options + the provider-projections catalog row) and the
- *   registry resolution (apps/provider-app relay-registry.ts); the harness
- *   deployment channel no longer folds rows (#450);
- * - daemon `DAEMON_AGENT_AUTH.providers` → the judge/security ModelRegistry
- *   (packages/daemon-service agent-auth.ts).
+ * One face consumes this declaration (#523): edge D1 provider_configs rows
+ * (this schema, via the server loader) → the picker/directory faces
+ * (apps/server-worker routes/system.ts execution-options + the
+ * provider-projections catalog row) and the registry resolution
+ * (apps/provider-app relay-registry.ts). find's judge leg is edge-side too
+ * (#523): the judge model resolves from the thread's pinned selection
+ * through the same D1 正本 chain (`resolveTurnModel` →
+ * `provider.completeText`) — the daemon host holds no model registry and
+ * runs find as a pure execution leg (find-protocol v1 candidate payloads).
  *
- * The MODEL-LEVEL FIELD DICTIONARY below is shared verbatim by both faces —
- * one zod vocabulary, no second source to drift (roadmap §4.4). Provider-
- * level fields stay channel-specific: the daemon wrapper carries credential
- * fields (`apiKey`/`auth`/`headers`) that the edge catalog must never carry,
- * and the edge wrapper carries presentation/capability fields the daemon
- * never needed (`displayName`/`serviceTier`/reasoning ladder overrides).
+ * The MODEL-LEVEL FIELD DICTIONARY below is the edge catalog's own entry
+ * vocabulary — one zod definition, no second source to drift. Its former
+ * daemon-side twin (a credential-bearing registry materialized from the
+ * retired agent-auth env channel, packages/daemon-service agent-auth.ts)
+ * was deleted with that channel (#523): only the edge schema survives,
+ * credential fields (`apiKey`/`auth`/`headers`) exist nowhere in it.
  *
  * Strictness is deliberate: a misspelled declared field
  * (`contextwindow`, `displayName` on a model row) must fail the deployment
@@ -122,12 +122,11 @@ export function deriveRelayReasoning(input: RelayReasoningDerivationInput): Rela
  * The relay's protocol-face vocabulary — exactly the api families the edge
  * relay speaks (omp models.yml field dictionary subset: `anthropic-messages`
  * is the #34 incumbent face, `openai-responses` the #361 adaptor and
- * `openai-completions` the #363 adaptor). The EDGE
- * catalog validates this enum at decode (strict: an api label the relay
+ * `openai-completions` the #363 adaptor). The EDGE catalog validates the
+ * provider-level api label at decode (strict: an api family the relay
  * cannot speak fails the deployment loudly, never silently rides the
- * anthropic wire); the shared model dictionary and the daemon
- * `DAEMON_AGENT_AUTH` face keep the free-form omp vocabulary (judge/security
- * models may declare families this relay never dials).
+ * anthropic wire); the model-entry dictionary keeps the free-form omp api
+ * label as descriptive vocabulary for the picker faces.
  */
 export const relayApiValues = [
   "anthropic-messages",
@@ -244,21 +243,24 @@ export function resolveResponsesEffort(
 }
 
 // ---------------------------------------------------------------------------
-// Shared field dictionary (model entries — edge + daemon, one vocabulary)
+// Shared field dictionary (model entries — one vocabulary, edge faces only)
 // ---------------------------------------------------------------------------
 
 /**
- * The shared model-entry dictionary: identical to the daemon-side
- * `DAEMON_AGENT_AUTH.providers[].models[]` vocabulary (omp models.yml field
- * set — id/name/api/reasoning/input/contextWindow/maxTokens/cost). The edge
- * catalog extends it with picker-face fields; the daemon wrapper adds none.
+ * The shared model-entry dictionary: the omp models.yml field set (id/name/
+ * api/reasoning/input/contextWindow/maxTokens/cost) as the edge catalog's
+ * canonical entry vocabulary. #523 deleted its last second consumer (the
+ * daemon-side model registry that imported this zod instance from the
+ * retired agent-auth env channel) — the edge catalog is now the
+ * dictionary's only consumer, and it extends entries with picker-face
+ * fields.
  */
 export const relayModelEntrySchema = z.strictObject({
   /** Model id as the relay wire addresses it (e.g. `glm-5.3`). */
   id: z.string().min(1),
   /** Display name; defaults to the id on the picker face. */
   name: z.string().min(1).optional(),
-  /** API family label (dictionary parity with the daemon defs). */
+  /** API family label (free-form omp vocabulary; provider rows use the strict enum). */
   api: z.string().min(1).optional(),
   /** Reasoning capability bit (declarative; the ladder is budget-derived). */
   reasoning: z.boolean().optional(),

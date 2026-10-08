@@ -17,10 +17,9 @@ export interface CfAccessConfig {
  * or `DAEMON_CF_ACCESS_CLIENT_ID`/`DAEMON_CF_ACCESS_CLIENT_SECRET`) into
  * the config. Both halves or neither: a one-headed pair is a
  * misconfiguration Access will always refuse (service auth checks both
- * headers), so it fails at start (agent-auth posture: rejection, not
- * silent fallback) instead of dialing with half a credential. Unset pair
- * → undefined — the no-Access direct-dial wire is unchanged (same bytes as
- * pre-#420).
+ * headers), so it fails at start (rejection, not silent fallback) instead
+ * of dialing with half a credential. Unset pair → undefined — the
+ * no-Access direct-dial wire is unchanged (same bytes as pre-#420).
  */
 export function decodeCfAccessConfig(
   clientId: string | undefined,

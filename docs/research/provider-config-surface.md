@@ -68,12 +68,12 @@ bb 的 provider = 驱动 thread 的 **agent CLI 后端**，不是 API key 通道
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | LLM 通道（relay）      | **D1 表 `provider_configs`（#362 用户面正本；#450 起 env seed——`MODEL_RELAY_CATALOG`/`MODEL_RELAY_PROVIDER_CREDENTIALS`——已删除，D1 行是目录与凭据的唯一正本）**；部署标量 env/secret `MODEL_RELAY_BASE_URL_ANTHROPIC`/`MODEL_RELAY_API_KEY`/`MODEL_RELAY_MODEL`/`MODEL_RELAY_MAX_TOKENS`/`MODEL_RELAY_THINKING_BUDGET_TOKENS`（+`DAEMON_MACHINE_ID`/`HARNESS_PERMISSION_MODE`）只喂 deployment channel（`provider-app/src/harness.ts` 三键总解析；#450 起 `api` 恒 anthropic-messages、effort 恒 none） | 秘密只存 D1 加密列（`api_key_enc` AES-256-GCM，`PROVIDER_CONFIG_MASTER_KEY` 派生）；快照仅 key 存在性投影（`projectHarness`）；漂移分类 unchanged/live/session；坏行 skip-with-warning 永不静默删；无 key/baseUrl 的行 dispatch fail-closed（#434 point ⑦）        | 模型/推理选择器（C4 ✅）：`GET /system/execution-options` 投影 D1 行目录（`resolveOverlayCatalog` 单解析——无 env seed、无 "omp" 合成行；无显式 provider 的选择 fail-closed 422）；面板写路径 Settings→Providers→Configured（CRUD/发现/test）；staging secret 缺席 → mock 模式（#34，deployable-units.md U1 缺口 4） |
 | web_search 引擎        | D1 表 `web_search`（#449 起唯一正本，`AGENT_DO_WEB_SEARCH` env 路径已删除——零 env 回落）：`chain`/`timeout_seconds`/`engines` 非秘密半 + `secrets_enc` AES-GCM 秘密半 + `secrets_meta` 存在性            | 写面 `GET/PUT /api/v1/system/web-search`（chain 整序替换、引擎字段三态、`resolveWebSearchConfig` 单一校验路径）；AgentDO 经 `applyWebSearchConfig` 于 `refreshProviderOverlay` 回合边界热应用（`packages/agent-do/src/agent-do.ts`）；browser-backed 引擎结构化拒绝（`tools/web-search.ts` 配置层红线）；wire schema 无 engine 字段——模型与用户都不能按调用选引擎 | Settings→Providers→Server 可编辑（#449）：链序开关+排序、timeout、brave/searxng 凭据写入式输入；聚合只读投影保留（chain 序+凭据门 boolean）                                   |
-| judge / security 模型  | daemon env `DAEMON_AGENT_AUTH` JSON：`providers`（物化为 `<agentDir>/models.yml`）/`runtimeKeys`/`judgeRole`/`securityModel`                                                                                 | daemon client 启动时 `decodeAgentAuthConfig`+`installAgentAuth`（`packages/daemon-service/src/client/agent-auth.ts:90-136`）；部署期输入，**模型不可达**（:5-9）；unset=「agentDir 自带为准」（omp `models.yml` 先例）                          | 无（零暴露）                                                                                                                                                                                                                                   |
+| find judge 模型（原 judge/security 模型行，#522+#523 退役） | **无独立配置点**——daemon agent-auth env 通道（`providers`/`runtimeKeys`/`judgeRole`/`securityModel` JSON）已整删（#523；#522 先删 `securityModel` 腿），宿主零模型注册表。判相模型=线程 pinned selection 经 D1 `provider_configs` 正本链（`resolveTurnModel` → `provider.completeText`），与主 turn 同一目录正本 | 判相在 edge `AgentDO`（`tools/find-judge.ts`）：宿主 find=纯执行相（`find-exec.ts` 回 find-protocol v1 候选载荷），判相腿走 D1 正本链折叠；「部署期输入、模型不可达、unset=agentDir 自带为准」的 env 形态随通道退役——判相模型即用户线程选择，面板写即热生效 | 无独立配置面——选择随线程 pinned selection（#499 picker） |
 | security_scan cloud 半 | Codex Security OAuth 凭据，宿主保管                                                                                                                                                                          | T15/#221（CHANGELOG.md:92-94；分类表 §2.3）                                                                                                                                                                                                     | 无                                                                                                                                                                                                                                             |
 | 实验闸（#150；#502 起 D1 正本）         | D1 表 `tool_capabilities`（#502 起，迁移 `0007_tool_capabilities.sql`，单行 id='tool_capabilities'：external_thinking/context_notes/checkpoint 0/1 列；env 闸对已删除——零 env 回落）                                                                     | 写面 `GET/PUT /api/v1/system/tool-capabilities`（三布尔整行替换）；AgentDO 经 `applyToolCapabilities` 于 `refreshProviderOverlay` 回合边界热应用（`packages/agent-do/src/agent-do.ts`）                                                                                                                             | 面板 Settings→Providers→Tool Capabilities 三开关写式（#502）；未配置=全 off 空态                                                                                                                                                                                                     |
 | 版本                   | `SERVER_VERSION` runtime secret                                                                                                                                                                              | `GET /system/version` 只读（routes/system.ts:223-230）                                                                                                                                                                                          | 只读 ✅                                                                                                                                                                                                                                        |
 
-配置变更语义：edge 侧=重部署（`POST /system/config/reload` 是刻意 no-op——「Worker config source is env vars, so there is nothing to reload」，routes/system.ts:217-221）；daemon 侧=改 env+重启 client。
+配置变更语义：edge 侧=重部署（`POST /system/config/reload` 是刻意 no-op——「Worker config source is env vars, so there is nothing to reload」，routes/system.ts:217-221）；daemon 侧=拓扑/enroll/CF Access 凭据 env 保留（provider/judge 配置零 env——agent-auth 通道 #523 整删，宿主零模型注册表）。
 
 ### 3.2 设置面/插件面现状（选项 A/B 的地基）
 
@@ -84,11 +84,11 @@ bb 的 provider = 驱动 thread 的 **agent CLI 后端**，不是 API key 通道
 
 ### 3.3 与 omp 原生面的关系
 
-omp 原生 provider 配置=用户可编辑的 `~/.omp/agent/models.yml`（provider/baseUrl/apiKey/models 表）。本仓以两种方式消费它：edge 侧完全绕开（relay 三键 env 直连）；daemon 侧以 `DAEMON_AGENT_AUTH` env JSON **物化覆盖** models.yml（agent-auth.ts:123-136），不设 env 时回落 agentDir 自带文件。即：本仓没有继承 omp 的「手编 YAML」用户面，也没有建任何替代 UI——#255 问的正是要不要建、建在哪。
+omp 原生 provider 配置=用户可编辑的 `~/.omp/agent/models.yml`（provider/baseUrl/apiKey/models 表）。本仓现只以一种方式对账它：edge 侧经 #364 `POST /import-models-yml` 粘贴导入 D1 `provider_configs` 行（omp models-config-schema 正本语义）；daemon 侧的 env JSON 物化覆盖路径（原 agent-auth.ts:123-136，不设 env 回落 agentDir 自带文件）已随 #523 通道整删——宿主零模型注册表。即：本仓没有继承 omp 的「手编 YAML」用户面，替代 UI=#362 D1 可配置面板（#255 之问的落地答案）。
 
 ## 4. 硬约束（既有裁决，形态选择必须遵守）
 
-1. **§3.2 设置归属表**（control-plane-layer.md:143-149）：「模型/中转/思考配置 → 部署 env（harness 三键），**不进 app_settings**——秘密与部署拓扑不落控制面 DB」。web_search 链、judge/security pin 同属「部署拓扑+凭据」类，同理适用 `[INFERENCE: 由同表工具开关/xdev 行的归属逻辑外推，表未逐字列名]`。
+1. **§3.2 设置归属表**（control-plane-layer.md:143-149）：「模型/中转/思考配置 → 部署 env（harness 三键），**不进 app_settings**——秘密与部署拓扑不落控制面 DB」。web_search 链同属「部署拓扑+凭据」类，同理适用 `[INFERENCE: 由同表工具开关/xdev 行的归属逻辑外推，表未逐字列名]`；原 judge/security pin 例已随 #523 通道退役失效（判相模型归 D1 正本链的线程选择）。
 2. **§1.2 注册面不归设置面管**（control-plane-layer.md:80）：设置面长出第二裁决点=违规。provider 配置 UI 不得变成工具/引擎启停的第二权威。
 3. **四层优先级链**（control-plane-layer.md:128-137）：部署 env → app 单行 → host ceiling → thread 选项 → 单次参数。provider 正本锁在第 1 层。
 4. **E8 先例**：外部 CLI provider 管理面已裁；#255 若引入 provider UI，必须是「服务端 provider 模型」语义，不是复活 E8。
@@ -111,7 +111,7 @@ omp 原生 provider 配置=用户可编辑的 `~/.omp/agent/models.yml`（provid
 ## 6. 采纳后的落地切片（供排票，非本票范围）
 
 1. **投影端点（edge 侧，小）**：聚合 `projectHarness`（mock|anthropic、baseUrl host、model、key 存在性）+ web_search 投影（chain 序、各引擎凭据门 boolean、browser-backed 排除策略）成 `GET /system/provider-projections`（或并入 execution-options 响应旁的只读对象）。零秘密值。
-2. **daemon 侧投影（开题）**：judge/security pin 与宿主凭据存在性在 daemon env，edge 不可见。两条路：daemon client enroll/status payload 捎带投影（推荐，随 #56 鉴权阶梯走）；或宿主侧本地 CLI/文件投影不进控制面。选哪条需 #56/多机主线一起裁 `[INFERENCE: 本文不定]`。
+2. **daemon 侧投影（已闭，#523）**：原开题「judge/security pin 与宿主凭据存在性投影通道」随 agent-auth env 通道整删而失效——宿主零模型注册表、零 auth 形状配置面，edge 投影面无 daemon 项可投影；本切片无需执行。
 3. **SPA 只读节**：设置面复用 `providers` 节位（路由已在，bb-spa-ux-surface.md:24）渲染只读投影+「编辑走部署 env」指针文案（对照 ops/staging-relay.md 先例）；不提供 PUT。
 4. **非秘密偏好（M3 后可选）**：per-project 默认引擎序/默认模型偏好可用插件 settings 非 secret 分支或 app 单行——过 §3.2 判据表再立票。
 5. **文档**：本文 §3.1 表即 provider 配置点的唯一索引，随 slice 1 一起挂 docs/ops。
@@ -119,7 +119,7 @@ omp 原生 provider 配置=用户可编辑的 `~/.omp/agent/models.yml`（provid
 
 ## 7. 未决 / JOINT-UNKNOWN
 
-- daemon 侧投影通道（§6.2）选型未裁。
+- ~~daemon 侧投影通道（§6.2）选型未裁~~——已随 #523 通道退役闭题（见 §6.2）。
 - staging `MODEL_RELAY_*` 缺席（mock 模式）何时补齐（#34 挂起）——影响投影端点的真实数据源。
 - 用户是否需要**非秘密**的运行时可改配置（如 web_search 链热调）——若需要，那是「app 单行收窄型偏好」新裁决，走 §3.2 判据表，不在本票。
 - per-thread/per-call 引擎覆盖：wire schema 无 engine 字段是刻意设计（T12），开放它=动 §2.2 裁定，本文不提。

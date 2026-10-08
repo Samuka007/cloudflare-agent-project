@@ -11,8 +11,9 @@ import { z } from "zod";
  *
  * Subpath module (agent-do package export "./find-protocol"): the daemon
  * client imports the TYPES from here without the agent-do barrel (the barrel
- * transitively loads cloudflare:workers — Node poison, the agent-auth.ts
- * import discipline). Zero runtime dependencies beyond zod.
+ * transitively loads cloudflare:workers — Node poison on the host side; the
+ * Node-facing import discipline is subpath modules, never the barrel). Zero
+ * runtime dependencies beyond zod.
  *
  * Fidelity anchor: omp 18.6.0 packages/coding-agent/src/tools/jfind/
  * cascade.ts — the survivor selection and batching rules below are that

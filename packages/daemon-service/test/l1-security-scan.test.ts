@@ -16,9 +16,9 @@ import {
  * 2026-10-08): the daemon no longer pins `security.enabled`, so omp's own
  * default-off gate keeps the tool out of the map — every fresh host builds
  * without security_scan, and a dispatch degrades to "unknown tool". The
- * #523 follow-up removed the last DAEMON_AGENT_AUTH consumer (find's judge
- * leg moved to the edge), so the whole channel is gone: no auth-shaped
- * config reaches the host at all.
+ * #523 follow-up moved find's judge leg to the edge and then deleted the
+ * daemon agent-auth channel with it: no auth-shaped config reaches the
+ * host at all.
  *
  * The former end-to-end L1 (native preflight fingerprint, background
  * coordinator cancel, credential-on-host seams — T15 #105/#221) tested the
