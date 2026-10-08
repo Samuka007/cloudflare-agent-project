@@ -31,11 +31,26 @@ const RANGES_SHOWN = 3;
  * LOCAL_REASONING_MAX_TOKENS anchor; reasoning models need headroom). */
 const JUDGE_MAX_TOKENS = 1024;
 /** Zero-parse excerpt length per failed batch (#529): enough of the raw
- * reply to answer "why judged 0" from the report alone, small enough to
- * stay one report line. */
-const PARSE_MISS_EXCERPT_CHARS = 160;
+ * reply to answer "why judged 0" from the report alone — 400 because the
+ * five-round wire repro's prose replies run well past 160 — small enough
+ * to stay one report line. */
+const PARSE_MISS_EXCERPT_CHARS = 400;
+/** One-shot format cue appended to the judge prompt on a single-passage
+ * parse miss (#529 five-round): a prose-form reply ("The passage
+ * contains: js … a recursive fibonacci implementation") is semantically
+ * correct but parses no verdict word; one hard cue buys a one-word
+ * answer. */
+export const RETRY_VERDICT_CUE = "Answer with exactly one word: yes or no.";
 /** Requests in flight per judge wave (jfind cascade.ts:28 PARALLEL). */
 const PARALLEL = 16;
+
+/** glm channels leak thinking text into output_text even with effort:none —
+ * the answer lines glue right after "</think>". Take the post-think tail. */
+function postThinkTail(text: string): string {
+  return text.includes("</think>")
+    ? text.slice(text.lastIndexOf("</think>") + "</think>".length)
+    : text;
+}
 
 export interface FindJudgeContext {
   /** The synchronous host leg: one service-DO findExec RPC, result payload. */
@@ -156,18 +171,17 @@ export async function runFindJudged(
         user: batch.user,
         maxTokens: JUDGE_MAX_TOKENS,
       });
-      if (result.usage !== null && !result.usage.estimated) receiptedBatches += 1;
-      if (result.usage !== null) {
-        inputTokens += result.usage.inputTokens;
-        outputTokens += result.usage.outputTokens;
-        cacheReadTokens += result.usage.cacheReadInputTokens;
-        cacheWriteTokens += result.usage.cacheCreationInputTokens;
-      }
-      // glm channels leak thinking text into output_text even with effort:none —
-      // the answer lines glue right after "</think>". Take the post-think tail.
-      const judgeText = result.text.includes("</think>")
-        ? result.text.slice(result.text.lastIndexOf("</think>") + "</think>".length)
-        : result.text;
+      const account = (r: TextCompletionResult): void => {
+        if (r.usage !== null && !r.usage.estimated) receiptedBatches += 1;
+        if (r.usage !== null) {
+          inputTokens += r.usage.inputTokens;
+          outputTokens += r.usage.outputTokens;
+          cacheReadTokens += r.usage.cacheReadInputTokens;
+          cacheWriteTokens += r.usage.cacheCreationInputTokens;
+        }
+      };
+      account(result);
+      const judgeText = postThinkTail(result.text);
       const ids = batch.passages.map((passage) => passage.key);
       const answers = splitFindAnswerLines(judgeText, ids);
       // Bare-answer tolerance (#529 four-round real-machine root cause):
@@ -178,9 +192,34 @@ export async function runFindJudged(
       // passage batches stay strict (a bare yes/no is ambiguous across
       // passages).
       const only = batch.passages.length === 1 ? batch.passages[0] : undefined;
+      /** The failure row discloses the extra call (single-passage only). */
+      let retried = false;
       if (answers.size === 0 && only !== undefined) {
         const verdict = parseFindNoulReply(judgeText.trim());
-        if (verdict !== undefined) answers.set(only.key, verdict ? "yes" : "no");
+        if (verdict !== undefined) {
+          answers.set(only.key, verdict ? "yes" : "no");
+        } else {
+          // Miss re-ask (#529 five-round real-machine wire, PM repro
+          // 2026-10-08): glm answers the true judgment prompt in prose —
+          // semantically yes, zero parseable verdict words. One hard
+          // format cue usually buys a one-word answer. Conservative
+          // scope: single-passage batches only; multi-passage
+          // strictness stands. The retry rides the same logical request
+          // — its usage is priced, the request count is not inflated;
+          // a still-missed retry is disclosed by the "(after retry)"
+          // failure row below.
+          retried = true;
+          const retry = await ctx.judge({
+            system: batch.system,
+            user: `${batch.user}\n\n${RETRY_VERDICT_CUE}`,
+            maxTokens: JUDGE_MAX_TOKENS,
+          });
+          account(retry);
+          const retryVerdict = parseFindNoulReply(postThinkTail(retry.text).trim());
+          if (retryVerdict !== undefined) {
+            answers.set(only.key, retryVerdict ? "yes" : "no");
+          }
+        }
       }
       const perBatch = new Map<string, number | undefined>();
       let batchJudged = 0;
@@ -207,7 +246,7 @@ export async function runFindJudged(
           collapsed.length === 0
             ? "empty reply"
             : collapsed.slice(0, PARSE_MISS_EXCERPT_CHARS);
-        const row = `parse miss (${batch.rel}): ${excerpt}`;
+        const row = `parse miss (${batch.rel}${retried ? ", after retry" : ""}): ${excerpt}`;
         if (!failures.includes(row)) failures.push(row);
       }
       judged.set(`#${batchIndex}`, perBatch);
