@@ -565,16 +565,6 @@ export function findRelayCatalogModel(
 // Thread-level selection resolution (#351 — the L4 consumption chain)
 // ---------------------------------------------------------------------------
 
-/**
- * The reserved legacy provider id (#434 retired the sentinel semantics: a
- * selection naming "omp" is an unknown provider like any other, and
- * sentinel-era stored rows/threads fail loudly — point ⑧). The id stays
- * refused on the provider-config CRUD write face so a new user row cannot
- * silently resurrect those journals, and the agent-do compose rig keeps it
- * as its single declared directory row.
- */
-export const SYNTHETIC_RELAY_PROVIDER_ID = "omp";
-
 /** A thread-level execution selection (threads row overrides / create/send payloads). */
 export interface RelaySelection {
   providerId?: string;

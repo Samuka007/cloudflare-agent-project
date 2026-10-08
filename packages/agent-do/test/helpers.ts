@@ -4,7 +4,7 @@ import { newThreadId } from "@cap/protocol";
 import type { AgentDO } from "../src/agent-do.js";
 import type { AgentEventType, AnyAgentEvent } from "../src/fsm-events.js";
 import { clearAgentRuntimes, setAgentRuntime } from "../src/injection.js";
-import { SYNTHETIC_RELAY_PROVIDER_ID, type RelaySelection } from "../src/provider-catalog.js";
+import type { RelaySelection } from "../src/provider-catalog.js";
 import type { ModelProvider } from "../src/provider.js";
 import { MockModelProvider, type MockTurn } from "../src/testing/mock-provider.js";
 import { mockAgentRuntime } from "../src/testing/mock-runtime.js";
@@ -85,7 +85,9 @@ export async function createRig(options: RigOptions = {}): Promise<Rig> {
     title: "rig",
     machineId: threadId,
     execution:
-      options.execution ?? { providerId: SYNTHETIC_RELAY_PROVIDER_ID, model: "mock-model" },
+      // The rig's own declared id (src/worker.ts rigRelayDirectory) — the
+      // unit-test DOs run the same single-row directory.
+      options.execution ?? { providerId: "omp", model: "mock-model" },
   });
   expect(created.duplicated).toBe(false);
   if (options.watchdog !== undefined) {

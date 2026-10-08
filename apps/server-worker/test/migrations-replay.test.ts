@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MIGRATION_FILES, ensureMigrations, splitMigrationStatements } from "./migrate.js";
 import orphanHostReferencesSql from "../migrations/0006_orphan_host_references.sql";
+import purgeOmpSentinelSql from "../migrations/0009_purge_omp_sentinel.sql";
 
 /**
  * #295 deploy-chain contract: scripts/deploy-staging.sh replays EVERY
@@ -21,6 +22,8 @@ afterAll(async () => {
   await env.DB.prepare("DELETE FROM hosts WHERE id = 'host_replay_probe'").run();
   await env.DB.prepare("DELETE FROM project_sources WHERE id LIKE 'src468_%'").run();
   await env.DB.prepare("DELETE FROM hosts WHERE id LIKE 'host468_%'").run();
+  // The #508 pin's non-omp survivor (its omp siblings the migration deletes).
+  await env.DB.prepare("DELETE FROM threads WHERE id = 'thr_rig_replay_probe'").run();
 });
 
 describe("migration replay idempotency (#295)", () => {
@@ -93,5 +96,51 @@ describe("migration replay idempotency (#295)", () => {
       "SELECT id FROM project_sources WHERE id LIKE 'src468_%'",
     ).all();
     expect(surviving.results.map((row) => row.id)).toEqual(["src468_live"]);
+  });
+
+  it("0009 net-deletes the omp sentinel's reference rows and spares the rest (#508)", async () => {
+    // The replay above already ran the full set over the live probes. This
+    // pins the #508 predicate itself: threads carrying the retired id go,
+    // with their tabs and provenance echo; any other provider's rows stay.
+    const now = Date.now();
+    const threadShape =
+      "INSERT INTO threads (id, project_id, provider_id, status, latest_attention_at, created_at, updated_at)";
+    await env.DB.prepare(`${threadShape} VALUES ('thr_omp_replay_probe', 'proj_personal', 'omp', 'starting', ?, ?, ?)`)
+      .bind(now, now, now)
+      .run();
+    await env.DB.prepare(`${threadShape} VALUES ('thr_rig_replay_probe', 'proj_personal', 'rig', 'starting', ?, ?, ?)`)
+      .bind(now, now, now)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO thread_tabs (thread_id, tabs_json, revision, updated_at) VALUES ('thr_omp_replay_probe', '[]', 0, ?)",
+    )
+      .bind(now)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO pending_interactions (id, thread_id, provider_id, status, payload, created_at, updated_at) VALUES ('pi_omp_replay_probe', 'thr_omp_replay_probe', 'omp', 'pending', '{}', ?, ?)",
+    )
+      .bind(now, now)
+      .run();
+
+    for (const statement of splitMigrationStatements(purgeOmpSentinelSql)) {
+      await env.DB.prepare(statement).run();
+    }
+
+    const ompThread = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM threads WHERE id = 'thr_omp_replay_probe'",
+    ).first();
+    expect(Number(ompThread?.n)).toBe(0);
+    const ompTabs = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM thread_tabs WHERE thread_id = 'thr_omp_replay_probe'",
+    ).first();
+    expect(Number(ompTabs?.n)).toBe(0);
+    const ompInteraction = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM pending_interactions WHERE id = 'pi_omp_replay_probe'",
+    ).first();
+    expect(Number(ompInteraction?.n)).toBe(0);
+    const rigThread = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM threads WHERE id = 'thr_rig_replay_probe'",
+    ).first();
+    expect(Number(rigThread?.n)).toBe(1);
   });
 });

@@ -200,7 +200,7 @@ providers:
     expect((await listProviders()).map((row) => row.id)).toContain("public-row");
   });
 
-  it("skips existing ids with 409 and reserved ids without touching stored rows", async () => {
+  it("skips existing ids with 409 without touching stored rows", async () => {
     await importYaml(`
 providers:
   dup:
@@ -217,16 +217,9 @@ providers:
     api: anthropic-messages
     models:
       - id: second
-  omp:
-    baseUrl: https://upstream.example.com
-    api: anthropic-messages
-    models:
-      - id: seam
 `);
     const dup = body.providers.find((entry) => entry.id === "dup");
-    const seam = body.providers.find((entry) => entry.id === "omp");
     expect(dup).toMatchObject({ verdict: "skipped", status: 409, code: "already_exists" });
-    expect(seam).toMatchObject({ verdict: "skipped", status: 409, code: "reserved_id" });
     // The stored row is untouched by the skipped re-import.
     const after = (await listProviders()).find((row) => row.id === "dup");
     expect(after?.baseUrl).toBe(before?.baseUrl);

@@ -168,10 +168,10 @@ describe("#351 RelayProviderRegistry resolution over the D1 overlay", () => {
     // No selection and no D1 default declaration (#450: rows never declare
     // one) → the named undeclared-default 422.
     expect(() => registry.resolve({})).toThrow(/names no defaultProvider/);
-    // The retired "omp" sentinel is an unknown provider like any other —
-    // sentinel-era stored threads fail loudly (point ⑧).
+    // Any unknown provider id fails closed (#508: the sentinel is purged and
+    // nothing re-reserves the vocabulary).
     try {
-      registry.resolve({ providerId: "omp" });
+      registry.resolve({ providerId: "ghost-relay" });
       expect.unreachable();
     } catch (error) {
       expect((error as RelaySelectionError).code).toBe("provider_unknown");

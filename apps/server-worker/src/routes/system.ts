@@ -11,7 +11,6 @@ import {
   relayCatalogModelSchema,
   relayImageModelKeys,
   relayImageModelSchema,
-  SYNTHETIC_RELAY_PROVIDER_ID,
   type RelayCatalogProvider,
 } from "@cap/agent-do";
 import type { WebSearchEngineProjection } from "@cap/agent-do";
@@ -1048,13 +1047,6 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         message: `invalid provider id "${payload.id}"`,
       });
     }
-    if (payload.id === SYNTHETIC_RELAY_PROVIDER_ID) {
-      throw new ApiError({
-        status: 409,
-        code: "provider_config_reserved",
-        message: `"${SYNTHETIC_RELAY_PROVIDER_ID}" is reserved (sentinel-era journals reference it) and cannot be configured`,
-      });
-    }
     if ((await getProviderConfigTarget(ctx.env, payload.id)) !== null) {
       throw new ApiError({
         status: 409,
@@ -1272,16 +1264,6 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         hasApiKey: candidate.apiKey !== null,
         warnings: candidate.warnings,
       };
-      if (candidate.id === SYNTHETIC_RELAY_PROVIDER_ID) {
-        entries.push({
-          ...entryBase,
-          verdict: "skipped",
-          status: 409,
-          code: "reserved_id",
-          message: `"${SYNTHETIC_RELAY_PROVIDER_ID}" is reserved (sentinel-era journals reference it) and cannot be configured`,
-        });
-        continue;
-      }
       if ((await getProviderConfigTarget(ctx.env, candidate.id)) !== null) {
         entries.push({
           ...entryBase,

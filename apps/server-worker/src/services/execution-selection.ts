@@ -79,8 +79,9 @@ function explicitOf(input: ThreadExecutionSelectionInput): RelaySelection | null
 /**
  * Validate one selection against the catalog directory. A payload without
  * selection fields resolves against the DECLARATION's defaultProvider
- * (#434 point 3 — never an "omp" sentinel: a deployment that declares no
- * defaultProvider fails the create/send with the named
+ * (#434 point 3 — no stored selection ever falls back to a synthetic
+ * default, #508 net-deleted: a deployment that declares no defaultProvider
+ * fails the create/send with the named
  * provider_default_undeclared 422). Throws 422 named errors:
  * provider_default_undeclared / provider_unknown / model_unknown /
  * reasoning_level_unknown (fail-closed including the empty catalog state —
