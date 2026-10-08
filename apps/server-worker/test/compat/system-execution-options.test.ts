@@ -1,9 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { exports } from "cloudflare:workers";
-import {
-  ensureRigProviderRow,
-  removeRigProviderRow,
-} from "../helpers.js";
+import { ensureRigProviderRow, removeRigProviderRow } from "../helpers.js";
 import { ensureMigrations } from "../migrate.js";
 import {
   systemConfigResponseSchema,
@@ -58,9 +55,7 @@ describe("GET /api/v1/system/execution-options", () => {
   });
 
   it("serves a contract-valid single-provider catalog from the configured rows", () => {
-    const parsed = systemExecutionOptionsResponseSchema.parse(
-      buildExecutionOptions(PROVIDERS),
-    );
+    const parsed = systemExecutionOptionsResponseSchema.parse(buildExecutionOptions(PROVIDERS));
     expect(parsed.providers).toHaveLength(1);
     expect(parsed.providers[0]?.id).toBe("declared");
     expect(parsed.providers[0]?.available).toBe(true);
@@ -93,28 +88,34 @@ describe("GET /api/v1/system/execution-options", () => {
     expect(undeclared.providers[0]?.capabilities.supportsImageInput).toBe(false);
   });
 
+  it("#546 arms the slash-command trigger via the skills composer action", () => {
+    // bb agent-providers catalog: every provider ships the skills composer
+    // action (PI_COMPOSER_ACTIONS shape). Without it the SPA typeahead never
+    // arms and the builtin /compact command is unreachable from the composer.
+    const parsed = systemExecutionOptionsResponseSchema.parse(buildExecutionOptions(PROVIDERS));
+    expect(parsed.providers[0]?.composerActions).toEqual([{ kind: "skills", trigger: "/" }]);
+  });
+
   it("#450 projects configured multi-provider rows verbatim", () => {
     const parsed = systemExecutionOptionsResponseSchema.parse(
-      buildExecutionOptions(
-        {
-          main: {
-            displayName: "Main relay",
-            serviceTier: true,
-            models: [
-              {
-                id: "glm-5.3",
-                name: "GLM-5.3",
-                description: "Flagship",
-                input: ["text", "image"],
-                reasoning: true,
-                thinking: { mode: "budget", efforts: ["low", "high"], defaultLevel: "high" },
-              },
-              { id: "glm-5.3-air", name: "GLM-5.3-Air" },
-            ],
-          },
-          backup: { models: [{ id: "glm-5.3-flash" }] },
+      buildExecutionOptions({
+        main: {
+          displayName: "Main relay",
+          serviceTier: true,
+          models: [
+            {
+              id: "glm-5.3",
+              name: "GLM-5.3",
+              description: "Flagship",
+              input: ["text", "image"],
+              reasoning: true,
+              thinking: { mode: "budget", efforts: ["low", "high"], defaultLevel: "high" },
+            },
+            { id: "glm-5.3-air", name: "GLM-5.3-Air" },
+          ],
         },
-      ),
+        backup: { models: [{ id: "glm-5.3-flash" }] },
+      }),
     );
     expect(parsed.providers.map((provider) => [provider.id, provider.displayName])).toEqual([
       ["main", "Main relay"],
@@ -163,9 +164,7 @@ describe("GET /api/v1/system/execution-options", () => {
     ).toEqual(["none", "low", "high", "max"]);
     expect(declared.models[0]?.defaultReasoningEffort).toBe("max");
     // No configured rows → NO rows at all (#434: nothing is synthesized).
-    const undeclared = systemExecutionOptionsResponseSchema.parse(
-      buildExecutionOptions({}),
-    );
+    const undeclared = systemExecutionOptionsResponseSchema.parse(buildExecutionOptions({}));
     expect(undeclared.models).toEqual([]);
     expect(undeclared.providers).toEqual([]);
   });

@@ -2,10 +2,12 @@ import { Hono } from "hono";
 import { projectPathInspectionSchema } from "@cap/daemon-service";
 import {
   createProjectRequestSchema,
+  commandListResponseSchema,
   createThreadSectionRequestSchema,
   deleteThreadSectionRequestSchema,
   createProjectSourceRequestSchema,
   updateProjectSourceRequestSchema,
+  projectCommandsQuerySchema,
   projectListQuerySchema,
   promptHistoryResponseSchema,
   projectResponseSchema,
@@ -15,6 +17,7 @@ import {
   updateThreadSectionRequestSchema,
   projectWithThreadsResponseSchema,
 } from "../contract/api/projects.js";
+import type { ProviderCommand } from "../contract/api/projects.js";
 import {
   PROMPT_HISTORY_ENTRY_LIMIT,
   projectSourceSchema,
@@ -73,6 +76,25 @@ import type { ProjectRow } from "../db/rows.js";
  */
 export function registerProjectRoutes(app: Hono<AppEnv>): void {
   const routes = new Hono<AppEnv>();
+
+  /**
+   * The builtin command row the composer typeahead serves (#546). bb's list
+   * is BUILT_IN_PROVIDER_COMMANDS (provider-command-typeahead.ts:15-23) plus
+   * host-discovered skills/project commands; this port has no host to probe
+   * and no skills discovery, and its compact engine is the DO-side
+   * summarizer (packages/agent-do compactThread) — provider-agnostic, so the
+   * single builtin row serves every provider unconditionally (bb's
+   * includeBuiltinCompact = supportsManualCompaction(provider) holds for
+   * every provider here). The query still validates so unknown fields 422
+   * at the same boundary bb validates them.
+   */
+  const BUILTIN_COMPACT_COMMAND: ProviderCommand = {
+    name: "compact",
+    source: "command",
+    origin: "builtin",
+    description: "Compact context",
+    argumentHint: null,
+  };
 
   routes.get("/projects", async (ctx) => {
     const query = parseOr422(projectListQuerySchema, ctx.req.query());
@@ -323,6 +345,14 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
     // bb's stored-defaults-absent shape; the picker sends the explicit
     // selection, never a synthesized default row.
     return ctx.json(null);
+  });
+
+  // --- commands (bb routes/projects.ts:684-738; host/skill legs deferred) -----
+
+  routes.get("/projects/:id/commands", async (ctx) => {
+    parseOr422(projectCommandsQuerySchema, ctx.req.query());
+    await requirePublicProject(ctx.env, ctx.req.param("id"));
+    return ctx.json(commandListResponseSchema.parse({ commands: [BUILTIN_COMPACT_COMMAND] }));
   });
 
   // bb routes/projects.ts:402-418: public project required, limit clamped to

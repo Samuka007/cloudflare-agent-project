@@ -1,9 +1,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
+import { agentEventDataSchemas } from "@cap/agent-do";
 import { threadEventDataSchemas } from "@cap/protocol";
 import { ensureMigrations } from "../migrate.js";
 import { BASE, createThread } from "../helpers.js";
 import { threadTimelineResponseSchema } from "../../src/contract/api/threads.js";
+import { createStandaloneBuiltinCompactCommandInput } from "../../src/contract/domain/shared-types.js";
 import type { AgentDoRpc } from "../../src/seam/agent-do.js";
 
 /**
@@ -118,5 +120,93 @@ describe("POST /threads/:id/compact (#309)", () => {
     // relay wire's real usage — the estimated flag is a deployment-mock
     // artifact no longer reachable on any dispatched turn.
     expect(parsed.contextWindowUsage?.estimated).toBe(false);
+  });
+});
+
+describe("POST /threads/:id/send with the builtin /compact mention (#546)", () => {
+  it("intercepts the standalone mention: the compact runs, the model never sees the text", async () => {
+    const thread = await createThread({
+      title: "compact-send-intercept",
+      input: [{ type: "text", text: "small opener" }],
+    });
+    const completedCount = async (): Promise<number> => {
+      const events = await rawEvents(thread.id);
+      return events.filter((event) => event.type === "turn.completed").length;
+    };
+    // Grown journal first: the same two-turn shape the manual-compact test
+    // uses, so the DO's retention-budget gate admits the compact.
+    await expect.poll(completedCount, { timeout: 30_000, interval: 150 }).toBeGreaterThanOrEqual(1);
+    await sendInput(thread.id, BIG_INPUT);
+    await expect.poll(completedCount, { timeout: 30_000, interval: 150 }).toBeGreaterThanOrEqual(2);
+
+    // The SPA's builtin-command auto-submit body: a lone text item whose
+    // only mention is the builtin compact command.
+    const response = await exports.default.fetch(`${BASE}/api/v1/threads/${thread.id}/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input: createStandaloneBuiltinCompactCommandInput(), mode: "auto" }),
+    });
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    expect(JSON.parse(body)).toEqual({ ok: true });
+
+    // The compact face ran: the checkpoint marker lands on the journal.
+    await expect
+      .poll(
+        async () => {
+          const events = await rawEvents(thread.id);
+          return events.filter((event) => event.type === "thread/compacted").length;
+        },
+        { timeout: 30_000, interval: 150 },
+      )
+      .toBeGreaterThanOrEqual(1);
+
+    // …and no turn input ever carried the bare "/compact" text — the
+    // mention was intercepted at the send face, not dispatched as content.
+    const events = await rawEvents(thread.id);
+    const compactTextInputs = events.filter((event) => {
+      if (event.type !== "turn.input" && event.type !== "turn.steer") {
+        return false;
+      }
+      const data = agentEventDataSchemas[event.type].parse(event.data);
+      return data.content.some((item) => item.type === "text" && item.text === "/compact");
+    });
+    expect(compactTextInputs).toHaveLength(0);
+  });
+
+  it("raw '/compact' text without the mention dispatches as a normal turn", async () => {
+    const thread = await createThread({
+      title: "compact-send-raw-text",
+      input: [{ type: "text", text: "small opener" }],
+    });
+    const completedCount = async (): Promise<number> => {
+      const events = await rawEvents(thread.id);
+      return events.filter((event) => event.type === "turn.completed").length;
+    };
+    await expect.poll(completedCount, { timeout: 30_000, interval: 150 }).toBeGreaterThanOrEqual(1);
+
+    await sendInput(thread.id, "/compact");
+
+    // Raw matching text intentionally does not qualify (bb
+    // isStandaloneBuiltinCompactCommand semantics): the turn dispatches the
+    // text as model content…
+    await expect
+      .poll(
+        async () => {
+          const events = await rawEvents(thread.id);
+          return events.some((event) => {
+            if (event.type !== "turn.input") {
+              return false;
+            }
+            const data = agentEventDataSchemas["turn.input"].parse(event.data);
+            return data.content.some((item) => item.type === "text" && item.text === "/compact");
+          });
+        },
+        { timeout: 30_000, interval: 150 },
+      )
+      .toBe(true);
+    // …and nothing compacted.
+    const events = await rawEvents(thread.id);
+    expect(events.some((event) => event.type === "thread/compacted")).toBe(false);
   });
 });

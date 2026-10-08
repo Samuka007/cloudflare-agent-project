@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import type { HostRpcCommand } from "@cap/daemon-service";
 import { activeTurnIdFromEvents, type RelaySelection } from "@cap/agent-do";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
@@ -122,6 +123,7 @@ import { computeTimelineRowDelta } from "../contract/thread-timeline.js";
 import { validatePromptAttachmentReferences } from "../services/attachments.js";
 import { agentDoCancelTurn, agentDoCompactThread, agentDoFor } from "../seam/agent-do.js";
 import { resolveThreadBinding } from "../services/thread-binding.js";
+import { isStandaloneBuiltinCompactCommand } from "../contract/domain/shared-types.js";
 import type { PromptInput } from "../contract/domain/shared-types.js";
 import type { PromptContent } from "@cap/protocol";
 import type { AppEnv, Env } from "../app-types.js";
@@ -660,6 +662,19 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
   routes.post("/threads/:id/send", async (ctx) => {
     const payload = await requireJsonBody(ctx, sendMessageRequestSchema);
     let row = await requirePublicThread(ctx);
+    // #546: the composer's builtin /compact command auto-submit arrives here
+    // as a standalone command mention (bb PromptBoxInternal auto-submits a
+    // no-argument builtin command). Upstream the provider adapter translates
+    // it into the provider's native compact RPC; this port owns the compact
+    // engine on the DO, so the send face intercepts the mention and runs the
+    // same compact face as POST /threads/:id/compact — the model never sees
+    // bare "/compact" text. Raw matching text and project/user commands do
+    // not qualify (isStandaloneBuiltinCompactCommand is mention-scoped).
+    // Attachments cannot ride a standalone mention (every input item is
+    // text), so the attachment-reference pass below is unreachable for it.
+    if (isStandaloneBuiltinCompactCommand(payload.input)) {
+      return ctx.json(await compactThreadFace(ctx, row));
+    }
     // #317 gate unlock: the same attachment-reference verification the create
     // face runs — relative paths must be uploaded into this thread's project
     // family; absolute/URI-like paths pass through to the runtime untouched.
@@ -808,15 +823,17 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
 
   // --- compact (#309, bb /threads/:id/compact wire: noRequest → {ok:true}) ----------
 
-  routes.post("/threads/:id/compact", async (ctx) => {
-    // bb compactThreadContext (routes/threads/actions.ts:131-161) gates the
-    // manual compact on a writable/idle thread; the turn-cancel face is
-    // journal state on the per-thread agent DO (the stop route's direct-read
-    // pattern), so derive activeness from the raw journal and reject before
-    // the DO RPC. The compact turn itself (summarization call + the
-    // `thread/compacted` checkpoint row) appends on the DO; the boundary is a
-    // replay-derived journal cut, never a deletion (#116).
-    const row = await requirePublicThread(ctx);
+  /**
+   * The compact trigger shared by the manual face and the send-face /compact
+   * intercept (#546): gate on journal activeness (bb compactThreadContext
+   * gates the manual compact on a writable/idle thread; the turn-cancel face
+   * is journal state on the per-thread agent DO, the stop route's
+   * direct-read pattern), fire the DO compact, and notify. The compact turn
+   * itself (summarization call + the `thread/compacted` checkpoint row)
+   * appends on the DO; the boundary is a replay-derived journal cut, never a
+   * deletion (#116).
+   */
+  async function compactThreadFace(ctx: Context<AppEnv>, row: ThreadDbRow): Promise<{ ok: true }> {
     const { events } = await agentDoFor(ctx.env, row.id).getEvents({
       sinceSeq: 0,
       project: "raw",
@@ -849,7 +866,12 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     await hub(ctx).notifyThread(row.id, ["events-appended"], {
       projectId: row.projectId,
     });
-    return ctx.json({ ok: true });
+    return { ok: true };
+  }
+
+  routes.post("/threads/:id/compact", async (ctx) => {
+    const row = await requirePublicThread(ctx);
+    return ctx.json(await compactThreadFace(ctx, row));
   });
 
   // --- timeline / outline / events ---------------------------------------------------
