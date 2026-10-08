@@ -159,8 +159,13 @@ export async function runFindJudged(
         cacheReadTokens += result.usage.cacheReadInputTokens;
         cacheWriteTokens += result.usage.cacheCreationInputTokens;
       }
+      // glm channels leak thinking text into output_text even with effort:none —
+      // the answer lines glue right after "</think>". Take the post-think tail.
+      const judgeText = result.text.includes("</think>")
+        ? result.text.slice(result.text.lastIndexOf("</think>") + "</think>".length)
+        : result.text;
       const answers = splitFindAnswerLines(
-        result.text,
+        judgeText,
         batch.passages.map((passage) => passage.key),
       );
       const perBatch = new Map<string, number | undefined>();
