@@ -217,18 +217,18 @@ export class FakeDaemonService implements DaemonServiceClient {
    * synthetic absolute path under a fake host root; tests override the
    * handler to simulate offline/timeout/daemon dispatch failures.
    */
-  hostThreadFileWriteHandler: (request: Parameters<
-    DaemonServiceClient["hostThreadFileWrite"]
-  >[0]) => Promise<HostThreadFileWriteOutcome> = (request) =>
+  hostThreadFileWriteHandler: (
+    request: Parameters<DaemonServiceClient["hostThreadFileWrite"]>[0],
+  ) => Promise<HostThreadFileWriteOutcome> = (request) =>
     Promise.resolve({
       kind: "ok",
       path: `/fake-host/${request.threadId}/Generated/${request.filename}`,
     });
   /** B2 (#322): the read seam. Default answers a tiny valid PNG; tests
    * override for ENOENT/unsupported-type/timeout simulation. */
-  hostThreadFileReadHandler: (request: Parameters<
-    DaemonServiceClient["hostThreadFileRead"]
-  >[0]) => Promise<HostThreadFileReadOutcome> = () =>
+  hostThreadFileReadHandler: (
+    request: Parameters<DaemonServiceClient["hostThreadFileRead"]>[0],
+  ) => Promise<HostThreadFileReadOutcome> = () =>
     Promise.resolve({
       kind: "ok",
       // PNG magic bytes (\x89PNG\r\n\x1a\n), base64 — the workers runtime
@@ -470,6 +470,50 @@ export class FakeDaemonService implements DaemonServiceClient {
       kind: "ok",
       result: { status: "ok", exitCode: 0, output },
     });
+  }
+
+  /**
+   * #523 find execution-leg echo: the fake has no cascade body, so the
+   * canned `findExecHandler` answers (tests inject a find-protocol v1
+   * payload fixture). Offline hosts fail like the real DO.
+   */
+  findExecHandler: (
+    request: Parameters<DaemonServiceClient["findExec"]>[0],
+  ) => Promise<
+    | { status: "ok"; exitCode: number; output: string }
+    | { status: "error"; exitCode: null; output: string }
+  > = (request) =>
+    Promise.resolve({
+      status: "ok",
+      exitCode: 0,
+      output: JSON.stringify({
+        v: 1,
+        query: typeof request.arguments.query === "string" ? request.arguments.query : "",
+        keywords: [],
+        threshold: 0.2,
+        files: [],
+        batches: [],
+        stats: {
+          listed: 0,
+          filesRead: 0,
+          fileBytes: 0,
+          mapCards: 0,
+          windowsPruned: 0,
+          elapsedMs: 1,
+        },
+        cwd: "/fake-host/workspace",
+      }),
+    });
+
+  findExec(request: Parameters<DaemonServiceClient["findExec"]>[0]): Promise<ToolResultPayload> {
+    if (!this.hostOnline) {
+      return Promise.resolve({
+        status: "error",
+        exitCode: null,
+        output: "host_offline: no live daemon session for the find execution leg",
+      });
+    }
+    return this.findExecHandler(request);
   }
 
   hostThreadFileWrite(

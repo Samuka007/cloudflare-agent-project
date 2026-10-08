@@ -294,4 +294,33 @@ export interface ModelProvider {
     request: ModelRequest,
     options: { signal: AbortSignal },
   ): AsyncIterable<ModelStreamChunk>;
+
+  /**
+   * Raw two-message completion — the find judge leg (#523): a system prompt
+   * and a user message in, one reply text plus its usage receipt out. NO
+   * agent system prompt, no tool surface, no history assembly — the relay's
+   * protocol machinery only. Optional: providers without it cannot serve
+   * the judge (the find executor fails closed with a structured error).
+   * Implementations are single-attempt: transport/retry policy rides the
+   * same failure taxonomy as streamTurn (ModelProviderError).
+   */
+  completeText?(
+    request: TextCompletionRequest,
+    options: { signal: AbortSignal },
+  ): Promise<TextCompletionResult>;
+}
+
+/** One raw judgment completion request (#523). */
+export interface TextCompletionRequest {
+  system: string;
+  user: string;
+  /** Reply budget; the judge answers are one-word-per-question lines. */
+  maxTokens?: number;
+}
+
+/** One raw judgment completion result (#523). */
+export interface TextCompletionResult {
+  text: string;
+  /** The provider receipt; null when the upstream reported nothing usable. */
+  usage: ModelUsageReceipt | null;
 }

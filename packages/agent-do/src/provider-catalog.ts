@@ -280,6 +280,11 @@ export const relayModelEntrySchema = z.strictObject({
 });
 export type RelayModelEntry = z.infer<typeof relayModelEntrySchema>;
 
+/** Public per-token pricing (USD per million tokens) — the named shape of
+ * `relayModelEntrySchema.cost`, consumable without the full entry (#523
+ * find judge footer pricing). */
+export type RelayModelCost = NonNullable<RelayModelEntry["cost"]>;
+
 // ---------------------------------------------------------------------------
 // Edge catalog schema (MODEL_RELAY_CATALOG)
 // ---------------------------------------------------------------------------

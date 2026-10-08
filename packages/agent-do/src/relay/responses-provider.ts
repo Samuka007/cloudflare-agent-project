@@ -5,6 +5,8 @@ import {
   type ModelStreamChunk,
   type ModelToolCall,
   type ModelUsageReceipt,
+  type TextCompletionRequest,
+  type TextCompletionResult,
 } from "../provider.js";
 import type { RelayConfig } from "./anthropic-provider.js";
 import { responsesRequestBody } from "./responses-wire.js";
@@ -220,7 +222,8 @@ export class ResponsesRelayProvider implements ModelProvider {
           case "response.failed": {
             const error = payload.response?.error;
             throw new ModelProviderError({
-              message: `relay response failed: ${error?.code ?? "unknown"} ${error?.message ?? ""}`.trim(),
+              message:
+                `relay response failed: ${error?.code ?? "unknown"} ${error?.message ?? ""}`.trim(),
               retryable: false,
               afterFirstByte: true,
             });
@@ -241,7 +244,8 @@ export class ResponsesRelayProvider implements ModelProvider {
             if (status === "failed") {
               const error = payload.response?.error;
               throw new ModelProviderError({
-                message: `relay response failed: ${error?.code ?? "unknown"} ${error?.message ?? ""}`.trim(),
+                message:
+                  `relay response failed: ${error?.code ?? "unknown"} ${error?.message ?? ""}`.trim(),
                 retryable: false,
                 afterFirstByte: true,
               });
@@ -335,6 +339,125 @@ export class ResponsesRelayProvider implements ModelProvider {
     if (toolCalls.length > 0) {
       yield { kind: "tool-calls", toolCalls };
     }
+  }
+
+  /**
+   * #523 judge leg: ONE non-streaming Responses call — instructions =
+   * system, one user message, no tools, no reasoning pin (the judge answers
+   * one-word-per-question lines). Same failure taxonomy as streamTurn.
+   */
+  async completeText(
+    request: TextCompletionRequest,
+    options: { signal: AbortSignal },
+  ): Promise<TextCompletionResult> {
+    const body = {
+      model: this.config.model,
+      stream: false,
+      store: false,
+      instructions: request.system,
+      max_output_tokens: request.maxTokens ?? this.config.maxTokens,
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: request.user }],
+        },
+      ],
+    };
+    const serialized = JSON.stringify(body);
+    const url = `${this.config.baseUrl.replace(/\/+$/, "")}/responses`;
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${this.config.apiKey}`,
+        },
+        body: serialized,
+        signal: options.signal,
+      });
+    } catch (error) {
+      throw new ModelProviderError({
+        message: `relay connect failed: ${error instanceof Error ? error.message : String(error)}`,
+        retryable: !options.signal.aborted,
+        afterFirstByte: false,
+      });
+    }
+    if (!response.ok) {
+      const detail = await errorDetail(response);
+      throw new ModelProviderError({
+        message: `relay http ${response.status}: ${detail}`,
+        retryable: RETRYABLE_STATUS.has(response.status),
+        afterFirstByte: false,
+      });
+    }
+    interface CompletionBody {
+      status?: string;
+      incomplete_details?: { reason?: string } | null;
+      error?: { code?: string; message?: string } | null;
+      output?: {
+        type?: string;
+        content?: { type?: string; text?: string }[];
+      }[];
+      usage?: ResponsesUsageFrame | null;
+    }
+    let payload: CompletionBody;
+    try {
+      const body: unknown = await response.json();
+      payload = body as CompletionBody;
+    } catch {
+      throw new ModelProviderError({
+        message: "relay sent malformed completion JSON",
+        retryable: false,
+        afterFirstByte: true,
+      });
+    }
+    if (payload.error !== undefined && payload.error !== null) {
+      throw new ModelProviderError({
+        message: `relay response error: ${payload.error.code ?? "unknown"} ${payload.error.message ?? ""}`,
+        retryable: false,
+        afterFirstByte: true,
+      });
+    }
+    if (payload.status === "incomplete") {
+      throw new ModelProviderError({
+        message: `relay response incomplete: ${payload.incomplete_details?.reason ?? "unknown"}`,
+        retryable: false,
+        afterFirstByte: true,
+      });
+    }
+    let text = "";
+    for (const item of payload.output ?? []) {
+      if (item.type !== "message") continue;
+      for (const part of item.content ?? []) {
+        if (part.type === "output_text" && typeof part.text === "string") text += part.text;
+      }
+    }
+    const usageFrame = payload.usage ?? null;
+    const usage: ModelUsageReceipt =
+      usageFrame !== null
+        ? {
+            inputTokens: Math.max(
+              0,
+              (usageFrame.input_tokens ?? 0) -
+                (usageFrame.input_tokens_details?.cached_tokens ?? 0),
+            ),
+            outputTokens: usageFrame.output_tokens ?? 0,
+            cacheReadInputTokens: usageFrame.input_tokens_details?.cached_tokens ?? 0,
+            cacheCreationInputTokens: usageFrame.input_tokens_details?.cache_write_tokens ?? 0,
+            contextWindow: this.config.contextWindow ?? null,
+            estimated: false,
+          }
+        : {
+            inputTokens: estimateWireRequestTokens(serialized),
+            outputTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            contextWindow: this.config.contextWindow ?? null,
+            estimated: true,
+          };
+    return { text, usage };
   }
 }
 

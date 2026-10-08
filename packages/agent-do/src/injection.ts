@@ -1,6 +1,6 @@
 import type { ModelProvider } from "./provider.js";
 import type { DaemonServiceClient } from "./daemon.js";
-import type { RelaySelection } from "./provider-catalog.js";
+import type { RelayModelCost, RelaySelection } from "./provider-catalog.js";
 
 /**
  * Runtime injection point for the two outbound seams (model relay, daemon
@@ -27,6 +27,18 @@ export interface AgentRuntime {
    * another row.
    */
   resolveExecutionProvider: (selection: RelaySelection) => ModelProvider;
+  /**
+   * #523: the selection-resolution twin for legs that need the resolved
+   * MODEL row, not just a wire client — the find judge prices its report
+   * footer from the row's declared per-token cost. Optional: runtimes
+   * without it leave the cost unknown (the footer prints $0.0000 with real
+   * token counts — never a fabricated price). Same fail-closed contract as
+   * resolveExecutionProvider (RelaySelectionError on catalog drift).
+   */
+  resolveExecutionModel?: (selection: RelaySelection) => {
+    provider: ModelProvider;
+    cost?: RelayModelCost;
+  };
   /**
    * #362 hot-reload seam: the deploying worker may re-read mutable provider
    * configuration (the D1 provider overlay) at the turn boundary — the DO
