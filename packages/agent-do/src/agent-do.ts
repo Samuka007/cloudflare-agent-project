@@ -147,6 +147,7 @@ import {
 import { checkpointRewindState, todoJournalState } from "./tools/session-tree.js";
 import {
   DEFAULT_WEB_SEARCH_CONFIG,
+  type FetchImpl,
   type WebSearchConfig,
   type WebSearchToolContext,
 } from "./tools/web-search.js";
@@ -241,6 +242,57 @@ export interface AgentDoBindings {
    * never logs or projects the value.
    */
   PROVIDER_CONFIG_MASTER_KEY?: string;
+  /**
+   * #535: the Workers VPC service binding for the searxng web_search leg
+   * (staging: wrangler.staging.jsonc `vpc_services`, service
+   * 01a11aa1-4c8a-7d90-a189-9fec20cdecac → http://10.120.16.22:8888 behind
+   * tunnel 55b914a6). Optional — unbound deployments (local rig, unit
+   * tests) keep the pure global-fetch path; bound deployments route ONLY
+   * the requests whose URL host matches the D1 seat's
+   * engines.searxng.endpoint host through the binding (`webSearchFetchImpl`)
+   * — the DO's global fetch cannot reach a private-network address.
+   */
+  SEARXNG_VPC?: Fetcher;
+}
+
+/**
+ * #535: the web_search outbound fetch with the optional searxng VPC leg.
+ * The searxng transport dials `${endpoint}/search` — the same origin as the
+ * D1 seat's `engines.searxng.endpoint` — so a binding-routed wrapper needs
+ * only a host comparison to pick its leg: matching requests ride the VPC
+ * service binding (the Workers VPC `fetch()` forwards them through the
+ * tunnel; host/port routing is decided by the service config), everything
+ * else — the brave/scraper/aggregate legs — keeps the plain global fetch.
+ * No binding, no endpoint, or an unparseable endpoint all return the
+ * byte-identical global-fetch wrapper (the pre-#535 shape).
+ */
+export function webSearchFetchImpl(config: WebSearchConfig, env: AgentDoBindings): FetchImpl {
+  const binding = env.SEARXNG_VPC;
+  const endpoint = config.engines.searxng?.endpoint;
+  if (binding === undefined || endpoint === undefined || endpoint === "") {
+    return (input, init) => fetch(input, init);
+  }
+  let host: string;
+  try {
+    host = new URL(endpoint).host;
+  } catch {
+    // The seat validates endpoints (z.url()) — this is defense in depth for
+    // a hand-built config: unroutable means never bind, never break a leg.
+    return (input, init) => fetch(input, init);
+  }
+  return (input, init) => {
+    // The request target's host, whatever input shape the transport dials:
+    // the searxng leg passes a URL object, the string/Request shapes stay
+    // covered for parity with plain fetch.
+    const targetHost =
+      typeof input === "string"
+        ? new URL(input).host
+        : input instanceof URL
+          ? input.host
+          : new URL(input.url).host;
+    if (targetHost === host) return binding.fetch(input, init);
+    return fetch(input, init);
+  };
 }
 
 /**
@@ -4310,12 +4362,15 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
    * surfaces as a cancelled tool result — omp throwIfAborted), and global
    * fetch (MSW-intercepted under the vitest workers pool). Zero journal
    * state beyond the tool.result row (practice 11).
+   * #535: when the SEARXNG_VPC binding is present, the searxng leg rides
+   * the Workers VPC service instead of the unreachable global dial
+   * (`webSearchFetchImpl` — host-matched, every other leg unchanged).
    */
   private webSearchToolContext(signal: AbortSignal): WebSearchToolContext {
     return {
       config: this.webSearchConfig,
       signal,
-      fetchImpl: (input, init) => fetch(input, init),
+      fetchImpl: webSearchFetchImpl(this.webSearchConfig, this.env),
     };
   }
 
