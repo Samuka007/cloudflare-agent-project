@@ -8,8 +8,9 @@
  * schemas and layers the cap delta post-processing (Thought rows D4,
  * provider-unhandled D7) on top.
  */
+import type { ThreadEvent, ThreadEventRow, ThreadStatus } from "@bb/domain";
 import { buildThreadEvent } from "@bb/domain";
-import { buildThreadTimelineFromEvents } from "../../../../bb/packages/thread-view/src/index.js";
+import { buildThreadTimelineFromEvents } from "@bb/thread-view";
 
 import {
   eventTypeOf,
@@ -24,15 +25,10 @@ import {
  * the packages' root exports (the deep subpath is not in bb's exports map,
  * which every resolution pipeline honors).
  */
-function decodeThreadEventRow(row: {
-  id: string;
-  seq: number;
-  createdAt: number;
-  threadId: string;
-  scope: unknown;
-  type: string;
-  data: Record<string, unknown>;
-}): { event: unknown; meta: { id: string; seq: number; createdAt: number } } {
+function decodeThreadEventRow(row: ThreadEventRow): {
+  event: ThreadEvent;
+  meta: { id: string; seq: number; createdAt: number };
+} {
   return {
     event: buildThreadEvent(row),
     meta: { id: row.id, seq: row.seq, createdAt: row.createdAt },
@@ -63,7 +59,7 @@ export interface UxWindowThreadViewProjection {
 
 export interface UxWindowThreadViewOptions {
   /** bb threadStatus — drives the activeThinking gate inside bb. */
-  threadStatus: string;
+  threadStatus: ThreadStatus;
   /**
    * bb tail-state extraction gate (pendingTodos/goal/modelFallback — states
    * the ux face never produces; true keeps bb from skipping work the
@@ -82,9 +78,7 @@ export function projectUxWindowThroughThreadView(
   options: UxWindowThreadViewOptions,
 ): UxWindowThreadViewProjection {
   const materializedRows = materializeUxWindowToStoredEventRows(envelopes);
-  const eventsWithMeta = materializedRows.map((materialized) =>
-    decodeThreadEventRow(materialized),
-  );
+  const eventsWithMeta = materializedRows.map((materialized) => decodeThreadEventRow(materialized));
   const contextWindowEvents = eventsWithMeta.filter(
     ({ event }) => eventTypeOf(event) === "thread/contextWindowUsage/updated",
   );

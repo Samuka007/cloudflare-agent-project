@@ -47,12 +47,6 @@ export default defineConfig({
       },
     }),
   ],
-  ssr: {
-    // #560: the bb packages are source-only TS (exports map has no JS dist);
-    // left external they fall through to workerd's native loader, which
-    // cannot load TS — force vite to resolve + transform them inline.
-    noExternal: ["@bb/domain", "@bb/thread-view", "@bb/server-contract"],
-  },
   test: {
     maxWorkers: 1,
     minWorkers: 1,

@@ -17,16 +17,19 @@
  * estimated usage, system/error, turn/phase.
  */
 import { buildThreadEvent } from "@cap/protocol";
-import type { ThreadEventEnvelope } from "@cap/protocol";
+import type { ThreadEventEnvelope, ThreadEventType } from "@cap/protocol";
 
 const THREAD = "thr_560harness";
 let seq = 0;
 
 const env = (
-  type: Parameters<typeof buildThreadEvent>[0]["type"],
+  type: ThreadEventType,
   data: Record<string, unknown>,
   opts: { id?: string; createdAt?: number } = {},
 ): ThreadEventEnvelope =>
+  // Fixture payloads are written loosely; the ux projection re-validates
+  // every envelope through threadEventDataSchemas downstream, and the
+  // protocol constructor itself casts its args the same way.
   buildThreadEvent({
     id: opts.id ?? `evt-${String(seq).padStart(4, "0")}`,
     threadId: THREAD,
@@ -34,7 +37,7 @@ const env = (
     type,
     data,
     createdAt: opts.createdAt ?? 1_700_000_000_000 + seq * 1_000,
-  });
+  } as Parameters<typeof buildThreadEvent>[0]);
 
 const T1 = "turn_0001";
 const T2 = "turn_0002";
