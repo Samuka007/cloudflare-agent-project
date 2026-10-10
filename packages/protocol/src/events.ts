@@ -352,7 +352,10 @@ export const threadEventDataSchemas = {
    * estimated usage row that drops the SPA indicator without a new model
    * call (null = the deployment cannot name a window, no row). `method`
    * distinguishes the trigger: `manual` = the compact button (#309), `auto` =
-   * the overflow compact-and-retry faces (#326).
+   * the overflow compact-and-retry faces (#326). #547 `mode` names the omp
+   * compact taxonomy the cut ran (soft = summarize in place, remote =
+   * deployment-named relay model, snap = no-model-call snapshot); absent = a
+   * pre-#547 row (soft semantics).
    */
   "thread/compacted": z.object({
     turnId: z.string().min(1),
@@ -361,6 +364,7 @@ export const threadEventDataSchemas = {
     tokensAfter: z.number().int().nonnegative(),
     contextWindow: z.number().int().positive().nullable(),
     method: z.enum(["manual", "auto"]),
+    mode: z.enum(["soft", "remote", "snap"]).optional(),
   }),
   "system/error": z.object({
     message: z.string(),

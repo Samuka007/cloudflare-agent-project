@@ -24,6 +24,7 @@ import {
   isContextOverflowFailure,
   lastUsageTotal,
   planCompactCut,
+  planSnapCut,
   planRetryCut,
   projectedContextTokens,
   shouldCompact,
@@ -41,7 +42,12 @@ import {
   type ExecutionRuntime,
   type ReplayState,
 } from "./turn-state.js";
-import type { AgentEventDataByType, AgentEventRecord, AgentEventType } from "./fsm-events.js";
+import type {
+  AgentEventDataByType,
+  AgentEventRecord,
+  AgentEventType,
+  CompactMode,
+} from "./fsm-events.js";
 import {
   parseAgentEvent,
   subagentActivityUnitSchema,
@@ -787,9 +793,37 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
      * retained tail explicitly.
      */
     keepRecentTokens?: number;
+    /**
+     * #547 the compact mode; default "soft" (the #309 behavior — the modeless
+     * wire stays byte-identical). The route resolves the modeless request
+     * against the deployment's methodOrder preference; an explicit mode
+     * arrives validated.
+     */
+    mode?: CompactMode;
+    /**
+     * mode === "remote": the route-validated selection the summarization call
+     * pins on the compact turn (the #351 execution mechanism — the DO trusts
+     * it and resolveTurnProvider fail-closes at dispatch exactly like any
+     * journaled selection; the row's reasoning ladder fills its default).
+     * Required for remote; rejected otherwise.
+     */
+    remote?: { providerId: string; model: string };
   }): Promise<{ turnId: string; duplicated: boolean }> {
     await this.ready();
     this.requireThread();
+    const mode = request.mode ?? "soft";
+    if (mode === "remote" && request.remote === undefined) {
+      throw new AgentRpcError(
+        "invalid",
+        "remote compact requires the route-validated remote selection",
+      );
+    }
+    if (mode !== "remote" && request.remote !== undefined) {
+      throw new AgentRpcError(
+        "invalid",
+        `remote selection is a remote-mode-only field (got ${mode})`,
+      );
+    }
     const inputId = request.clientRequestId ?? `compact-${crypto.randomUUID()}`;
     const existing = this.state.inputIds.get(inputId);
     if (existing !== undefined) {
@@ -815,25 +849,40 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
         "nothing to compact: the journal has no completed model call",
       );
     }
-    const plan = planCompactCut(events, request.keepRecentTokens ?? DEFAULT_KEEP_RECENT_TOKENS);
-    if (plan === undefined) {
-      throw new AgentRpcError(
-        "invalid",
-        "nothing to compact: the whole journal fits the retention budget",
-      );
-    }
     const usage = lastUsageTotal(events);
     const turnId = `turn_${crypto.randomUUID()}`;
     await this.appendEvent("turn.input", {
       turnId,
       inputId,
       content: [{ type: "text", text: COMPACT_DIRECTIVE_TEXT }],
+      compactMode: mode,
       // #496: the compact turn dispatches through the same fail-closed
-      // resolver — it pins the thread's selection like any turn.
-      ...(this.state.execution !== null ? { execution: this.state.execution } : {}),
+      // resolver — it pins the thread's selection like any turn. remote pins
+      // the delegated summarizer INSTEAD (the whole point of the mode); snap
+      // dispatches nothing, so it pins no selection.
+      ...(mode === "remote"
+        ? { execution: request.remote }
+        : this.state.execution !== null
+          ? { execution: this.state.execution }
+          : {}),
     });
     this.armWatchdog();
-    this.ctx.waitUntil(this.runCompactTurnCore(turnId, plan, usage, "manual"));
+    if (mode === "snap") {
+      // The snap cut is retention-budget-free (omp snapcompact runs whenever
+      // triggered — the snapshot is a deliberate reset, not a summarization
+      // economy): the no-model-activity gate above stays, the fits-budget
+      // refusal does not apply to it.
+      this.ctx.waitUntil(this.runSnapCompactTurn(turnId));
+    } else {
+      const plan = planCompactCut(events, request.keepRecentTokens ?? DEFAULT_KEEP_RECENT_TOKENS);
+      if (plan === undefined) {
+        throw new AgentRpcError(
+          "invalid",
+          "nothing to compact: the whole journal fits the retention budget",
+        );
+      }
+      this.ctx.waitUntil(this.runCompactTurnCore(turnId, plan, usage, "manual", mode));
+    }
     return { turnId, duplicated: false };
   }
 
@@ -854,6 +903,8 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     plan: CompactCutPlan,
     usage: { usedTokens: number; contextWindow: number | null } | null,
     method: "manual" | "auto",
+    /** #547 the compact mode the marker records; default soft. */
+    mode: CompactMode = "soft",
   ): Promise<"completed" | "failed" | "cancelled"> {
     const abort = new AbortController();
     this.activeDrivers.set(turnId, abort);
@@ -954,12 +1005,58 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
           tokensAfter,
           contextWindow: usage?.contextWindow ?? null,
           method,
+          mode,
         });
         await this.appendEvent("turn.completed", { turnId });
         return "completed";
       }
     } finally {
       this.activeDrivers.delete(turnId);
+    }
+  }
+
+  /**
+   * #547 the snap driver — the compact mode with NO model call (omp
+   * snapcompact: archive the history without an LLM summary; on this stack
+   * the journal is the archive, #116). The checkpoint hides every row up to
+   * and including the snap turn's own directive (planSnapCut), the usage
+   * estimate drops to zero, and the turn completes — a fresh empty context
+   * with the full history still replayable. Synchronous journal appends: the
+   * cancellation faces have no window to land in, so unlike
+   * runCompactTurnCore there is no abort driver.
+   */
+  private async runSnapCompactTurn(turnId: string): Promise<"completed" | "failed"> {
+    try {
+      const { events } = await this.readAllEvents();
+      const input = events.find(
+        (event) => event.type === "turn.input" && event.data.turnId === turnId,
+      );
+      if (input?.type !== "turn.input") {
+        throw new AgentRpcError("not_found", `snap compact turn ${turnId} has no journal input`);
+      }
+      const usage = lastUsageTotal(events);
+      await this.appendEvent("thread/compacted", {
+        turnId,
+        hideThroughSeq: planSnapCut(input.seq).hideThroughSeq,
+        tokensBefore: usage?.usedTokens ?? null,
+        // The post-cut visible tail is empty (the directive row hides with
+        // the cut): zero is the honest estimate the usage row projects.
+        tokensAfter: 0,
+        contextWindow: usage?.contextWindow ?? null,
+        method: "manual",
+        mode: "snap",
+      });
+      await this.appendEvent("turn.completed", { turnId });
+      return "completed";
+    } catch (error) {
+      const live = this.state.turns.get(turnId);
+      if (live !== undefined && !turnTerminal(live)) {
+        await this.appendEvent("turn.failed", { turnId, reason: "model_error" });
+      }
+      if (!(error instanceof FsmViolationError)) {
+        console.error(`snap compact turn ${turnId} failed`, error);
+      }
+      return "failed";
     }
   }
 
@@ -1071,14 +1168,23 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
   private async resumeCompactTurn(turnId: string): Promise<void> {
     try {
       const { events } = await this.readAllEvents();
+      const input = events.find(
+        (event) => event.type === "turn.input" && event.data.turnId === turnId,
+      );
+      // #547 mode attribution reads the journaled compactMode (replay-is-
+      // truth); absent = a pre-#547 row (soft). A snap turn re-runs the
+      // snapshot checkpoint — no model call, so the planRetryCut ladder that
+      // a summarization resume needs does not apply.
+      const compactMode = input?.type === "turn.input" ? input.data.compactMode : undefined;
+      if (compactMode === "snap") {
+        await this.runSnapCompactTurn(turnId);
+        return;
+      }
       const plan = planRetryCut(events, this.cfg.autoCompactionKeepRecentTokens);
       if (plan === undefined) {
         await this.appendEvent("turn.failed", { turnId, reason: "model_error" });
         return;
       }
-      const input = events.find(
-        (event) => event.type === "turn.input" && event.data.turnId === turnId,
-      );
       const method =
         input?.type === "turn.input" && input.data.inputId.startsWith("compact-auto-")
           ? ("auto" as const)

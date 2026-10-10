@@ -92,8 +92,13 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
     name: "compact",
     source: "command",
     origin: "builtin",
-    description: "Compact context",
-    argumentHint: null,
+    // #547: the omp taxonomy rides the panel copy — the typeahead names the
+    // three modes the send face parses; argumentHint "" marks the command
+    // arg-accepting (bb BUILT_IN_PROVIDER_COMMANDS keeps null upstream; the
+    // port's hint slot carries the omp mode list).
+    description:
+      "Compact context — soft (summarize) | remote (delegated model) | snap (snapshot, no model call)",
+    argumentHint: "",
   };
 
   routes.get("/projects", async (ctx) => {

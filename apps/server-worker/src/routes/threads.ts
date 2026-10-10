@@ -1,7 +1,12 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { HostRpcCommand } from "@cap/daemon-service";
-import { activeTurnIdFromEvents, type RelaySelection } from "@cap/agent-do";
+import {
+  activeTurnIdFromEvents,
+  resolveCompactMode,
+  type CompactMode,
+  type RelaySelection,
+} from "@cap/agent-do";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import {
   classifyThreadSelectionChange,
@@ -24,6 +29,7 @@ import {
   threadTimelineQuerySchema,
   updateThreadRequestSchema,
   resolvePendingInteractionRequestSchema,
+  threadCompactRequestSchema,
   type ThreadResponse,
 } from "../contract/api/threads.js";
 import { getPermissionMode } from "../db/permission-mode.js";
@@ -81,6 +87,7 @@ import { getHostRow } from "../db/hosts.js";
 import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs.js";
 import { mirrorPendingInteraction } from "../db/pending-interactions.js";
 import { getAppSettingsRow, toAppSettings } from "../db/settings.js";
+import { getCompactionSettings } from "../db/compaction-settings.js";
 import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
 import {
   toThreadListEntries,
@@ -123,7 +130,7 @@ import { computeTimelineRowDelta } from "../contract/thread-timeline.js";
 import { validatePromptAttachmentReferences } from "../services/attachments.js";
 import { agentDoCancelTurn, agentDoCompactThread, agentDoFor } from "../seam/agent-do.js";
 import { resolveThreadBinding } from "../services/thread-binding.js";
-import { isStandaloneBuiltinCompactCommand } from "../contract/domain/shared-types.js";
+import { parseStandaloneBuiltinCompactCommand } from "../contract/domain/shared-types.js";
 import type { PromptInput } from "../contract/domain/shared-types.js";
 import type { PromptContent } from "@cap/protocol";
 import type { AppEnv, Env } from "../app-types.js";
@@ -147,7 +154,6 @@ function mapSelectionMissing(error: unknown): unknown {
   }
   return error;
 }
-
 
 /** bb timeline.ts:163-165. */
 const THREAD_TIMELINE_DEFAULT_SEGMENT_LIMIT = 20;
@@ -348,10 +354,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // 正本 — a panel-side provider is selectable the moment it exists; no
     // rows → the fail-closed empty directory).
     const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
-    const selection = validateThreadExecutionSelection(
-      payload,
-      overlay?.providers ?? {},
-    );
+    const selection = validateThreadExecutionSelection(payload, overlay?.providers ?? {});
     const providerId = selection.resolved.providerId;
     // #288: the binding source chain resolves once, here — explicit choice >
     // project default source > deployment single machine — and feeds BOTH
@@ -524,21 +527,21 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
    * stored-selection face (ResolvedThreadExecutionOptions | null). #486:
    * without this face the composer never sees the thread's stored selection —
    * the SPA seeds no model, the picker silently falls to the catalog's
-  * isDefault row, and follow-up sends ride no selection
+   * isDefault row, and follow-up sends ride no selection
    * (followUpExecutionSelection gates on this face) so turns dispatch the
    * deployment default: the exact display+dispatch drift the ticket reports.
    * Resolution is the stored row through resolveThreadDefaultExecutionOptions
-  * — the same merged catalog a send validates against. #500: the display's
-  * permission posture is the D1 `permission_mode` seat (hot, no redeploy).
+   * — the same merged catalog a send validates against. #500: the display's
+   * permission posture is the D1 `permission_mode` seat (hot, no redeploy).
    */
   routes.get("/threads/:id/default-execution-options", async (ctx) => {
     const row = await requirePublicThread(ctx);
     const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
     const permissionMode = (await getPermissionMode(ctx.env)).mode;
     return ctx.json(
-      resolvedThreadExecutionOptionsSchema.nullable().parse(
-        resolveThreadDefaultExecutionOptions(permissionMode, row, overlay?.providers ?? {}),
-      ),
+      resolvedThreadExecutionOptionsSchema
+        .nullable()
+        .parse(resolveThreadDefaultExecutionOptions(permissionMode, row, overlay?.providers ?? {})),
     );
   });
 
@@ -668,12 +671,24 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // it into the provider's native compact RPC; this port owns the compact
     // engine on the DO, so the send face intercepts the mention and runs the
     // same compact face as POST /threads/:id/compact — the model never sees
-    // bare "/compact" text. Raw matching text and project/user commands do
-    // not qualify (isStandaloneBuiltinCompactCommand is mention-scoped).
+    // bare "/compact" text. #547: the omp allowArgs face — a trailing token
+    // names the mode (soft | remote | snap; snapcompact is the omp-name
+    // alias); an unrecognized token is a named 422 (no focus-instruction
+    // plumbing), the empty remainder is the modeless face. Raw matching text
+    // and project/user commands do not qualify (the parse is mention-scoped).
     // Attachments cannot ride a standalone mention (every input item is
     // text), so the attachment-reference pass below is unreachable for it.
-    if (isStandaloneBuiltinCompactCommand(payload.input)) {
-      return ctx.json(await compactThreadFace(ctx, row));
+    const compactParse = parseStandaloneBuiltinCompactCommand(payload.input);
+    if (compactParse !== null) {
+      if (compactParse.kind === "invalid") {
+        throw new ApiError({
+          status: 422,
+          code: "invalid_request",
+          message: `unknown /compact mode "${compactParse.token}" — expected soft | remote | snap`,
+          details: { reason: "unknown_compact_mode" },
+        });
+      }
+      return ctx.json(await compactThreadFace(ctx, row, compactParse.mode));
     }
     // #317 gate unlock: the same attachment-reference verification the create
     // face runs — relative paths must be uploaded into this thread's project
@@ -832,8 +847,63 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
    * itself (summarization call + the `thread/compacted` checkpoint row)
    * appends on the DO; the boundary is a replay-derived journal cut, never a
    * deletion (#116).
+   *
+   * #547 mode resolution: an explicit mode forces one taxonomy entry
+   * (`soft`/`remote`/`snap`); the modeless face walks the deployment's
+   * compaction methodOrder preference (GET/PUT /system/compaction-settings,
+   * omp DEFAULT_COMPACTION_METHOD_ORDER semantics) and takes the first
+   * ELIGIBLE entry — remote is eligible only when the seat names a
+   * summarizer that still resolves against the live catalog. A drifted seat
+   * is ineligible for the order walk (the next entry wins); an EXPLICIT
+   * remote that drifted is the named 422 (the caller asked for exactly that
+   * model), and an explicit remote with no seat is the named 409 — never a
+   * silent soft fallback.
    */
-  async function compactThreadFace(ctx: Context<AppEnv>, row: ThreadDbRow): Promise<{ ok: true }> {
+  async function compactThreadFace(
+    ctx: Context<AppEnv>,
+    row: ThreadDbRow,
+    explicitMode?: CompactMode,
+  ): Promise<{ ok: true }> {
+    const seat = await getCompactionSettings(ctx.env);
+    const remoteOf = async (): Promise<{ providerId: string; model: string } | null> => {
+      if (seat.remote === null) return null;
+      const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+      const validated = validateThreadExecutionSelection(
+        { providerId: seat.remote.providerId, model: seat.remote.model },
+        overlay?.providers ?? {},
+      );
+      return { providerId: validated.resolved.providerId, model: validated.resolved.model };
+    };
+    let compactMode: CompactMode;
+    let remote: { providerId: string; model: string } | undefined;
+    if (explicitMode === "remote") {
+      remote = (await remoteOf()) ?? undefined;
+      if (remote === undefined) {
+        throw new ApiError({
+          status: 409,
+          code: "invalid_request",
+          message:
+            "remote compact is not configured: name a summarizer with " +
+            "PUT /system/compaction-settings (remote.model) first",
+          details: { reason: "remote_not_configured" },
+        });
+      }
+      compactMode = "remote";
+    } else if (explicitMode !== undefined) {
+      compactMode = explicitMode;
+    } else {
+      let eligibleRemote: { providerId: string; model: string } | null = null;
+      try {
+        eligibleRemote = await remoteOf();
+      } catch {
+        // Drifted seat: ineligible for the order walk — the next entry wins.
+        eligibleRemote = null;
+      }
+      compactMode = resolveCompactMode(seat.methodOrder, undefined, (mode) =>
+        mode === "remote" ? eligibleRemote !== null : true,
+      );
+      if (compactMode === "remote") remote = eligibleRemote ?? undefined;
+    }
     const { events } = await agentDoFor(ctx.env, row.id).getEvents({
       sinceSeq: 0,
       project: "raw",
@@ -847,7 +917,10 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       });
     }
     try {
-      await agentDoCompactThread(ctx.env, row.id);
+      await agentDoCompactThread(ctx.env, row.id, {
+        mode: compactMode,
+        ...(remote !== undefined ? { remote } : {}),
+      });
     } catch (error) {
       // The RPC seam rethrows remote errors without their class; the DO's
       // retention-budget gate (pi prepareCompaction kept-still-fits →
@@ -871,7 +944,12 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
 
   routes.post("/threads/:id/compact", async (ctx) => {
     const row = await requirePublicThread(ctx);
-    return ctx.json(await compactThreadFace(ctx, row));
+    // #547: the body is OPTIONAL (the bb wire is noRequest) — an empty body
+    // is the modeless face, `{mode}` forces one taxonomy entry.
+    const rawBody = (await ctx.req.text()).trim();
+    const payload =
+      rawBody === "" ? {} : parseOr422(threadCompactRequestSchema, JSON.parse(rawBody));
+    return ctx.json(await compactThreadFace(ctx, row, payload.mode));
   });
 
   // --- timeline / outline / events ---------------------------------------------------

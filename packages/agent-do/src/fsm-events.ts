@@ -76,6 +76,18 @@ export const threadExecutionSelectionSchema = z
   );
 export type ThreadExecutionSelection = z.infer<typeof threadExecutionSelectionSchema>;
 
+/**
+ * #547 the omp compact-mode taxonomy (pi-coding-agent@18.6.0
+ * session/compaction-methods.d.ts COMPACTION_METHOD_CHOICES, reduced to the
+ * three the port ships): `soft` summarizes in place with the pinned model
+ * (the #309 behavior), `remote` delegates the summary to a deployment-named
+ * relay model, `snap` snapshots the context with no model call (omp
+ * snapcompact semantics minus the bitmap rendering the edge DO cannot do —
+ * the journal itself is the archive, #116).
+ */
+export const compactModeSchema = z.enum(["soft", "remote", "snap"]);
+export type CompactMode = z.infer<typeof compactModeSchema>;
+
 const toolCallDataSchema = z.object({
   name: z.string().min(1),
   arguments: z.record(z.string(), z.unknown()),
@@ -210,6 +222,12 @@ export const agentEventDataSchemas = {
     contextWindow: z.number().int().positive().nullable(),
     /** `manual` = the compact button (#309); `auto` = overflow faces (#326). */
     method: z.enum(["manual", "auto"]),
+    /**
+     * #547: the compact mode that produced the cut (soft | remote | snap).
+     * Orthogonal to `method` (the trigger): the auto faces run soft and name
+     * it. Absent = a pre-#547 row (always soft semantics).
+     */
+    mode: compactModeSchema.optional(),
   }),
 
   "turn.input": z.object({
@@ -226,6 +244,13 @@ export const agentEventDataSchemas = {
      * Absent = the pre-#351 shape (dispatch on the deployment default).
      */
     execution: threadExecutionSelectionSchema.optional(),
+    /**
+     * #547: the compact mode a `compact-…` turn runs (soft | remote | snap).
+     * The resume path re-derives the driver and the checkpoint attribution
+     * from THIS field (replay-is-truth — no inputId prefix parsing); absent =
+     * the pre-#547 shape (soft semantics, method attribution by prefix).
+     */
+    compactMode: compactModeSchema.optional(),
   }),
 
   "turn.steer": z.object({

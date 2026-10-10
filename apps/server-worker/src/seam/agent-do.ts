@@ -144,14 +144,22 @@ export function agentDoCancelTurn(
 export function agentDoCompactThread(
   env: Env,
   threadId: string,
+  request: {
+    mode?: "soft" | "remote" | "snap";
+    remote?: { providerId: string; model: string };
+  } = {},
 ): Promise<{ turnId: string; duplicated: boolean }> {
   const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId)) as unknown as {
-    compactThread(args: { clientRequestId?: string }): Promise<{
+    compactThread(args: {
+      clientRequestId?: string;
+      mode?: "soft" | "remote" | "snap";
+      remote?: { providerId: string; model: string };
+    }): Promise<{
       turnId: string;
       duplicated: boolean;
     }>;
   };
-  return stub.compactThread({});
+  return stub.compactThread(request);
 }
 
 // ---------------------------------------------------------------------------

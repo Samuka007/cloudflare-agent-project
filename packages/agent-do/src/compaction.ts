@@ -1,4 +1,5 @@
 import type { AnyAgentEvent } from "./fsm-events.js";
+import type { CompactMode } from "./fsm-events.js";
 
 /**
  * #309 manual compact — the pure planning face (journal checkpoint-style
@@ -24,6 +25,69 @@ import type { AnyAgentEvent } from "./fsm-events.js";
 
 /** pi compaction/compaction.ts:126-130 via kernel DEFAULT_COMPACTION_SETTINGS. */
 export const DEFAULT_KEEP_RECENT_TOKENS = 20_000;
+
+// ---------------------------------------------------------------------------
+// #547 compact-mode taxonomy (omp session/compaction-methods.d.ts, reduced to
+// the three modes the port ships) + the methodOrder preference resolution
+// (omp DEFAULT_COMPACTION_METHOD_ORDER / resolveCompactionMethodOrder)
+// ---------------------------------------------------------------------------
+
+/**
+ * omp DEFAULT_COMPACTION_METHOD_ORDER (bundle-verified
+ * `["remote","snapcompact","handoff","shake","soft"]`) reduced to the ported
+ * three: the delegated/native summary is tried first, the no-model-call
+ * snapshot second, the in-place portable summary last. This is the omp
+ * canonical order an operator writes into the deployment's compaction seat —
+ * NOT the port's absent-row runtime default (that stays the #309 soft
+ * behavior; see apps/server-worker src/db/compaction-settings.ts).
+ */
+export const DEFAULT_COMPACTION_METHOD_ORDER: readonly CompactMode[] = ["remote", "snap", "soft"];
+
+/** Runtime guard for a configured mode token (omp isCompactionMethod). */
+export function isCompactMode(value: unknown): value is CompactMode {
+  return value === "soft" || value === "remote" || value === "snap";
+}
+
+/**
+ * omp resolveCompactionMethodOrder: filter malformed entries and dedupe,
+ * preserving first-occurrence order. Empty input = an empty order (every
+ * modeless compact falls back to soft downstream).
+ */
+export function resolveCompactionMethodOrder(value: unknown): CompactMode[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<CompactMode>();
+  for (const entry of value) {
+    if (isCompactMode(entry)) seen.add(entry);
+  }
+  return [...seen];
+}
+
+/**
+ * The eligibility predicate one mode answers for a deployment (omp gate
+ * semantics, reduced): `remote` needs a configured remote summarizer (omp
+ * canUseRemoteCompaction), `snap`/`soft` are always eligible — omp gates
+ * snapcompact on image input support, a capability the port's snapshot cut
+ * does not use (no bitmap rendering; divergence recorded in
+ * docs/design/compact-modes.md).
+ */
+export type CompactModeEligibility = (mode: CompactMode) => boolean;
+
+/**
+ * Resolve the effective mode: an explicit request mode wins (validated
+ * upstream); otherwise the first eligible entry of the preference order;
+ * `soft` is the floor (omp: the order always ends in a portable summary).
+ */
+export function resolveCompactMode(
+  order: readonly CompactMode[],
+  explicit: CompactMode | undefined,
+  eligible: CompactModeEligibility,
+): CompactMode {
+  if (explicit !== undefined) return explicit;
+  for (const mode of order) {
+    if (eligible(mode)) return mode;
+  }
+  return "soft";
+}
 
 // ---------------------------------------------------------------------------
 // Overflow trigger + reactive retry (#326) — the pi shouldCompact threshold and
@@ -278,6 +342,14 @@ export function turnSlices(events: readonly AnyAgentEvent[]): CompactTurnSlice[]
   let current: CompactTurnSlice | null = null;
   for (const event of events) {
     if (event.type === "turn.input") {
+      // #547: a snap turn's slice is snapshot bookkeeping — its directive row
+      // is hidden by the turn's own checkpoint, so it never re-enters a later
+      // cut as kept material (a kept snap slice would dangle its directive
+      // text into future requests with no assistant answer).
+      if (event.data.compactMode === "snap") {
+        current = null;
+        continue;
+      }
       current = { inputSeq: event.seq, events: [event], estimatedTokens: 0 };
       slices.push(current);
       continue;
@@ -355,6 +427,29 @@ export function estimateVisibleTailTokens(options: {
     encoder.encode(options.directiveText).byteLength +
     encoder.encode(options.summaryText).byteLength;
   return Math.ceil((kept + compactTurn) / 4);
+}
+
+/**
+ * #547 the snap cut (omp snapcompact semantics on a journal that is never
+ * truncated, #116): everything visible up to and including the snap turn's
+ * own directive row leaves the active context — rows ≤ hideThroughSeq are
+ * cut-folded by translate, the journal keeps them (the archive IS the log),
+ * and no summarization model call runs. `firstKeptTurnInputSeq` is null:
+ * unlike a summary cut there is no kept tail.
+ */
+export interface SnapCutPlan {
+  /** The snap turn's own directive row — hidden by the checkpoint it arms. */
+  hideThroughSeq: number;
+}
+
+/**
+ * Plan the snapshot cut over the journal as it stands AFTER the snap
+ * turn.input appended: `hideThroughSeq` is that row's seq, so the fresh
+ * context is empty (no directive residue — the directive exists for journal
+ * provenance, not for the model).
+ */
+export function planSnapCut(compactTurnInputSeq: number): SnapCutPlan {
+  return { hideThroughSeq: compactTurnInputSeq };
 }
 
 /** The latest usage-receipt total (usedTokens fold, ux-projection semantics). */

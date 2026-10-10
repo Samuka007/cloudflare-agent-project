@@ -231,6 +231,17 @@ export const sendMessageRequestSchema = z.object({
 });
 export type SendMessageRequest = z.infer<typeof sendMessageRequestSchema>;
 
+/**
+ * #547 POST /threads/:id/compact body — OPTIONAL (the bb wire is noRequest:
+ * `{ok:true}`; an empty body is the modeless face). `mode` forces one compact
+ * taxonomy mode; absent = the deployment's compaction methodOrder preference
+ * (GET/PUT /system/compaction-settings) picks.
+ */
+export const threadCompactRequestSchema = z.object({
+  mode: z.enum(["soft", "remote", "snap"]).optional(),
+});
+export type ThreadCompactRequest = z.infer<typeof threadCompactRequestSchema>;
+
 export const providerRateLimitRecoveryReasonSchema = z.enum([
   "eligible",
   "thread-not-failed",
