@@ -1,0 +1,14 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["bun"],
+    "baseUrl": ".",
+    "paths": {
+      "@cap/protocol": ["../../../../packages/protocol/src/index.ts"],
+      "@bb/domain": ["../../../../bb/packages/domain/src/index.ts"],
+      "@bb/domain/*": ["../../../../bb/packages/domain/src/*"],
+      "@bb/server-contract": ["../../../../bb/packages/server-contract/src/index.ts"]
+    }
+  },
+  "include": ["*.ts"]
+}
