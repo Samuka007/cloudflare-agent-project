@@ -3,8 +3,8 @@
     "uxEnvelopeCount": 34,
     "materializedRowCount": 35,
     "pathARowCount": 11,
-    "pathBTopLevelCount": 10,
-    "pathBFlattenedCount": 10
+    "pathBTopLevelCount": 11,
+    "pathBFlattenedCount": 12
   },
   "tailState": {
     "activeThinkingA": null,
@@ -221,6 +221,41 @@
       }
     },
     {
+      "key": "thr_spike554:turn_0001:turn:0",
+      "family": "turn",
+      "titleOrRole": "",
+      "status": "completed",
+      "seq": [
+        3,
+        7
+      ],
+      "textLen": 0,
+      "textHead": "",
+      "extra": {
+        "turnId": "turn_0001",
+        "completedAt": 1700000014000,
+        "children": 1,
+        "summaryCount": 1
+      }
+    },
+    {
+      "key": "thr_spike554:op:reasoning:kind:reasoning|turn:turn_0001|parent:root|item:itm-rs-turn_0001:1",
+      "family": "system/operation/reasoning",
+      "titleOrRole": "Thought for 4s",
+      "status": "completed",
+      "seq": [
+        3,
+        7
+      ],
+      "textLen": 62,
+      "textHead": "I should inspect the workspace first. Then summarize finding",
+      "extra": {
+        "turnId": "turn_0001",
+        "reasoningId": "thr_spike554:op:reasoning:kind:reasoning|turn:turn_0001|parent:root|item:itm-rs-turn_0001:1",
+        "completedAt": 1700000007000
+      }
+    },
+    {
       "key": "thr_spike554:assistant:kind:assistant|turn:turn_0001|parent:root|item:itm-am-turn_0001:1",
       "family": "conversation/assistant",
       "titleOrRole": "Inspecting the workspace now.",
@@ -334,7 +369,7 @@
         "callId": "exec_0016",
         "turnId": "turn_0002",
         "completedAt": 1700000029000,
-        "childRows": 2,
+        "childRows": 3,
         "subagentType": "scout",
         "description": "Scout the docs folder"
       }
