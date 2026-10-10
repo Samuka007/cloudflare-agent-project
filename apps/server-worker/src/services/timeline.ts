@@ -12,15 +12,20 @@ import type { JsonValue } from "../contract/domain/json-value.js";
 import type { UxThreadEvent } from "../seam/agent-do.js";
 
 /**
- * M0 timeline projection: AgentDO UX-projected events (protocol union —
- * turn/started, item/started, item/agentMessage/delta, item/completed,
- * turn/completed, system/error) → bb timeline rows
- * (contract/thread-timeline.ts). bb's full projection lives in
- * packages/thread-view + services/threads/timeline.ts and covers dozens of
- * event types; the M0 face covers the subset the mock-completed turn
- * mechanism produces (spec #17: model relay missing → mock provider). Event
- * → row mapping follows the same anchors bb uses: stable item ids as row ids,
- * sourceSeqStart/End from event sequences, status from item/turn completion.
+ * Retired M0 timeline projection (the "porting layer"): AgentDO UX-projected
+ * events (protocol union — turn/started, item/started, item/agentMessage/
+ * delta, item/completed, turn/completed, system/error) → bb timeline rows
+ * (contract/thread-timeline.ts).
+ *
+ * #560 switched the routes to the bb direct-import face
+ * (services/thread-view.ts → @cap/agent-do/thread-view). These functions are
+ * no longer called in production; they remain as the path-A oracle of the
+ * CI diff harness (test/thread-view-diff-harness.test.ts), which pins the
+ * materializer+thread-view projection against them line by line, and they
+ * retire once the bb pin ships the upstream Thought-row creation side (D4)
+ * and the harness's equivalence debt is settled (#554 roadmap step 5).
+ * Pagination/cache/outline (below the oracle block) remain the LIVE
+ * implementation.
  */
 
 const PREVIEW_MAX_CHARS = 512;
@@ -238,7 +243,7 @@ export function durationToCompactString(durationMs: number): string {
 const MAX_REASONING_DETAIL_CHARS = 32_000;
 const REASONING_DETAIL_TRUNCATION_SUFFIX_TAIL = " more characters truncated]";
 
-function truncateReasoningDetail(detail: string): string {
+export function truncateReasoningDetail(detail: string): string {
   if (detail.length <= MAX_REASONING_DETAIL_CHARS) {
     return detail;
   }
@@ -939,62 +944,8 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
   return topRows;
 }
 
-// --- debug toggle (bb showUnhandledProviderEvents, data.ts:331-334) --------------
-
-/**
- * bb gates the provider-unhandled diagnostic rows on the Debug settings
- * toggle: `deps.config.isDevelopment ||
- * getAppSettings(db).showUnhandledProviderEvents` (routes/threads/data.ts:
- * 331-334). The Worker has no dev-build term, so the flag alone decides —
- * staging is the packaged-build equivalent.
- *
- * bb surfaces provider events the adapter persisted but could not classify
- * (domain ProviderUnhandledEvent → thread-view parse-operation-message.ts:
- * 447-461). This stack's raw journal lives on the agent DO with the FSM
- * vocabulary, and the UX projection (packages/agent-do ux-projection.ts) is
- * the authoritative "what the SPA can see" fold: every raw row it omits
- * (thread.created, model.call_retry, tool.output, tool.exec_started,
- * turn.cancel_requested, the job/task/interaction/peer journal families,
- * secondary model.call_started within a turn) is a raw event the runtime
- * persisted but no timeline row renders. That set-difference is this stack's
- * provider-unhandled population — computed from the projection itself so the
- * FSM vocabulary can grow without a second hand-maintained list here.
- */
-export function projectUnhandledProviderRows(
-  uxEvents: readonly UxThreadEvent[],
-  rawEvents: readonly UxThreadEvent[],
-): TimelineRow[] {
-  const renderedIds = new Set(uxEvents.map((event) => event.id));
-  const rows: TimelineRow[] = [];
-  for (const event of rawEvents) {
-    if (renderedIds.has(event.id)) {
-      continue;
-    }
-    const raw: EventData =
-      event.data !== null && typeof event.data === "object" ? (event.data as EventData) : {};
-    rows.push(
-      timelineRowSchema.parse({
-        kind: "system",
-        systemKind: "operation",
-        operationKind: "provider-unhandled",
-        // bb operation message ids (format-helpers.ts:72-74) —
-        // `${threadId}:op:provider-unhandled:${seq}` (parse-operation-message.ts:393).
-        id: `${event.threadId}:op:provider-unhandled:${event.seq}`,
-        threadId: event.threadId,
-        turnId: pickTurnId(raw),
-        sourceSeqStart: event.seq,
-        sourceSeqEnd: event.seq,
-        startedAt: event.createdAt,
-        createdAt: event.createdAt,
-        title: UNHANDLED_PROVIDER_ROW_TITLE,
-        detail: providerUnhandledDetail(event),
-        status: "completed",
-        completedAt: event.createdAt,
-      }),
-    );
-  }
-  return rows;
-}
+// --- diagnostic-row merge (D7 merge seam; the rows themselves moved to
+// services/thread-view.ts with the rest of the switched projection) ----------
 
 /**
  * Merge the diagnostic rows into the UX-projected rows in source order —

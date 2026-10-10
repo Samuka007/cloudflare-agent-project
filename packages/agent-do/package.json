@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./provider-catalog": "./src/provider-catalog.ts",
     "./find-protocol": "./src/tools/find-protocol.ts",
-    "./testing": "./src/testing/index.ts"
+    "./testing": "./src/testing/index.ts",
+    "./thread-view": "./src/thread-view/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -16,8 +17,11 @@
     "smoke:poc": "vitest run smoke-real-model"
   },
   "dependencies": {
-    "@cap/mcp": "workspace:*",
+    "@bb/domain": "workspace:*",
+    "@bb/server-contract": "workspace:*",
+    "@bb/thread-view": "workspace:*",
     "@cap/daemon-service": "workspace:*",
+    "@cap/mcp": "workspace:*",
     "@cap/protocol": "workspace:*",
     "@oh-my-pi/pi-catalog": "18.6.0",
     "arktype": "^2.2.7",

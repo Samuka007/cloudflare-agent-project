@@ -2,6 +2,15 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "agent-do",
   "main": "src/worker.ts",
+  // #560 thread-view direct-import: bb submodule sources bundle verbatim
+  // (typecheck runs on ambient shims in @cap/agent-do — these aliases are the
+  // runtime resolution; zod resolves through the root node_modules copy).
+  "alias": {
+    "@bb/domain": "../../../bb/packages/domain/src/index.ts",
+    "@bb/thread-view": "../../../bb/packages/thread-view/src/index.ts",
+    "@bb/thread-view/event-decode": "../../../bb/packages/thread-view/src/event-decode.ts",
+    "@bb/thread-view/accepted-client-request-context": "../../../bb/packages/thread-view/src/accepted-client-request-context.ts",
+  },
   "compatibility_date": "2026-10-01",
   "durable_objects": {
     "bindings": [

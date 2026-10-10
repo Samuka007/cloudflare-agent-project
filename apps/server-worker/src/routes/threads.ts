@@ -109,19 +109,25 @@ import {
   remapHostFileRouteError,
 } from "../services/host-files.js";
 import { hostFileReadResultSchema } from "../contract/api/hosts.js";
+// #560: pagination/cache/outline stay in the porting-layer module (保留不动);
+// the projection itself is the bb direct-import face (services/thread-view.ts).
 import {
   buildConversationOutline,
-  buildActiveThinking,
   buildTimelinePage,
-  buildContextWindowUsage,
-  mergeTimelineRows,
-  projectTimelineRows,
-  projectUnhandledProviderRows,
   timelineLatestRowsCache,
 } from "../services/timeline.js";
+import {
+  projectThreadTimeline,
+  rowsForConversationOutline,
+} from "../services/thread-view.js";
 import { computeTimelineRowDelta } from "../contract/thread-timeline.js";
 import { validatePromptAttachmentReferences } from "../services/attachments.js";
-import { agentDoCancelTurn, agentDoCompactThread, agentDoFor } from "../seam/agent-do.js";
+import {
+  agentDoCancelTurn,
+  agentDoCompactThread,
+  agentDoFor,
+  type UxThreadEvent,
+} from "../seam/agent-do.js";
 import { resolveThreadBinding } from "../services/thread-binding.js";
 import { isStandaloneBuiltinCompactCommand } from "../contract/domain/shared-types.js";
 import type { PromptInput } from "../contract/domain/shared-types.js";
@@ -913,14 +919,25 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       await hub(ctx).notifyThread(row.id, ["status-changed"], { projectId: row.projectId });
       await hub(ctx).notifyProject(row.projectId, ["threads-changed"]);
     }
-    let allRows = projectTimelineRows(events);
+    // #560 projection switch: materializer + bb thread-view (with the cap
+    // delta post-processing — D4 Thought rows, D7 provider-unhandled debug
+    // rows) replaces the retired porting-layer fold. bb turn-summary rows
+    // (D8) and row ids (D1) are bb-face behavior, accepted per #554 §4.
+    let rawEvents: UxThreadEvent[] | undefined;
     if (includeUnhandledProviderEvents) {
-      const { events: rawEvents } = await agentDoFor(ctx.env, row.id).getEvents({
-        sinceSeq: 0,
-        project: "raw",
-      });
-      allRows = mergeTimelineRows(allRows, projectUnhandledProviderRows(events, rawEvents));
+      rawEvents = (
+        await agentDoFor(ctx.env, row.id).getEvents({ sinceSeq: 0, project: "raw" })
+      ).events;
     }
+    const {
+      rows: allRows,
+      activeThinking,
+      contextWindowUsage,
+    } = projectThreadTimeline(events, {
+      threadStatus: row.status,
+      includeUnhandledProviderRows: includeUnhandledProviderEvents,
+      rawEvents,
+    });
     const kind = query.beforeAnchorSeq !== undefined ? "older" : "latest";
     if (query.beforeAnchorSeq !== undefined) {
       const anchorId = query.beforeAnchorId;
@@ -953,10 +970,6 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       summaryOnly,
     };
     const page = buildTimelinePage(allRows, pageQuery);
-    // bb tail-only state gates on the LATEST page (thread-timeline.ts:2073);
-    // activeThinking additionally gates on thread status === active (bb
-    // thread-view buildProjectionActiveThinking, #257 CoT surface).
-    const activeThinking = buildActiveThinking(events, row.status);
     const paramsKey = `${row.id}|${row.status}|${kind}|${segmentLimit}|${String(includeNestedRows)}|${String(summaryOnly)}|${String(includeUnhandledProviderEvents)}`;
     let delta;
     if (query.afterSequence !== undefined && kind === "latest") {
@@ -968,9 +981,6 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     if (kind === "latest" && !summaryOnly) {
       timelineLatestRowsCache.put(paramsKey, { maxSeq: latestSeq, rows: page.rows });
     }
-    // #308: context-window fill is latest-row-wins tail state; omitted when
-    // the thread has no usage row (the SPA renders no indicator then).
-    const contextWindowUsage = buildContextWindowUsage(events);
     return ctx.json({
       rows: summaryOnly ? [] : page.rows,
       activePromptMode: null,
@@ -993,8 +1003,12 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       sinceSeq: 0,
       project: "ux",
     });
+    // #560: the bb projection nests completed turns (D8); the outline fold
+    // keeps its flat-list contract, so turn wrappers expand in place first.
     return ctx.json({
-      items: buildConversationOutline(projectTimelineRows(events)),
+      items: buildConversationOutline(
+        rowsForConversationOutline(projectThreadTimeline(events, { threadStatus: row.status }).rows),
+      ),
       maxSeq: latestSeq,
     });
   });

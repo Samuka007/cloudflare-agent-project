@@ -9,14 +9,18 @@
   "scripts": {
     "gen:types": "wrangler types",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:thread-view": "vitest run --config vitest.thread-view.config.ts"
   },
   "dependencies": {
+    "@bb/domain": "workspace:*",
+    "@bb/server-contract": "workspace:*",
+    "@bb/thread-view": "workspace:*",
     "@cap/agent-do": "workspace:*",
     "@cap/daemon-service": "workspace:*",
     "@cap/daemon-worker": "workspace:*",
-    "hono": "^4.7.0",
     "@cap/provider-app": "workspace:*",
+    "hono": "^4.7.0",
     "zod": "^4.6.0"
   },
   "devDependencies": {
