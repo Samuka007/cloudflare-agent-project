@@ -1,0 +1,374 @@
+{
+  "counts": {
+    "uxEnvelopeCount": 34,
+    "materializedRowCount": 35,
+    "pathARowCount": 11,
+    "pathBTopLevelCount": 10,
+    "pathBFlattenedCount": 10
+  },
+  "tailState": {
+    "activeThinkingA": null,
+    "activeThinkingB": null,
+    "contextWindowUsageA": {
+      "usedTokens": 3100,
+      "modelContextWindow": 200000,
+      "estimated": true
+    },
+    "contextWindowUsageB": {
+      "estimated": true,
+      "modelContextWindow": 200000,
+      "usedTokens": 3100
+    }
+  },
+  "pathARows": [
+    {
+      "key": "itm-um-turn_0001:0",
+      "family": "conversation/user",
+      "titleOrRole": "List the workspace and summarize.",
+      "status": null,
+      "seq": [
+        1,
+        1
+      ],
+      "textLen": 33,
+      "textHead": "List the workspace and summarize.",
+      "extra": {
+        "turnId": "turn_0001"
+      }
+    },
+    {
+      "key": "reasoning:itm-rs-turn_0001:1",
+      "family": "system/operation/reasoning",
+      "titleOrRole": "Thought for 4s",
+      "status": "completed",
+      "seq": [
+        3,
+        7
+      ],
+      "textLen": 62,
+      "textHead": "I should inspect the workspace first. Then summarize finding",
+      "extra": {
+        "turnId": "turn_0001",
+        "reasoningId": "itm-rs-turn_0001:1",
+        "completedAt": 1700000007000
+      }
+    },
+    {
+      "key": "assistant:itm-am-turn_0001:1",
+      "family": "conversation/assistant",
+      "titleOrRole": "Inspecting the workspace now.",
+      "status": null,
+      "seq": [
+        5,
+        8
+      ],
+      "textLen": 29,
+      "textHead": "Inspecting the workspace now.",
+      "extra": {
+        "turnId": "turn_0001"
+      }
+    },
+    {
+      "key": "exec_0009",
+      "family": "tool",
+      "titleOrRole": "",
+      "status": "completed",
+      "seq": [
+        10,
+        13
+      ],
+      "textLen": 23,
+      "textHead": "# Workspace\nhello world",
+      "extra": {
+        "toolName": "read",
+        "callId": "exec_0009",
+        "turnId": "turn_0001",
+        "completedAt": 1700000013000
+      }
+    },
+    {
+      "key": "itm-iv-turn_0001:11",
+      "family": "image-view",
+      "titleOrRole": "",
+      "status": "completed",
+      "seq": [
+        11,
+        12
+      ],
+      "textLen": 0,
+      "textHead": "",
+      "extra": {
+        "callId": "itm-iv-turn_0001:11",
+        "turnId": "turn_0001",
+        "completedAt": 1700000012000
+      }
+    },
+    {
+      "key": "itm-st-turn_0002:15",
+      "family": "conversation/user",
+      "titleOrRole": "Also spawn a scout for the docs.",
+      "status": null,
+      "seq": [
+        15,
+        15
+      ],
+      "textLen": 32,
+      "textHead": "Also spawn a scout for the docs.",
+      "extra": {
+        "turnId": "turn_0002"
+      }
+    },
+    {
+      "key": "assistant:itm-am-turn_0002:2",
+      "family": "conversation/assistant",
+      "titleOrRole": "Spawning the scout.",
+      "status": null,
+      "seq": [
+        17,
+        18
+      ],
+      "textLen": 19,
+      "textHead": "Spawning the scout.",
+      "extra": {
+        "turnId": "turn_0002"
+      }
+    },
+    {
+      "key": "exec_0014",
+      "family": "tool",
+      "titleOrRole": "",
+      "status": "completed",
+      "seq": [
+        19,
+        20
+      ],
+      "textLen": 13,
+      "textHead": "README.md\nsrc",
+      "extra": {
+        "toolName": "bash",
+        "callId": "exec_0014",
+        "turnId": "turn_0002",
+        "completedAt": 1700000020000
+      }
+    },
+    {
+      "key": "exec_0016",
+      "family": "delegation",
+      "titleOrRole": "",
+      "status": "completed",
+      "seq": [
+        21,
+        29
+      ],
+      "textLen": 28,
+      "textHead": "agentId: child-1\nScout done.",
+      "extra": {
+        "toolName": "spawnAgent",
+        "callId": "exec_0016",
+        "turnId": "turn_0002",
+        "completedAt": 1700000029000,
+        "childRows": 2,
+        "subagentType": "scout",
+        "description": "Scout the docs folder"
+      }
+    },
+    {
+      "key": "syserr:evt-0030",
+      "family": "system/error",
+      "titleOrRole": "model stream interrupted mid-call; turn sealed",
+      "status": "error",
+      "seq": [
+        31,
+        31
+      ],
+      "textLen": 0,
+      "textHead": "",
+      "extra": {
+        "turnId": null
+      }
+    },
+    {
+      "key": "compact:evt-0031",
+      "family": "system/operation/compaction",
+      "titleOrRole": "Context compacted",
+      "status": "completed",
+      "seq": [
+        32,
+        32
+      ],
+      "textLen": 0,
+      "textHead": "",
+      "extra": {
+        "turnId": "turn_0002",
+        "completedAt": 1700000032000
+      }
+    }
+  ],
+  "pathBRows": [
+    {
+      "key": "thr_spike554:user-seed:1",
+      "family": "conversation/user",
+      "titleOrRole": "List the workspace and summarize.",
+      "status": null,
+      "seq": [
+        1,
+        1
+      ],
+      "textLen": 33,
+      "textHead": "List the workspace and summarize.",
+      "extra": {
+        "turnId": "turn_0001"
+      }
+    },
+    {
+      "key": "thr_spike554:assistant:kind:assistant|turn:turn_0001|parent:root|item:itm-am-turn_0001:1",
+      "family": "conversation/assistant",
+      "titleOrRole": "Inspecting the workspace now.",
+      "status": null,
+      "seq": [
+        5,
+        8
+      ],
+      "textLen": 29,
+      "textHead": "Inspecting the workspace now.",
+      "extra": {
+        "turnId": "turn_0001"
+      }
+    },
+    {
+      "key": "thr_spike554:tool:exec_0009",
+      "family": "tool",
+      "titleOrRole": "",
+      "status": "completed",
+      "seq": [
+        10,
+        13
+      ],
+      "textLen": 23,
+      "textHead": "# Workspace\nhello world",
+      "extra": {
+        "toolName": "read",
+        "callId": "exec_0009",
+        "turnId": "turn_0001",
+        "completedAt": 1700000013000
+      }
+    },
+    {
+      "key": "thr_spike554:image-view:itm-iv-turn_0001:11",
+      "family": "image-view",
+      "titleOrRole": "",
+      "status": "completed",
+      "seq": [
+        11,
+        12
+      ],
+      "textLen": 0,
+      "textHead": "",
+      "extra": {
+        "callId": "itm-iv-turn_0001:11",
+        "turnId": "turn_0001",
+        "completedAt": 1700000012000
+      }
+    },
+    {
+      "key": "thr_spike554:user-seed:15",
+      "family": "conversation/user",
+      "titleOrRole": "Also spawn a scout for the docs.",
+      "status": null,
+      "seq": [
+        16,
+        16
+      ],
+      "textLen": 32,
+      "textHead": "Also spawn a scout for the docs.",
+      "extra": {
+        "turnId": "turn_0002"
+      }
+    },
+    {
+      "key": "thr_spike554:assistant:kind:assistant|turn:turn_0002|parent:root|item:itm-am-turn_0002:2",
+      "family": "conversation/assistant",
+      "titleOrRole": "Spawning the scout.",
+      "status": null,
+      "seq": [
+        17,
+        18
+      ],
+      "textLen": 19,
+      "textHead": "Spawning the scout.",
+      "extra": {
+        "turnId": "turn_0002"
+      }
+    },
+    {
+      "key": "thr_spike554:tool:exec_0014",
+      "family": "tool",
+      "titleOrRole": "",
+      "status": "completed",
+      "seq": [
+        19,
+        20
+      ],
+      "textLen": 13,
+      "textHead": "README.md\nsrc",
+      "extra": {
+        "toolName": "bash",
+        "callId": "exec_0014",
+        "turnId": "turn_0002",
+        "completedAt": 1700000020000
+      }
+    },
+    {
+      "key": "thr_spike554:delegation:exec_0016",
+      "family": "delegation",
+      "titleOrRole": "",
+      "status": "completed",
+      "seq": [
+        21,
+        29
+      ],
+      "textLen": 28,
+      "textHead": "agentId: child-1\nScout done.",
+      "extra": {
+        "toolName": "spawnAgent",
+        "callId": "exec_0016",
+        "turnId": "turn_0002",
+        "completedAt": 1700000029000,
+        "childRows": 2,
+        "subagentType": "scout",
+        "description": "Scout the docs folder"
+      }
+    },
+    {
+      "key": "thr_spike554:op:compaction:turn_0002",
+      "family": "system/operation/compaction",
+      "titleOrRole": "Context compacted",
+      "status": "completed",
+      "seq": [
+        32,
+        32
+      ],
+      "textLen": 0,
+      "textHead": "",
+      "extra": {
+        "turnId": "turn_0002",
+        "completedAt": 1700000032000
+      }
+    },
+    {
+      "key": "thr_spike554:error:31",
+      "family": "system/error",
+      "titleOrRole": "model stream interrupted mid-call; turn sealed",
+      "status": "error",
+      "seq": [
+        31,
+        31
+      ],
+      "textLen": 0,
+      "textHead": "",
+      "extra": {
+        "turnId": null
+      }
+    }
+  ]
+}
