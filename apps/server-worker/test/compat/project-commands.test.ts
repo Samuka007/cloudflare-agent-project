@@ -27,8 +27,9 @@ describe("GET /projects/:id/commands (#546)", () => {
         name: "compact",
         source: "command",
         origin: "builtin",
-        description: "Compact context",
-        argumentHint: null,
+        description:
+          "Compact context — soft (summarize) | remote (delegated model) | snap (snapshot, no model call)",
+        argumentHint: "",
       },
     ]);
   });

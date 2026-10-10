@@ -451,9 +451,7 @@ export const systemToolCapabilitiesResponseSchema = z.object({
   contextNotes: z.boolean(),
   checkpoint: z.boolean(),
 });
-export type SystemToolCapabilitiesResponse = z.infer<
-  typeof systemToolCapabilitiesResponseSchema
->;
+export type SystemToolCapabilitiesResponse = z.infer<typeof systemToolCapabilitiesResponseSchema>;
 
 /** PUT /system/tool-capabilities: wholesale replace of the three gates. */
 export const systemToolCapabilitiesPutRequestSchema = z
@@ -468,6 +466,45 @@ export type SystemToolCapabilitiesPutRequest = z.infer<
 >;
 
 /**
+ * #547 the compaction-preference face (the D1 `compaction_settings`
+ * single-row seat, the sole 正本 — zero env fallback). GET/PUT
+ * /system/compaction-settings: the deployment's omp compact taxonomy
+ * preference — `methodOrder` (first entry the modeless compact face tries;
+ * entries filtered/deduped omp-style on read) and the `remote` summarizer
+ * selection the remote mode pins (providerId optional = the catalog's
+ * defaultProvider; model required). `configured` reports row existence:
+ * false = the absent-row posture (omp default order, remote ineligible). A
+ * write hot-applies on the next compact (read-per-compact, no redeploy).
+ */
+export const compactionRemoteSelectionSchema = z
+  .object({
+    providerId: z.string().min(1).optional(),
+    model: z.string().min(1),
+  })
+  .strict();
+export type CompactionRemoteSelection = z.infer<typeof compactionRemoteSelectionSchema>;
+
+export const systemCompactionSettingsResponseSchema = z.object({
+  configured: z.boolean(),
+  methodOrder: z.array(z.enum(["soft", "remote", "snap"])),
+  remote: compactionRemoteSelectionSchema.nullable(),
+});
+export type SystemCompactionSettingsResponse = z.infer<
+  typeof systemCompactionSettingsResponseSchema
+>;
+
+/** PUT /system/compaction-settings: wholesale replace of order + remote. */
+export const systemCompactionSettingsPutRequestSchema = z
+  .object({
+    methodOrder: z.array(z.enum(["soft", "remote", "snap"])),
+    remote: compactionRemoteSelectionSchema.nullable(),
+  })
+  .strict();
+export type SystemCompactionSettingsPutRequest = z.infer<
+  typeof systemCompactionSettingsPutRequestSchema
+>;
+
+/**
  * #506 the origin-allowlist face (the D1 `origin_allowlist` single-row seat,
  * the sole 正本 — the APP_EXTRA_ORIGINS env input is deleted, zero env
  * fallback). GET/PUT /system/origin-allowlist: the extra browser origins the
@@ -478,9 +515,7 @@ export type SystemToolCapabilitiesPutRequest = z.infer<
 export const systemOriginAllowlistResponseSchema = z.object({
   origins: z.array(z.string()),
 });
-export type SystemOriginAllowlistResponse = z.infer<
-  typeof systemOriginAllowlistResponseSchema
->;
+export type SystemOriginAllowlistResponse = z.infer<typeof systemOriginAllowlistResponseSchema>;
 
 /**
  * PUT /system/origin-allowlist: wholesale replace. Every entry must parse as
@@ -502,9 +537,7 @@ export const systemOriginAllowlistPutRequestSchema = z
       }
     });
   });
-export type SystemOriginAllowlistPutRequest = z.infer<
-  typeof systemOriginAllowlistPutRequestSchema
->;
+export type SystemOriginAllowlistPutRequest = z.infer<typeof systemOriginAllowlistPutRequestSchema>;
 
 /**
  * #500 the permission-mode default face (the D1 `permission_mode` single-row

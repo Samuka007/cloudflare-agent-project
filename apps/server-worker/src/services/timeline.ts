@@ -500,9 +500,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
       // [assistant][Thought]). firstSeq is monotone per call and interleaves
       // correctly with tool/answer rows.
       __order: lifecycle.firstSeq,
-      ...(lifecycle.parentCallId !== undefined
-        ? { __parentCallId: lifecycle.parentCallId }
-        : {}),
+      ...(lifecycle.parentCallId !== undefined ? { __parentCallId: lifecycle.parentCallId } : {}),
     });
   };
 
@@ -714,12 +712,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
           if (lifecycle === undefined) {
             break;
           }
-          materializeReasoningRow(
-            lifecycle,
-            "completed",
-            event,
-            item.content.join(""),
-          );
+          materializeReasoningRow(lifecycle, "completed", event, item.content.join(""));
           break;
         }
         const assistantRowId =
@@ -888,6 +881,16 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
         // the row carries only a title and status, never expandable). Our
         // marker is terminal on arrival (the checkpoint appends after the
         // summarization call completed), so the row is born completed.
+        // #547: the omp compact mode names itself in the row title (the
+        // panel-visible face of the taxonomy; the SPA renders the title
+        // verbatim) — modeless/soft keeps the bb-exact string.
+        const compacted = threadEventDataSchemas["thread/compacted"].safeParse(event.data);
+        const compactTitle =
+          compacted.success && compacted.data.mode === "remote"
+            ? "Context compacted (remote)"
+            : compacted.success && compacted.data.mode === "snap"
+              ? "Context compacted (snapshot)"
+              : "Context compacted";
         rows.set(`compact:${event.id}`, {
           kind: "system",
           systemKind: "operation",
@@ -899,7 +902,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
           sourceSeqEnd: event.seq,
           startedAt: event.createdAt,
           createdAt: event.createdAt,
-          title: "Context compacted",
+          title: compactTitle,
           detail: null,
           status: "completed",
           completedAt: event.createdAt,

@@ -54,6 +54,8 @@ import {
   systemOriginAllowlistPutRequestSchema,
   systemPermissionModePutRequestSchema,
   systemPermissionModeResponseSchema,
+  systemCompactionSettingsPutRequestSchema,
+  systemCompactionSettingsResponseSchema,
   systemToolCapabilitiesPutRequestSchema,
   systemToolCapabilitiesResponseSchema,
   systemWebSearchPutRequestSchema,
@@ -90,6 +92,7 @@ import {
 import { getImageSourceProviderId, setImageSourceProviderId } from "../db/image-source.js";
 import { getPermissionMode, setPermissionMode } from "../db/permission-mode.js";
 import { getToolCapabilities, setToolCapabilities } from "../db/tool-capabilities.js";
+import { getCompactionSettings, setCompactionSettings } from "../db/compaction-settings.js";
 import { getOriginAllowlist, setOriginAllowlist } from "../db/origin-allowlist.js";
 import { canonicalOriginAllowlist } from "../contract/domain/origin-allowlist.js";
 import { setWebSearchConfig, webSearchHasSecrets } from "../db/web-search.js";
@@ -99,6 +102,7 @@ import {
 } from "../services/provider-config-test.js";
 import { consumeProbeSlot } from "../services/probe-rate-limit.js";
 import { resolvePrimaryHostId } from "../services/host-records.js";
+import { validateThreadExecutionSelection } from "../services/execution-selection.js";
 import {
   getAppSettingsRow,
   getExperiments,
@@ -316,10 +320,7 @@ function webSearchProjectionRow(overlayRow: WebSearchOverlayRow | undefined): {
  * (#255 §6.2, ticket #56).
  */
 export function buildProviderProjections(
-  overlay: Pick<
-    ProviderConfigCatalogOverlay,
-    "providers" | "imageSourceProviderId" | "webSearch"
-  >,
+  overlay: Pick<ProviderConfigCatalogOverlay, "providers" | "imageSourceProviderId" | "webSearch">,
 ) {
   // The D1 rows are the sole directory source (#450/#500).
   const resolution = resolveOverlayCatalog(overlay.providers);
@@ -510,16 +511,18 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
     const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
     return ctx.json(
       systemProviderProjectionsResponseSchema.parse(
-        buildProviderProjections(overlay ?? {
-          providers: {},
-          imageSourceProviderId: null,
-          webSearch: {
-            configured: false,
-            decodeError: false,
-            projection: null,
-            engines: null,
+        buildProviderProjections(
+          overlay ?? {
+            providers: {},
+            imageSourceProviderId: null,
+            webSearch: {
+              configured: false,
+              decodeError: false,
+              projection: null,
+              engines: null,
+            },
           },
-        }),
+        ),
       ),
     );
   });
@@ -561,13 +564,16 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     return { kind: "set", plaintext: apiKey };
   };
 
-  const writeFieldsOf = (payload: {
-    displayName?: string;
-    baseUrl?: string;
-    api?: string;
-    serviceTier?: boolean;
-    models?: unknown[];
-  }, modelsOverride?: unknown[]): ProviderConfigWriteFields => ({
+  const writeFieldsOf = (
+    payload: {
+      displayName?: string;
+      baseUrl?: string;
+      api?: string;
+      serviceTier?: boolean;
+      models?: unknown[];
+    },
+    modelsOverride?: unknown[],
+  ): ProviderConfigWriteFields => ({
     displayName: payload.displayName ?? null,
     baseUrl: payload.baseUrl ?? null,
     api: payload.api ?? null,
@@ -665,7 +671,9 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   const foldModelFamilyPairing = (
     models: unknown[],
     effectiveApi: string | null,
-  ): { family: "chat"; models: RelayCatalogModel[] } | { family: "image"; models: RelayImageModel[] } => {
+  ):
+    | { family: "chat"; models: RelayCatalogModel[] }
+    | { family: "image"; models: RelayImageModel[] } => {
     const imageFamily = effectiveApi === IMAGE_SOURCE_API_FAMILY;
     const chatOut: RelayCatalogModel[] = [];
     const imageOut: RelayImageModel[] = [];
@@ -727,7 +735,9 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     }
     // Per-family parse gates guarantee the entry types; the family picks the
     // array (a flipped family fails the whole write above, never mixes).
-    return imageFamily ? { family: "image", models: imageOut } : { family: "chat", models: chatOut };
+    return imageFamily
+      ? { family: "image", models: imageOut }
+      : { family: "chat", models: chatOut };
   };
 
   // #448 the 产图源 face: the explicit generate_image source seat. Distinct
@@ -803,8 +813,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
       decodeError: ws?.decodeError ?? false,
       chain: ws?.projection?.chain ?? [],
       timeoutSeconds: ws?.projection?.timeoutSeconds ?? null,
-      browserBackedEngines:
-        ws?.projection?.browserBackedEngines ?? [...BROWSER_BACKED_ENGINES],
+      browserBackedEngines: ws?.projection?.browserBackedEngines ?? [...BROWSER_BACKED_ENGINES],
       availableEngines: [...SEARCH_ENGINE_IDS],
       engines: ws?.engines ?? {
         brave: { hasApiKey: false },
@@ -976,9 +985,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   // AGENT_DO_* gate envs are deleted). Read = the stored gates (+ whether
   // the row exists at all); write = wholesale replace of the three booleans.
   routes.get("/system/tool-capabilities", async (ctx) => {
-    return ctx.json(
-      systemToolCapabilitiesResponseSchema.parse(await getToolCapabilities(ctx.env)),
-    );
+    return ctx.json(systemToolCapabilitiesResponseSchema.parse(await getToolCapabilities(ctx.env)));
   });
 
   routes.put("/system/tool-capabilities", async (ctx) => {
@@ -988,9 +995,42 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     // as the provider rows, so the next turn picks the gates up (the
     // image-source/web-search writes ride the same path).
     await hub(ctx.env).notifySystem(["config-changed"]);
-    return ctx.json(
-      systemToolCapabilitiesResponseSchema.parse(await getToolCapabilities(ctx.env)),
-    );
+    return ctx.json(systemToolCapabilitiesResponseSchema.parse(await getToolCapabilities(ctx.env)));
+  });
+
+  // #547 the compaction-preference face: the D1 `compaction_settings`
+  // single-row seat is the sole 正本 (zero env fallback). Read = the stored
+  // order + remote summarizer (an absent row is the omp default posture);
+  // write = wholesale replace. The remote selection 422-validates against
+  // the live catalog at write time (the #351 named errors — the same
+  // fail-closed posture a create/send selection gets); the compact face
+  // re-validates at use, so a later catalog drift degrades to that face's
+  // named errors instead of a silent mis-route. Read-per-compact, so a
+  // write hot-applies without a redeploy.
+  routes.get("/system/compaction-settings", async (ctx) => {
+    const state = await getCompactionSettings(ctx.env);
+    return ctx.json(systemCompactionSettingsResponseSchema.parse(state));
+  });
+
+  routes.put("/system/compaction-settings", async (ctx) => {
+    const payload = await requireJsonBody(ctx, systemCompactionSettingsPutRequestSchema);
+    if (payload.remote !== null) {
+      const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+      validateThreadExecutionSelection(
+        { providerId: payload.remote.providerId, model: payload.remote.model },
+        overlay?.providers ?? {},
+      );
+    }
+    await setCompactionSettings(ctx.env, {
+      methodOrder: payload.methodOrder,
+      remote: payload.remote,
+    });
+    // Hot-apply broadcast (#382): the compact face reads the seat per
+    // request, so the next /compact picks the preference up (the
+    // tool-capabilities write path).
+    await hub(ctx.env).notifySystem(["config-changed"]);
+    const state = await getCompactionSettings(ctx.env);
+    return ctx.json(systemCompactionSettingsResponseSchema.parse(state));
   });
 
   // #506 the origin-allowlist face: the D1 `origin_allowlist` single-row seat
@@ -1026,9 +1066,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   // default-execution-options face read the seat per request/turn, so a
   // write hot-applies without a redeploy.
   routes.get("/system/permission-mode", async (ctx) => {
-    return ctx.json(
-      systemPermissionModeResponseSchema.parse(await getPermissionMode(ctx.env)),
-    );
+    return ctx.json(systemPermissionModeResponseSchema.parse(await getPermissionMode(ctx.env)));
   });
 
   routes.put("/system/permission-mode", async (ctx) => {
@@ -1037,9 +1075,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     // Hot-apply broadcast (#382): the seat is read per dispatch, so the next
     // turn/defaults read picks the mode up (the tool-capabilities write path).
     await hub(ctx.env).notifySystem(["config-changed"]);
-    return ctx.json(
-      systemPermissionModeResponseSchema.parse(await getPermissionMode(ctx.env)),
-    );
+    return ctx.json(systemPermissionModeResponseSchema.parse(await getPermissionMode(ctx.env)));
   });
 
   routes.get("/system/providers", async (ctx) => {

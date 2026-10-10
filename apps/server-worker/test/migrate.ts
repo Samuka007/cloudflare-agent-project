@@ -15,6 +15,9 @@ import permissionModeSql from "../migrations/0008_permission_mode.sql";
 // #508: pure data purge (no schema) — predicate DELETEs of the retired omp
 // sentinel's reference rows; idempotent under replay by construction.
 import purgeOmpSentinelSql from "../migrations/0009_purge_omp_sentinel.sql";
+// #547: the compaction-preference seat behind GET/PUT
+// /system/compaction-settings (single-row, the tool_capabilities precedent).
+import compactionSettingsSql from "../migrations/0010_compaction_settings.sql";
 
 /** The migration files, in apply order. The deploy chain replays the whole
  * `migrations/*.sql` directory per deploy (#295, scripts/deploy-staging.sh);
@@ -32,6 +35,7 @@ export const MIGRATION_FILES: string[] = [
   originAllowlistSql,
   permissionModeSql,
   purgeOmpSentinelSql,
+  compactionSettingsSql,
 ];
 
 /** Statement splitter shared with the deploy replay: one statement per `;\n`

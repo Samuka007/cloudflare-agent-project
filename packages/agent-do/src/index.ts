@@ -13,7 +13,13 @@ export type {
 } from "./agent-do.js";
 export { AgentRpcError } from "./agent-do.js";
 export { EventLog } from "./event-log.js";
-export { agentEventDataSchemas, blobRefSchema, isBlobRef } from "./fsm-events.js";
+export {
+  agentEventDataSchemas,
+  blobRefSchema,
+  compactModeSchema,
+  isBlobRef,
+} from "./fsm-events.js";
+export type { CompactMode } from "./fsm-events.js";
 export type {
   AgentEventDataByType,
   AgentEventInput,
@@ -62,6 +68,15 @@ export {
   emptyReplayState,
   replayEvents,
 } from "./turn-state.js";
+export {
+  DEFAULT_COMPACTION_METHOD_ORDER,
+  DEFAULT_KEEP_RECENT_TOKENS,
+  isCompactMode,
+  planSnapCut,
+  resolveCompactMode,
+  resolveCompactionMethodOrder,
+} from "./compaction.js";
+export type { SnapCutPlan } from "./compaction.js";
 export type {
   ExecutionRuntime,
   ExecutionStatus,

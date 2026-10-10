@@ -3,6 +3,7 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
+import type { CompactMode } from "@cap/agent-do";
 
 /**
  * Order is load-bearing: `reasoningRank` (index) drives model-switch
@@ -319,11 +320,34 @@ function isSelectedPromptCommandMention(
 
 const BUILTIN_COMPACT_COMMAND = { trigger: "/", name: "compact" } as const;
 
+/** The omp compact-mode vocabulary the send face accepts (#547). */
+const COMPACT_COMMAND_MODES: Record<string, CompactMode> = {
+  soft: "soft",
+  remote: "remote",
+  snap: "snap",
+  // omp's own mode name — accepted as the alias of the ported `snap`.
+  snapcompact: "snap",
+};
+
+/** The parse verdict for a selected builtin `/compact [mode]` mention. */
+export type CompactCommandParse =
+  { kind: "compact"; mode?: CompactMode } | { kind: "invalid"; token: string };
+
 /**
- * Whether input consists solely of one selected built-in `/compact` mention.
- * Raw matching text and project/user commands intentionally do not qualify.
+ * Parse a selected builtin `/compact` mention into its compact face (#547,
+ * omp /compact `allowArgs` semantics reduced): the mention must span the
+ * `/compact` prefix of the sole text input; a trailing token matches the
+ * mode vocabulary case-insensitively (`soft | remote | snap | snapcompact` —
+ * omp's own `snapcompact` name is the snap alias), the empty remainder is
+ * the modeless face (the deployment methodOrder preference decides), and an
+ * unrecognized token is `invalid` (the port ships no focus-instruction
+ * plumbing, so omp's "rest = summarizer instructions" face is a named 422
+ * here, never a silently ignored argument). Raw matching text and
+ * project/user commands intentionally do not qualify (null).
  */
-export function isStandaloneBuiltinCompactCommand(input: readonly PromptInput[]): boolean {
+export function parseStandaloneBuiltinCompactCommand(
+  input: readonly PromptInput[],
+): CompactCommandParse | null {
   const selected = input.flatMap((item) =>
     item.type === "text"
       ? item.mentions
@@ -333,7 +357,7 @@ export function isStandaloneBuiltinCompactCommand(input: readonly PromptInput[])
   );
   const standalone = selected[0];
   if (selected.length !== 1 || !standalone || input.some((item) => item.type !== "text")) {
-    return false;
+    return null;
   }
   const { mention, text } = standalone;
   if (
@@ -342,11 +366,16 @@ export function isStandaloneBuiltinCompactCommand(input: readonly PromptInput[])
     mention.resource.origin !== "builtin" ||
     text.slice(mention.start, mention.end) !== "/compact"
   ) {
-    return false;
+    return null;
   }
-  return removeCommandMentionsFromPromptInput(input, BUILTIN_COMPACT_COMMAND).every(
-    (item) => item.type === "text" && item.text.trim() === "",
-  );
+  const argument = removeCommandMentionsFromPromptInput(input, BUILTIN_COMPACT_COMMAND)
+    .map((item) => (item.type === "text" ? item.text : ""))
+    .join("")
+    .trim();
+  if (argument === "") return { kind: "compact" };
+  const mode = COMPACT_COMMAND_MODES[argument.toLowerCase()];
+  if (mode === undefined) return { kind: "invalid", token: argument };
+  return { kind: "compact", mode };
 }
 
 /** Structured prompt input for the selected built-in `/compact` command. */
@@ -366,7 +395,7 @@ export function createStandaloneBuiltinCompactCommandInput(): PromptInput[] {
             source: "command",
             origin: "builtin",
             label: "compact",
-            argumentHint: null,
+            argumentHint: "",
           },
         },
       ],
