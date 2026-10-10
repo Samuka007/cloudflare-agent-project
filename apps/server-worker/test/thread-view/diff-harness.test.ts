@@ -28,7 +28,7 @@ import {
   rowsForConversationOutline,
 } from "../../src/services/thread-view.js";
 import type { TimelineRow } from "../../src/contract/thread-timeline.js";
-import { THREAD_ID, THREAD_STATUS, uxJournal } from "./fixture.js";
+import { THREAD_STATUS, uxJournal } from "./fixture.js";
 
 interface RowSummary {
   family: string;
@@ -45,23 +45,18 @@ function summarizeRow(row: TimelineRow): RowSummary {
     row.kind === "work"
       ? `work/${row.workKind}`
       : row.kind === "system"
-        ? `system/${row.systemKind}${"operationKind" in row ? `/${String(row.operationKind)}` : ""}`
+        ? `system/${row.systemKind}${"operationKind" in row ? `/${row.operationKind}` : ""}`
         : row.kind === "conversation"
           ? `conversation/${row.role}`
           : row.kind;
-  const titleOrRole =
-    "title" in row && row.title !== undefined
-      ? String(row.title)
-      : "text" in row && row.text !== undefined
-        ? String(row.text)
-        : "";
+  const titleOrRole = "title" in row ? row.title : "text" in row ? row.text : "";
   const fullText =
-    "text" in row && row.text !== undefined
-      ? String(row.text)
-      : "output" in row && row.output !== undefined
-        ? String(row.output)
-        : "detail" in row && row.detail !== null && "detail" in row && row.detail !== undefined
-          ? String(row.detail)
+    "text" in row
+      ? row.text
+      : "output" in row
+        ? row.output
+        : "detail" in row && row.detail !== null
+          ? row.detail
           : "";
   const extra: Record<string, unknown> = {};
   if ("toolName" in row) extra.toolName = row.toolName;
@@ -69,7 +64,7 @@ function summarizeRow(row: TimelineRow): RowSummary {
   if ("turnId" in row) extra.turnId = row.turnId;
   if ("reasoningId" in row) extra.reasoningId = row.reasoningId;
   if ("completedAt" in row) extra.completedAt = row.completedAt;
-  if ("childRows" in row) extra.childRows = row.childRows.length;
+  if ("childRows" in row) extra.childRows = row.childRows?.length ?? 0;
   if ("children" in row) extra.children = row.children?.length ?? 0;
   if ("subagentType" in row) extra.subagentType = row.subagentType;
   if ("description" in row) extra.description = row.description;
@@ -85,7 +80,7 @@ function summarizeRow(row: TimelineRow): RowSummary {
   return {
     family,
     titleOrRole: titleOrRole.slice(0, 80),
-    status: "status" in row && row.status !== undefined ? String(row.status) : null,
+    status: "status" in row ? row.status : null,
     seq: [row.sourceSeqStart, row.sourceSeqEnd],
     textLen: fullText.length,
     textHead: fullText.slice(0, 60),
@@ -139,7 +134,9 @@ const contextWindowUsageA = buildContextWindowUsage(uxJournal);
 // --- Path B: the switched projection ----------------------------------------
 const projectedB = projectThreadTimeline(uxJournal, { threadStatus });
 const rowsB = projectedB.rows;
-const summariesA = rowsA.map(summarizeRow).sort((a, b) => compareKey(a).localeCompare(compareKey(b)));
+const summariesA = rowsA
+  .map(summarizeRow)
+  .sort((a, b) => compareKey(a).localeCompare(compareKey(b)));
 const summariesB = flattenRows(rowsB)
   .map(summarizeRow)
   .sort((a, b) => compareKey(a).localeCompare(compareKey(b)));
@@ -159,9 +156,10 @@ describe("#560 dual-path timeline diff harness (spike #554 harness in CI)", () =
   });
 
   it("synthesizes the D4 Thought rows in both faces (status/identity parity)", () => {
-    const thoughts = (rows: readonly TimelineRow[]): TimelineRow[] =>
+    type ThoughtRow = TimelineRow & { operationKind: string; reasoningId: string };
+    const thoughts = (rows: readonly TimelineRow[]): ThoughtRow[] =>
       rows.filter(
-        (row): row is TimelineRow & { operationKind: string; reasoningId: string } =>
+        (row): row is ThoughtRow =>
           row.kind === "system" &&
           row.systemKind === "operation" &&
           row.operationKind === "reasoning",
@@ -176,8 +174,14 @@ describe("#560 dual-path timeline diff harness (spike #554 harness in CI)", () =
 
   it("seals the BATCH delegation rows in plan order (D5 k-th settle)", () => {
     const delegations = flattenRows(rowsB).filter(
-      (row): row is TimelineRow & { workKind: string; callId: string; status: string; output: string } =>
-        row.kind === "work" && row.workKind === "delegation",
+      (
+        row,
+      ): row is TimelineRow & {
+        workKind: string;
+        callId: string;
+        status: string;
+        output: string;
+      } => row.kind === "work" && row.workKind === "delegation",
     );
     const batch = delegations
       .filter((row) => row.callId.startsWith("exec_batch_call"))
@@ -190,8 +194,14 @@ describe("#560 dual-path timeline diff harness (spike #554 harness in CI)", () =
 
   it("keeps the single background delegation sealed with the settle summary", () => {
     const delegations = flattenRows(rowsB).filter(
-      (row): row is TimelineRow & { workKind: string; callId: string; status: string; output: string } =>
-        row.kind === "work" && row.workKind === "delegation",
+      (
+        row,
+      ): row is TimelineRow & {
+        workKind: string;
+        callId: string;
+        status: string;
+        output: string;
+      } => row.kind === "work" && row.workKind === "delegation",
     );
     const single = delegations.find((row) => row.callId === "exec_0016");
     expect(single).toMatchObject({ status: "completed", output: "agentId: child-1\nScout done." });
@@ -204,10 +214,10 @@ describe("#560 dual-path timeline diff harness (spike #554 harness in CI)", () =
     );
     const single = delegations.find((row) => row.callId === "exec_0016");
     expect(single?.childRows.length).toBe(
-      rowsA.filter(
-        (row) =>
+      rowsA.find(
+        (row): row is TimelineRow & { callId: string; childRows: TimelineRow[] } =>
           row.kind === "work" && row.workKind === "delegation" && row.callId === "exec_0016",
-      )[0]?.childRows.length,
+      )?.childRows.length,
     );
   });
 

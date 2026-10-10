@@ -31,6 +31,12 @@ jobs:
       # the set CI tests cannot drift from the set staging serves (#175).
       - name: Stage bb SPA (pinned submodule)
         run: ./scripts/stage-bb-spa.sh
+      # #566: typecheck consumes bb's dist .d.ts and the vitest worker
+      # pipeline loads bb's dist JS — build the five dist-emitting bb packages
+      # before any gate runs (pnpm build:bb; deploy-staging.sh does the same
+      # so CD can never bundle against a stale or missing dist).
+      - name: Build bb dist packages (pinned submodule)
+        run: pnpm build:bb
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test

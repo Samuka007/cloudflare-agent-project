@@ -52,16 +52,11 @@
  *   the one cap delta handled inside the materializer, because it rewrites
  *   materialized rows before bb sees them.
  */
-import {
-  threadEventScopeSchema,
-  type ThreadEventRow,
-  type ThreadEventScope,
-} from "@bb/domain";
-// (typed through the ambient shims in bb-thread-view.d.ts: tsc cannot check
-// bb sources under this stack's stricter base flags, and the vitest plugin's
-// module pipeline externalizes bare specifiers to workerd — see the shim
-// header and the #560 close-out notes for the two-sided resolution story:
-// tsc → shims, deploy bundling → wrangler alias, harness → plain vitest)
+import { threadEventScopeSchema, type ThreadEventRow, type ThreadEventScope } from "@bb/domain";
+// (#566: typed through bb's dist .d.ts — the pinned bb emits JS+declarations
+// (lane/566-dist-build), so tsc sees only the declaration surface under this
+// stack's stricter base flags, and workerd natively loads the dist JS that
+// the vitest plugin's module pipeline externalizes bare specifiers to)
 
 /**
  * Structural view of one ux journal envelope. The protocol union
@@ -116,8 +111,7 @@ const rowId = (envelope: UxThreadEventEnvelope): string =>
   // keeps ids unique without changing any projected row.
   `${envelope.id}#${envelope.seq}`;
 
-const threadScope = (): ThreadEventScope =>
-  threadEventScopeSchema.parse({ kind: "thread" });
+const threadScope = (): ThreadEventScope => threadEventScopeSchema.parse({ kind: "thread" });
 
 const turnScope = (turnId: string): ThreadEventScope =>
   threadEventScopeSchema.parse({ kind: "turn", turnId });
@@ -128,19 +122,24 @@ const row = (
   scope: ThreadEventScope,
   data: Record<string, unknown>,
 ): ThreadEventRow =>
+  // The static union cannot express "data payload valid for this type"
+  // without duplicating bb's per-type schemas; the pairing is a runtime
+  // contract — bb's decode (buildThreadEvent) re-validates every row through
+  // its zod schema, so a mismatched payload throws at the projection
+  // boundary instead of lying. #566: the cast replaced the #560 ambient
+  // shim, which hid the real bb types from this program entirely.
   ({
-
-  id: rowId(envelope),
-  scope,
-  threadId: envelope.threadId,
-  seq: envelope.seq,
-  createdAt: envelope.createdAt,
-  type,
-  // bb persists providerThreadId as a data member (stored-thread-event.ts
-  // Omit<TEvent, "threadId" | "type" | "scope">); buildThreadEvent re-reads
-  // it from there. Overridable per row (turn/completed stores null).
-  data: { providerThreadId: SYNTHETIC_PROVIDER_THREAD_ID, ...data },
-});
+    id: rowId(envelope),
+    scope,
+    threadId: envelope.threadId,
+    seq: envelope.seq,
+    createdAt: envelope.createdAt,
+    type,
+    // bb persists providerThreadId as a data member (stored-thread-event.ts
+    // Omit<TEvent, "threadId" | "type" | "scope">); buildThreadEvent re-reads
+    // it from there. Overridable per row (turn/completed stores null).
+    data: { providerThreadId: SYNTHETIC_PROVIDER_THREAD_ID, ...data },
+  }) as ThreadEventRow;
 
 // clientTurnRequestIdSchema: /^creq_[23456789abcdefghijkmnpqrstuvwxyz]{10}$/
 // — the synthesized id must satisfy bb's pattern, so the ux seq encodes
@@ -150,7 +149,7 @@ function encodeRequestId(seq: number): string {
   let out = "";
   let value = seq;
   for (let index = 0; index < 10; index += 1) {
-    out = REQUEST_ID_ALPHABET[value % REQUEST_ID_ALPHABET.length] + out;
+    out = REQUEST_ID_ALPHABET.charAt(value % REQUEST_ID_ALPHABET.length) + out;
     value = Math.floor(value / REQUEST_ID_ALPHABET.length);
   }
   return `creq_${out}`;
@@ -198,25 +197,17 @@ function requestRowsForUserMessage(
   if (kind === null) return [];
   const requestId = encodeRequestId(envelope.seq);
   const input = requestInput(Array.isArray(item.content) ? item.content : []);
-  const requested: ThreadEventRow = row(
-    envelope,
-    "client/turn/requested",
-    threadScope(),
-    {
-      direction: "outbound",
-      requestId,
-      source: "tell",
-      initiator: "user",
-      senderThreadId: null,
-      input,
-      target:
-        kind === "steer"
-          ? { kind: "steer", expectedTurnId: turnId }
-          : { kind: "new-turn" },
-      request: { method: "turn/start", params: {} },
-      execution: synthesizedExecution,
-    },
-  );
+  const requested: ThreadEventRow = row(envelope, "client/turn/requested", threadScope(), {
+    direction: "outbound",
+    requestId,
+    source: "tell",
+    initiator: "user",
+    senderThreadId: null,
+    input,
+    target: kind === "steer" ? { kind: "steer", expectedTurnId: turnId } : { kind: "new-turn" },
+    request: { method: "turn/start", params: {} },
+    execution: synthesizedExecution,
+  });
   const accepted: ThreadEventRow = row(envelope, "turn/input/accepted", turnScope(turnId), {
     clientRequestId: requestId,
   });
@@ -304,9 +295,7 @@ function itemStartedRows(
             ...(typeof item.output === "string" && item.output.length > 0
               ? { aggregatedOutput: item.output }
               : {}),
-            ...(typeof item.exitCode === "number"
-              ? { exitCode: item.exitCode }
-              : {}),
+            ...(typeof item.exitCode === "number" ? { exitCode: item.exitCode } : {}),
           },
         }),
       ];
@@ -398,9 +387,7 @@ function itemCompletedRows(
             ...(typeof item.output === "string" && item.output.length > 0
               ? { aggregatedOutput: item.output }
               : {}),
-            ...(typeof item.exitCode === "number"
-              ? { exitCode: item.exitCode }
-              : {}),
+            ...(typeof item.exitCode === "number" ? { exitCode: item.exitCode } : {}),
           },
         }),
       ];
@@ -444,12 +431,7 @@ function anchorAndSealPostPass(rows: ThreadEventRow[]): void {
   for (const materialized of rows) {
     if (materialized.type === "item/started") {
       const item = asRecord(materialized.data.item);
-      if (
-        item !== undefined &&
-        item.type === "toolCall" &&
-        item.tool === "spawnAgent" &&
-        typeof item.id === "string"
-      ) {
+      if (item?.type === "toolCall" && item.tool === "spawnAgent" && typeof item.id === "string") {
         const turnId = materialized.scope.kind === "turn" ? materialized.scope.turnId : null;
         if (turnId !== null) {
           delegationPlan.push({ callId: item.id, turnId });
@@ -460,12 +442,7 @@ function anchorAndSealPostPass(rows: ThreadEventRow[]): void {
     }
     if (materialized.type === "item/completed") {
       const item = asRecord(materialized.data.item);
-      if (
-        item !== undefined &&
-        item.type === "toolCall" &&
-        item.tool === "spawnAgent" &&
-        typeof item.id === "string"
-      ) {
+      if (item?.type === "toolCall" && item.tool === "spawnAgent" && typeof item.id === "string") {
         sealedCallIds.add(item.id);
       }
     }
@@ -502,7 +479,7 @@ function anchorAndSealPostPass(rows: ThreadEventRow[]): void {
     if (
       target === undefined ||
       sealedCallIds.has(target.callId) ||
-      item.status !== "completed" && item.status !== "failed" && item.status !== "interrupted"
+      (item.status !== "completed" && item.status !== "failed" && item.status !== "interrupted")
     ) {
       continue;
     }

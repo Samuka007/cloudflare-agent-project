@@ -38,55 +38,6 @@ const PREVIEW_MAX_CHARS = 512;
 const MAX_ERROR_TITLE_LENGTH = 80;
 
 /**
- * bb titles provider-unhandled rows `Unhandled <provider> event` with the
- * projected provider display name (thread-view parse-operation-message.ts:452).
- * This stack's journal has no per-thread providerId — the model relay is the
- * single provider — so the display name is the fixed runtime identity.
- */
-const UNHANDLED_PROVIDER_ROW_TITLE = "Unhandled agent event";
-
-/** bb thread-view provider-unhandled-detail.ts HUMANIZED_EVENT_TOKEN_MAP port. */
-const HUMANIZED_EVENT_TOKEN_MAP: Record<string, string> = {
-  api: "API",
-  chatgpt: "ChatGPT",
-  id: "ID",
-  mcp: "MCP",
-  oauth: "OAuth",
-  sdk: "SDK",
-  ui: "UI",
-  url: "URL",
-};
-
-/** bb thread-view provider-unhandled-detail.ts humanizeRawType port. */
-function humanizeRawType(rawType: string): string {
-  return rawType
-    .split(/[:/._-]+/u)
-    .flatMap((token) => token.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(" "))
-    .filter((token) => token.length > 0)
-    .map((token) => {
-      const normalized = token.toLowerCase();
-      return (
-        HUMANIZED_EVENT_TOKEN_MAP[normalized] ??
-        normalized.charAt(0).toUpperCase() + normalized.slice(1)
-      );
-    })
-    .join(" ");
-}
-
-/**
- * bb buildProviderUnhandledDetail (provider-unhandled-detail.ts:38-46):
- * humanized raw type, the raw type token, then the byte-transparent payload.
- */
-function providerUnhandledDetail(event: UxThreadEvent): string {
-  return [
-    humanizeRawType(event.type),
-    `Raw event: ${event.type}`,
-    "Payload:",
-    JSON.stringify(event, null, 2),
-  ].join("\n");
-}
-
-/**
  * `__parentCallId` carries #274 J1 delegation attribution: ux items with a
  * `parentToolCallId` fold into that delegation row's `childRows` at assembly
  * instead of the top-level timeline (#275 J4) — bb thread-view aggregates the
@@ -505,9 +456,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
       // [assistant][Thought]). firstSeq is monotone per call and interleaves
       // correctly with tool/answer rows.
       __order: lifecycle.firstSeq,
-      ...(lifecycle.parentCallId !== undefined
-        ? { __parentCallId: lifecycle.parentCallId }
-        : {}),
+      ...(lifecycle.parentCallId !== undefined ? { __parentCallId: lifecycle.parentCallId } : {}),
     });
   };
 
@@ -719,12 +668,7 @@ export function projectTimelineRows(events: readonly UxThreadEvent[]): TimelineR
           if (lifecycle === undefined) {
             break;
           }
-          materializeReasoningRow(
-            lifecycle,
-            "completed",
-            event,
-            item.content.join(""),
-          );
+          materializeReasoningRow(lifecycle, "completed", event, item.content.join(""));
           break;
         }
         const assistantRowId =

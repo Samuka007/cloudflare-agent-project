@@ -39,6 +39,12 @@ if [[ ! -d node_modules ]]; then
   exit 1
 fi
 
+# #566: the worker imports bb packages through their dist JS (exports default
+# condition) — build the five dist-emitting bb packages before wrangler
+# bundles, so the deploy can never ship a stale or missing dist.
+echo "== building bb dist packages =="
+pnpm build:bb
+
 # SEC-W5-001 (#397): deploy-time gate-armed assertion. #505 removed the flag —
 # gate state IS the credential pair (middleware/access.ts derives it from
 # ACCESS_TEAM_DOMAIN + ACCESS_AUD), so the assert script checks that the

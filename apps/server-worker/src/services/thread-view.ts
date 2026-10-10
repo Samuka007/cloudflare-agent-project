@@ -31,18 +31,12 @@ import {
   type TimelineDelegationWorkRow,
   type TimelineRow,
 } from "../contract/thread-timeline.js";
-import {
-  activeThinkingSchema,
-  type ActiveThinking,
-} from "../contract/domain/active-thinking.js";
+import { activeThinkingSchema, type ActiveThinking } from "../contract/domain/active-thinking.js";
+import type { ThreadStatus } from "../contract/domain/thread-status.js";
 import type { ThreadContextWindowUsage } from "../contract/api/shared.js";
 // durationToCompactString/truncateReasoningDetail are the retired fold's bb
 // format-helpers ports, shared with the D4 synthesis below.
-import {
-  durationToCompactString,
-  mergeTimelineRows,
-  truncateReasoningDetail,
-} from "./timeline.js";
+import { durationToCompactString, mergeTimelineRows, truncateReasoningDetail } from "./timeline.js";
 
 // --- D4: Thought operation rows (#303 J6 档 2, bb #3250 port) -------------
 
@@ -68,9 +62,7 @@ function pickTurnId(data: EventData): string | null {
 }
 
 function rawEventData(event: UxThreadEvent): EventData {
-  return event.data !== null && typeof event.data === "object"
-    ? (event.data as EventData)
-    : {};
+  return event.data !== null && typeof event.data === "object" ? (event.data as EventData) : {};
 }
 
 interface ThoughtRow {
@@ -120,7 +112,7 @@ function materializeThoughtRow(
     status,
     completedAt: event.createdAt,
   });
-  rowsById.set(String(row.id), row);
+  rowsById.set(row.id, row);
   return {
     row,
     ...(lifecycle.parentCallId !== undefined ? { parentCallId: lifecycle.parentCallId } : {}),
@@ -135,9 +127,10 @@ function materializeThoughtRow(
  * of a turn sweeps that turn's still-open lifecycles (aborted calls never
  * complete — their text dies with the turn, #543).
  */
-function synthesizeThoughtRows(
-  events: readonly UxThreadEvent[],
-): { topLevel: TimelineRow[]; parented: ThoughtRow[] } {
+function synthesizeThoughtRows(events: readonly UxThreadEvent[]): {
+  topLevel: TimelineRow[];
+  parented: ThoughtRow[];
+} {
   const lifecycles = new Map<string, ReasoningLifecycle>();
   const seenItemIds = new Set<string>();
   const rowsById = new Map<string, TimelineRow>();
@@ -404,9 +397,33 @@ export function projectUnhandledProviderRows(
 
 // --- the projection switch -------------------------------------------------
 
+/**
+ * #566 face parity: bb materializes a zero-count attachments object for
+ * text-only user rows (build-thread-timeline.ts toConversationAttachments);
+ * the shipped M0 row shape is null (#320 A5 — the retired
+ * conversationAttachmentsOf). The SPA renders both identically
+ * (ConversationAttachments.tsx:128 early-return), so this normalizes back to
+ * null to keep the boundary output identical with the face the compat suite
+ * pins. A row carrying at least one attachment part keeps bb's counts.
+ */
+function normalizeZeroCountAttachments(row: TimelineRow): void {
+  if (
+    row.kind === "conversation" &&
+    row.role === "user" &&
+    row.attachments !== null &&
+    row.attachments.webImages === 0 &&
+    row.attachments.localImages === 0 &&
+    row.attachments.localFiles === 0
+  ) {
+    row.attachments = null;
+  }
+}
+
 export interface ThreadTimelineProjectionOptions {
-  /** bb threadStatus — drives the activeThinking gate inside bb. */
-  threadStatus: string;
+  /** bb threadStatus — drives the activeThinking gate inside bb. Cap
+   * contract's same-source union: a bb pin that drifts the status vocabulary
+   * fails this assignment instead of silently reshaping the gate. */
+  threadStatus: ThreadStatus;
   /** D7 debug toggle (bb showUnhandledProviderEvents). */
   includeUnhandledProviderRows?: boolean;
   /** The raw journal window — required when includeUnhandledProviderRows. */
@@ -434,14 +451,20 @@ export function projectThreadTimeline(
   // Each bb row parses against the cap contract — the same-source drift
   // alarm: a bb pin upgrade that changes row shapes fails here instead of
   // shipping a silently reshaped SPA face.
-  let rows = projection.rows.map((row) => timelineRowSchema.parse(row));
+  let rows = projection.rows.map((row) => {
+    const parsed = timelineRowSchema.parse(row);
+    normalizeZeroCountAttachments(parsed);
+    return parsed;
+  });
   rows = mergeThoughtRows(rows, synthesizeThoughtRows(events));
   if (options.includeUnhandledProviderRows === true) {
     const rawEvents = options.rawEvents ?? [];
     rows = mergeTimelineRows(rows, projectUnhandledProviderRows(events, rawEvents));
   }
   const activeThinking =
-    projection.activeThinking === null ? null : activeThinkingSchema.parse(projection.activeThinking);
+    projection.activeThinking === null
+      ? null
+      : activeThinkingSchema.parse(projection.activeThinking);
   const contextWindowUsage =
     projection.contextWindowUsage === null
       ? null
