@@ -1,9 +1,21 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": ".",
-    "types": ["@cloudflare/workers-types"],
-    "allowImportingTsExtensions": true
+    "types": [
+      "@cloudflare/workers-types"
+    ],
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@bb/domain": [
+        "./src/thread-view/bb-thread-view.d.ts"
+      ],
+      "@bb/thread-view": [
+        "./src/thread-view/bb-thread-view.d.ts"
+      ]
+    }
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts"
+  ]
 }
