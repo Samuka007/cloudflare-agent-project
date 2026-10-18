@@ -1,17 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { buildActiveThinking, projectTimelineRows } from "../../src/services/timeline.js";
+import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view.js";
 import type { TimelineRow } from "../../src/contract/thread-timeline.js";
 import type { UxThreadEvent } from "../../src/seam/agent-do.js";
 
 /**
  * #303 (upstream bb #3250 port, J6 档 2): the completed CoT face. The ux
  * reasoning stream folds into persistent `reasoning` operation rows —
- * "Thought for Ns" title, prose detail, canonical `reasoningId` = the ux
- * itemId (which is also the live `activeThinking` id), delegation nesting via
+ * "Thought for Ns" title, prose detail, delegation nesting via
  * parentToolCallId, interrupted sealing at turn end — while the live face
- * stays `activeThinking` (no pending reasoning row doubles the indicator,
- * matching bb's projection where reasoning messages materialize only at
- * completion).
+ * stays `activeThinking` (no pending reasoning row doubles the indicator).
+ * Since the #554 roadmap step ⑤ retirement these pins target the LIVE face:
+ * the materializer + bb thread-view projection (services/thread-view.ts),
+ * not the deleted porting-layer fold.
+ *
+ * bb identity (the D1 namespace the #560 diff harness pinned): Thought rows
+ * carry bb's operation id `${threadId}:op:reasoning:${messageKey}` with
+ * messageKey `kind:reasoning|turn:<t>|parent:<p>|item:<itemId>` — both as
+ * the row id and the `reasoningId` field; the ux itemId is the `item:` tail.
  */
 
 function uxEvent(
@@ -21,6 +26,18 @@ function uxEvent(
   createdAt = 1_000 + seq,
 ): UxThreadEvent {
   return { id: `evt-${seq}`, threadId: "thr_t", seq, type, data, createdAt };
+}
+
+function thoughtId(itemId: string, parent = "root", turnId = "t1"): string {
+  return `thr_t:op:reasoning:kind:reasoning|turn:${turnId}|parent:${parent}|item:${itemId}`;
+}
+
+const turnStarted = (): UxThreadEvent => uxEvent(0, "turn/started", { turnId: "t1" });
+
+/** bb wraps completed/interrupted turns into summary rows (D8); the flat
+ * assertions below walk the unwrapped feed, same as the SPA timeline does. */
+function projectRows(events: readonly UxThreadEvent[]): TimelineRow[] {
+  return rowsForConversationOutline(projectThreadTimeline(events, { threadStatus: "active" }).rows);
 }
 
 type GenericOperationSystemRow = Extract<
@@ -38,9 +55,9 @@ function isReasoningRow(
   );
 }
 
-describe("#303 — reasoning operation rows (bb #3250 parity)", () => {
+describe("#303 — reasoning operation rows (bb #3250 parity, live face)", () => {
   it("materializes the completed Thought row with canonical identity and duration title", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
       uxEvent(1, "turn/started", { turnId: "t1" }, 1_000),
       uxEvent(2, "item/reasoning/textDelta", {
         turnId: "t1",
@@ -68,8 +85,8 @@ describe("#303 — reasoning operation rows (bb #3250 parity)", () => {
     const reasoning = rows.filter(isReasoningRow);
     expect(reasoning).toHaveLength(1);
     expect(reasoning[0]).toMatchObject({
-      id: "reasoning:itm-rs-t1:1",
-      reasoningId: "itm-rs-t1:1",
+      id: thoughtId("itm-rs-t1:1"),
+      reasoningId: thoughtId("itm-rs-t1:1"),
       title: "Thought for 12s",
       detail: "Compare both render paths.",
       status: "completed",
@@ -82,24 +99,25 @@ describe("#303 — reasoning operation rows (bb #3250 parity)", () => {
 
   it("keeps the live face on activeThinking only — no pending reasoning row", () => {
     const events = [
-      uxEvent(1, "turn/started", { turnId: "t1" }),
+      turnStarted(),
       uxEvent(2, "item/reasoning/textDelta", {
         turnId: "t1",
         itemId: "itm-rs-t1:1",
-        delta: "still streaming",
+        delta: "still streaming\n",
       }),
     ];
-    const rows = projectTimelineRows(events);
+    const rows = projectRows(events);
     expect(rows).toHaveLength(0);
-    // The live face keeps the stream (bb threadStatus gate applies at the
-    // route boundary; here the fold itself is status-independent).
-    expect(buildActiveThinking(events, "active")?.text).toBe(
-      "still streaming",
-    );
+    // The live face keeps the stream (the bb threadStatus gate applies at
+    // the route boundary — projection runs with "active" here).
+    expect(
+      projectThreadTimeline(events, { threadStatus: "active" }).activeThinking?.text,
+    ).toBe("still streaming\n");
   });
 
   it("drops an empty-text completion without leaving a row", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       uxEvent(1, "item/completed", {
         turnId: "t1",
         item: { type: "reasoning", id: "itm-rs-t1:1", summary: [], content: [] },
@@ -109,7 +127,8 @@ describe("#303 — reasoning operation rows (bb #3250 parity)", () => {
   });
 
   it("seals an open stream as an interrupted Thought row at turn completion", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       uxEvent(1, "item/reasoning/textDelta", {
         turnId: "t1",
         itemId: "itm-rs-t1:1",
@@ -124,15 +143,16 @@ describe("#303 — reasoning operation rows (bb #3250 parity)", () => {
     const reasoning = rows.filter(isReasoningRow);
     expect(reasoning).toHaveLength(1);
     expect(reasoning[0]).toMatchObject({
-      id: "reasoning:itm-rs-t1:1",
-      reasoningId: "itm-rs-t1:1",
+      id: thoughtId("itm-rs-t1:1"),
+      reasoningId: thoughtId("itm-rs-t1:1"),
       detail: "cut mid-thought",
       status: "interrupted",
     });
   });
 
   it("never resurrects a materialized row at turn completion", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       uxEvent(1, "item/reasoning/textDelta", {
         turnId: "t1",
         itemId: "itm-rs-t1:1",
@@ -155,7 +175,8 @@ describe("#303 — reasoning operation rows (bb #3250 parity)", () => {
   });
 
   it("nests subagent CoT into the delegation row's childRows by attribution", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       uxEvent(1, "item/started", {
         turnId: "t1",
         item: {
@@ -203,7 +224,7 @@ describe("#303 — reasoning operation rows (bb #3250 parity)", () => {
     }
     expect(isReasoningRow(child)).toBe(true);
     expect(child).toMatchObject({
-      reasoningId: "itm-rs-t1:child",
+      reasoningId: thoughtId("itm-rs-t1:child", "spawn-1"),
       detail: "child reasoning",
       status: "completed",
     });
@@ -211,7 +232,8 @@ describe("#303 — reasoning operation rows (bb #3250 parity)", () => {
 
   it("truncates oversized detail with the bb tail-counted suffix", () => {
     const big = "x".repeat(32_500);
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       uxEvent(1, "item/reasoning/textDelta", {
         turnId: "t1",
         itemId: "itm-rs-t1:big",
@@ -236,7 +258,8 @@ describe("#303 — reasoning operation rows (bb #3250 parity)", () => {
   // thinking deltas at seq 5/20, answer deltas at 7-11/22-26, rows rendered
   // [assistant][Thought]).
   it("renders the Thought row before the answer it precedes when deltas interleave", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       uxEvent(5, "item/reasoning/textDelta", {
         turnId: "t1",
         itemId: "itm-rs-t1:3",
@@ -272,7 +295,8 @@ describe("#303 — reasoning operation rows (bb #3250 parity)", () => {
   });
 
   it("seals an interrupted Thought at its stream position, not at the turn terminal", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       uxEvent(1, "item/reasoning/textDelta", {
         turnId: "t1",
         itemId: "itm-rs-t1:1",

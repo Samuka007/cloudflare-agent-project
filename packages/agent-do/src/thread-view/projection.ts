@@ -1,12 +1,12 @@
 /**
  * #560 projection switch, bb face: ux window → bb thread-view timeline
  * (buildThreadTimelineFromEvents), replacing the retired porting-layer fold
- * (projectTimelineRows/buildActiveThinking/buildContextWindowUsage) with the
- * upstream projection verbatim. The materializer supplies bb-consumable
- * rows; this module owns the decode + build pipeline and returns the RAW bb
- * output — the server-worker consumer re-validates against the cap contract
- * schemas and layers the cap delta post-processing (Thought rows D4,
- * provider-unhandled D7) on top.
+ * (the #554 roadmap step ⑤ deletion: the M0 row projection + the two tail
+ * folds) with the upstream projection verbatim. The materializer supplies
+ * bb-consumable rows; this module owns the decode + build pipeline and
+ * returns the RAW bb output — the server-worker consumer re-validates
+ * against the cap contract schemas and layers the cap delta post-processing
+ * (Thought rows D4, provider-unhandled D7) on top.
  */
 import type { ThreadEvent, ThreadEventRow, ThreadStatus } from "@bb/domain";
 import { buildThreadEvent } from "@bb/domain";

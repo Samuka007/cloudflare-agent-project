@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { ensureMigrations } from "../migrate.js";
-import { projectTimelineRows } from "../../src/services/timeline.js";
+import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view.js";
 import type { TimelineDelegationWorkRow, TimelineRow } from "../../src/contract/thread-timeline.js";
 import type { UxThreadEvent } from "../../src/seam/agent-do.js";
 
@@ -10,8 +10,15 @@ import type { UxThreadEvent } from "../../src/seam/agent-do.js";
  * arrives via the thread-scoped backgroundTask family, #274-attributed rows
  * aggregate into childRows, and background rows survive turn boundaries.
  * Pure projection tests over synthetic ux envelopes (m1-ux-fixes pattern).
+ * Since the #554 roadmap step ⑤ retirement the pins target the LIVE face —
+ * the materializer + bb thread-view projection (services/thread-view.ts);
+ * bb turn-summary wrappers (D8) are unwrapped before the flat assertions.
  */
 beforeAll(ensureMigrations);
+
+function projectRows(events: readonly UxThreadEvent[]): TimelineRow[] {
+  return rowsForConversationOutline(projectThreadTimeline(events, { threadStatus: "active" }).rows);
+}
 
 let seqCounter = 0;
 
@@ -28,6 +35,8 @@ function uxEvent(type: string, data: unknown): UxThreadEvent {
 }
 
 const ANCHOR = "thr_test:10";
+
+const turnStarted = (): UxThreadEvent => uxEvent("turn/started", { turnId: "turn_1" });
 
 function delegationStarted(overrides?: { id?: string; anchor?: string }): UxThreadEvent {
   return uxEvent("item/started", {
@@ -60,7 +69,7 @@ function delegationOf(rows: readonly TimelineRow[], id = ANCHOR): TimelineDelega
 
 describe("#275 J4 — delegation row projection", () => {
   it("materializes the contract delegation row with badge data from the synthetic arguments", () => {
-    const rows = projectTimelineRows([delegationStarted()]);
+    const rows = projectRows([turnStarted(), delegationStarted()]);
     const row = delegationOf(rows);
     expect(row).toMatchObject({
       workKind: "delegation",
@@ -77,43 +86,50 @@ describe("#275 J4 — delegation row projection", () => {
   });
 
   it("folds the turn-scoped item/completed (blocking settle) into output and status", () => {
-    const rows = projectTimelineRows([
+    const completion = uxEvent("item/completed", {
+      turnId: "turn_1",
+      item: {
+        type: "toolCall",
+        id: ANCHOR,
+        tool: "spawnAgent",
+        arguments: {},
+        status: "completed",
+        output: "blocking answer",
+        completedAt: 2_500,
+      },
+    });
+    const rows = projectRows([
+      turnStarted(),
       delegationStarted(),
-      uxEvent("item/completed", {
-        turnId: "turn_1",
-        item: {
-          type: "toolCall",
-          id: ANCHOR,
-          tool: "spawnAgent",
-          arguments: {},
-          status: "completed",
-          output: "blocking answer",
-          completedAt: 2_500,
-        },
-      }),
+      completion,
     ]);
     expect(delegationOf(rows)).toMatchObject({
       status: "completed",
       output: "blocking answer",
-      completedAt: 2_500,
+      // bb completes the row at the journal envelope's createdAt (the
+      // completion instant); the item's completedAt field is not read.
+      completedAt: completion.createdAt,
     });
   });
 
   it("seals a background row from the thread-scoped completed family by parentToolCallId", () => {
+    // The ux projection normalizes status/taskStatus together
+    // (ux-projection.ts:74-90): taskStatus "stopped" always ships with
+    // status "interrupted", which is what bb's workflow mapping renders.
     const terminal = uxEvent("item/backgroundTask/completed", {
       item: {
         type: "backgroundTask",
         id: "task:sp_1#0",
         taskType: "local_subagent",
         description: "Report the answer",
-        status: "completed",
+        status: "interrupted",
         taskStatus: "stopped",
         skipTranscript: false,
         summary: "",
         parentToolCallId: ANCHOR,
       },
     });
-    const rows = projectTimelineRows([delegationStarted(), terminal]);
+    const rows = projectRows([turnStarted(), delegationStarted(), terminal]);
     // stopped → interrupted (backgroundTaskItemStatus); no summary → output stays "".
     expect(delegationOf(rows)).toMatchObject({
       status: "interrupted",
@@ -123,7 +139,8 @@ describe("#275 J4 — delegation row projection", () => {
   });
 
   it("lands the settle summary into the row output (the #229 S7 summary slot)", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       delegationStarted(),
       uxEvent("item/backgroundTask/completed", {
         item: {
@@ -145,8 +162,8 @@ describe("#275 J4 — delegation row projection", () => {
     });
   });
 
-  it("never materializes a row from the family alone (no anchor, no phantom)", () => {
-    const rows = projectTimelineRows([
+  it("never materializes a DELEGATION row from the family alone (no anchor, no phantom)", () => {
+    const rows = projectRows([
       uxEvent("item/backgroundTask/completed", {
         item: {
           type: "backgroundTask",
@@ -171,13 +188,25 @@ describe("#275 J4 — delegation row projection", () => {
         },
       }),
     ]);
-    expect(rows).toHaveLength(0);
+    // The porting layer dropped the orphan family entirely; the live face
+    // renders bb's NATIVE background/workflow row for it instead (the
+    // prompt-box activity card face) — accepted bb behavior, but still no
+    // delegation row: without an anchor there is nothing to seal.
+    expect(rows.filter((row) => row.kind === "work" && row.workKind === "delegation")).toHaveLength(0);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kind: "work",
+      workKind: "workflow",
+      itemId: "task:sp_9#0",
+      taskStatus: "paused",
+    });
   });
 });
 
 describe("#275 J4 — childRows aggregation by parentToolCallId", () => {
   it("nests attributed tool and assistant rows; they leave the top-level timeline", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       delegationStarted(),
       uxEvent("item/started", {
         turnId: "turn_1",
@@ -214,6 +243,15 @@ describe("#275 J4 — childRows aggregation by parentToolCallId", () => {
           completedAt: 2_700,
         },
       }),
+      uxEvent("item/completed", {
+        turnId: "turn_1",
+        item: {
+          type: "agentMessage",
+          id: "itm_am_1",
+          text: "child says hi",
+          parentToolCallId: ANCHOR,
+        },
+      }),
     ]);
     const row = delegationOf(rows);
     expect(row.childRows).toHaveLength(2);
@@ -234,7 +272,8 @@ describe("#275 J4 — childRows aggregation by parentToolCallId", () => {
   });
 
   it("keeps unattributed rows at the top level", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       delegationStarted(),
       uxEvent("item/started", {
         turnId: "turn_1",
@@ -256,7 +295,8 @@ describe("#275 J4 — childRows aggregation by parentToolCallId", () => {
 
 describe("#275 J4 — replay consistency and turn boundaries", () => {
   it("a completing spawning turn does NOT seal a pending background delegation row", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       delegationStarted(),
       uxEvent("turn/completed", { turnId: "turn_1", status: "completed", error: null }),
     ]);
@@ -278,7 +318,8 @@ describe("#275 J4 — replay consistency and turn boundaries", () => {
           parentToolCallId: ANCHOR,
         },
       });
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       delegationStarted({ id: `${ANCHOR}#0` }),
       delegationStarted({ id: `${ANCHOR}#1` }),
       familyCompleted("sp_1", "first"),
@@ -292,6 +333,7 @@ describe("#275 J4 — replay consistency and turn boundaries", () => {
 
   it("full re-projection is identical — reload neither loses nor duplicates rows", () => {
     const events = [
+      turnStarted(),
       delegationStarted(),
       uxEvent("item/backgroundTask/completed", {
         item: {
@@ -307,6 +349,6 @@ describe("#275 J4 — replay consistency and turn boundaries", () => {
         },
       }),
     ];
-    expect(projectTimelineRows(events)).toEqual(projectTimelineRows(events));
+    expect(projectRows(events)).toEqual(projectRows(events));
   });
 });

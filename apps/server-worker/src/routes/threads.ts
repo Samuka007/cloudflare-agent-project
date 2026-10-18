@@ -116,8 +116,9 @@ import {
   remapHostFileRouteError,
 } from "../services/host-files.js";
 import { hostFileReadResultSchema } from "../contract/api/hosts.js";
-// #560: pagination/cache/outline stay in the porting-layer module (保留不动);
-// the projection itself is the bb direct-import face (services/thread-view.ts).
+// #554 ⑤: the projection itself is the bb direct-import face
+// (services/thread-view.ts); this module keeps the response assembly
+// (pagination/cache/outline) in services/timeline.ts.
 import {
   buildConversationOutline,
   buildTimelinePage,
