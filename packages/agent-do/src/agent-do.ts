@@ -80,6 +80,11 @@ import {
   type ModelUsageReceipt,
 } from "./provider.js";
 import { projectToUxEvents } from "./ux-projection.js";
+import {
+  readTimelineWindowEvents,
+  type TimelineWindowInfo,
+  type TimelineWindowSpec,
+} from "./timeline-read.js";
 import { getAgentRuntime } from "./injection.js";
 import { modelRequestFromEvents } from "./translate.js";
 import { RelaySelectionError, type RelaySelection } from "./provider-catalog.js";
@@ -436,6 +441,16 @@ export interface GetEventsRequest {
   sinceSeq?: number;
   limit?: number;
   project?: "raw" | "ux";
+  /**
+   * #561: request a bb-aligned windowed read face (ux reads only). Present
+   * = the DO bounds the read: byte-budget window floor +
+   * findStoredTimelineWindowByteBudgetFloor semantics, inline-output
+   * truncation at truncatedEventDataColumn semantics, and delta governance
+   * (full deltas only in the newest window). Absent = the legacy full read
+   * (raw semantics unchanged; ux reads still stop dead-weight payloads at
+   * the SQL boundary).
+   */
+  window?: TimelineWindowSpec;
 }
 
 export interface GetEventsResult {
@@ -447,6 +462,8 @@ export interface GetEventsResult {
    */
   events: AnyAgentEvent[];
   latestSeq: number;
+  /** Present only when the request asked for a windowed read. */
+  window?: TimelineWindowInfo;
 }
 
 export interface CancelTurnRequest {
@@ -748,10 +765,25 @@ export class AgentDO extends DurableObject<AgentDoBindings> {
     const threadId = this.requireThread();
     const sinceSeq = request.sinceSeq ?? 0;
     const limit = request.limit ?? 10_000;
-    const { events, latestSeq } = await this.log.read(threadId, sinceSeq, limit);
     if (request.project === "ux") {
-      return { events: projectToUxEvents(events) as unknown as AnyAgentEvent[], latestSeq };
+      // #561: the ux face reads through the windowed read layer — SQL-side
+      // inline-output truncation + dead-weight type filter on every read,
+      // byte-budget window + delta governance when `window` is present. The
+      // projection is unaware: ux output for a fitting journal is identical
+      // to the legacy full read.
+      const { events, latestSeq, window } = readTimelineWindowEvents(this.ctx.storage.sql, {
+        threadId,
+        sinceSeq,
+        limit,
+        ...(request.window !== undefined ? { window: request.window } : {}),
+      });
+      return {
+        events: projectToUxEvents(events) as unknown as AnyAgentEvent[],
+        latestSeq,
+        ...(window !== undefined ? { window } : {}),
+      };
     }
+    const { events, latestSeq } = await this.log.read(threadId, sinceSeq, limit);
     return { events, latestSeq };
   }
 

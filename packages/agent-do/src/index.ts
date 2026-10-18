@@ -77,6 +77,19 @@ export {
   resolveCompactionMethodOrder,
 } from "./compaction.js";
 export type { SnapCutPlan } from "./compaction.js";
+export {
+  TIMELINE_MAX_INLINE_OUTPUT_CHARS,
+  TIMELINE_WINDOW_BYTE_BUDGET,
+  UX_EXCLUDED_EVENT_TYPES,
+  UX_OLDER_EXCLUDED_EVENT_TYPES,
+  readTimelineWindowEvents,
+} from "./timeline-read.js";
+export type {
+  ReadTimelineWindowArgs,
+  TimelineWindowInfo,
+  TimelineWindowRead,
+  TimelineWindowSpec,
+} from "./timeline-read.js";
 export type {
   ExecutionRuntime,
   ExecutionStatus,

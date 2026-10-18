@@ -76,7 +76,24 @@ export interface AgentDoRpc {
     sinceSeq: number;
     limit?: number;
     project?: "raw" | "ux";
-  }): Promise<{ events: UxThreadEvent[]; latestSeq: number }>;
+    /**
+     * #561: bb-aligned windowed read face — byte-budget floor +
+     * truncatedEventDataColumn-style inline truncation + delta governance
+     * inside the DO. `beforeSeq` anchors an older page (the window extends
+     * through the anchor's whole turn).
+     */
+    window?: { beforeSeq?: number };
+  }): Promise<{
+    events: UxThreadEvent[];
+    latestSeq: number;
+    /** Present only for windowed reads: window accounting for pagination. */
+    window?: {
+      windowStartSeq: number;
+      floorSeq: number;
+      dataBytes: number;
+      hasOlderRows: boolean;
+    };
+  }>;
   /** Journal-folded pending interactions (#225); the interactions routes' source. */
   listInteractions(): Promise<{ interactions: PendingInteractionRow[] }>;
   /** Ruling backflow (M1.5 T4); the resolve route's write face. */
