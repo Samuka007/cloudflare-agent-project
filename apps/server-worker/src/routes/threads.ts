@@ -123,10 +123,8 @@ import {
   buildTimelinePage,
   timelineLatestRowsCache,
 } from "../services/timeline.js";
-import {
-  projectThreadTimeline,
-  rowsForConversationOutline,
-} from "../services/thread-view.js";
+import type { TimelineRow } from "../contract/thread-timeline.js";
+import { projectThreadTimeline, rowsForConversationOutline } from "../services/thread-view.js";
 import { computeTimelineRowDelta } from "../contract/thread-timeline.js";
 import { validatePromptAttachmentReferences } from "../services/attachments.js";
 import {
@@ -983,9 +981,21 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       }
       segmentLimit = parsed;
     }
-    const { events, latestSeq } = await agentDoFor(ctx.env, row.id).getEvents({
+    // #561: every timeline read is windowed — newest pages read the newest
+    // byte-budget worth of whole turns (DO-side floor + turn rounding);
+    // older pages re-anchor at the cursor. The window info reports whether
+    // UX-visible rows remain below the read, which — not this page's row
+    // slice — can be the pagination bound on a budget-cut journal.
+    const beforeAnchorSeq =
+      query.beforeAnchorSeq !== undefined ? Number(query.beforeAnchorSeq) : undefined;
+    const {
+      events,
+      latestSeq,
+      window: windowInfo,
+    } = await agentDoFor(ctx.env, row.id).getEvents({
       sinceSeq: 0,
       project: "ux",
+      window: beforeAnchorSeq !== undefined ? { beforeSeq: beforeAnchorSeq } : {},
     });
     // Terminal turn events settle the coarse M0 execution status (#52):
     // the send route flips `active` on dispatch; without consuming the
@@ -1003,9 +1013,8 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // (D8) and row ids (D1) are bb-face behavior, accepted per #554 §4.
     let rawEvents: UxThreadEvent[] | undefined;
     if (includeUnhandledProviderEvents) {
-      rawEvents = (
-        await agentDoFor(ctx.env, row.id).getEvents({ sinceSeq: 0, project: "raw" })
-      ).events;
+      rawEvents = (await agentDoFor(ctx.env, row.id).getEvents({ sinceSeq: 0, project: "raw" }))
+        .events;
     }
     const {
       rows: allRows,
@@ -1048,6 +1057,27 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       summaryOnly,
     };
     const page = buildTimelinePage(allRows, pageQuery);
+    let timelinePage = page.page;
+    if (windowInfo?.hasOlderRows === true) {
+      let olderCursor = timelinePage.olderCursor;
+      if (olderCursor === null) {
+        // The whole window fit one page but the journal continues below it:
+        // anchor the next older fetch at the window's bottom row (it is in
+        // allRows, and the window's inclusive upper bound re-reads it).
+        const bottom = allRows.reduce<TimelineRow | null>(
+          (min, candidate) =>
+            min === null || candidate.sourceSeqStart < min.sourceSeqStart ? candidate : min,
+          null,
+        );
+        if (
+          bottom !== null &&
+          bottom.sourceSeqStart < (beforeAnchorSeq ?? Number.MAX_SAFE_INTEGER)
+        ) {
+          olderCursor = { anchorSeq: bottom.sourceSeqStart, anchorId: bottom.id };
+        }
+      }
+      timelinePage = { ...timelinePage, hasOlderRows: true, olderCursor };
+    }
     const paramsKey = `${row.id}|${row.status}|${kind}|${segmentLimit}|${String(includeNestedRows)}|${String(summaryOnly)}|${String(includeUnhandledProviderEvents)}`;
     let delta;
     if (query.afterSequence !== undefined && kind === "latest") {
@@ -1069,7 +1099,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       goal: null,
       modelFallback: null,
       ...(contextWindowUsage !== null ? { contextWindowUsage } : {}),
-      timelinePage: page.page,
+      timelinePage,
       maxSeq: latestSeq,
       ...(delta !== undefined ? { delta } : {}),
     });
@@ -1085,7 +1115,9 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // keeps its flat-list contract, so turn wrappers expand in place first.
     return ctx.json({
       items: buildConversationOutline(
-        rowsForConversationOutline(projectThreadTimeline(events, { threadStatus: row.status }).rows),
+        rowsForConversationOutline(
+          projectThreadTimeline(events, { threadStatus: row.status }).rows,
+        ),
       ),
       maxSeq: latestSeq,
     });
