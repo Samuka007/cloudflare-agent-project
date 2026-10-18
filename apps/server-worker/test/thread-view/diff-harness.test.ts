@@ -40,6 +40,23 @@ interface RowSummary {
   extra: Record<string, unknown>;
 }
 
+/**
+ * #559 accepted delta (D1 row-id namespace): bb #3250 wraps Thought
+ * identities in its namespaced row ids (`…|item:{itemId}`); the ux face
+ * carries the bare item id. Equivalence is the `item:` tail.
+ */
+function stripD1Namespace(value: string): string {
+  const marker = "|item:";
+  const idx = value.lastIndexOf(marker);
+  return idx === -1 ? value : value.slice(idx + marker.length);
+}
+
+function isThoughtRow(row: TimelineRow): boolean {
+  return (
+    row.kind === "system" && row.systemKind === "operation" && row.operationKind === "reasoning"
+  );
+}
+
 function summarizeRow(row: TimelineRow): RowSummary {
   const family =
     row.kind === "work"
@@ -62,9 +79,13 @@ function summarizeRow(row: TimelineRow): RowSummary {
   if ("toolName" in row) extra.toolName = row.toolName;
   if ("callId" in row) extra.callId = row.callId;
   if ("turnId" in row) extra.turnId = row.turnId;
-  if ("reasoningId" in row) extra.reasoningId = row.reasoningId;
+  if ("reasoningId" in row && typeof row.reasoningId === "string") {
+    extra.reasoningId = stripD1Namespace(row.reasoningId);
+  }
   if ("completedAt" in row) extra.completedAt = row.completedAt;
-  if ("childRows" in row) extra.childRows = row.childRows?.length ?? 0;
+  if ("childRows" in row) {
+    extra.childRows = row.childRows?.filter((child) => !isThoughtRow(child)).length ?? 0;
+  }
   if ("children" in row) extra.children = row.children?.length ?? 0;
   if ("subagentType" in row) extra.subagentType = row.subagentType;
   if ("description" in row) extra.description = row.description;
@@ -156,7 +177,18 @@ describe("#560 dual-path timeline diff harness (spike #554 harness in CI)", () =
   });
 
   it("synthesizes the D4 Thought rows in both faces (status/identity parity)", () => {
-    type ThoughtRow = TimelineRow & { operationKind: string; reasoningId: string };
+    type ThoughtRow = TimelineRow & {
+      operationKind: string;
+      reasoningId: string;
+      title: string;
+      status: string;
+      detail: string | null;
+      turnId: string | null;
+      startedAt: number;
+      completedAt: number;
+      sourceSeqStart: number;
+      sourceSeqEnd: number;
+    };
     const thoughts = (rows: readonly TimelineRow[]): ThoughtRow[] =>
       rows.filter(
         (row): row is ThoughtRow =>
@@ -169,7 +201,19 @@ describe("#560 dual-path timeline diff harness (spike #554 harness in CI)", () =
       x.reasoningId.localeCompare(y.reasoningId),
     );
     expect(b.length).toBeGreaterThan(0);
-    expect(b).toEqual(a);
+    const semantic = (row: ThoughtRow) =>
+      JSON.stringify({
+        title: row.title,
+        status: row.status,
+        detail: row.detail,
+        turnId: row.turnId,
+        startedAt: row.startedAt,
+        completedAt: row.completedAt,
+        sourceSeqStart: row.sourceSeqStart,
+        sourceSeqEnd: row.sourceSeqEnd,
+        reasoningId: stripD1Namespace(row.reasoningId),
+      });
+    expect(b.map(semantic)).toEqual(a.map(semantic));
   });
 
   it("seals the BATCH delegation rows in plan order (D5 k-th settle)", () => {
@@ -213,11 +257,15 @@ describe("#560 dual-path timeline diff harness (spike #554 harness in CI)", () =
         row.kind === "work" && row.workKind === "delegation",
     );
     const single = delegations.find((row) => row.callId === "exec_0016");
-    expect(single?.childRows.length).toBe(
-      rowsA.find(
-        (row): row is TimelineRow & { callId: string; childRows: TimelineRow[] } =>
-          row.kind === "work" && row.workKind === "delegation" && row.callId === "exec_0016",
-      )?.childRows.length,
+    const countNonThought = (rows: readonly TimelineRow[]): number =>
+      rows.filter((child) => !isThoughtRow(child)).length;
+    expect(countNonThought(single?.childRows ?? [])).toBe(
+      countNonThought(
+        rowsA.find(
+          (row): row is TimelineRow & { callId: string; childRows: TimelineRow[] } =>
+            row.kind === "work" && row.workKind === "delegation" && row.callId === "exec_0016",
+        )?.childRows ?? [],
+      ),
     );
   });
 
