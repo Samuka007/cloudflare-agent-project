@@ -9,8 +9,7 @@
   "scripts": {
     "gen:types": "wrangler types",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:thread-view": "vitest run --config vitest.thread-view.config.ts"
+    "test": "vitest run"
   },
   "dependencies": {
     "@bb/domain": "workspace:*",

@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { ensureMigrations } from "../migrate.js";
-import { projectTimelineRows } from "../../src/services/timeline.js";
+import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view.js";
 import type { TimelineImageViewWorkRow, TimelineRow } from "../../src/contract/thread-timeline.js";
 import type { UxThreadEvent } from "../../src/seam/agent-do.js";
 
@@ -12,8 +12,15 @@ import type { UxThreadEvent } from "../../src/seam/agent-do.js";
  * ImageViewWorkRowBody renders the row with the lightbox, src =
  * buildThreadHostFileContentUrl → the #321 host-file content face. Pure
  * projection tests over synthetic ux envelopes (timeline-delegation pattern).
+ * Since the #554 roadmap step ⑤ retirement the pins target the LIVE face —
+ * the materializer + bb thread-view projection (services/thread-view.ts);
+ * bb turn-summary wrappers (D8) are unwrapped before the flat assertions.
  */
 beforeAll(ensureMigrations);
+
+function projectRows(events: readonly UxThreadEvent[]): TimelineRow[] {
+  return rowsForConversationOutline(projectThreadTimeline(events, { threadStatus: "active" }).rows);
+}
 
 let seqCounter = 0;
 
@@ -46,9 +53,12 @@ function imageViewRows(rows: readonly TimelineRow[]): TimelineImageViewWorkRow[]
   );
 }
 
+const turnStarted = (): UxThreadEvent => uxEvent("turn/started", { turnId: "turn_1" });
+
 describe("#321 B1 timeline image-view row projection", () => {
   it("materializes the image-view work row from item/started (pending, item id as callId)", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       uxEvent("item/started", {
         turnId: "turn_1",
         item: imageViewItem({ parentToolCallId: "thr_b1:40" }),
@@ -60,7 +70,9 @@ describe("#321 B1 timeline image-view row projection", () => {
     if (row === undefined) throw new Error("no image-view row");
     expect(row).toMatchObject({
       workKind: "image-view",
-      id: "itm-iv-turn_1:42",
+      // bb operation-style row id (the D1 namespace the #560 harness pinned);
+      // the ux item id survives as the callId.
+      id: "thr_b1:image-view:itm-iv-turn_1:42",
       callId: "itm-iv-turn_1:42",
       path: "/workspace/output/diagram.png",
       status: "pending",
@@ -72,7 +84,8 @@ describe("#321 B1 timeline image-view row projection", () => {
   });
 
   it("seals the row from the same-seq item/completed with the refreshed path", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       uxEvent("item/started", {
         turnId: "turn_1",
         item: imageViewItem(),
@@ -94,7 +107,8 @@ describe("#321 B1 timeline image-view row projection", () => {
   });
 
   it("seals a still-pending row at the turn boundary (bb tool-activity sweep)", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       uxEvent("item/started", {
         turnId: "turn_1",
         item: imageViewItem(),
@@ -107,7 +121,8 @@ describe("#321 B1 timeline image-view row projection", () => {
   });
 
   it("keeps the row top-level (bb build-thread-timeline emits it where the message sits)", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
+      turnStarted(),
       uxEvent("item/started", { turnId: "turn_1", item: imageViewItem() }),
       uxEvent("item/completed", { turnId: "turn_1", item: imageViewItem() }),
     ]);

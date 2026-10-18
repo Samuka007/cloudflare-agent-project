@@ -6,7 +6,8 @@ import {
   threadResponseSchema,
   threadTimelineResponseSchema,
 } from "../../src/contract/api/threads.js";
-import { buildTimelinePage, projectTimelineRows } from "../../src/services/timeline.js";
+import { buildTimelinePage } from "../../src/services/timeline.js";
+import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view.js";
 import type { UxThreadEvent } from "../../src/seam/agent-do.js";
 import {
   BASE,
@@ -40,6 +41,12 @@ beforeAll(async () => {
   await ensureRigReady();
 });
 
+/** Live-face row generator (#554 ⑤: the porting-layer fold is retired) —
+ * bb turn-summary wrappers (D8) unwrapped for the flat pagination asserts. */
+function projectRows(events: readonly UxThreadEvent[]) {
+  return rowsForConversationOutline(projectThreadTimeline(events, { threadStatus: "active" }).rows);
+}
+
 let seqCounter = 0;
 
 function uxEvent(type: string, data: unknown, seq?: number): UxThreadEvent {
@@ -54,22 +61,33 @@ function uxEvent(type: string, data: unknown, seq?: number): UxThreadEvent {
   };
 }
 
-/** Long-thread fixture: `count` user rows at seqs 101..100+count-1. */
+/**
+ * Long-thread fixture: `count` user rows at seqs 101..100+count-1. The live
+ * face builds user rows from the request→acceptance path (#554 materializer:
+ * ux item/started{userMessage} → client/turn/requested + turn/input/accepted,
+ * acceptance deferred onto the turn/started seq), so each row carries the
+ * ux `itm-um-` id prefix and its own turn, started at the row's seq.
+ */
 function longThreadEvents(count: number): UxThreadEvent[] {
-  return Array.from({ length: count }, (_, index) =>
-    uxEvent(
-      "item/started",
-      {
-        turnId: "t1",
-        item: {
-          type: "userMessage",
-          id: `u${index + 1}`,
-          content: [{ type: "text", text: `m${index + 1}` }],
+  return Array.from({ length: count }, (_, index) => {
+    const seq = 101 + index;
+    const turnId = `t${index + 1}`;
+    return [
+      uxEvent(
+        "item/started",
+        {
+          turnId,
+          item: {
+            type: "userMessage",
+            id: `itm-um-${turnId}:${seq}`,
+            content: [{ type: "text", text: `m${index + 1}` }],
+          },
         },
-      },
-      101 + index,
-    ),
-  );
+        seq,
+      ),
+      uxEvent("turn/started", { turnId }, seq),
+    ];
+  }).flat();
 }
 
 async function getJson(
@@ -118,14 +136,19 @@ async function createThreadFixture(
 
 describe("#121: buildTimelinePage older pagination (24-row long thread)", () => {
   it("returns only rows strictly before the anchor and touches bottom", () => {
-    const rows = projectTimelineRows(longThreadEvents(24));
+    const rows = projectRows(longThreadEvents(24));
     expect(rows).toHaveLength(24);
 
     // Latest window: newest 20, cursor at the page's first row.
     const latest = buildTimelinePage(rows, { kind: "latest", segmentLimit: 20 });
     expect(latest.rows).toHaveLength(20);
     expect(latest.page.hasOlderRows).toBe(true);
-    expect(latest.page.olderCursor).toEqual({ anchorSeq: 105, anchorId: "u5" });
+    // Row ids are face-specific (the D1 namespace the #560 harness pinned);
+    // the cursor carries whichever row sits at seq 105 — the page's first.
+    const seq105 = rows[4];
+    if (seq105 === undefined) throw new Error("expected a row at seq 105");
+    expect(seq105.sourceSeqStart).toBe(105);
+    expect(latest.page.olderCursor).toEqual({ anchorSeq: 105, anchorId: seq105.id });
 
     // older@105: with the regressed predicate the id clause let every
     // non-anchor row through and this page re-served the NEWEST 20 rows
@@ -133,9 +156,11 @@ describe("#121: buildTimelinePage older pagination (24-row long thread)", () => 
     const older = buildTimelinePage(rows, {
       kind: "older",
       segmentLimit: 20,
-      beforeAnchor: { anchorSeq: 105, anchorId: "u5" },
+      beforeAnchor: { anchorSeq: 105, anchorId: seq105.id },
     });
-    expect(older.rows.map((row) => row.id)).toEqual(["u1", "u2", "u3", "u4"]);
+    expect(older.rows.map((row) => row.id)).toEqual(
+      rows.slice(0, 4).map((row) => row.id),
+    );
     for (const row of older.rows) {
       expect(row.sourceSeqStart).toBeLessThan(105);
     }
@@ -148,32 +173,76 @@ describe("#121: buildTimelinePage older pagination (24-row long thread)", () => 
 
   it("excludes only the anchor row among rows sharing the anchor sequence", () => {
     const events = longThreadEvents(24);
+    // Two user rows cannot share a seq on the live face (the request id is
+    // seq-derived), but the real ux journal does produce same-seq row pairs:
+    // the reasoning+agentMessage completion pair the ux projection emits at
+    // model.call_completed (extraUx). Tie the anchor sequence with that pair.
     events.push(
       uxEvent(
-        "item/started",
+        "turn/started",
+        { turnId: "tie" },
+        124,
+      ),
+    );
+    events.push(
+      uxEvent(
+        "item/reasoning/textDelta",
+        { turnId: "tie", itemId: "itm-rs-tie:1", delta: "tie thought.\n" },
+        124,
+      ),
+    );
+    events.push(
+      uxEvent(
+        "item/agentMessage/delta",
+        { turnId: "tie", itemId: "itm-am-tie:1", delta: "tie answer\n" },
+        124,
+      ),
+    );
+    events.push(
+      uxEvent(
+        "item/completed",
         {
-          turnId: "t1",
-          item: { type: "userMessage", id: "u-tie", content: [{ type: "text", text: "tie" }] },
+          turnId: "tie",
+          item: { type: "reasoning", id: "itm-rs-tie:1", summary: [], content: ["tie thought."] },
         },
         124,
       ),
     );
-    const rows = projectTimelineRows(events);
+    events.push(
+      uxEvent(
+        "item/completed",
+        { turnId: "tie", item: { type: "agentMessage", id: "itm-am-tie:1", text: "tie answer" } },
+        124,
+      ),
+    );
+    const rows = projectRows(events);
+    const ties = rows.filter((row) => row.sourceSeqStart === 124);
+    expect(ties.length).toBeGreaterThanOrEqual(2);
+    const anchorRow = ties[0];
+    const siblingRow = ties[1];
+    if (anchorRow === undefined || siblingRow === undefined) throw new Error("expected two ties");
     const page = buildTimelinePage(rows, {
       kind: "older",
       segmentLimit: 20,
-      beforeAnchor: { anchorSeq: 124, anchorId: "u24" },
+      beforeAnchor: { anchorSeq: 124, anchorId: anchorRow.id },
     });
     const ids = page.rows.map((row) => row.id);
-    expect(ids).toContain("u-tie");
-    expect(ids).not.toContain("u24");
+    expect(ids).toContain(siblingRow.id);
+    expect(ids).not.toContain(anchorRow.id);
     expect(page.page.hasOlderRows).toBe(true);
-    // Cursor anchors at the returned page's first row (u5, seq 105).
-    expect(page.page.olderCursor).toEqual({ anchorSeq: 105, anchorId: "u5" });
+    // Cursor anchors at the returned page's first row: the eligible set
+    // (every row but the excluded anchor) sliced to the last 20.
+    const eligible = rows.filter((row) => row.id !== anchorRow.id);
+    const expectedCursorRow = eligible[5];
+    if (expectedCursorRow === undefined) throw new Error("expected a cursor row");
+    expect(page.page.olderCursor).toEqual({
+      anchorSeq: expectedCursorRow.sourceSeqStart,
+      anchorId: expectedCursorRow.id,
+    });
   });
 
   it("keeps latest-page hasOlderRows false when everything fits one window", () => {
-    const rows = projectTimelineRows(longThreadEvents(24));
+    const rows = projectRows(longThreadEvents(24));
     const page = buildTimelinePage(rows, { kind: "latest", segmentLimit: 100 });
     expect(page.rows).toHaveLength(24);
     expect(page.page.hasOlderRows).toBe(false);

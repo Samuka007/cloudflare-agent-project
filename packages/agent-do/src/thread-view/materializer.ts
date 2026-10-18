@@ -7,8 +7,9 @@
  * vocabulary (ThreadEventRow = StoredEventRow + scope), so bb thread-view's
  * buildThreadTimelineFromEvents consumes it verbatim. The projection switch
  * itself lives in apps/server-worker (services/thread-view.ts), which is the
- * only consumer; the materializer stays a pure function so the CI diff
- * harness can run it against the retired porting layer.
+ * only consumer; the materializer stays a pure function (the #560 CI diff
+ * harness that verified it against the porting layer retired with that
+ * layer in #554 roadmap step ⑤).
  *
  * DECISIONS (per #554 report §2/§3, all harness-verified there):
  * - turn/phase has no bb equivalent → dropped (the retired timeline.ts
@@ -405,7 +406,7 @@ function itemCompletedRows(
  * delegation anchor is deliberately un-suffixed even for batch items, where
  * per-item delegation rows are `<call>#<i>`). The retired porting layer
  * resolved the seal target with a prefix fallback in plan order
- * (timeline.ts delegationTargetFor — "each settle seals exactly one row");
+ * ("each settle seals exactly one row");
  * bb matches parentToolCallId exactly and ROOT-SUPPRESSES rows whose parent
  * is not a delegation. Left alone, batch settles would both vanish (workflow
  * row suppressed) and leave the delegation rows pending forever.
@@ -471,7 +472,7 @@ function anchorAndSealPostPass(rows: ThreadEventRow[]): void {
       target = candidates[settledSoFar];
       if (target !== undefined) {
         // The k-th settle rides the k-th per-item row (plan-order parity
-        // with delegationTargetFor's pending consumption).
+        // with the porting layer's pending consumption).
         item.parentToolCallId = target.callId;
         sealsPerAnchor.set(anchor, settledSoFar + 1);
       }

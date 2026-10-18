@@ -83,8 +83,9 @@ function imageContributionsOf(content: readonly PromptContent[]): ImageContribut
 }
 
 /** The text parts of one prompt-content list, joined (A4: image parts carry
- * no text placeholders — they ride {@link imageContributionsOf}). */
-function textOfContent(content: readonly PromptContent[]): string {
+ * no text placeholders — they ride {@link imageContributionsOf}). Same
+ * join semantics the bb timeline applies to user rows; independent copy. */
+function promptTextOf(content: readonly PromptContent[]): string {
   return content
     .filter((part): part is Extract<PromptContent, { type: "text" }> => part.type === "text")
     .map((part) => part.text)
@@ -240,7 +241,7 @@ export function modelRequestFromEvents(
         break;
       case "turn.steer": {
         // Image parts ride the steer as ImageContributions (A4), not as text.
-        steerTexts.set(event.seq, textOfContent(event.data.content));
+        steerTexts.set(event.seq, promptTextOf(event.data.content));
         steerImages.set(event.seq, imageContributionsOf(event.data.content));
         break;
       }
@@ -252,7 +253,7 @@ export function modelRequestFromEvents(
           turnId: event.data.turnId,
           seq: event.seq,
           inputId: event.data.inputId,
-          text: textOfContent(event.data.content),
+          text: promptTextOf(event.data.content),
           images: imageContributionsOf(event.data.content),
         });
         break;

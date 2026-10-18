@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { beforeAll } from "vitest";
 import { exports } from "cloudflare:workers";
 import { threadTimelineResponseSchema } from "../../src/contract/api/threads.js";
+import { threadEventDataSchemas } from "@cap/protocol";
 import { createThread, send } from "../helpers.js";
 import { ensureMigrations } from "../migrate.js";
-import { buildContextWindowUsage } from "../../src/services/timeline.js";
+import { projectThreadTimeline } from "../../src/services/thread-view.js";
 import type { UxThreadEvent } from "../../src/seam/agent-do.js";
 
 /**
@@ -31,6 +32,15 @@ const usageRow = (seq: number, usedTokens: number, modelContextWindow = 200_000)
   createdAt: 1_000 + seq,
 });
 
+const turnStarted = (seq: number): UxThreadEvent => ({
+  id: `thr_u:${seq}`,
+  threadId: "thr_u",
+  seq,
+  type: "turn/started",
+  data: { turnId: "turn_1" },
+  createdAt: 1_000 + seq,
+});
+
 const noise = (seq: number): UxThreadEvent => ({
   id: `thr_u:${seq}`,
   threadId: "thr_u",
@@ -40,31 +50,50 @@ const noise = (seq: number): UxThreadEvent => ({
   createdAt: 1_000 + seq,
 });
 
-describe("buildContextWindowUsage (#308)", () => {
+/**
+ * The fold itself retired with the porting layer (#554 roadmap step ⑤);
+ * these pins target the live face — the materializer + bb thread-view
+ * projection's tail state (services/thread-view.ts projectThreadTimeline).
+ */
+function contextWindowUsageOf(events: readonly UxThreadEvent[]) {
+  return projectThreadTimeline(events, { threadStatus: "active" }).contextWindowUsage;
+}
+
+describe("contextWindowUsage tail state (#308, live face)", () => {
   it("returns null for a thread with no usage rows (no indicator, no guess)", () => {
-    expect(buildContextWindowUsage([noise(1), noise(2)])).toBeNull();
-    expect(buildContextWindowUsage([])).toBeNull();
+    expect(contextWindowUsageOf([turnStarted(0), noise(1), noise(2)])).toBeNull();
+    expect(contextWindowUsageOf([])).toBeNull();
   });
 
   it("newest row wins regardless of input order", () => {
-    const events = [usageRow(9, 300), noise(10), usageRow(5, 100), usageRow(7, 200)];
-    expect(buildContextWindowUsage(events)).toEqual({
+    const events = [turnStarted(0), usageRow(9, 300), noise(10), usageRow(5, 100), usageRow(7, 200)];
+    expect(contextWindowUsageOf(events)).toEqual({
       usedTokens: 300,
       modelContextWindow: 200_000,
       estimated: false,
     });
   });
 
-  it("ignores malformed rows instead of surfacing a partial percentage", () => {
+  it("a partial usage row cannot reach the projection (producer schema gate)", () => {
+    // The porting layer safe-parsed rows and skipped malformed ones; the live
+    // face (bb decode) throws on them instead — the guarantee that no partial
+    // percentage can surface moved upstream to the producer schema: the ux
+    // journal only ever stores schema-valid envelopes, so an incomplete
+    // contextWindowUsage row is unreachable in production.
     const events: UxThreadEvent[] = [
       usageRow(5, 100),
       { ...usageRow(6, 999), data: { contextWindowUsage: { usedTokens: -5, modelContextWindow: 1 } } },
     ];
-    expect(buildContextWindowUsage(events)).toEqual({
-      usedTokens: 100,
-      modelContextWindow: 200_000,
-      estimated: false,
-    });
+    const malformed = events[1];
+    if (malformed === undefined) throw new Error("expected the malformed row");
+    expect(
+      threadEventDataSchemas["thread/contextWindowUsage/updated"].safeParse(malformed.data).success,
+    ).toBe(false);
+    expect(
+      threadEventDataSchemas["thread/contextWindowUsage/updated"].safeParse(
+        (events[0] ?? malformed).data,
+      ).success,
+    ).toBe(true);
   });
 });
 

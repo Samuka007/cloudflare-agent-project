@@ -28,7 +28,6 @@ import { timelineRowSchema, type TimelineRow } from "../contract/thread-timeline
 import { activeThinkingSchema, type ActiveThinking } from "../contract/domain/active-thinking.js";
 import type { ThreadStatus } from "../contract/domain/thread-status.js";
 import type { ThreadContextWindowUsage } from "../contract/api/shared.js";
-import { mergeTimelineRows } from "./timeline.js";
 
 // --- D7: provider-unhandled debug rows ------------------------------------
 // Moved verbatim from the porting layer (services/timeline.ts) — the
@@ -142,8 +141,8 @@ export function projectUnhandledProviderRows(
 /**
  * #566 face parity: bb materializes a zero-count attachments object for
  * text-only user rows (build-thread-timeline.ts toConversationAttachments);
- * the shipped M0 row shape is null (#320 A5 — the retired
- * conversationAttachmentsOf). The SPA renders both identically
+ * the shipped M0 row shape is null (#320 A5 — the retired M0 attachments
+ * projection). The SPA renders both identically
  * (ConversationAttachments.tsx:128 early-return), so this normalizes back to
  * null to keep the boundary output identical with the face the compat suite
  * pins. A row carrying at least one attachment part keeps bb's counts.
@@ -186,6 +185,24 @@ function pickTurnId(data: EventData): string | null {
 
 function rawEventData(event: UxThreadEvent): EventData {
   return event.data !== null && typeof event.data === "object" ? (event.data as EventData) : {};
+}
+
+/**
+ * Merge the diagnostic rows into the projected rows in source order —
+ * bb projects everything in one pass over the seq-ordered events, so the
+ * merged list is seq-ordered with the projection's id tie-break. (The D7
+ * merge seam, moved here from the retired porting layer with the rows it
+ * merges.)
+ */
+function mergeTimelineRows(
+  base: readonly TimelineRow[],
+  extra: readonly TimelineRow[],
+): TimelineRow[] {
+  return [...base, ...extra].sort((a, b) =>
+    a.sourceSeqStart === b.sourceSeqStart
+      ? a.id.localeCompare(b.id)
+      : a.sourceSeqStart - b.sourceSeqStart,
+  );
 }
 
 /**

@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { ensureMigrations } from "../migrate.js";
 import { threadSearchResponseSchema } from "../../src/contract/api/threads.js";
-import { projectTimelineRows } from "../../src/services/timeline.js";
+import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view.js";
 import type { UxThreadEvent } from "../../src/seam/agent-do.js";
 import { createThread } from "../helpers.js";
 import { env, exports } from "cloudflare:workers";
@@ -13,6 +13,11 @@ import { env, exports } from "cloudflare:workers";
  * residue resolves bb-equivalent with no server surface (PR evidence note).
  */
 beforeAll(ensureMigrations);
+
+/** Live-face row generator (#554 ⑤: the porting-layer fold is retired). */
+function projectRows(events: readonly UxThreadEvent[]) {
+  return rowsForConversationOutline(projectThreadTimeline(events, { threadStatus: "active" }).rows);
+}
 
 let seqCounter = 0;
 
@@ -161,7 +166,7 @@ describe("C6: thread prompt-history serves the bb empty list", () => {
 
 describe("D7: sealed-error rows carry the message text with error status", () => {
   it("titles the row with the event message, detail null, status error", () => {
-    const rows = projectTimelineRows([
+    const rows = projectRows([
       uxEvent("system/error", {
         message: "model stream interrupted mid-call; turn sealed",
         category: "internal",
@@ -179,7 +184,7 @@ describe("D7: sealed-error rows carry the message text with error status", () =>
 
   it("falls back to the System error label past 80 chars with the text in detail", () => {
     const long = "d".repeat(120);
-    const rows = projectTimelineRows([
+    const rows = projectRows([
       uxEvent("system/error", { message: long, category: "internal" }),
     ]);
     const row = rows.find((candidate) => candidate.kind === "system");
