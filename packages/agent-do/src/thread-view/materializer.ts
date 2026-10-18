@@ -541,6 +541,15 @@ export function materializeUxWindowToStoredEventRows(
   // row until the turn's turn/started materializes.
   const acceptedPendingTurnStart = new Map<string, ThreadEventRow[]>();
   const startedTurnIds = new Set<string>();
+  /**
+   * Window-boundary referential integrity (#547 snap cut): a compaction cut
+   * (hideThroughSeq) can hide a turn's turn/started while row-carrying
+   * events of that turn survive above the cut. bb's turn grouping throws on
+   * orphans; the retired porting layer ignored them. Orphan rows fall back
+   * to thread scope — they still render, just ungrouped from any turn.
+   */
+  const scopeForTurn = (turnId: string): ThreadEventScope =>
+    startedTurnIds.has(turnId) ? turnScope(turnId) : threadScope();
   for (const envelope of envelopes) {
     const data = envelopeData(envelope);
     const turnId = typeof data.turnId === "string" ? data.turnId : undefined;
@@ -569,7 +578,7 @@ export function materializeUxWindowToStoredEventRows(
       case "item/reasoning/textDelta": {
         if (typeof turnId !== "string") break;
         rows.push(
-          row(envelope, envelope.type, turnScope(turnId), {
+          row(envelope, envelope.type, scopeForTurn(turnId), {
             itemId: data.itemId,
             delta: data.delta,
             ...(data.parentToolCallId !== undefined
@@ -598,7 +607,10 @@ export function materializeUxWindowToStoredEventRows(
         break;
       }
       case "turn/completed": {
-        if (typeof turnId !== "string") break;
+        // Window-boundary referential integrity (#547 snap cut): a cut can
+        // hide a turn's turn/started while its turn/completed survives. bb's
+        // turn grouping throws on the orphan; skip it.
+        if (typeof turnId !== "string" || !startedTurnIds.has(turnId)) break;
         const errorMessage = errorMessageOf(data.error);
         const error = errorMessage !== undefined ? { message: errorMessage } : undefined;
         rows.push(
@@ -629,18 +641,11 @@ export function materializeUxWindowToStoredEventRows(
         );
         break;
       }
-      case "thread/compacted": {
-        if (typeof turnId !== "string") break;
-        // Bare marker: bb's schema carries no payload. The estimated usage
-        // companion row (emitted by the ux projection at the same seq)
-        // materializes separately above/below.
-        rows.push(
-          row(envelope, "thread/compacted", turnScope(turnId), {
-            providerThreadId: SYNTHETIC_PROVIDER_THREAD_ID,
-          }),
-        );
+      case "thread/compacted":
+        // Cap face owns the op row (thread-view.ts synthesizeCompactionRows —
+        // the ux payload names the mode; bb's bare marker is turn-scoped-strict
+        // and post-cut windows orphan it). Emit nothing here.
         break;
-      }
       case "system/error": {
         rows.push(row(envelope, "system/error", threadScope(), { message: data.message }));
         break;
