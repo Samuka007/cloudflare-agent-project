@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./provider-catalog": "./src/provider-catalog.ts",
     "./find-protocol": "./src/tools/find-protocol.ts",
-    "./testing": "./src/testing/index.ts"
+    "./testing": "./src/testing/index.ts",
+    "./thread-view": "./src/thread-view/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -16,6 +17,9 @@
     "smoke:poc": "vitest run smoke-real-model"
   },
   "dependencies": {
+    "@bb/domain": "workspace:*",
+    "@bb/server-contract": "workspace:*",
+    "@bb/thread-view": "workspace:*",
     "@cap/daemon-service": "workspace:*",
     "@cap/mcp": "workspace:*",
     "@cap/protocol": "workspace:*",
@@ -29,7 +33,6 @@
     "@cloudflare/workers-types": "^5.20261001.1",
     "@msw/cloudflare": "^0.2.0",
     "@types/node": "^22.10.0",
-    "fast-check": "3.23.2",
     "msw": "^3.0.2",
     "typescript": "~5.9.0",
     "vitest": "^4.1.0",

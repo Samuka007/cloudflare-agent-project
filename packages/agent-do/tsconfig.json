@@ -1,9 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": ".",
-    "types": ["@cloudflare/workers-types"],
-    "allowImportingTsExtensions": true
+    "types": ["@cloudflare/workers-types"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }
