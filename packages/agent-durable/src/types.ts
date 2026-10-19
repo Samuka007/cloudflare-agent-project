@@ -1,5 +1,6 @@
 import type { Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { HarnessOptions, Registry } from "@earendil-works/pi-durable";
+import type { HostExecutionUpdate } from "./tools.js";
 
 /** Everything the DO needs from the application layer; lanes B/C/D fill this in. */
 export interface DurableAgentRuntime {
@@ -16,6 +17,8 @@ export interface DurableAgentRuntime {
   now?: () => number;
   /** Harness settings; retention defaults to 0 for 1.3.0 (see #580). */
   settings?: HarnessOptions["settings"];
+  /** Host-tool update sink (#586); the DO forwards daemon frames here. */
+  hostTools?: { onUpdate(update: HostExecutionUpdate): void };
 }
 
 export type DurableAgentRuntimeFactory = (

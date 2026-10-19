@@ -1,4 +1,5 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
   Harness,
   type AgentEventStream,
@@ -83,6 +84,17 @@ export class DurableThread {
 
   async abort(): Promise<void> {
     await this.#conversation.abort(context);
+  }
+
+  async compact(): Promise<string> {
+    return String(await this.#conversation.compact(undefined, context));
+  }
+
+  async configure(agent: {
+    model: { provider: string; modelId: string };
+    thinkingLevel?: ModelThinkingLevel;
+  }): Promise<void> {
+    await this.#conversation.configure(agent, context);
   }
 
   conversation(): Conversation {

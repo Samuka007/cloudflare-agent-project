@@ -24,11 +24,7 @@ export type {
   DurableProviderSource,
   ProviderProjectionErrorCode,
 } from "./provider.js";
-export {
-  createHostTool,
-  DEFAULT_HOST_TOOL_TIMEOUT_MS,
-  HostToolDispatcher,
-} from "./tools.js";
+export { createHostTool, DEFAULT_HOST_TOOL_TIMEOUT_MS, HostToolDispatcher } from "./tools.js";
 export type {
   HostDispatchClient,
   HostDispatchOutcome,

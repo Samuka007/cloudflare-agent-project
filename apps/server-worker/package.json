@@ -16,9 +16,12 @@
     "@bb/server-contract": "workspace:*",
     "@bb/thread-view": "workspace:*",
     "@cap/agent-do": "workspace:*",
+    "@cap/agent-durable": "workspace:*",
     "@cap/daemon-service": "workspace:*",
     "@cap/daemon-worker": "workspace:*",
     "@cap/provider-app": "workspace:*",
+    "@earendil-works/pi-ai": "1.3.0",
+    "@earendil-works/pi-durable": "1.3.0",
     "hono": "^4.7.0",
     "zod": "^4.6.0"
   },

@@ -99,7 +99,8 @@ export interface HostToolSpec {
   name: string;
   description: string;
   parameters: TSchema;
-  scope: HostToolScope;
+  /** Static scope, or a per-call resolver (the DO reads current thread/turn). */
+  scope: HostToolScope | (() => HostToolScope);
   /** Read-only tools are safe to rerun; side-effecting tools are not (#579). */
   replay: "safe" | "unsafe";
   /** Cap's schedule class → pi executionMode (exclusive over-serializes conservatively). */
@@ -160,6 +161,7 @@ export function createHostTool(spec: HostToolSpec, transport: HostToolTransport)
     executionMode: spec.schedule === "exclusive" ? "sequential" : "parallel",
     execute: async (args: Static<TSchema>, api: ToolExecutionApi) => {
       const executionId = `cap:${api.conversationId}:${api.taskId}`;
+      const scope = typeof spec.scope === "function" ? spec.scope() : spec.scope;
       const frame: HostToolFrame = {
         tool: spec.name,
         arguments:
@@ -167,11 +169,11 @@ export function createHostTool(spec: HostToolSpec, transport: HostToolTransport)
             ? (args as Record<string, unknown>)
             : spec.mapArguments(args as Record<string, unknown>),
         executionId,
-        machineId: spec.scope.machineId,
-        threadId: spec.scope.threadId,
-        turnId: spec.scope.turnId,
+        machineId: scope.machineId,
+        threadId: scope.threadId,
+        turnId: scope.turnId,
         timeoutMs: spec.timeoutMs ?? DEFAULT_HOST_TOOL_TIMEOUT_MS,
-        ...(spec.scope.workspace === undefined ? {} : { workspace: spec.scope.workspace }),
+        ...(scope.workspace === undefined ? {} : { workspace: scope.workspace }),
       };
 
       const { promise, resolve, reject } = Promise.withResolvers<HostToolResultPayload>();

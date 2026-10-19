@@ -41,6 +41,14 @@ export {
   parseWatchdogConfigPatch,
 } from "./config.js";
 export type { ExperimentalToolConfig, WatchdogConfig, WatchdogConfigPatch } from "./config.js";
+export { TOOL_REGISTRY, toolRegistryRow } from "./tools/registry.js";
+export type {
+  BatchScheduleClass,
+  IntentMode,
+  ToolBackend,
+  ToolClass,
+  ToolRegistryRow,
+} from "./tools/registry.js";
 export { ModelProviderError } from "./provider.js";
 export type {
   ImageContribution,

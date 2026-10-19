@@ -66,7 +66,7 @@ import {
   parseOr422,
   requireJsonBody,
 } from "../shared/route-utils.js";
-import { createThreadId } from "../shared/ids.js";
+import { createDurableThreadId, createThreadId } from "../shared/ids.js";
 import {
   createThreadRecord,
   getThreadRow,
@@ -369,7 +369,8 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       projectId: payload.projectId,
       ...(payload.environment !== undefined ? { environment: payload.environment } : {}),
     });
-    const threadId = createThreadId();
+    const threadId =
+      ctx.env.AGENT_RUNTIME === "durable" ? createDurableThreadId() : createThreadId();
     const visibility =
       payload.visibility ??
       (parentThreadId !== null

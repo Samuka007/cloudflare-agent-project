@@ -119,11 +119,23 @@ export interface UxThreadEvent {
   createdAt: number;
 }
 
+function agentDoNamespaceFor(env: Env, threadId: string): DurableObjectNamespace {
+  if (threadId.startsWith("dthr_") && env.DURABLE_AGENT_DO !== undefined) {
+    return env.DURABLE_AGENT_DO;
+  }
+  return env.AGENT_DO;
+}
+
 export function agentDoFor(env: Env, threadId: string): AgentDoRpc {
-  if (env.ORCHESTRATOR !== undefined && env.MANAGER !== undefined) {
+  if (
+    !threadId.startsWith("dthr_") &&
+    env.ORCHESTRATOR !== undefined &&
+    env.MANAGER !== undefined
+  ) {
     return orchestratorBackedRpc(env, threadId);
   }
-  const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId));
+  const namespace = agentDoNamespaceFor(env, threadId);
+  const stub = namespace.get(namespace.idFromName(threadId));
   return stub as unknown as AgentDoRpc;
 }
 
@@ -143,7 +155,8 @@ export function agentDoCancelTurn(
   threadId: string,
   turnId: string,
 ): Promise<{ accepted: boolean }> {
-  const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId)) as unknown as Pick<
+  const namespace = agentDoNamespaceFor(env, threadId);
+  const stub = namespace.get(namespace.idFromName(threadId)) as unknown as Pick<
     AgentDoRpc,
     "cancelTurn"
   >;
@@ -166,7 +179,8 @@ export function agentDoCompactThread(
     remote?: { providerId: string; model: string };
   } = {},
 ): Promise<{ turnId: string; duplicated: boolean }> {
-  const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId)) as unknown as {
+  const namespace = agentDoNamespaceFor(env, threadId);
+  const stub = namespace.get(namespace.idFromName(threadId)) as unknown as {
     compactThread(args: {
       clientRequestId?: string;
       mode?: "soft" | "remote" | "snap";

@@ -34,6 +34,8 @@
       // Per-thread event log + turn state (#29), composed wrapper for
       // per-isolate relay registration (#31).
       { "name": "AGENT_DO", "class_name": "ComposedAgentDO" },
+      // #581 additive pi-durable runtime; new `dthr_` threads only.
+      { "name": "DURABLE_AGENT_DO", "class_name": "ComposedDurableAgentDO" },
       // Per-host command journal + session mirror (#27), composed wrapper
       // for in-isolate adapter installation (#31).
       { "name": "ORCHESTRATOR", "class_name": "ComposedHostOrchestratorDO" },
@@ -64,6 +66,11 @@
         "DaemonServiceDO",
       ],
     },
+    {
+      // #581 additive class; existing deployments have already applied v1.
+      "tag": "v2",
+      "new_sqlite_classes": ["ComposedDurableAgentDO"],
+    },
   ],
   "kv_namespaces": [
     {
@@ -79,6 +86,9 @@
     "crons": ["*/5 * * * *"],
   },
   "vars": {
+    // #581 cutover flag: legacy keeps every existing/new thread on AgentDO;
+    // durable routes only newly created `dthr_` threads to the pi runtime.
+    "AGENT_RUNTIME": "legacy",
     // SEC-W5-001 (#397) fail-closed, #505: no gate flag — gate state IS the
     // ACCESS_TEAM_DOMAIN + ACCESS_AUD Worker secret pair (`wrangler secret
     // put`). Both present = JWT verification on /api/v1/* and /ws; either
