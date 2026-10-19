@@ -160,8 +160,10 @@ export function createHostTool(spec: HostToolSpec, transport: HostToolTransport)
     replay: spec.replay,
     executionMode: spec.schedule === "exclusive" ? "sequential" : "parallel",
     execute: async (args: Static<TSchema>, api: ToolExecutionApi) => {
-      const executionId = `cap:${api.conversationId}:${api.taskId}`;
       const scope = typeof spec.scope === "function" ? spec.scope() : spec.scope;
+      // Self-routing key: the daemon service recovers the owning DO from the
+      // prefix before the last colon (`threadId:taskId`).
+      const executionId = `${scope.threadId}:${api.taskId}`;
       const frame: HostToolFrame = {
         tool: spec.name,
         arguments:

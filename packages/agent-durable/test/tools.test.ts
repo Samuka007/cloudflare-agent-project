@@ -63,7 +63,7 @@ describe("host tool wrapper", () => {
     if (frame === undefined) throw new Error("dispatch frame missing");
     expect(frame).toMatchObject({
       tool: "bash",
-      executionId: "cap:conv-1:task-1",
+      executionId: "thread-1:task-1",
       machineId: "machine-1",
       timeoutMs: 12_000,
       arguments: { command: "echo hi" },

@@ -56,10 +56,17 @@ export class PiEventBridge {
   #turnError: string | undefined;
   readonly #compactionReason = new Map<string, CompactionReason>();
 
-  constructor(options: { threadId: string; sink: ThreadEventSink; now?: () => number }) {
+  constructor(options: {
+    threadId: string;
+    sink: ThreadEventSink;
+    now?: () => number;
+    /** Resume the adapter-owned turn counter after a DO restart. */
+    initialTurnOrdinal?: number;
+  }) {
     this.#threadId = options.threadId;
     this.#sink = options.sink;
     this.#now = options.now ?? Date.now;
+    this.#turnOrdinal = options.initialTurnOrdinal ?? 0;
   }
 
   async ingest(events: readonly AgentEvent[]): Promise<ThreadEventEnvelope[]> {

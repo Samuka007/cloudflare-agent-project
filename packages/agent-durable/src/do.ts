@@ -227,7 +227,11 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
     if (this.#sink !== undefined) return;
     this.#threadId = threadId;
     this.#sink = new DurableEventSink(this.ctx.storage.sql, threadId);
-    this.#bridge = new PiEventBridge({ threadId, sink: this.#sink });
+    this.#bridge = new PiEventBridge({
+      threadId,
+      sink: this.#sink,
+      initialTurnOrdinal: this.#turnOrdinal,
+    });
     this.#attachWatcher();
   }
 

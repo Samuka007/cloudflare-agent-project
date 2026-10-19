@@ -20,7 +20,7 @@ describe("durable runtime tool projection", () => {
         dispatch: () => Promise.resolve({ kind: "host_offline" }),
       }),
     );
-    const args = validateToolArguments(tool, {
+    const args: unknown = validateToolArguments(tool, {
       id: "call-1",
       name: "bash",
       arguments: { command: "echo hi" },
