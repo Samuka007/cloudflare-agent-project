@@ -70,7 +70,9 @@ export async function getProviderConfigTarget(
   env: ProviderConfigEnv,
   id: string,
 ): Promise<ProviderConfigTarget | null> {
-  const row = await env.DB.prepare("SELECT base_url, api, models FROM provider_configs WHERE id = ?")
+  const row = await env.DB.prepare(
+    "SELECT base_url, api, models FROM provider_configs WHERE id = ?",
+  )
     .bind(id)
     .first<{ base_url: string | null; api: string | null; models: string }>();
   if (row === null) return null;
@@ -117,9 +119,7 @@ export async function getProviderConfigMutationContext(
 
 /** Credential-set resolution shared by POST/PUT/PATCH (the null protocol). */
 export type CredentialUpdate =
-  | { kind: "keep" }
-  | { kind: "clear" }
-  | { kind: "set"; plaintext: string };
+  { kind: "keep" } | { kind: "clear" } | { kind: "set"; plaintext: string };
 
 export async function insertProviderConfig(
   env: ProviderConfigEnv,

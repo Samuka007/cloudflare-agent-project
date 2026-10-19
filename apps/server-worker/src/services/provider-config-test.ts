@@ -1,23 +1,22 @@
 import type {
   ProviderConfigDiscoverResponse,
   ProviderConfigTestResponse,
-} from "../contract/api/system.js";
-import { IMAGE_SOURCE_API_FAMILY, isImageGenerationModelId } from "@cap/agent-do";
+} from "../contract/api/system";
+import { IMAGE_SOURCE_API_FAMILY, isImageGenerationModelId } from "@cap/agent-config";
 import {
   hostDiscoverModelsResultSchema,
   type DiscoveredModelEntry,
   type HostDiscoverModelsCommand,
 } from "@cap/daemon-service";
-import { listNonDestroyedHostRows } from "../db/hosts.js";
-import { HOST_COMMAND_TIMEOUT_MS, daemonServiceStubOrNull } from "./host-files.js";
-import type { Env } from "../env.js";
+import { listNonDestroyedHostRows } from "../db/hosts";
+import { HOST_COMMAND_TIMEOUT_MS, daemonServiceStubOrNull } from "./host-files";
+import type { Env } from "../env";
 import { z } from "zod";
 
 /**
  * #362 test-connection: ONE minimal wire request against the row's declared
  * endpoint, answered as a true/false verdict (+ status/latency/bounded
- * error). Family conventions match the relay wire (packages/agent-do
- * relay/anthropic-provider.ts `${baseUrl}/v1/messages`) and the OpenAI
+ * error). Family conventions match the OpenAI
  * Responses convention (`${baseUrl}/responses`, #361's adaptor family).
  *
  * Zero-secret: the key value rides headers only and the error body is read
@@ -166,8 +165,7 @@ function withDiscoveredFamilies(
     : models.filter((entry) => entry.family === "image").map((entry) => entry.id);
   if (imageIds.length === 0) return { ...verdict, models };
   const listed = imageIds.slice(0, 5).join(", ");
-  const listedIds =
-    imageIds.length > 5 ? `${listed} +${String(imageIds.length - 5)} more` : listed;
+  const listedIds = imageIds.length > 5 ? `${listed} +${String(imageIds.length - 5)} more` : listed;
   return {
     ...verdict,
     models,

@@ -1,5 +1,5 @@
-import { NegotiationBackoff, NegotiationError, type BackoffClock } from "./backoff.js";
-import { log } from "./log.js";
+import { NegotiationBackoff, NegotiationError, type BackoffClock } from "./backoff";
+import { log } from "./log";
 
 /**
  * The single reconnect loop (issue #35): session establishment and every

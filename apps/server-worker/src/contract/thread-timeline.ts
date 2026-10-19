@@ -18,7 +18,7 @@ import {
   type BackgroundTaskUsage,
   type JsonObject,
   type WorkflowProgressSnapshot,
-} from "./domain/index.js";
+} from "./domain/index";
 
 export const timelineRowStatusValues = ["pending", "completed", "error", "interrupted"] as const;
 export const timelineRowStatusSchema = z.enum(timelineRowStatusValues);

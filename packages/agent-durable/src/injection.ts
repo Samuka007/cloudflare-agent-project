@@ -1,4 +1,4 @@
-import type { DurableAgentRuntime, DurableAgentRuntimeFactory } from "./types.js";
+import type { DurableAgentRuntime, DurableAgentRuntimeFactory } from "./types";
 
 let factory: DurableAgentRuntimeFactory | undefined;
 

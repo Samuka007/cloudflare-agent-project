@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view.js";
-import type { TimelineRow } from "../../src/contract/thread-timeline.js";
-import type { UxThreadEvent } from "../../src/seam/agent-do.js";
+import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view";
+import type { TimelineRow } from "../../src/contract/thread-timeline";
+import type { UxThreadEvent } from "../../src/seam/agent-do";
 
 /**
  * #303 (upstream bb #3250 port, J6 档 2): the completed CoT face. The ux
@@ -40,18 +40,13 @@ function projectRows(events: readonly UxThreadEvent[]): TimelineRow[] {
   return rowsForConversationOutline(projectThreadTimeline(events, { threadStatus: "active" }).rows);
 }
 
-type GenericOperationSystemRow = Extract<
-  TimelineRow,
-  { kind: "system"; systemKind: "operation" }
->;
+type GenericOperationSystemRow = Extract<TimelineRow, { kind: "system"; systemKind: "operation" }>;
 
 function isReasoningRow(
   row: TimelineRow,
 ): row is GenericOperationSystemRow & { operationKind: "reasoning" } {
   return (
-    row.kind === "system" &&
-    row.systemKind === "operation" &&
-    row.operationKind === "reasoning"
+    row.kind === "system" && row.systemKind === "operation" && row.operationKind === "reasoning"
   );
 }
 
@@ -59,27 +54,42 @@ describe("#303 — reasoning operation rows (bb #3250 parity, live face)", () =>
   it("materializes the completed Thought row with canonical identity and duration title", () => {
     const rows = projectRows([
       uxEvent(1, "turn/started", { turnId: "t1" }, 1_000),
-      uxEvent(2, "item/reasoning/textDelta", {
-        turnId: "t1",
-        itemId: "itm-rs-t1:1",
-        delta: "Compare both ",
-      }, 1_000),
-      uxEvent(3, "item/reasoning/textDelta", {
-        turnId: "t1",
-        itemId: "itm-rs-t1:1",
-        delta: "render paths.",
-      }, 2_000),
+      uxEvent(
+        2,
+        "item/reasoning/textDelta",
+        {
+          turnId: "t1",
+          itemId: "itm-rs-t1:1",
+          delta: "Compare both ",
+        },
+        1_000,
+      ),
+      uxEvent(
+        3,
+        "item/reasoning/textDelta",
+        {
+          turnId: "t1",
+          itemId: "itm-rs-t1:1",
+          delta: "render paths.",
+        },
+        2_000,
+      ),
       // The canonical text wins over the delta accumulation (bb finalized
       // text replaces the buffer, deduped when equal).
-      uxEvent(4, "item/completed", {
-        turnId: "t1",
-        item: {
-          type: "reasoning",
-          id: "itm-rs-t1:1",
-          summary: [],
-          content: ["Compare both render paths."],
+      uxEvent(
+        4,
+        "item/completed",
+        {
+          turnId: "t1",
+          item: {
+            type: "reasoning",
+            id: "itm-rs-t1:1",
+            summary: [],
+            content: ["Compare both render paths."],
+          },
         },
-      }, 13_000),
+        13_000,
+      ),
     ]);
 
     const reasoning = rows.filter(isReasoningRow);
@@ -110,9 +120,9 @@ describe("#303 — reasoning operation rows (bb #3250 parity, live face)", () =>
     expect(rows).toHaveLength(0);
     // The live face keeps the stream (the bb threadStatus gate applies at
     // the route boundary — projection runs with "active" here).
-    expect(
-      projectThreadTimeline(events, { threadStatus: "active" }).activeThinking?.text,
-    ).toBe("still streaming\n");
+    expect(projectThreadTimeline(events, { threadStatus: "active" }).activeThinking?.text).toBe(
+      "still streaming\n",
+    );
   });
 
   it("drops an empty-text completion without leaving a row", () => {
@@ -282,7 +292,12 @@ describe("#303 — reasoning operation rows (bb #3250 parity, live face)", () =>
       }),
       uxEvent(11, "item/completed", {
         turnId: "t1",
-        item: { type: "agentMessage", id: "itm-am-t1:3", text: "17 × 23 = 391", parentToolCallId: undefined },
+        item: {
+          type: "agentMessage",
+          id: "itm-am-t1:3",
+          text: "17 × 23 = 391",
+          parentToolCallId: undefined,
+        },
       }),
     ]);
     const thoughtIndex = rows.findIndex(isReasoningRow);
@@ -317,9 +332,7 @@ describe("#303 — reasoning operation rows (bb #3250 parity, live face)", () =>
       uxEvent(9, "turn/completed", { turnId: "t1", status: "interrupted", error: null }),
     ]);
     const thoughtIndex = rows.findIndex(isReasoningRow);
-    const toolIndex = rows.findIndex(
-      (row) => row.kind === "work" && row.workKind === "tool",
-    );
+    const toolIndex = rows.findIndex((row) => row.kind === "work" && row.workKind === "tool");
     expect(thoughtIndex).toBeGreaterThanOrEqual(0);
     expect(toolIndex).toBeGreaterThan(thoughtIndex);
   });

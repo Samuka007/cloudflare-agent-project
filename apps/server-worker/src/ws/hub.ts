@@ -5,7 +5,7 @@ import {
   clientMessageSchema,
   realtimeSubscriptionTargetKey,
   type ThreadChangeMetadata,
-} from "../contract/domain/change-kinds.js";
+} from "../contract/domain/change-kinds";
 
 /**
  * NotificationHub → Durable Object port (bb apps/server/src/ws/hub.ts,

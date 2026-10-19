@@ -1,6 +1,6 @@
-export { TestAgentSinkDO } from "./agent-sink.js";
-export * from "./constants.js";
-export { threadIdFromExecutionId } from "./execution-id.js";
+export { TestAgentSinkDO } from "./agent-sink";
+export * from "./constants";
+export { threadIdFromExecutionId } from "./execution-id";
 export {
   emptyServiceState,
   foldOp,
@@ -10,7 +10,7 @@ export {
   type ReconcileAction,
   type ServiceStateData,
   type SessionRecord,
-} from "./journal.js";
+} from "./journal";
 export {
   bootAnnounceFrameSchema,
   clientFrameSchema,
@@ -54,14 +54,14 @@ export {
   type ObservedExecution,
   type ObservedState,
   type ServiceFrame,
-} from "./protocol.js";
+} from "./protocol";
 export {
   hostPathsExistResultSchema,
   hostMkdirCommandSchema,
   hostPathMutationResultSchema,
   projectPathInspectionSchema,
   projectPathResultSchema,
-} from "./protocol.js";
+} from "./protocol";
 export {
   consumeJoinCode,
   JOIN_CODE_TTL_S,
@@ -70,18 +70,18 @@ export {
   sha256Hex,
   type JoinCodeRecord,
   type MintedJoinCode,
-} from "./join-codes.js";
+} from "./join-codes";
 export {
   DaemonServiceDO,
   type DaemonServiceEnv,
   type HostRpcOutcome,
   type HostThreadFileReadOutcome,
   type HostThreadFileWriteOutcome,
-} from "./service-do.js";
+} from "./service-do";
 export {
   default as daemonServiceWorker,
   requireDaemonCredentials,
   type ProjectAttachmentContentResult,
   type ProjectAttachmentReader,
   type WorkerEnv,
-} from "./worker.js";
+} from "./worker";

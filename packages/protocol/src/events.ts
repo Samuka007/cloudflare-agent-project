@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { FIRST_SEQ } from "./ids.js";
-import { toolResultErrorCodeSchema } from "./tool-results.js";
+import { FIRST_SEQ } from "./ids";
+import { toolResultErrorCodeSchema } from "./tool-results";
 
 /**
  * Append-only thread event log schema.

@@ -1,7 +1,7 @@
 import type { DaemonServiceDO } from "@cap/daemon-service";
-import type { HostFileReadResult } from "../contract/api/hosts.js";
-import type { Env } from "../env.js";
-import { ApiError } from "../shared/api-error.js";
+import type { HostFileReadResult } from "../contract/api/hosts";
+import type { Env } from "../env";
+import { ApiError } from "../shared/api-error";
 
 /**
  * B1 (#321): the thread host-file content face's response builder — bb port
@@ -32,7 +32,10 @@ export function hostFileHostUnavailable(): ApiError {
  * hosts.ts daemonStubOrNull, shared: the per-host DaemonServiceDO stub, or
  * null when the deployment carries no daemon namespace.
  */
-export function daemonServiceStubOrNull(env: Env, hostId: string): (DurableObjectStub & DaemonServiceDO) | null {
+export function daemonServiceStubOrNull(
+  env: Env,
+  hostId: string,
+): (DurableObjectStub & DaemonServiceDO) | null {
   const namespace = env.DAEMON_SERVICE;
   if (namespace === undefined) return null;
   return namespace.get(namespace.idFromName(hostId)) as DurableObjectStub & DaemonServiceDO;

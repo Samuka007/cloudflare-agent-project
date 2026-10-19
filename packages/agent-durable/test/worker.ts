@@ -1,12 +1,12 @@
-import { DurableAgentDO } from "../src/do.js";
-import { setDurableAgentRuntimeFactory } from "../src/injection.js";
+import { DurableAgentDO } from "../src/do";
+import { setDurableAgentRuntimeFactory } from "../src/injection";
 import {
   createTestRuntime,
   readTestState,
   writeScript,
   type TestState,
   type TestScriptStep,
-} from "./support.js";
+} from "./support";
 
 setDurableAgentRuntimeFactory((_env, ctx) => createTestRuntime(ctx));
 

@@ -1,16 +1,16 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { env, exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
-import { createThread, ensureRigReady, RIG_MODEL_ID, RIG_PROVIDER_ID } from "../helpers.js";
+import { ensureMigrations } from "../migrate";
+import { createThread, ensureRigReady, RIG_MODEL_ID, RIG_PROVIDER_ID } from "../helpers";
 import {
   threadResponseSchema,
   threadWithIncludesResponseSchema,
-} from "../../src/contract/api/threads.js";
-import { threadListEntrySchema } from "../../src/contract/domain/thread.js";
-import { projectSourceSchema } from "../../src/contract/domain/index.js";
+} from "../../src/contract/api/threads";
+import { threadListEntrySchema } from "../../src/contract/domain/thread";
+import { projectSourceSchema } from "../../src/contract/domain/index";
 import { CLOUD_PLACEHOLDER_HOST_ID, threadSummarySchema } from "@cap/protocol";
-import type { AgentDoRpc } from "../../src/seam/agent-do.js";
+import type { AgentDoRpc } from "../../src/seam/agent-do";
 
 /**
  * #288 binding feed-through (inventory #282 §2.A): POST /threads resolves the
@@ -132,7 +132,7 @@ describe("#288 explicit host binding lands in D1, trajectory and read faces", ()
     expect(thread.environmentId).not.toBeNull();
     // Trajectory half: thread.created carries the binding machine.
     const events = await rawEvents(thread.id);
-    expect(events[0]?.type).toBe("thread.created");
+    expect(events[0]?.type).toBe("client/thread/start");
     expect(machineIdOfFirstEvent(events)).toBe(host.id);
     // Find-or-create: exactly one new row.
     expect(await environmentCount()).toBe(before + 1);
@@ -237,9 +237,7 @@ describe("#288 explicit host binding lands in D1, trajectory and read faces", ()
     // The personal singleton has no source: the placeholder default, zero rows.
     const before = await environmentCount();
     const deployment = await createThread({ title: "deployment-default" });
-    expect(machineIdOfFirstEvent(await rawEvents(deployment.id))).toBe(
-      CLOUD_PLACEHOLDER_HOST_ID,
-    );
+    expect(machineIdOfFirstEvent(await rawEvents(deployment.id))).toBe(CLOUD_PLACEHOLDER_HOST_ID);
     const bareDetail = threadResponseSchema.parse(
       (await getJson(`/api/v1/threads/${deployment.id}`)).body,
     );
@@ -298,7 +296,7 @@ describe("#288 explicit host binding lands in D1, trajectory and read faces", ()
     expect(row.environmentId).not.toBeNull();
     expect(row.environmentId).not.toBe(thread.environmentId);
     const events = await rawEvents(thread.id);
-    const reboundEvent = events.find((event) => event.type === "thread.rebound");
+    const reboundEvent = events.find((event) => event.type === "thread/rebound");
     expect(dataField(reboundEvent?.data, "machineId")).toBe(hostB.id);
     // Same-target rebind appends nothing (idempotent owner operation).
     const again = await postJson(`/api/v1/threads/${thread.id}/environment`, {
@@ -310,7 +308,7 @@ describe("#288 explicit host binding lands in D1, trajectory and read faces", ()
     });
     expect(again.status).toBe(200);
     const eventsAfter = await rawEvents(thread.id);
-    expect(eventsAfter.filter((event) => event.type === "thread.rebound")).toHaveLength(1);
+    expect(eventsAfter.filter((event) => event.type === "thread/rebound")).toHaveLength(1);
   });
 });
 
@@ -389,7 +387,9 @@ describe("#468 dangling binding references fall to the cloud placeholder", () =>
     });
     expect(fallback.status).toBe(201);
     expect(
-      machineIdOfFirstEvent(await rawEvents(createdThreadBodySchema.parse(await fallback.json()).id)),
+      machineIdOfFirstEvent(
+        await rawEvents(createdThreadBodySchema.parse(await fallback.json()).id),
+      ),
     ).toBe(CLOUD_PLACEHOLDER_HOST_ID);
   });
 

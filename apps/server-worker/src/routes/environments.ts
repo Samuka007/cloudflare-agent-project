@@ -1,8 +1,8 @@
 import { Hono } from "hono";
-import { ApiError } from "../shared/api-error.js";
-import { environmentSchema } from "../contract/domain/environment.js";
-import { getEnvironmentRow, listEnvironmentRows } from "../db/environments.js";
-import type { AppEnv } from "../app-types.js";
+import { ApiError } from "../shared/api-error";
+import { environmentSchema } from "../contract/domain/environment";
+import { getEnvironmentRow, listEnvironmentRows } from "../db/environments";
+import type { AppEnv } from "../app-types";
 
 /**
  * #288 environments minimal set (inventory §2.A2 read face): project-scoped

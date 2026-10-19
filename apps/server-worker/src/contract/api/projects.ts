@@ -14,12 +14,12 @@ import {
   projectSourceSchema,
   promptHistoryEntrySchema,
   threadListEntrySchema,
-} from "../domain/index.js";
+} from "../domain/index";
 import {
   branchListQuerySchema,
   isCommaSeparatedIncludeQueryValue,
   pathListIncludeQueryValueSchema,
-} from "./shared.js";
+} from "./shared";
 
 const localProjectPathRequestSchema = z
   .string()

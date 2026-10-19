@@ -2,7 +2,7 @@
 // Ported verbatim from bb (Samuka007/bb fork of get-bb/bb) commit 8473d8c33.
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
-import type { EnvironmentStatus } from "./environment.js";
+import type { EnvironmentStatus } from "./environment";
 
 /**
  * What happened to an environment, in product terms. Callers report events

@@ -10,21 +10,21 @@ import {
   hostPathsExistRequestSchema,
   updateHostPermissionCeilingRequestSchema,
   updateHostRequestSchema,
-} from "../contract/api/hosts.js";
+} from "../contract/api/hosts";
 import {
   HOST_COMMAND_TIMEOUT_MS,
   hostOnlineRpcOrThrow,
   requireHostRow,
-} from "../services/host-rpc.js";
-import { createHostId } from "../shared/ids.js";
-import { ApiError } from "../shared/api-error.js";
-import { parseOr422, requireJsonBody } from "../shared/route-utils.js";
-import { getHostRow, listNonDestroyedHostRows, updateHostRow } from "../db/hosts.js";
-import { deleteProjectSourceRowsByHost } from "../db/project-sources.js";
-import { toHostRecord } from "../services/host-records.js";
-import { requirePublicStandardProject } from "../services/entity-lookup.js";
-import { pathsExistResponseSchema } from "../contract/hdc/local.js";
-import type { AppEnv, Env } from "../app-types.js";
+} from "../services/host-rpc";
+import { createHostId } from "../shared/ids";
+import { ApiError } from "../shared/api-error";
+import { parseOr422, requireJsonBody } from "../shared/route-utils";
+import { getHostRow, listNonDestroyedHostRows, updateHostRow } from "../db/hosts";
+import { deleteProjectSourceRowsByHost } from "../db/project-sources";
+import { toHostRecord } from "../services/host-records";
+import { requirePublicStandardProject } from "../services/entity-lookup";
+import { pathsExistResponseSchema } from "../contract/hdc/local";
+import type { AppEnv, Env } from "../app-types";
 
 /**
  * Hosts face (ruling #7 "hosts 最小"): fleet list/get/rename/ceiling/delete.

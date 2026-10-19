@@ -1,4 +1,4 @@
-import { TOOL_REGISTRY } from "@cap/agent-do";
+import { TOOL_REGISTRY } from "@cap/agent-config";
 import { createHostTool, HostToolDispatcher } from "@cap/agent-durable";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";

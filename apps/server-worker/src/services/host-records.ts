@@ -1,11 +1,11 @@
 import type { DaemonServiceDO } from "@cap/daemon-service";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
-import { hostSchema } from "../contract/domain/host.js";
-import type { Host } from "../contract/domain/host.js";
-import { listNonDestroyedHostRows } from "../db/hosts.js";
-import type { HostDbRow } from "../db/rows.js";
-import type { Env } from "../env.js";
-import { ApiError } from "../shared/api-error.js";
+import { hostSchema } from "../contract/domain/host";
+import type { Host } from "../contract/domain/host";
+import { listNonDestroyedHostRows } from "../db/hosts";
+import type { HostDbRow } from "../db/rows";
+import type { Env } from "../env";
+import { ApiError } from "../shared/api-error";
 
 /**
  * bb toHostRecord reads the status out of the live session before shaping

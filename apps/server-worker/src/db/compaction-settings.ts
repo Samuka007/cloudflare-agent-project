@@ -10,7 +10,11 @@
  * remote ineligible. Reads happen per compact face, so a write hot-applies.
  */
 
-import { compactModeSchema, resolveCompactionMethodOrder, type CompactMode } from "@cap/agent-do";
+import {
+  compactModeSchema,
+  resolveCompactionMethodOrder,
+  type CompactMode,
+} from "@cap/agent-config";
 
 /** The capability slice this module needs (the worker Env satisfies it). */
 export interface CompactionSettingsEnv {

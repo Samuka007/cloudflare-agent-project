@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
-import { apiGet } from "../helpers.js";
+import { apiGet } from "../helpers";
 
 /**
  * #494: POST /api/v1/files/mkdir — the Add-project folder browser's "New

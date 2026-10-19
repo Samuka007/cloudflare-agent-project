@@ -20,7 +20,7 @@ type GitBranchNameCandidate = string;
 const gitBranchForbiddenCharacterPattern = /[\u0000-\u001f\u007f\\:~^?*\[]/u;
 const gitBranchWhitespacePattern = /[ \t]/u;
 const GIT_RESERVED_BRANCH_NAMES: Record<string, true> = {
-  "AUTO_MERGE": true,
+  AUTO_MERGE: true,
   BISECT_HEAD: true,
   CHERRY_PICK_HEAD: true,
   FETCH_HEAD: true,

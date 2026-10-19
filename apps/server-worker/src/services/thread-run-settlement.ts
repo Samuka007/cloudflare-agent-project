@@ -1,11 +1,11 @@
-import type { UxThreadEvent } from "../seam/agent-do.js";
+import type { UxThreadEvent } from "../seam/agent-do";
 import {
   evaluateThreadLifecycleEvent,
   type ThreadLifecycleEvent,
-} from "../contract/domain/thread-lifecycle.js";
-import { getThreadRow, updateThreadRecord } from "../db/control-plane.js";
-import type { ThreadDbRow } from "../db/rows.js";
-import type { Env } from "../env.js";
+} from "../contract/domain/thread-lifecycle";
+import { getThreadRow, updateThreadRecord } from "../db/control-plane";
+import type { ThreadDbRow } from "../db/rows";
+import type { Env } from "../env";
 
 /**
  * Terminal-turn settlement (#52).

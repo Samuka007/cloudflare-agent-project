@@ -1,10 +1,10 @@
-import type { Env } from "../env.js";
+import type { Env } from "../env";
 import {
   ENVIRONMENT_COLUMN_SQL,
   toEnvironmentDbRow,
   type EnvironmentDbRow,
   type WorkspaceProvisionType,
-} from "./rows.js";
+} from "./rows";
 
 /**
  * #288 environments persistence (bb packages/db schema.ts:485-536 via the

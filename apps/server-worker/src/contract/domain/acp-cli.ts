@@ -3,7 +3,7 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import { reasoningLevelSchema } from "./shared-types.js";
+import { reasoningLevelSchema } from "./shared-types";
 
 const providerSkillRootPathSchema = z
   .string()

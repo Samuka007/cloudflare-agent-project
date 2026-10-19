@@ -3,7 +3,7 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import { permissionModeSchema } from "../domain/index.js";
+import { permissionModeSchema } from "../domain/index";
 import {
   pathsExistRequestSchema,
   providerCliInstallEventSchema,
@@ -14,7 +14,7 @@ import {
   type ProviderCliInstallEvent,
   type ProviderCliInstallRequest,
   type ProviderCliStatusResponse,
-} from "../hdc/local.js";
+} from "../hdc/local";
 
 /**
  * Query for `GET /hosts/:id/directory`, the interactive path browser's

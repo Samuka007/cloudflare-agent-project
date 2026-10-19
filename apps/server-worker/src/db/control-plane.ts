@@ -1,6 +1,6 @@
-import type { Env } from "../env.js";
-import { resolveEnvironmentWorkspaceDisplayKind } from "../contract/domain/environment.js";
-import type { EnvironmentWorkspaceDisplayKind } from "../contract/domain/environment.js";
+import type { Env } from "../env";
+import { resolveEnvironmentWorkspaceDisplayKind } from "../contract/domain/environment";
+import type { EnvironmentWorkspaceDisplayKind } from "../contract/domain/environment";
 import {
   THREAD_COLUMN_SQL,
   toProjectRow,
@@ -11,7 +11,7 @@ import {
   type ProjectRow,
   type ThreadDbRow,
   type ThreadSectionRow,
-} from "./rows.js";
+} from "./rows";
 
 /**
  * Control-plane queries against D1, ported from bb

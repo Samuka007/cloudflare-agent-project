@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import { ZodError } from "zod";
-import { ApiError, ZodErrorHolder, toApiError } from "./api-error.js";
+import { ApiError, ZodErrorHolder, toApiError } from "./api-error";
 
 export { ApiError };
 

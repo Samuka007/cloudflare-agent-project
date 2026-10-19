@@ -2,7 +2,7 @@
 // Ported verbatim from bb (Samuka007/bb fork of get-bb/bb) commit 8473d8c33.
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
-import { reasoningLevelValues, type ReasoningLevel } from "./shared-types.js";
+import { reasoningLevelValues, type ReasoningLevel } from "./shared-types";
 
 /**
  * When the model changes, we want the reasoning preference to follow as

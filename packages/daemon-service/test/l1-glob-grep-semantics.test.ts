@@ -10,7 +10,7 @@ import {
   executeDispatch,
   type ToolDispatchFrame,
   type ToolHost,
-} from "../src/client/tool-runtime.js";
+} from "../src/client/tool-runtime";
 
 /**
  * L1 per-tool semantics for glob + grep (M1.5/T7 #97) — the vendored omp

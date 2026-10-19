@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { ensureMigrations } from "../migrate.js";
-import { threadSearchResponseSchema } from "../../src/contract/api/threads.js";
-import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view.js";
-import type { UxThreadEvent } from "../../src/seam/agent-do.js";
-import { createThread } from "../helpers.js";
+import { ensureMigrations } from "../migrate";
+import { threadSearchResponseSchema } from "../../src/contract/api/threads";
+import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view";
+import type { UxThreadEvent } from "../../src/seam/agent-do";
+import { createThread } from "../helpers";
 import { env, exports } from "cloudflare:workers";
 
 /**
@@ -184,9 +184,7 @@ describe("D7: sealed-error rows carry the message text with error status", () =>
 
   it("falls back to the System error label past 80 chars with the text in detail", () => {
     const long = "d".repeat(120);
-    const rows = projectRows([
-      uxEvent("system/error", { message: long, category: "internal" }),
-    ]);
+    const rows = projectRows([uxEvent("system/error", { message: long, category: "internal" })]);
     const row = rows.find((candidate) => candidate.kind === "system");
     expect(row).toMatchObject({
       title: "System error",
@@ -220,9 +218,7 @@ describe("E9/A6: provider-clis/status answers the E8 crop as an empty state (#30
     // (reading 'installed' of undefined, staging post-#330). Mirror bb's
     // always-every-key shape with explicit not-installed entries.
     expect(known.status).toBe(200);
-    const body = await known.json<
-      Record<string, { installed: boolean; displayName: string }>
-    >();
+    const body = await known.json<Record<string, { installed: boolean; displayName: string }>>();
     expect(Object.keys(body).sort()).toEqual(["claudeCode", "codex"]);
     expect(body.codex?.installed).toBe(false);
     expect(body.claudeCode?.installed).toBe(false);

@@ -1,5 +1,5 @@
 import type { DaemonThreadEventInput, ThreadEventEnvelope } from "@cap/protocol";
-import type { ThreadEventSink } from "./events.js";
+import type { ThreadEventSink } from "./events";
 
 interface EventRow {
   [key: string]: SqlStorageValue;
@@ -68,6 +68,19 @@ export class DurableEventSink implements ThreadEventSink {
       )
       .toArray();
     return rows.map((row) => this.#toEnvelope(row));
+  }
+
+  /** Older page: the newest `limit` rows at or below `beforeSeq` (the
+   * timeline anchor is included so the route can validate it). */
+  readBefore(beforeSeq: number, limit: number): ThreadEventEnvelope[] {
+    const rows = this.#sql
+      .exec<EventRow>(
+        "SELECT seq, id, type, data, created_at FROM events WHERE seq <= ? ORDER BY seq DESC LIMIT ?",
+        beforeSeq,
+        limit,
+      )
+      .toArray();
+    return rows.reverse().map((row) => this.#toEnvelope(row));
   }
 
   latestSeq(): number {

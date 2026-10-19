@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MIGRATION_FILES, ensureMigrations, splitMigrationStatements } from "./migrate.js";
+import { MIGRATION_FILES, ensureMigrations, splitMigrationStatements } from "./migrate";
 import orphanHostReferencesSql from "../migrations/0006_orphan_host_references.sql";
 import purgeOmpSentinelSql from "../migrations/0009_purge_omp_sentinel.sql";
 
@@ -69,8 +69,7 @@ describe("migration replay idempotency (#295)", () => {
     )
       .bind(now, now, now)
       .run();
-    const sourceColumns =
-      "id, project_id, is_default, type, host_id, path, created_at, updated_at";
+    const sourceColumns = "id, project_id, is_default, type, host_id, path, created_at, updated_at";
     const sourceShape = "'local_path', ?, '/repo/468', 1, 1";
     await env.DB.prepare(
       `INSERT INTO project_sources (${sourceColumns}) VALUES ('src468_live', 'proj_personal', 0, ${sourceShape})`,
@@ -105,10 +104,14 @@ describe("migration replay idempotency (#295)", () => {
     const now = Date.now();
     const threadShape =
       "INSERT INTO threads (id, project_id, provider_id, status, latest_attention_at, created_at, updated_at)";
-    await env.DB.prepare(`${threadShape} VALUES ('thr_omp_replay_probe', 'proj_personal', 'omp', 'starting', ?, ?, ?)`)
+    await env.DB.prepare(
+      `${threadShape} VALUES ('thr_omp_replay_probe', 'proj_personal', 'omp', 'starting', ?, ?, ?)`,
+    )
       .bind(now, now, now)
       .run();
-    await env.DB.prepare(`${threadShape} VALUES ('thr_rig_replay_probe', 'proj_personal', 'rig', 'starting', ?, ?, ?)`)
+    await env.DB.prepare(
+      `${threadShape} VALUES ('thr_rig_replay_probe', 'proj_personal', 'rig', 'starting', ?, ?, ?)`,
+    )
       .bind(now, now, now)
       .run();
     await env.DB.prepare(

@@ -7,8 +7,8 @@ import {
   dispatchViaSeam,
   executionViewOf,
   sinkStub,
-} from "./helpers.js";
-import type { ObservedExecution } from "../src/protocol.js";
+} from "./helpers";
+import type { ObservedExecution } from "../src/protocol";
 
 /**
  * I24 — authorization list is unique (§8.5 new-boot branch): the service DO

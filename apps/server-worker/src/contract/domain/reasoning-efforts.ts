@@ -2,8 +2,8 @@
 // Ported verbatim from bb (Samuka007/bb fork of get-bb/bb) commit 8473d8c33.
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
-import type { ModelReasoningEffort } from "./provider-types.js";
-import type { ReasoningLevel } from "./shared-types.js";
+import type { ModelReasoningEffort } from "./provider-types";
+import type { ReasoningLevel } from "./shared-types";
 
 export const NONE_REASONING_EFFORT: ModelReasoningEffort = {
   reasoningEffort: "none",

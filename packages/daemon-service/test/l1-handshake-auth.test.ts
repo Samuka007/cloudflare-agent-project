@@ -6,8 +6,8 @@ import {
   testEnv,
   journalOf,
   opsOfKind,
-} from "./helpers.js";
-import { DAEMON_PROTOCOL_VERSION } from "../src/constants.js";
+} from "./helpers";
+import { DAEMON_PROTOCOL_VERSION } from "../src/constants";
 
 /**
  * Handshake + auth surface (bb §2.1/§5; §8.5 tree steps 1–3): Bearer hostKey
@@ -23,7 +23,10 @@ describe("L1 handshake + auth", () => {
       new Request("https://daemon-service.test/enroll", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ enrollKey: "[REDACTED-staging-secret]", hostId: uniqueHostId("retired") }),
+        body: JSON.stringify({
+          enrollKey: "[REDACTED-staging-secret]",
+          hostId: uniqueHostId("retired"),
+        }),
       }),
     );
     expect(enroll.status).toBe(401);

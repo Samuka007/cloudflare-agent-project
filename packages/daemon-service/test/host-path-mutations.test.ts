@@ -3,10 +3,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import type { HostRpcRequestFrame } from "../src/protocol.js";
-import { mkdirHostPath } from "../src/client/host-path-mutations.js";
-import { dispatchHostRpc } from "../src/client/connection.js";
-import { HostRpcCommandError } from "../src/client/host-directory.js";
+import type { HostRpcRequestFrame } from "../src/protocol";
+import { mkdirHostPath } from "../src/client/host-path-mutations";
+import { dispatchHostRpc } from "../src/client/connection";
+import { HostRpcCommandError } from "../src/client/host-directory";
 
 /**
  * #494 bun suite (real fs, host-directory.test.ts lane): the daemon face of

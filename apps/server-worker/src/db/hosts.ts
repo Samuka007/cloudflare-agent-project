@@ -1,6 +1,6 @@
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
-import type { Env } from "../env.js";
-import { toHostDbRow, type HostDbRow } from "./rows.js";
+import type { Env } from "../env";
+import { toHostDbRow, type HostDbRow } from "./rows";
 
 export async function getHostRow(env: Env, hostId: string): Promise<HostDbRow | null> {
   const row = await env.DB.prepare(
@@ -46,7 +46,8 @@ export async function upsertAttachedHost(
   const name = typeof info?.hostName === "string" && info.hostName !== "" ? info.hostName : hostId;
   // bb: enroll's upsert preserves the rejection (data/hosts.ts:84 keeps
   // existing columns), only a successful open clears it (internal/session.ts:96-98).
-  const clearRejected = info?.clearRejected === true ? ", last_rejected_protocol_version = NULL" : "";
+  const clearRejected =
+    info?.clearRejected === true ? ", last_rejected_protocol_version = NULL" : "";
   await env.DB.prepare(
     `INSERT INTO hosts (id, name, type, connect_machine_id, max_permission_mode, destroyed_at,
                         last_seen_at, last_rejected_protocol_version, created_at, updated_at)

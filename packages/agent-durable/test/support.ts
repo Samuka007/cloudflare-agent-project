@@ -12,7 +12,7 @@ import {
   defineTool,
   type JsonObject,
 } from "@earendil-works/pi-durable";
-import type { DurableAgentRuntime } from "../src/types.js";
+import type { DurableAgentRuntime } from "../src/types";
 
 export type TestScriptStep =
   | { kind: "text"; text: string }

@@ -2,12 +2,9 @@ import { Hono } from "hono";
 import {
   pluginContributionsResponseSchema,
   pluginListResponseSchema,
-} from "../contract/api/plugins.js";
-import type { AppEnv } from "../app-types.js";
-import {
-  loadStaticRegistryAsset,
-  loadStaticRegistryEntry,
-} from "../services/plugin-registry.js";
+} from "../contract/api/plugins";
+import type { AppEnv } from "../app-types";
+import { loadStaticRegistryAsset, loadStaticRegistryEntry } from "../services/plugin-registry";
 
 /**
  * Plugins metadata + asset face (#382), bb apps/server/src/routes/plugins.ts
@@ -24,9 +21,7 @@ export function registerPluginRoutes(app: Hono<AppEnv>): void {
 
   routes.get("/plugins", async (ctx) => {
     const entry = await loadStaticRegistryEntry(ctx.env);
-    return ctx.json(
-      pluginListResponseSchema.parse({ plugins: entry === null ? [] : [entry] }),
-    );
+    return ctx.json(pluginListResponseSchema.parse({ plugins: entry === null ? [] : [entry] }));
   });
 
   // Fast metadata for the CLI help/proxy path and host-rendered UI
@@ -52,9 +47,7 @@ export function registerPluginRoutes(app: Hono<AppEnv>): void {
       // bb plugins.ts:309-312 policy: matching hash is immutable; a stale or
       // absent ?h is no-store so a stale URL can never pin a stale bundle.
       "cache-control":
-        ctx.req.query("h") === asset.hash
-          ? "public, max-age=31536000, immutable"
-          : "no-store",
+        ctx.req.query("h") === asset.hash ? "public, max-age=31536000, immutable" : "no-store",
     });
   });
 

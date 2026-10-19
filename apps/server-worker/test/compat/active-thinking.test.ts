@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   activeThinkingSchema,
   type ActiveThinking,
-} from "../../src/contract/domain/active-thinking.js";
-import { projectThreadTimeline } from "../../src/services/thread-view.js";
-import type { ThreadStatus } from "../../src/contract/domain/thread-status.js";
-import type { UxThreadEvent } from "../../src/seam/agent-do.js";
+} from "../../src/contract/domain/active-thinking";
+import { projectThreadTimeline } from "../../src/services/thread-view";
+import type { ThreadStatus } from "../../src/contract/domain/thread-status";
+import type { UxThreadEvent } from "../../src/seam/agent-do";
 
 /**
  * #257 CoT surface: the ux stream folds into the response's `activeThinking`
@@ -152,7 +152,15 @@ describe("#257 — activeThinking (bb parity, live face)", () => {
       }),
       uxEvent(2, "item/completed", {
         turnId: "t1",
-        item: { type: "toolCall", id: "call_x", tool: "read", arguments: {}, status: "completed", output: "x", completedAt: 1_000 },
+        item: {
+          type: "toolCall",
+          id: "call_x",
+          tool: "read",
+          arguments: {},
+          status: "completed",
+          output: "x",
+          completedAt: 1_000,
+        },
       }),
     ];
     expect(activeThinkingOf(events, "active")?.text).toBe("reasoning\n");

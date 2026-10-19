@@ -1,4 +1,4 @@
-import type { TimelineRow } from "../contract/thread-timeline.js";
+import type { TimelineRow } from "../contract/thread-timeline";
 
 /**
  * Timeline response assembly — the #554 roadmap step ⑤ survivor. The ux

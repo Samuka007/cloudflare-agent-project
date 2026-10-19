@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { relayCatalogModelSchema } from "@cap/agent-do";
+import { relayCatalogModelSchema } from "@cap/agent-config";
 import {
   ModelsYmlImportError,
   OMP_UNADMITTED_API_VALUES,
   parseModelsYml,
-} from "../src/models-yml-import.js";
+} from "../src/models-yml-import";
 
 /**
  * #364 the omp models.yml importer: the parse + map half (route orchestration

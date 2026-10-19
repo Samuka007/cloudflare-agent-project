@@ -1,10 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { negotiationFailure } from "./backoff.js";
-import { cfAccessHeaders, type CfAccessConfig } from "./cf-access.js";
-import { log } from "./log.js";
-import type { TaskIsolationConfig } from "./task-isolation.js";
+import { negotiationFailure } from "./backoff";
+import { cfAccessHeaders, type CfAccessConfig } from "./cf-access";
+import { log } from "./log";
+import type { TaskIsolationConfig } from "./task-isolation";
 
 /**
  * Client identity (§8.1): the ONLY persisted client state — hostId + hostKey

@@ -7,8 +7,8 @@ import {
   dispatchViaSeam,
   executionViewOf,
   sinkStub,
-} from "./helpers.js";
-import type { ObservedExecution } from "../src/protocol.js";
+} from "./helpers";
+import type { ObservedExecution } from "../src/protocol";
 
 /**
  * I28 — judgment-tree completeness (§8.5): each (boot continuity × process

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
-import type { HostRpcRequestFrame, HostRpcResponseFrame } from "../src/protocol.js";
-import { hostFileReadResultSchema } from "../src/protocol.js";
-import { SimulatedClient, serviceStub, uniqueHostId } from "./helpers.js";
+import type { HostRpcRequestFrame, HostRpcResponseFrame } from "../src/protocol";
+import { hostFileReadResultSchema } from "../src/protocol";
+import { SimulatedClient, serviceStub, uniqueHostId } from "./helpers";
 
 /**
  * L1 host read-file RPC (B1 #321): the transport behind
@@ -75,8 +75,8 @@ describe("L1 host read-file RPC (#321)", () => {
     expect(hostFileReadResultSchema.safeParse({ ...FILE_RESULT, sha256: undefined }).success).toBe(
       false,
     );
-    expect(hostFileReadResultSchema.safeParse({ ...FILE_RESULT, mimeType: undefined }).success).toBe(
-      true,
-    );
+    expect(
+      hostFileReadResultSchema.safeParse({ ...FILE_RESULT, mimeType: undefined }).success,
+    ).toBe(true);
   });
 });

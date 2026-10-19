@@ -22,7 +22,7 @@ import {
   type JevJudgeFn,
   type JevSnapshot,
   type JevUsage,
-} from "../accept/jev-loop.js";
+} from "../accept/jev-loop";
 
 const ALLOWLIST = ["bb-staging.samuka007.com"];
 

@@ -1,12 +1,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
-import { agentEventDataSchemas } from "@cap/agent-do";
 import { apiErrorSchema } from "@cap/protocol";
-import { ensureMigrations } from "../migrate.js";
-import { ensureRigReady, RIG_MODEL_ID, RIG_PROVIDER_ID } from "../helpers.js";
-import { uploadedPromptAttachmentSchema } from "../../src/contract/api/projects.js";
-import { threadResponseSchema } from "../../src/contract/api/threads.js";
-import type { AgentDoRpc } from "../../src/seam/agent-do.js";
+import { ensureMigrations } from "../migrate";
+import { ensureRigReady, RIG_MODEL_ID, RIG_PROVIDER_ID } from "../helpers";
+import { uploadedPromptAttachmentSchema } from "../../src/contract/api/projects";
+import { threadResponseSchema } from "../../src/contract/api/threads";
+import type { AgentDoRpc } from "../../src/seam/agent-do";
 
 /**
  * #317 A2: the M0 "text only" 422 gate is unlocked — the prompt input union
@@ -71,13 +70,16 @@ async function sendInput(threadId: string, input: unknown[]): Promise<Response> 
   });
 }
 
-/** Raw per-thread DO journal: every turn.input content array in log order. */
+/** Raw per-thread DO journal: every userMessage content array in log order. */
 async function rawTurnInputContents(threadId: string): Promise<unknown[][]> {
   const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId)) as unknown as AgentDoRpc;
   const { events } = await stub.getEvents({ sinceSeq: 0 });
-  return events
-    .filter((event) => event.type === "turn.input")
-    .map((event) => agentEventDataSchemas["turn.input"].parse(event.data).content);
+  return events.flatMap((event) => {
+    if (event.type !== "item/started") return [];
+    const data = event.data as { item?: { type?: string; content?: unknown[] } };
+    if (data.item?.type !== "userMessage" || !Array.isArray(data.item.content)) return [];
+    return [data.item.content];
+  });
 }
 
 describe("#317 prompt input union gate unlock", () => {

@@ -3,7 +3,7 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import { permissionModeSchema } from "./shared-types.js";
+import { permissionModeSchema } from "./shared-types";
 
 /** bb carries only "persistent" (domain/src/host.ts:4-5); #386 adds the
  * seeded cloud placeholder — a real row with empty-machine semantics (never

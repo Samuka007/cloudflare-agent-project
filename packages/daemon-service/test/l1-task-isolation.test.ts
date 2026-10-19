@@ -8,8 +8,8 @@ import {
   ISOLATION_PREPARE_TOOL,
   ISOLATION_RELEASE_TOOL,
   decodeTaskIsolationConfig,
-} from "../src/client/task-isolation.js";
-import { ToolRuntime, type ToolDispatchFrame } from "../src/client/tool-runtime.js";
+} from "../src/client/task-isolation";
+import { ToolRuntime, type ToolDispatchFrame } from "../src/client/tool-runtime";
 
 /**
  * L1 for the task isolation backend (M1.5/T20 #110) — runs under Bun (the

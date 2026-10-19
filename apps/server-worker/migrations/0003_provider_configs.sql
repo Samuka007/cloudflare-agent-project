@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS provider_configs (
   service_tier INTEGER NOT NULL DEFAULT 0,
   api_key_enc TEXT,
   -- JSON array of catalog model entries, validated against the
-  -- relayCatalogModelSchema (packages/agent-do provider-catalog.ts).
+  -- relayCatalogModelSchema (packages/agent-config provider-catalog.ts).
   -- Invalid JSON decodes to a loud warning and the row rides the CRUD face
   -- unrepaired (skip-with-warning, never deleted).
   models TEXT NOT NULL DEFAULT '[]',

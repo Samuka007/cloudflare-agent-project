@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
-import { openWebSocket } from "../helpers.js";
+import { openWebSocket } from "../helpers";
 import { threadDeltaMessage } from "@cap/protocol";
 
 /**

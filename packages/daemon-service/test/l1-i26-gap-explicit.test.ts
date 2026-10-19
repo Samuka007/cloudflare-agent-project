@@ -6,7 +6,7 @@ import {
   opsOfKind,
   dispatchViaSeam,
   executionViewOf,
-} from "./helpers.js";
+} from "./helpers";
 
 /**
  * I26 — gaps are explicit (§8.3): after a resume with an evicted ring tail,

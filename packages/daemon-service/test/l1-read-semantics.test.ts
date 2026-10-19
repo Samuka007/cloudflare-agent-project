@@ -10,7 +10,7 @@ import {
   executeDispatch,
   type ToolDispatchFrame,
   type ToolHost,
-} from "../src/client/tool-runtime.js";
+} from "../src/client/tool-runtime";
 
 /**
  * L1 per-tool semantics for read (M1.5/T5 #95) — the full read face of the

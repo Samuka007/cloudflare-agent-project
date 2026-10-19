@@ -1,17 +1,17 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { apiErrorHandler } from "./shared/api-error.js";
-import { originGuard } from "./middleware/origin-guard.js";
-import { accessGate } from "./middleware/access.js";
-import { registerThreadRoutes } from "./routes/threads.js";
-import { registerSystemRoutes } from "./routes/system.js";
-import { registerProjectRoutes, registerThreadSectionRoutes } from "./routes/projects.js";
-import { registerHostRoutes } from "./routes/hosts.js";
-import { registerEnvironmentRoutes } from "./routes/environments.js";
-import { registerPluginRoutes } from "./routes/plugins.js";
-import { registerFileRoutes } from "./routes/files.js";
-import { installShScript } from "./install-sh.js";
-import type { AppEnv, Env } from "./app-types.js";
+import { apiErrorHandler } from "./shared/api-error";
+import { originGuard } from "./middleware/origin-guard";
+import { accessGate } from "./middleware/access";
+import { registerThreadRoutes } from "./routes/threads";
+import { registerSystemRoutes } from "./routes/system";
+import { registerProjectRoutes, registerThreadSectionRoutes } from "./routes/projects";
+import { registerHostRoutes } from "./routes/hosts";
+import { registerEnvironmentRoutes } from "./routes/environments";
+import { registerPluginRoutes } from "./routes/plugins";
+import { registerFileRoutes } from "./routes/files";
+import { installShScript } from "./install-sh";
+import type { AppEnv, Env } from "./app-types";
 import type { Context, Next } from "hono";
 
 /** Shared fallback: no guard read this request (no Origin header) = none extra. */

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { evictDurableObject } from "cloudflare:test";
-import type { ToolExecServiceFrame } from "../src/protocol.js";
+import type { ToolExecServiceFrame } from "../src/protocol";
 import {
   SimulatedClient,
   uniqueHostId,
@@ -8,7 +8,7 @@ import {
   journalOf,
   dispatchViaSeam,
   executionViewOf,
-} from "./helpers.js";
+} from "./helpers";
 
 /**
  * I19 (service-DO half) — replay determinism (§3.3/C, model two): after a

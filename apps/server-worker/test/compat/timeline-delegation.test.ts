@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { ensureMigrations } from "../migrate.js";
-import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view.js";
-import type { TimelineDelegationWorkRow, TimelineRow } from "../../src/contract/thread-timeline.js";
-import type { UxThreadEvent } from "../../src/seam/agent-do.js";
+import { ensureMigrations } from "../migrate";
+import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view";
+import type { TimelineDelegationWorkRow, TimelineRow } from "../../src/contract/thread-timeline";
+import type { UxThreadEvent } from "../../src/seam/agent-do";
 
 /**
  * #275 J4 — delegation branch of the timeline projection: the synthetic
@@ -98,11 +98,7 @@ describe("#275 J4 — delegation row projection", () => {
         completedAt: 2_500,
       },
     });
-    const rows = projectRows([
-      turnStarted(),
-      delegationStarted(),
-      completion,
-    ]);
+    const rows = projectRows([turnStarted(), delegationStarted(), completion]);
     expect(delegationOf(rows)).toMatchObject({
       status: "completed",
       output: "blocking answer",
@@ -192,7 +188,9 @@ describe("#275 J4 — delegation row projection", () => {
     // renders bb's NATIVE background/workflow row for it instead (the
     // prompt-box activity card face) — accepted bb behavior, but still no
     // delegation row: without an anchor there is nothing to seal.
-    expect(rows.filter((row) => row.kind === "work" && row.workKind === "delegation")).toHaveLength(0);
+    expect(rows.filter((row) => row.kind === "work" && row.workKind === "delegation")).toHaveLength(
+      0,
+    );
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       kind: "work",

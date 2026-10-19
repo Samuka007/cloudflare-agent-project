@@ -3,7 +3,7 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import type { ThreadEventType } from "./provider-event.js";
+import type { ThreadEventType } from "./provider-event";
 
 export const threadEventScopeKindValues = ["thread", "turn"] as const;
 export const threadEventScopeKindSchema = z.enum(threadEventScopeKindValues);

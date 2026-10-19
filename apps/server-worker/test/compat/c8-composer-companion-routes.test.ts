@@ -1,14 +1,14 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { ensureMigrations } from "../migrate.js";
+import { ensureMigrations } from "../migrate";
 import {
   pluginContributionsResponseSchema,
   pluginListResponseSchema,
-} from "../../src/contract/api/plugins.js";
+} from "../../src/contract/api/plugins";
 import {
   promptHistoryResponseSchema,
   projectDefaultExecutionOptionsQuerySchema,
-} from "../../src/contract/api/projects.js";
-import { createThread } from "../helpers.js";
+} from "../../src/contract/api/projects";
+import { createThread } from "../helpers";
 import { exports } from "cloudflare:workers";
 
 /**

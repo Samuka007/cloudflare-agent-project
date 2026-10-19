@@ -1,7 +1,7 @@
-import { ApiError } from "../shared/api-error.js";
-import { getProject } from "../db/control-plane.js";
-import type { ProjectRow } from "../db/rows.js";
-import type { Env } from "../env.js";
+import { ApiError } from "../shared/api-error";
+import { getProject } from "../db/control-plane";
+import type { ProjectRow } from "../db/rows";
+import type { Env } from "../env";
 
 /**
  * bb services/lib/entity-lookup.ts narrowed to the project faces the port

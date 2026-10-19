@@ -3,7 +3,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { AssistantEntry } from "@earendil-works/pi-durable";
 import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
-import type { TestDurableAgentDO } from "./worker.js";
+import type { TestDurableAgentDO } from "./worker";
 
 describe("DurableAgentDO", () => {
   it("creates a thread and streams pi events into the derived journal", async () => {

@@ -9,7 +9,7 @@
  * sole 正本, no env fallback exists.
  */
 
-import { permissionModeValues, type PermissionMode } from "../contract/domain/shared-types.js";
+import { permissionModeValues, type PermissionMode } from "../contract/domain/shared-types";
 
 /** The slice of the worker Env this module needs (the worker Env satisfies it). */
 export interface PermissionModeEnv {

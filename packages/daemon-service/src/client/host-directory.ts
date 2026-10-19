@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import type { HostBrowseDirectoryCommand, HostDirectoryListing } from "../protocol.js";
+import type { HostBrowseDirectoryCommand, HostDirectoryListing } from "../protocol";
 
 /**
  * #302: the daemon side of `host.browse_directory` — verbatim port of bb's

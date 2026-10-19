@@ -2,13 +2,13 @@ import { beforeAll, afterEach, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import type { z } from "zod";
 import { decryptProviderSecret } from "@cap/provider-app";
-import { ensureMigrations } from "../migrate.js";
+import { ensureMigrations } from "../migrate";
 import {
   providerConfigImportResponseSchema,
   providerConfigRowSchema,
   providerConfigsListResponseSchema,
   systemExecutionOptionsResponseSchema,
-} from "../../src/contract/api/system.js";
+} from "../../src/contract/api/system";
 
 /**
  * Ticket #364: the omp models.yml paste-import route
@@ -45,7 +45,9 @@ async function request(method: string, path: string, body?: unknown): Promise<Re
   });
 }
 
-async function importYaml(yaml: string): Promise<{ status: number; body: z.infer<typeof providerConfigImportResponseSchema> }> {
+async function importYaml(
+  yaml: string,
+): Promise<{ status: number; body: z.infer<typeof providerConfigImportResponseSchema> }> {
   const response = await request("POST", "/api/v1/system/providers/import-models-yml", { yaml });
   const payload = await response.json<unknown>();
   return {
@@ -134,9 +136,9 @@ providers:
     expect(raw?.api_key_enc).not.toBeNull();
     expect(raw?.api_key_enc).not.toContain(IMPORT_KEY);
     // And the rig master key decrypts it back to the pasted value.
-    await expect(
-      decryptProviderSecret(RIG_MASTER_KEY, raw?.api_key_enc ?? ""),
-    ).resolves.toBe(IMPORT_KEY);
+    await expect(decryptProviderSecret(RIG_MASTER_KEY, raw?.api_key_enc ?? "")).resolves.toBe(
+      IMPORT_KEY,
+    );
     const row = (await listProviders()).find((candidate) => candidate.id === "keyed");
     expect(row?.hasApiKey).toBe(true);
     expect(JSON.stringify(row)).not.toContain(IMPORT_KEY);

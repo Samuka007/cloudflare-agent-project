@@ -24,8 +24,8 @@ import {
   type MeasuredTotals,
   type TaskAggregate,
   type TrialRecord,
-} from "../accept/jev-kill-ladder.js";
-import type { FlowProbe, FlowReport } from "../accept/jev-loop.js";
+} from "../accept/jev-kill-ladder";
+import type { FlowProbe, FlowReport } from "../accept/jev-loop";
 
 // ---------------------------------------------------------------------------
 // Fixtures

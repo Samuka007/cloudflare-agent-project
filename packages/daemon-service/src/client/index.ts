@@ -16,11 +16,11 @@
  * exec.output_ack, buffers drop only on exec.forget.
  */
 
-import { runClient } from "./connection.js";
-import { hasPersistedIdentity, type ClientConfig } from "./identity.js";
-import { decodeCfAccessConfig } from "./cf-access.js";
+import { runClient } from "./connection";
+import { hasPersistedIdentity, type ClientConfig } from "./identity";
+import { decodeCfAccessConfig } from "./cf-access";
 
-import { decodeTaskIsolationConfig } from "./task-isolation.js";
+import { decodeTaskIsolationConfig } from "./task-isolation";
 import { homedir } from "node:os";
 import { join } from "node:path";
 

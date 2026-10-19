@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { evictDurableObject, runDurableObjectAlarm } from "cloudflare:test";
-import type { ToolExecServiceFrame } from "../src/protocol.js";
+import type { ToolExecServiceFrame } from "../src/protocol";
 import {
   SimulatedClient,
   dispatchViaSeam,
@@ -8,7 +8,7 @@ import {
   opsOfKind,
   serviceStub,
   uniqueHostId,
-} from "./helpers.js";
+} from "./helpers";
 
 /**
  * L1 workspace relay (#290 C1) — the service DO's half of the frame

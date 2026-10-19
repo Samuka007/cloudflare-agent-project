@@ -8,7 +8,7 @@ import {
   opsOfKind,
   dispatchViaSeam,
   executionViewOf,
-} from "./helpers.js";
+} from "./helpers";
 
 /**
  * Lease lapse + grace (§5.2.1) and the same-boot heal (§6.2): a lapsed lease

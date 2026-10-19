@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { ensureMigrations } from "../migrate.js";
+import { ensureMigrations } from "../migrate";
 import { exports } from "cloudflare:workers";
 
 /**

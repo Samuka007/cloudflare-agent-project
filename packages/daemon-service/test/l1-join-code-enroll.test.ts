@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { testEnv, workerFetch } from "./helpers.js";
-import { consumeJoinCode, joinCodeKvKey, mintJoinCode, sha256Hex } from "../src/join-codes.js";
+import { testEnv, workerFetch } from "./helpers";
+import { consumeJoinCode, joinCodeKvKey, mintJoinCode, sha256Hex } from "../src/join-codes";
 
 /**
  * #258: the enroll front redeems one-time join codes minted by the control

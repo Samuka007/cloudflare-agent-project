@@ -34,7 +34,7 @@
  * JEV_URL / JEV_MODEL / JudgeAnswer shapes are reused, not redefined).
  */
 
-import type { JudgeAnswer } from "../../pm-autopilot/src/core.js";
+import type { JudgeAnswer } from "../../pm-autopilot/src/core";
 
 // Endpoint constants are aliased to locals rather than re-exported directly:
 // Bun ≤1.3.x can mis-lower bare `export { X } from "..."` bindings when the
@@ -45,7 +45,7 @@ import {
   JEV_MODEL as PM_JEV_MODEL,
   JEV_URL as PM_JEV_URL,
   resolveJeapiKey,
-} from "../../pm-autopilot/src/core.js";
+} from "../../pm-autopilot/src/core";
 
 export const JEV_URL = PM_JEV_URL;
 export const JEV_MODEL = PM_JEV_MODEL;

@@ -9,7 +9,7 @@
       # omp 18.6.0 engines require bun >= 1.3.14; nixos-25.05 carries 1.2.x.
       bun = nixpkgs-bun.legacyPackages.${system}.bun;
 
-      # Source slice the daemon runtime needs: the three workspace packages on
+      # Source slice the daemon runtime needs: the two workspace packages on
       # the client import graph (bun executes TS directly) plus the workspace
       # manifests the filtered pnpm install resolves against.
       daemonSrc = pkgs.lib.fileset.toSource {
@@ -20,7 +20,6 @@
           ./pnpm-lock.yaml
           ./tsconfig.base.json
           ./packages/daemon-service
-          ./packages/agent-do
           ./packages/protocol
         ];
       };

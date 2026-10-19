@@ -4,7 +4,7 @@ import {
   localImageContentSchema,
   toolResultErrorCodeSchema,
 } from "@cap/protocol";
-import { DAEMON_PROTOCOL_VERSION } from "./constants.js";
+import { DAEMON_PROTOCOL_VERSION } from "./constants";
 
 /**
  * Daemon client ↔ daemon service DO WS frames (unified-turn-state §8).
@@ -158,6 +158,45 @@ export const toolResultPayloadSchema = z.object({
    */
   images: z.array(z.object({ path: z.string().min(1) })).optional(),
 });
+
+export type ToolResultStatus = "ok" | "error" | "timeout" | "cancelled" | "outcome_unknown";
+
+/** The journal-side result shape: the wire schema plus outcome_unknown. */
+export interface ToolResultPayload {
+  status: ToolResultStatus;
+  exitCode: number | null;
+  output: string;
+  outputTruncated?: boolean;
+  errorCode?: string;
+  images?: { path: string }[];
+}
+
+/** One host-tool dispatch request (the daemon-service front's RPC input). */
+export interface ToolDispatchRequest {
+  threadId: string;
+  turnId: string;
+  executionId: string;
+  machineId: string;
+  workspace?: { id: string; path: string };
+  tool: string;
+  arguments: Record<string, unknown>;
+  timeoutMs: number;
+}
+
+export type DispatchOutcome =
+  | { kind: "accepted" }
+  | { kind: "completed_cached"; result: ToolResultPayload }
+  | { kind: "host_offline" };
+
+export type ExecutionUpdate =
+  | {
+      kind: "started";
+      executionId: string;
+      pid?: number;
+      pidStartedAt?: number;
+    }
+  | { kind: "output"; executionId: string; offset: number; chunk: string }
+  | { kind: "exited"; executionId: string; result: ToolResultPayload };
 
 export const toolExitedFrameSchema = z.object({
   type: z.literal("tool.exited"),

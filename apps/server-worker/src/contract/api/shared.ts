@@ -8,15 +8,15 @@ import {
   changedMessageLenientSchema,
   changedMessageSchema,
   gitBranchNameSchema,
-} from "../domain/index.js";
-import type { GitBranchName } from "../domain/index.js";
+} from "../domain/index";
+import type { GitBranchName } from "../domain/index";
 
 export {
   BRANCH_LIST_LIMIT_MAX,
   BRANCH_LIST_QUERY_MAX_LENGTH,
   FILE_LIST_LIMIT_MAX,
   FILE_LIST_QUERY_MAX_LENGTH,
-} from "../domain/index.js";
+} from "../domain/index";
 
 interface IncludeQueryValidationArgs {
   allowedValues: readonly string[];

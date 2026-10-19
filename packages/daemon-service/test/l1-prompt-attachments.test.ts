@@ -3,22 +3,22 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } fr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PromptContent } from "@cap/protocol";
-import { decodeTaskIsolationConfig } from "../src/client/task-isolation.js";
+import { decodeTaskIsolationConfig } from "../src/client/task-isolation";
 import {
   clientFrameSchema,
   type ClientFrame,
   type ToolExecServiceFrame,
   type ToolExitedFrame,
-} from "../src/protocol.js";
-import { dispatchToolExec, type ClientRuntime } from "../src/client/connection.js";
-import { Executor } from "../src/client/executor.js";
-import { stagePromptAttachments } from "../src/client/prompt-attachments.js";
-import type { FetchProjectAttachment } from "../src/client/project-attachments.js";
+} from "../src/protocol";
+import { dispatchToolExec, type ClientRuntime } from "../src/client/connection";
+import { Executor } from "../src/client/executor";
+import { stagePromptAttachments } from "../src/client/prompt-attachments";
+import type { FetchProjectAttachment } from "../src/client/project-attachments";
 import type {
   ToolDispatchFrame,
   ToolExecutionResult,
   ToolRuntime,
-} from "../src/client/tool-runtime.js";
+} from "../src/client/tool-runtime";
 
 /**
  * L1 attachment staging (#318, real fs — the runtime lane like the per-tool

@@ -16,16 +16,16 @@ import {
   clientTurnLifecycleEventDataSchema,
   turnRequestEventDataSchema,
   turnRequestRejectedEventDataSchema,
-} from "./thread-events.js";
-import { jsonValueSchema } from "./json-value.js";
-import { threadEventScopeSchema, validateThreadEventScope } from "./thread-event-scope.js";
-import { clientTurnRequestIdSchema } from "./protocol-ids.js";
+} from "./thread-events";
+import { jsonValueSchema } from "./json-value";
+import { threadEventScopeSchema, validateThreadEventScope } from "./thread-event-scope";
+import { clientTurnRequestIdSchema } from "./protocol-ids";
 import {
   backgroundTaskStatusSchema,
   backgroundTaskUsageSchema,
   workflowProgressSnapshotSchema,
-} from "./background-task.js";
-import { threadTimelineGoalStatusSchema } from "./thread-timeline-goal.js";
+} from "./background-task";
+import { threadTimelineGoalStatusSchema } from "./thread-timeline-goal";
 
 export const threadEventItemStatusSchema = z.enum([
   "pending",

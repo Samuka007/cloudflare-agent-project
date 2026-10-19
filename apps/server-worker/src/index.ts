@@ -1,9 +1,3 @@
-import {
-  AgentDO,
-  DEFAULT_WEB_SEARCH_CONFIG,
-  setAgentRuntime,
-  type AgentDoBindings,
-} from "@cap/agent-do";
 import { DurableAgentDO, type DurableAgentEnv, type DurableAgentRuntime } from "@cap/agent-durable";
 import {
   DaemonServiceDO,
@@ -11,106 +5,27 @@ import {
   requireDaemonCredentials,
   type WorkerEnv as DaemonServiceWorkerEnv,
 } from "@cap/daemon-service";
-import { HostOrchestratorDO, setProviderAdapter } from "@cap/daemon-worker";
-import {
-  ManagerDo,
-  createEdgeAgentAdapter,
-  relayAgentRuntime,
-  loadProviderConfigOverlay,
-  imageGenerationSourceFromOverlay,
-  EMPTY_PROVIDER_OVERLAY,
-  RelayProviderRegistry,
-} from "@cap/provider-app";
-import { createApp } from "./app.js";
-import { updateHostRow, upsertAttachedHost } from "./db/hosts.js";
-import { projectAttachmentReader } from "./services/attachment-pickup.js";
-import { NotificationHubDO } from "./ws/hub.js";
-import { LeaseStoreDO } from "./leases/lease-do.js";
-import type { Env } from "./env.js";
-import { createDurableRuntime } from "./durable-runtime.js";
+import { createApp } from "./app";
+import { updateHostRow, upsertAttachedHost } from "./db/hosts";
+import { projectAttachmentReader } from "./services/attachment-pickup";
+import { NotificationHubDO } from "./ws/hub";
+import { LeaseStoreDO } from "./leases/lease-do";
+import type { Env } from "./env";
+import { createDurableRuntime } from "./durable-runtime";
 
 /**
- * Composed deployment entry (#31, wrangler.jsonc mains this file): the bb SPA
- * (Workers Assets) → server control plane (#26) → daemon-worker command
- * journal (#27) → provider-app adapter + manager registry (#28) → per-thread
- * agent DO (#29) → per-machine daemon service DO (#30) → daemon client.
- *
- * DO exports: every class the composed binding graph reaches. The two
- * composed wrappers below exist because workerd runs each DO in an isolate
- * whose module globals are separate from the entry fetch handler's —
- * per-request registration would miss them. They self-register their
- * collaborators from the constructor env instead, so every isolate resolves
- * the same deterministic configuration.
+ * Composed deployment entry: the bb SPA (Workers Assets) → server control
+ * plane → daemon-service DO → pi-durable agent DO → daemon client. There is
+ * exactly one agent runtime; the legacy AgentDO/manager/orchestrator graph is
+ * deleted.
  */
 
-export { NotificationHubDO, LeaseStoreDO, ManagerDo, DaemonServiceDO };
+export { NotificationHubDO, LeaseStoreDO, DaemonServiceDO };
 
 /**
- * The per-thread agent DO with per-isolate relay registration: the manager's
- * ensureAgentRuntime covers the manager's own isolate; this covers every
- * isolate that hosts an agent DO (turn drivers resolve the provider through
- * the module-global injection registry, agent-do/src/injection.ts).
- */
-export class ComposedAgentDO extends AgentDO {
-  /** The registry the "*" registration dispatches through (#351, #362). */
-  private readonly relayRegistry: RelayProviderRegistry;
-  /** Last applied D1 overlay fingerprint (hot-reload gate). */
-  private appliedOverlayFingerprint: string | null = null;
-
-  constructor(ctx: DurableObjectState, env: AgentDoBindings) {
-    super(ctx, env);
-    // #351/#496: the providerId-keyed registry resolver every
-    // journal-selection dispatch goes through (no deployment-default
-    // provider — the "*" fallback posture is retired) — one registration
-    // shape shared with the manager.
-    // #450: the D1 overlay is the sole directory 正本. The constructor is
-    // synchronous and D1 is async, so the isolate starts on the honest
-    // zero-config overlay; the awaited refreshRuntime at the turn boundary
-    // (agent-do.ts driveTurn) hot-applies the panel rows before dispatch.
-    // #500: no deployment env takes part — the overlay is the whole input.
-    const registry = RelayProviderRegistry.create(EMPTY_PROVIDER_OVERLAY);
-    this.relayRegistry = registry;
-    setAgentRuntime("*", {
-      ...relayAgentRuntime(registry),
-      // #362 hot-reload: every driveTurn re-reads the D1 provider overlay
-      // behind a content fingerprint, so panel-side provider edits reach
-      // warm DO isolates without a redeploy.
-      refreshRuntime: () => this.refreshProviderOverlay(),
-    });
-  }
-
-  private async refreshProviderOverlay(): Promise<void> {
-    const overlay = await loadProviderConfigOverlay(this.env);
-    if (overlay === null || overlay.fingerprint === this.appliedOverlayFingerprint) return;
-    this.relayRegistry.applyOverlay(overlay);
-    // #448: the 产图源 seat (overlay.imageSourceProviderId) is the
-    // generate_image switch + source — refresh the DO-side source alongside
-    // the catalog so a panel edit lands on the next turn (null = not
-    // configured; the seat rides the same content fingerprint as the rows).
-    this.applyImageGenerationSource(imageGenerationSourceFromOverlay(overlay));
-    // #449: the engine chain rides the same fingerprint gate — the D1
-    // `web_search` row is the sole 正本 (zero env fallback). A broken row
-    // keeps the last-known config (the read face is loud); an absent row
-    // resolves to the ruled defaults.
-    if (overlay.webSearchConfig !== null) {
-      this.applyWebSearchConfig(overlay.webSearchConfig);
-    } else if (!overlay.webSearch.decodeError) {
-      this.applyWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG);
-    }
-    // #502: the tool-capability seat rides the same fingerprint gate — the
-    // three #150 gates (think / context_notes+new_context / checkpoint+rewind)
-    // hot-apply on the next turn; an absent row resolves to the omp posture
-    // (all off). The seat IS the config, so it applies whenever the
-    // fingerprint moves (no broken-row hold-back — the decode is total).
-    this.applyToolCapabilities(overlay.toolCapabilities);
-    this.appliedOverlayFingerprint = overlay.fingerprint;
-  }
-}
-
-/**
- * #581 additive runtime: the production subclass supplies the D1 provider
- * catalog + daemon-host tool registry; the base owns the pi Harness, journal,
- * and alarm.
+ * The per-thread pi-durable agent. The production subclass supplies the D1
+ * provider catalog + daemon-host tool registry; the base owns the pi Harness,
+ * journal, and alarm.
  */
 export class ComposedDurableAgentDO extends DurableAgentDO {
   protected override createRuntime(
@@ -118,18 +33,6 @@ export class ComposedDurableAgentDO extends DurableAgentDO {
     ctx: DurableObjectState,
   ): Promise<DurableAgentRuntime> {
     return createDurableRuntime(env as unknown as Env, ctx);
-  }
-}
-
-/**
- * The per-host orchestrator with in-isolate adapter installation: the
- * provider lane resolves its adapter through the daemon-worker injection
- * registry, so the install must happen in the DO's own isolate.
- */
-export class ComposedHostOrchestratorDO extends HostOrchestratorDO {
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env as unknown as ConstructorParameters<typeof HostOrchestratorDO>[1]);
-    setProviderAdapter(createEdgeAgentAdapter(env as { MANAGER: DurableObjectNamespace }));
   }
 }
 
@@ -165,28 +68,24 @@ export default {
     const path = new URL(request.url).pathname;
     if (isDaemonFace(request, path)) {
       // #398/SEC-W5-002: no repo-public fallback — a deployment without its
-      // daemon secrets fails closed on the daemon face (client/index.ts:32-36
-      // mirrored server-side).
+      // daemon secrets fails closed on the daemon face.
       const { enrollKey, hostKey } = requireDaemonCredentials(env);
       const serviceEnv: DaemonServiceWorkerEnv = {
         DAEMON_SERVICE: requireDaemonService(env),
         AGENT_DO: env.AGENT_DO,
-        ...(env.DURABLE_AGENT_DO === undefined ? {} : { DURABLE_AGENT_DO: env.DURABLE_AGENT_DO }),
         // #195 S3: the rejection path consumes the retry-update flag and
-        // broadcasts host-disconnected through the hub (bb internal/session.ts:56-57).
+        // broadcasts host-disconnected through the hub.
         HUB: env.HUB,
         ENROLL_KEY: enrollKey,
         DAEMON_HOST_KEY: hostKey,
         DAEMON_EDGE_KV: env.DAEMON_EDGE_KV,
         // #49: daemon attach → control-plane host registry (the /hosts face);
-        // #195 S3: protocol rejections stamp last_rejected_protocol_version
-        // so the SPA's "Needs update" face activates (bb internal/session.ts:53-55).
+        // #195 S3: protocol rejections stamp last_rejected_protocol_version.
         onDaemonAttach: (hostId, info) => upsertAttachedHost(env, hostId, info),
         onDaemonProtocolReject: async (hostId, protocolVersion) => {
           await updateHostRow(env, hostId, { lastRejectedProtocolVersion: protocolVersion });
         },
-        // #318: the pickup route's thread→project cross-check + R2 read,
-        // answered from the control plane's D1 + A1 attachment family.
+        // #318: the pickup route's thread→project cross-check + R2 read.
         readProjectAttachment: projectAttachmentReader(env),
       };
       return daemonServiceWorker.fetch(request, serviceEnv);
@@ -196,10 +95,9 @@ export default {
   },
 
   /**
-   * bb ran a 10s in-process sweep (start-server.ts:225-228); the Workers
-   * equivalent is Cron Triggers as a backstop plus DO alarms for per-item
-   * timing. The cron pings the lease store; daemon session sweeps ride DO
-   * alarms (#27/#30).
+   * bb ran a 10s in-process sweep; the Workers equivalent is Cron Triggers as
+   * a backstop plus DO alarms for per-item timing. The cron pings the lease
+   * store; daemon session sweeps ride DO alarms.
    */
   scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
     ctx.waitUntil(

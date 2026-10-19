@@ -4,7 +4,7 @@ import {
   createHostId,
   httpStatusForCode,
 } from "@cap/protocol";
-import { DAEMON_PROTOCOL_VERSION } from "./constants.js";
+import { DAEMON_PROTOCOL_VERSION } from "./constants";
 import {
   armNegativeCache,
   authKeyOf,
@@ -16,14 +16,14 @@ import {
   rateLimitedResponse,
   sha256Hex,
   takeToken,
-} from "./edge.js";
-import { TestAgentSinkDO } from "./agent-sink.js";
-import { consumeJoinCode } from "./join-codes.js";
+} from "./edge";
+import { TestAgentSinkDO } from "./agent-sink";
+import { consumeJoinCode } from "./join-codes";
 import {
   projectAttachmentContentQuerySchema,
   type ProjectAttachmentContentQuery,
-} from "./protocol.js";
-import { DaemonServiceDO, type DaemonServiceEnv, type OpenSessionResult } from "./service-do.js";
+} from "./protocol";
+import { DaemonServiceDO, type DaemonServiceEnv, type OpenSessionResult } from "./service-do";
 // Wrangler requires the DO classes on the deployed entry (main).
 export { DaemonServiceDO, TestAgentSinkDO };
 export type { DaemonServiceEnv };

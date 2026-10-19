@@ -15,7 +15,16 @@
  * Usage: bun scripts/accept/demo-jev-149.ts   (JEV_API_KEY via env or .env.local)
  */
 
-import { JevError, openTab, resolveJeapiKey, runFlow, type FlowAssertion, type FlowProbe, type FlowReport, type JevPage } from "./jev-loop.js";
+import {
+  JevError,
+  openTab,
+  resolveJeapiKey,
+  runFlow,
+  type FlowAssertion,
+  type FlowProbe,
+  type FlowReport,
+  type JevPage,
+} from "./jev-loop";
 
 const CDP_HTTP = process.env.JEV_CDP_HTTP ?? "http://172.27.0.1:9222";
 const STAGING_HOST = "bb-staging.samuka007.com";
@@ -69,7 +78,9 @@ const TOGGLE_OFF_GOAL = `Open the app Settings (sidebar link "Settings (Ctrl + ,
 
 async function main(): Promise<void> {
   if (resolveJeapiKey() === null) {
-    throw new JevError("no JEV_API_KEY (process env or gitignored .env.local walking up from scripts/accept)");
+    throw new JevError(
+      "no JEV_API_KEY (process env or gitignored .env.local walking up from scripts/accept)",
+    );
   }
   const page: JevPage = await openTab({ http: CDP_HTTP, tabName: TAB_NAME, url: THREAD_URL });
   const verbose = process.env.JEV_DEMO_VERBOSE === "1";
@@ -86,7 +97,9 @@ async function main(): Promise<void> {
 
     // Deterministic baseline: if a previous run left the toggle ON, normalize
     // first so the ON phase's "row appears" assertion is not vacuous.
-    const baselineBody = await page.evalJs<string>("(document.body ? document.body.innerText : '')");
+    const baselineBody = await page.evalJs<string>(
+      "(document.body ? document.body.innerText : '')",
+    );
     if (baselineBody.includes(ROW_TITLE)) {
       const normalize = await runFlow({
         ...flowBase,
@@ -119,7 +132,9 @@ async function main(): Promise<void> {
     // assertions all passed counts, even when the loop then stopped on a
     // post-goal confidence floor (recorded as diagnostic detail).
     const phaseAccepted = (r: FlowReport): boolean =>
-      r.assertions.length > 0 && r.assertions.every((a) => a.pass) && r.steps.some((s) => s.executed === true);
+      r.assertions.length > 0 &&
+      r.assertions.every((a) => a.pass) &&
+      r.steps.some((s) => s.executed === true);
     ok = ok && phaseAccepted(phaseOn) && phaseAccepted(phaseOff);
     verdict.diagnostic = {
       on: { ok: phaseOn.ok, stopped: phaseOn.stopped },

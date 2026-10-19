@@ -16,7 +16,7 @@
  * skip-with-warning posture.
  */
 
-import { parseOriginLike } from "../contract/domain/origin-allowlist.js";
+import { parseOriginLike } from "../contract/domain/origin-allowlist";
 
 /** The capability slice this module needs (the worker Env satisfies it). */
 export interface OriginAllowlistEnv {
@@ -36,9 +36,7 @@ function decodeOriginAllowlistCell(raw: string | null): ReadonlySet<string> {
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    console.warn(
-      `[origin-allowlist] seat cell is not JSON — treating as empty (${String(error)})`,
-    );
+    console.warn(`[origin-allowlist] seat cell is not JSON — treating as empty (${String(error)})`);
     return EMPTY_ALLOWLIST;
   }
   if (!Array.isArray(parsed)) {
@@ -61,9 +59,7 @@ function decodeOriginAllowlistCell(raw: string | null): ReadonlySet<string> {
  * The trusted extra origins (canonical forms). Absent row = the ruled
  * default posture (zero extra origins), never an env override.
  */
-export async function getOriginAllowlist(
-  env: OriginAllowlistEnv,
-): Promise<ReadonlySet<string>> {
+export async function getOriginAllowlist(env: OriginAllowlistEnv): Promise<ReadonlySet<string>> {
   if (env.DB === undefined) {
     return EMPTY_ALLOWLIST;
   }

@@ -5,7 +5,7 @@
 import type { Hono } from "hono";
 import { hc } from "hono/client";
 import { z } from "zod";
-import type { EmptyInput, Endpoint } from "./common.js";
+import type { EmptyInput, Endpoint } from "./common";
 
 // ---------------------------------------------------------------------------
 // Schemas

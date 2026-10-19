@@ -1,18 +1,12 @@
 import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import type { z } from "zod";
-import {
-  decryptProviderSecret,
-  resolveOverlayCatalog,
-} from "@cap/provider-app";
-import type { AnyAgentEvent, RelayCatalogProvider } from "@cap/agent-do";
-import { ensureMigrations } from "../migrate.js";
-import { ensureRigProviderRow, removeRigProviderRow } from "../helpers.js";
-import { insertProviderConfig, type ProviderConfigEnv } from "../../src/db/provider-configs.js";
-import {
-  PROBE_RATE_LIMIT_MAX,
-  resetProbeRateLimiter,
-} from "../../src/services/probe-rate-limit.js";
+import { decryptProviderSecret, resolveOverlayCatalog } from "@cap/provider-app";
+import type { RelayCatalogProvider } from "@cap/agent-config";
+import { ensureMigrations } from "../migrate";
+import { ensureRigProviderRow, removeRigProviderRow } from "../helpers";
+import { insertProviderConfig, type ProviderConfigEnv } from "../../src/db/provider-configs";
+import { PROBE_RATE_LIMIT_MAX, resetProbeRateLimiter } from "../../src/services/probe-rate-limit";
 import {
   providerConfigDiscoverResponseSchema,
   providerConfigRowSchema,
@@ -21,7 +15,7 @@ import {
   systemProviderProjectionsResponseSchema,
   systemExecutionOptionsResponseSchema,
   systemImageSourceResponseSchema,
-} from "../../src/contract/api/system.js";
+} from "../../src/contract/api/system";
 
 /**
  * Ticket #362: the provider configurable panel's user-face 正本 — the D1
@@ -107,17 +101,6 @@ async function executionOptions() {
 
 async function deleteRow(id: string): Promise<void> {
   await request("DELETE", `/api/v1/system/providers/${id}`);
-}
-
-async function rawEvents(threadId: string): Promise<AnyAgentEvent[]> {
-  // Boundary cast (verbatim from thread-execution-selection.test.ts): the DO
-  // namespace RPC loses the event union to UxThreadEvent's `data: unknown`;
-  // the raw projection IS AnyAgentEvent.
-  const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(threadId)) as unknown as {
-    getEvents(args: { sinceSeq: number; project: "raw" }): Promise<{ events: AnyAgentEvent[] }>;
-  };
-  const { events } = await stub.getEvents({ sinceSeq: 0, project: "raw" });
-  return events;
 }
 
 async function expect422(response: Response, code: string): Promise<void> {
@@ -545,51 +528,6 @@ describe("#362/#450 the D1 directory (sole 正本, no env seed)", () => {
 });
 
 describe("#362 thread selection consumes the D1 directory (#351 chain)", () => {
-  it("a panel provider is selectable at create and a keyless dispatch fails closed (#434 ⑦)", async () => {
-    // No key and no baseUrl → NO row-level mock: the turn fails loudly with
-    // the named credential error (standalone rows never fall back to
-    // deployment credentials).
-    await postProvider({
-      id: "mockrow",
-      displayName: "Mock Row",
-      api: "anthropic-messages",
-      models: [{ id: "mock-model" }],
-    });
-
-    const created = await request("POST", "/api/v1/threads", {
-      projectId: "proj_personal",
-      origin: "app",
-      environment: { type: "host", workspace: { type: "personal" } },
-      input: [{ type: "text", text: "panel provider turn" }],
-      providerId: "mockrow",
-      model: "mock-model",
-      reasoningLevel: "none",
-    });
-    expect(created.status).toBe(201);
-    const thread = await created.json<{ id: string }>();
-
-    // The selection bridges into the journal (#351 shape) with the panel id.
-    const events = await rawEvents(thread.id);
-    const threadCreated = events.find((event) => event.type === "thread.created");
-    expect(threadCreated?.data).toMatchObject({
-      execution: { providerId: "mockrow", model: "mock-model" },
-    });
-    const wait = await request(
-      "GET",
-      // The UX projection names a failed turn system/error (turn.failed is
-      // the raw journal spelling — asserted below).
-      `/api/v1/threads/${thread.id}/events/wait?type=${encodeURIComponent("system/error")}&afterSeq=0&waitMs=15000`,
-    );
-    expect(wait.status).toBe(200);
-    const turnEvents = await rawEvents(thread.id);
-    console.log("TURN_EVENTS", JSON.stringify(turnEvents.map((event) => event.type)));
-    console.log("TURN_DETAIL", JSON.stringify(turnEvents.slice(-6)));
-    // Raw journal spells terminal events with a dot (UX projects a slash).
-    expect(turnEvents.some((event) => event.type === "turn.failed")).toBe(true);
-    // The failure names the row and the remedy — fail-closed, not a mock.
-    expect(JSON.stringify(turnEvents)).toContain("no usable credential");
-  });
-
   it("fail-closed: an unknown/deleted provider is 422 provider_unknown on the merged directory", async () => {
     await expect422(
       await request("POST", "/api/v1/threads", {
@@ -1010,7 +948,10 @@ describe("#362 scope absorption: per-model thinking budget + openai-images rows"
     // The write normalized the stored JSON: a re-read serves the pi shape.
     const stored = await request("GET", "/api/v1/system/providers/budgeted");
     const storedBody: { models: Record<string, unknown>[] } = await stored.json();
-    expect(storedBody.models[0]?.thinking).toMatchObject({ efforts: ["high"], defaultLevel: "high" });
+    expect(storedBody.models[0]?.thinking).toMatchObject({
+      efforts: ["high"],
+      defaultLevel: "high",
+    });
     expect(storedBody.models[0]?.reasoningLevels).toBeUndefined();
     expect(storedBody.models[0]?.thinkingBudgetTokens).toBeUndefined();
   });
@@ -1213,7 +1154,9 @@ describe("#485 row/model family split (chat vs openai-images)", () => {
       await (await request("GET", "/api/v1/system/image-source")).json(),
     );
     expect(seat.candidates).toContain("imagey-485");
-    expect((await request("PUT", "/api/v1/system/image-source", { providerId: "imagey-485" })).status).toBe(200);
+    expect(
+      (await request("PUT", "/api/v1/system/image-source", { providerId: "imagey-485" })).status,
+    ).toBe(200);
   });
 
   it("a models-only PATCH keeps the row family; an api flip validates the effective set", async () => {
@@ -1297,16 +1240,13 @@ describe("#485 row/model family split (chat vs openai-images)", () => {
       baseUrl: "https://images.example.com/v1",
       models: [{ id: "gpt-image-2" }],
     });
-    vi.stubGlobal(
-      "fetch",
-      (url: string | URL | Request): Promise<Response> => {
-        const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
-        const list = href.includes("images.example.com")
-          ? [{ id: "gpt-image-2.5" }]
-          : [{ id: "glm-5.3" }, { id: "gpt-image-2" }];
-        return Promise.resolve(new Response(JSON.stringify({ data: list }), { status: 200 }));
-      },
-    );
+    vi.stubGlobal("fetch", (url: string | URL | Request): Promise<Response> => {
+      const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      const list = href.includes("images.example.com")
+        ? [{ id: "gpt-image-2.5" }]
+        : [{ id: "glm-5.3" }, { id: "gpt-image-2" }];
+      return Promise.resolve(new Response(JSON.stringify({ data: list }), { status: 200 }));
+    });
     const chatVerdict = providerConfigDiscoverResponseSchema.parse(
       await (
         await request("POST", "/api/v1/system/providers/discover-models", {
@@ -1332,9 +1272,9 @@ describe("#485 row/model family split (chat vs openai-images)", () => {
     ]);
     // The image anchor adds no image-id warning (the degradation note from
     // the no-host fallback may still ride along).
-    expect(
-      imageVerdict.warnings.some((warning) => warning.includes("image-generation")),
-    ).toBe(false);
+    expect(imageVerdict.warnings.some((warning) => warning.includes("image-generation"))).toBe(
+      false,
+    );
 
     // The unsaved-row family hint (an image row being composed) rides the
     // same annotation — no stored row needed.

@@ -6,7 +6,7 @@ import {
   journalOf,
   opsOfKind,
   dispatchViaSeam,
-} from "./helpers.js";
+} from "./helpers";
 
 /**
  * I30 — syncing gate (§8.2/§8.5): between WS attach and reconcile completion

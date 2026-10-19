@@ -8,7 +8,7 @@ import type {
   TaskId,
 } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
-import { PiEventBridge, type ThreadEventSink } from "../src/events.js";
+import { PiEventBridge, type ThreadEventSink } from "../src/events";
 
 class MemorySink implements ThreadEventSink {
   readonly envelopes: ThreadEventEnvelope[] = [];

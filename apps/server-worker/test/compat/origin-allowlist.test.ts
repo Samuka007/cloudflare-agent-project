@@ -1,10 +1,10 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
+import { ensureMigrations } from "../migrate";
 import {
   systemOriginAllowlistResponseSchema,
   type SystemOriginAllowlistResponse,
-} from "../../src/contract/api/system.js";
+} from "../../src/contract/api/system";
 
 /**
  * #506 the origin-allowlist seat (the D1 `origin_allowlist` single-row row,

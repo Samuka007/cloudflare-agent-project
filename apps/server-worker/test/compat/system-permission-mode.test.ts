@@ -1,12 +1,12 @@
 import { beforeAll, afterEach, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
+import { ensureMigrations } from "../migrate";
 import {
   systemPermissionModeResponseSchema,
   type SystemPermissionModeResponse,
-} from "../../src/contract/api/system.js";
-import { resolveThreadDefaultExecutionOptions } from "../../src/services/execution-selection.js";
-import { BASE } from "../helpers.js";
+} from "../../src/contract/api/system";
+import { resolveThreadDefaultExecutionOptions } from "../../src/services/execution-selection";
+import { BASE } from "../helpers";
 
 /**
  * #500 the permission-mode default write face (the D1 `permission_mode`

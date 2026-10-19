@@ -1,4 +1,4 @@
-import type { Env } from "../env.js";
+import type { Env } from "../env";
 
 /**
  * project_sources persistence (bb packages/db schema.ts projectSources).

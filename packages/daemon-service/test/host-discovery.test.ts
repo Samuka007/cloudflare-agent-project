@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 
-import { discoveredModelEntrySchema, hostDiscoverModelsResultSchema } from "../src/protocol.js";
-import { discoverHostProviderModels } from "../src/client/host-discovery.js";
-import { dispatchHostRpc } from "../src/client/connection.js";
+import { discoveredModelEntrySchema, hostDiscoverModelsResultSchema } from "../src/protocol";
+import { discoverHostProviderModels } from "../src/client/host-discovery";
+import { dispatchHostRpc } from "../src/client/connection";
 
 /**
  * #447 bun suite: the daemon face of `host.discover_models` — the pi-catalog

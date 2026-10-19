@@ -6,42 +6,39 @@ import {
   HEARTBEAT_INTERVAL_MS,
   KILL_ESCALATION_MS,
   WS_BACKPRESSURE_HIGH_WATER_BYTES,
-} from "../constants.js";
-import { negotiationFailure } from "./backoff.js";
-import { log } from "./log.js";
-import { runSessionLoop } from "./session-loop.js";
-import { serviceFrameSchema, type ObservedExecution, type ServiceFrame } from "../protocol.js";
-import { loadIdentity, type ClientConfig, type ClientIdentity } from "./identity.js";
-import { cfAccessHeaders } from "./cf-access.js";
-import { Executor, scanMarkerProcesses } from "./executor.js";
-import { HostRpcCommandError, browseHostDirectory } from "./host-directory.js";
-import { discoverHostProviderModels } from "./host-discovery.js";
-import { readHostFile, writeThreadFile } from "./host-files.js";
-import { mkdirHostPath } from "./host-path-mutations.js";
+} from "../constants";
+import { negotiationFailure } from "./backoff";
+import { log } from "./log";
+import { runSessionLoop } from "./session-loop";
+import { serviceFrameSchema, type ObservedExecution, type ServiceFrame } from "../protocol";
+import { loadIdentity, type ClientConfig, type ClientIdentity } from "./identity";
+import { cfAccessHeaders } from "./cf-access";
+import { Executor, scanMarkerProcesses } from "./executor";
+import { HostRpcCommandError, browseHostDirectory } from "./host-directory";
+import { discoverHostProviderModels } from "./host-discovery";
+import { readHostFile, writeThreadFile } from "./host-files";
+import { mkdirHostPath } from "./host-path-mutations";
 import {
   checkHostPathsExist,
   cloneProject,
   inspectProjectPath,
   resolveProjectCloneDefaultPath,
-} from "./project.js";
-import { ExecutionBuffer } from "./buffers.js";
+} from "./project";
+import { ExecutionBuffer } from "./buffers";
 import {
   stagePromptAttachments,
   cleanupAfterPostStagingFailure,
   type StagedPromptAttachments,
-} from "./prompt-attachments.js";
-import {
-  createProjectAttachmentFetcher,
-  type FetchProjectAttachment,
-} from "./project-attachments.js";
+} from "./prompt-attachments";
+import { createProjectAttachmentFetcher, type FetchProjectAttachment } from "./project-attachments";
 import {
   assertNativeAddonCurrent,
   readNativeAddonStatus,
   ToolRuntime,
   type ToolDispatchFrame,
   type ToolExecutionResult,
-} from "./tool-runtime.js";
-import { watchSocketClose, WSSession } from "./ws-session.js";
+} from "./tool-runtime";
+import { watchSocketClose, WSSession } from "./ws-session";
 
 /**
  * Client connection lifecycle (§8.2/§8.5): open → attach → announce → serve;

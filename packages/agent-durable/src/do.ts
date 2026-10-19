@@ -1,13 +1,13 @@
 import { DurableObject } from "cloudflare:workers";
 import type { PromptContent, ThreadEventEnvelope } from "@cap/protocol";
 import type { Conversation, SettledSubmissionRecord } from "@earendil-works/pi-durable";
-import { PiEventBridge } from "./events.js";
-import { resolveDurableAgentRuntime } from "./injection.js";
-import { DurableEventSink } from "./journal.js";
-import { DurableThread } from "./thread.js";
-import type { HostExecutionUpdate } from "./tools.js";
-import type { DurableAgentRuntime } from "./types.js";
-import { foldCapRung } from "./provider.js";
+import { PiEventBridge } from "./events";
+import { resolveDurableAgentRuntime } from "./injection";
+import { DurableEventSink } from "./journal";
+import { DurableThread } from "./thread";
+import type { HostExecutionUpdate } from "./tools";
+import type { DurableAgentRuntime } from "./types";
+import { foldCapRung } from "./provider";
 
 export const HEARTBEAT_MS = 60_000;
 
@@ -23,21 +23,26 @@ export interface DurableExecutionSelection {
 
 function promptText(content: readonly PromptContent[]): string {
   const parts: string[] = [];
+  let omitted = 0;
   for (const part of content) {
-    if (part.type !== "text") {
-      throw new Error(
-        `unsupported_prompt_content: durable runtime accepts text only (${part.type})`,
-      );
+    if (part.type === "text") {
+      parts.push(part.text);
+    } else {
+      omitted += 1;
     }
-    parts.push(part.text);
+  }
+  // The durable Harness takes text. The full union still lands in the
+  // journal (userMessage content); the model-facing leg names the omission
+  // instead of silently pretending the attachment was read.
+  if (omitted > 0) {
+    parts.push(`[${String(omitted)} non-text attachment(s) omitted: this runtime is text-only]`);
   }
   return parts.join("\n");
 }
 
 /**
- * Additive runtime (#581): one DO = one thread's Harness. The legacy
- * `packages/agent-do` DO stays in service; new threads route here behind
- * `AGENT_RUNTIME=durable` once the server-worker lane lands.
+ * The one agent runtime: one DO = one thread's pi-durable Harness. The
+ * legacy AgentDO, provider manager, and host orchestrator are deleted.
  */
 export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
   #thread!: DurableThread;
@@ -93,7 +98,11 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
         id: `thread-start-${args.threadId}`,
         threadId: args.threadId,
         type: "client/thread/start",
-        data: { title: args.title },
+        data: {
+          title: args.title,
+          ...(args.machineId === undefined ? {} : { machineId: args.machineId }),
+          ...(args.execution === undefined ? {} : { execution: args.execution }),
+        },
         createdAt: Date.now(),
       });
       this.#created = true;
@@ -103,11 +112,30 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
     return { threadId: args.threadId, duplicated };
   }
 
-  rebindThread(args: { machineId: string; environmentId?: string }): Promise<{
+  async rebindThread(args: { machineId: string; environmentId?: string }): Promise<{
     machineId: string;
     duplicated: boolean;
   }> {
-    return Promise.resolve({ machineId: args.machineId, duplicated: false });
+    const previous = this.ctx.storage.kv.get<string>("machineId");
+    this.ctx.storage.kv.put("machineId", args.machineId);
+    if (args.environmentId !== undefined) {
+      this.ctx.storage.kv.put("environmentId", args.environmentId);
+    }
+    const threadId = this.ctx.storage.kv.get<string>("threadId");
+    const sink = this.#sink;
+    if (threadId !== undefined && sink !== undefined && previous !== args.machineId) {
+      await sink.append({
+        id: `thread-rebound-${threadId}-${args.machineId}`,
+        threadId,
+        type: "thread/rebound",
+        data: {
+          machineId: args.machineId,
+          ...(args.environmentId === undefined ? {} : { environmentId: args.environmentId }),
+        },
+        createdAt: Date.now(),
+      });
+    }
+    return { machineId: args.machineId, duplicated: previous === args.machineId };
   }
 
   async sendMessage(args: {
@@ -165,12 +193,33 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
     limit?: number;
     project?: "raw" | "ux";
     window?: { beforeSeq?: number };
-  }): Promise<{ events: ThreadEventEnvelope[]; latestSeq: number }> {
+  }): Promise<{
+    events: ThreadEventEnvelope[];
+    latestSeq: number;
+    window?: {
+      windowStartSeq: number;
+      floorSeq: number;
+      dataBytes: number;
+      hasOlderRows: boolean;
+    };
+  }> {
     const sink = this.#sink;
     if (sink === undefined) return Promise.resolve({ events: [], latestSeq: 0 });
+    const limit = args.limit ?? 1000;
+    const events =
+      args.window?.beforeSeq === undefined
+        ? sink.read(args.sinceSeq, limit)
+        : sink.readBefore(args.window.beforeSeq, limit);
+    const firstSeq = events[0]?.seq ?? 0;
     return Promise.resolve({
-      events: sink.read(args.sinceSeq, args.limit ?? 1000),
+      events,
       latestSeq: sink.latestSeq(),
+      window: {
+        windowStartSeq: firstSeq,
+        floorSeq: firstSeq,
+        dataBytes: events.reduce((total, event) => total + JSON.stringify(event.data).length, 0),
+        hasOlderRows: firstSeq > 1,
+      },
     });
   }
 

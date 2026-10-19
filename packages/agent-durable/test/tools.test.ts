@@ -8,7 +8,7 @@ import {
   type HostDispatchOutcome,
   type HostToolFrame,
   type HostToolResultPayload,
-} from "../src/tools.js";
+} from "../src/tools";
 
 class FakeDispatchClient implements HostDispatchClient {
   readonly frames: HostToolFrame[] = [];

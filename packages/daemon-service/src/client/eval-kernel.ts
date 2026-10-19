@@ -19,8 +19,8 @@ import { cfgPythonInterpreter, cfgPythonKernelMode } from "@oh-my-pi/pi-coding-a
 import { clampTimeout } from "@oh-my-pi/pi-coding-agent/tools/tool-timeouts";
 import { cfgToolsMaxTimeout } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import type { ToolDispatchFrame, ToolExecutionResult, ToolHost } from "./tool-runtime.js";
-import { threadIdFromExecutionId } from "../execution-id.js";
+import type { ToolDispatchFrame, ToolExecutionResult, ToolHost } from "./tool-runtime";
+import { threadIdFromExecutionId } from "../execution-id";
 
 /**
  * Eval kernel seam (M1.5/T10' #100): routes `{tool: "eval"}` dispatch frames

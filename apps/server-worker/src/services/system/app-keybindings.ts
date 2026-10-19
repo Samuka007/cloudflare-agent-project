@@ -10,12 +10,12 @@ import type {
   AppKeybinding,
   AppKeybindings,
   AppShortcut,
-} from "../../contract/domain/index.js";
+} from "../../contract/domain/index";
 import {
   QUESTION_SELECT_APP_COMMAND_IDS,
   PANE_FOCUS_APP_COMMAND_IDS,
   THREAD_JUMP_APP_COMMAND_IDS,
-} from "../../contract/domain/index.js";
+} from "../../contract/domain/index";
 
 interface ShortcutModifiers {
   mod?: boolean;

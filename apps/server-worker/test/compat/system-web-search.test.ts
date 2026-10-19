@@ -1,12 +1,12 @@
 import { beforeAll, afterEach, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
+import { ensureMigrations } from "../migrate";
 import { decryptProviderSecret, loadProviderConfigOverlay } from "@cap/provider-app";
 import {
   systemWebSearchResponseSchema,
   type SystemWebSearchResponse,
-} from "../../src/contract/api/system.js";
-import { setWebSearchConfig } from "../../src/db/web-search.js";
+} from "../../src/contract/api/system";
+import { setWebSearchConfig } from "../../src/db/web-search";
 
 /**
  * #449 the web-search engine-chain write face (the D1 `web_search` row, the

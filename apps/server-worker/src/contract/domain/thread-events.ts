@@ -9,10 +9,10 @@ import {
   pendingInteractionStatusSchema,
   userQuestionPendingInteractionPayloadSchema,
   userQuestionPendingInteractionResolutionSchema,
-} from "./pending-interactions.js";
-import { promptInputSchema, recordedThreadExecutionOptionsSchema } from "./shared-types.js";
-import { jsonValueSchema } from "./json-value.js";
-import { clientTurnRequestIdSchema } from "./protocol-ids.js";
+} from "./pending-interactions";
+import { promptInputSchema, recordedThreadExecutionOptionsSchema } from "./shared-types";
+import { jsonValueSchema } from "./json-value";
+import { clientTurnRequestIdSchema } from "./protocol-ids";
 
 export const systemEventTypeValues = [
   "client/thread/start",

@@ -36,9 +36,16 @@ import {
   type ProviderModelFamily,
   type WebSearchConfig,
   type WebSearchProjection,
-} from "@cap/agent-do";
-import { decryptProviderSecret } from "./provider-config-crypto.js";
-import type { RelayProviderCredentialMap } from "./relay-registry.js";
+} from "@cap/agent-config";
+import { decryptProviderSecret } from "./provider-config-crypto";
+
+/** One provider's decrypted credential slot (never a face). */
+export interface RelayProviderCredential {
+  apiKey?: string;
+  baseUrl?: string;
+}
+
+export type RelayProviderCredentialMap = Record<string, RelayProviderCredential>;
 
 /** The env slice this loader reads (structural — the worker Env satisfies it). */
 export interface ProviderConfigEnv {
@@ -270,8 +277,9 @@ async function assembleWebSearch(
       );
     } else {
       try {
-        secrets = JSON.parse(await decryptProviderSecret(masterKey, row.secrets_enc)) as
-          WebSearchStoredSecrets;
+        secrets = JSON.parse(
+          await decryptProviderSecret(masterKey, row.secrets_enc),
+        ) as WebSearchStoredSecrets;
       } catch (error) {
         return fail(
           `secrets_enc is not decryptable (${error instanceof Error ? error.message : String(error)})`,
@@ -309,29 +317,25 @@ async function assembleWebSearch(
   const faceEngines: WebSearchFaceEngines = {
     brave: {
       // The decrypt half reads the real secrets; the catalog half the meta.
-      hasApiKey:
-        options.decrypt
-          ? secrets?.brave?.apiKey !== undefined
-          : meta?.brave?.apiKey === true,
+      hasApiKey: options.decrypt
+        ? secrets?.brave?.apiKey !== undefined
+        : meta?.brave?.apiKey === true,
     },
     exa: {
-      hasApiKey:
-        options.decrypt ? secrets?.exa?.apiKey !== undefined : meta?.exa?.apiKey === true,
+      hasApiKey: options.decrypt ? secrets?.exa?.apiKey !== undefined : meta?.exa?.apiKey === true,
     },
     searxng: {
       endpoint: storedEngines?.searxng?.endpoint ?? null,
       categories: storedEngines?.searxng?.categories ?? null,
       language: storedEngines?.searxng?.language ?? null,
       safesearch: storedEngines?.searxng?.safesearch ?? null,
-      hasToken:
-        options.decrypt
-          ? secrets?.searxng?.token !== undefined
-          : meta?.searxng?.token === true,
-      hasBasicAuth:
-        options.decrypt
-          ? secrets?.searxng?.basicUsername !== undefined ||
-            secrets?.searxng?.basicPassword !== undefined
-          : meta?.searxng?.basic === true,
+      hasToken: options.decrypt
+        ? secrets?.searxng?.token !== undefined
+        : meta?.searxng?.token === true,
+      hasBasicAuth: options.decrypt
+        ? secrets?.searxng?.basicUsername !== undefined ||
+          secrets?.searxng?.basicPassword !== undefined
+        : meta?.searxng?.basic === true,
     },
   };
   const overlay: WebSearchOverlayRow = {
@@ -449,7 +453,8 @@ function decodeRowModels(
       .map((model) => model.id);
     if (imageIds.length > 0) {
       const listed = imageIds.slice(0, 5).join(", ");
-      const listedIds = imageIds.length > 5 ? `${listed} +${String(imageIds.length - 5)} more` : listed;
+      const listedIds =
+        imageIds.length > 5 ? `${listed} +${String(imageIds.length - 5)} more` : listed;
       warnings.push(
         skipWarning(
           id,
@@ -574,8 +579,7 @@ async function readProviderConfigs(
     const rowWarnings: string[] = [];
     const declaredApi = row.api !== null && row.api !== "" ? row.api : null;
     // #485: the row-level api seat IS the model family (see decodeRowModels).
-    const family: ProviderModelFamily =
-      declaredApi === IMAGE_SOURCE_API_FAMILY ? "image" : "chat";
+    const family: ProviderModelFamily = declaredApi === IMAGE_SOURCE_API_FAMILY ? "image" : "chat";
     let models: unknown = [];
     let jsonBroken = false;
     if (typeof row.models === "string" && row.models.trim() !== "") {

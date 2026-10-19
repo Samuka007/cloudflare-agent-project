@@ -6,7 +6,7 @@ import {
   opsOfKind,
   dispatchViaSeam,
   executionViewOf,
-} from "./helpers.js";
+} from "./helpers";
 
 /**
  * I25 — ack monotonicity + trim conservation (§8.3): output_ack's

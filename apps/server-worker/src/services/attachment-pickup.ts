@@ -1,10 +1,10 @@
 import type { ProjectAttachmentContentResult, ProjectAttachmentReader } from "@cap/daemon-service";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
-import { getThreadRow } from "../db/control-plane.js";
-import { getEnvironmentRow } from "../db/environments.js";
-import { readAttachment } from "./attachments.js";
-import { ApiError } from "../shared/api-error.js";
-import type { Env } from "../env.js";
+import { getThreadRow } from "../db/control-plane";
+import { getEnvironmentRow } from "../db/environments";
+import { readAttachment } from "./attachments";
+import { ApiError } from "../shared/api-error";
+import type { Env } from "../env";
 
 /**
  * #318 attachment pickup bridge — the deployment half of the daemon face's

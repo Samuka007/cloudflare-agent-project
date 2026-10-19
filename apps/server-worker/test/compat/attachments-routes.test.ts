@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
-import { uploadedPromptAttachmentSchema } from "../../src/contract/api/projects.js";
-import { env } from "../helpers.js";
+import { ensureMigrations } from "../migrate";
+import { uploadedPromptAttachmentSchema } from "../../src/contract/api/projects";
+import { env } from "../helpers";
 
 /**
  * #316 A1 keystone: the R2 attachment storage face — bb
@@ -26,7 +26,11 @@ async function seedProject(): Promise<string> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       name: `attachments-${Math.random().toString(36).slice(2, 8)}`,
-      source: { hostId: `host_${Math.random().toString(36).slice(2, 8)}`, type: "local_path", path: "/tmp/attachments-lane" },
+      source: {
+        hostId: `host_${Math.random().toString(36).slice(2, 8)}`,
+        type: "local_path",
+        path: "/tmp/attachments-lane",
+      },
     }),
   });
   if (response.status !== 201) {
@@ -37,9 +41,11 @@ async function seedProject(): Promise<string> {
 }
 
 function sha256Hex(bytes: Uint8Array): Promise<string> {
-  return crypto.subtle.digest("SHA-256", bytes).then((digest) =>
-    [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join(""),
-  );
+  return crypto.subtle
+    .digest("SHA-256", bytes)
+    .then((digest) =>
+      [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join(""),
+    );
 }
 
 async function upload(projectId: string, file: File): Promise<Response> {
@@ -49,7 +55,9 @@ async function upload(projectId: string, file: File): Promise<Response> {
 }
 
 /** bb PNG bytes with real magic so the mime sniff face is exercised honestly. */
-const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x01, 0x02]);
+const PNG_BYTES = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x01, 0x02,
+]);
 
 describe("#316 R2 attachment storage face", () => {
   it("exposes the R2 binding through the wrangler config", () => {
@@ -58,7 +66,10 @@ describe("#316 R2 attachment storage face", () => {
 
   it("uploads an image into the R2 family and answers the bb 201 shape", async () => {
     const projectId = await seedProject();
-    const response = await upload(projectId, new File([PNG_BYTES], "hello.png", { type: "image/png" }));
+    const response = await upload(
+      projectId,
+      new File([PNG_BYTES], "hello.png", { type: "image/png" }),
+    );
     expect(response.status).toBe(201);
     const attachment = uploadedPromptAttachmentSchema.parse(await response.json());
     expect(attachment.type).toBe("localImage");
@@ -80,7 +91,9 @@ describe("#316 R2 attachment storage face", () => {
   it("returns byte-identical content whose sha256 matches the path", async () => {
     const projectId = await seedProject();
     const uploaded = uploadedPromptAttachmentSchema.parse(
-      await (await upload(projectId, new File([PNG_BYTES], "hello.png", { type: "image/png" }))).json(),
+      await (
+        await upload(projectId, new File([PNG_BYTES], "hello.png", { type: "image/png" }))
+      ).json(),
     );
     const response = await apiFetch(
       `/api/v1/projects/${projectId}/attachments/content?path=${encodeURIComponent(uploaded.path)}`,
@@ -95,7 +108,10 @@ describe("#316 R2 attachment storage face", () => {
   it("sniffs non-image uploads as localFile and serves the declared mime", async () => {
     const projectId = await seedProject();
     const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
-    const response = await upload(projectId, new File([bytes], "doc.pdf", { type: "application/pdf" }));
+    const response = await upload(
+      projectId,
+      new File([bytes], "doc.pdf", { type: "application/pdf" }),
+    );
     expect(response.status).toBe(201);
     const attachment = uploadedPromptAttachmentSchema.parse(await response.json());
     expect(attachment.type).toBe("localFile");
@@ -160,9 +176,14 @@ describe("#316 R2 attachment storage face", () => {
 
     const blankName = new FormData();
     blankName.append("file", new File([PNG_BYTES], "  ", { type: "image/png" }));
-    const blank = await apiFetch(`/api/v1/projects/${projectId}/attachments`, { method: "POST", body: blankName });
+    const blank = await apiFetch(`/api/v1/projects/${projectId}/attachments`, {
+      method: "POST",
+      body: blankName,
+    });
     expect(blank.status).toBe(400);
-    expect((await blank.json<{ message: string }>()).message).toBe("Attachment filename is required");
+    expect((await blank.json<{ message: string }>()).message).toBe(
+      "Attachment filename is required",
+    );
   });
 
   it("enforces the bb upstream limits: images 10MB, files 25MB", async () => {
@@ -172,20 +193,32 @@ describe("#316 R2 attachment storage face", () => {
     expect(boundary.status).toBe(201);
 
     const overImage = new Uint8Array(10 * 1024 * 1024 + 1);
-    const imageLimit = await upload(projectId, new File([overImage], "big.png", { type: "image/png" }));
+    const imageLimit = await upload(
+      projectId,
+      new File([overImage], "big.png", { type: "image/png" }),
+    );
     expect(imageLimit.status).toBe(400);
-    expect((await imageLimit.json<{ message: string }>()).message).toBe("Attachment exceeds 10MB limit");
+    expect((await imageLimit.json<{ message: string }>()).message).toBe(
+      "Attachment exceeds 10MB limit",
+    );
 
     const overFile = new Uint8Array(25 * 1024 * 1024 + 1);
-    const fileLimit = await upload(projectId, new File([overFile], "big.bin", { type: "application/octet-stream" }));
+    const fileLimit = await upload(
+      projectId,
+      new File([overFile], "big.bin", { type: "application/octet-stream" }),
+    );
     expect(fileLimit.status).toBe(400);
-    expect((await fileLimit.json<{ message: string }>()).message).toBe("Attachment exceeds 25MB limit");
+    expect((await fileLimit.json<{ message: string }>()).message).toBe(
+      "Attachment exceeds 25MB limit",
+    );
   });
 
   it("keeps the bb containment semantics on the content face", async () => {
     const projectId = await seedProject();
 
-    const unknownProject = await apiFetch("/api/v1/projects/prj_missing/attachments/content?path=whatever");
+    const unknownProject = await apiFetch(
+      "/api/v1/projects/prj_missing/attachments/content?path=whatever",
+    );
     expect(unknownProject.status).toBe(404);
     expect((await unknownProject.json<{ code: string }>()).code).toBe("project_not_found");
 
@@ -193,7 +226,9 @@ describe("#316 R2 attachment storage face", () => {
       `/api/v1/projects/${projectId}/attachments/content?path=${encodeURIComponent("../../etc/passwd")}`,
     );
     expect(traversal.status).toBe(400);
-    expect((await traversal.json<{ message: string }>()).message).toBe("Attachment path escapes project directory");
+    expect((await traversal.json<{ message: string }>()).message).toBe(
+      "Attachment path escapes project directory",
+    );
 
     const backslash = await apiFetch(
       `/api/v1/projects/${projectId}/attachments/content?path=${encodeURIComponent("..\\..\\secret")}`,
@@ -231,7 +266,9 @@ describe("#316 R2 attachment storage face", () => {
     const sourceProjectId = await seedProject();
     const targetProjectId = await seedProject();
     const uploaded = uploadedPromptAttachmentSchema.parse(
-      await (await upload(sourceProjectId, new File([PNG_BYTES], "hello.png", { type: "image/png" }))).json(),
+      await (
+        await upload(sourceProjectId, new File([PNG_BYTES], "hello.png", { type: "image/png" }))
+      ).json(),
     );
 
     const absent = await apiFetch(

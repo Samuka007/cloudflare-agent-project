@@ -24,9 +24,9 @@ import {
   type LocateComponent,
   type LocateRegion,
   type LocateReport,
-} from "../accept/jev-locate.js";
-import type { FlowPage, JevElementRec, JevJudgeFn, JevSnapshot } from "../accept/jev-loop.js";
-import type { JudgeAnswer } from "../../pm-autopilot/src/core.js";
+} from "../accept/jev-locate";
+import type { FlowPage, JevElementRec, JevJudgeFn, JevSnapshot } from "../accept/jev-loop";
+import type { JudgeAnswer } from "../../pm-autopilot/src/core";
 
 // ---------------------------------------------------------------------------
 // Fakes

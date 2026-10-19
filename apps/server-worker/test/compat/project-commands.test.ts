@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { exports } from "cloudflare:workers";
-import { BASE, createThread } from "../helpers.js";
-import { ensureMigrations } from "../migrate.js";
-import { commandListResponseSchema } from "../../src/contract/api/projects.js";
+import { BASE, createThread } from "../helpers";
+import { ensureMigrations } from "../migrate";
+import { commandListResponseSchema } from "../../src/contract/api/projects";
 
 /**
  * #546: GET /projects/:id/commands — the composer typeahead's data source

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { resolveSendMode } from "../../src/routes/threads.js";
-import { ApiError } from "../../src/shared/api-error.js";
+import { resolveSendMode } from "../../src/routes/threads";
+import { ApiError } from "../../src/shared/api-error";
 
 /**
  * bb resolveSendMode (services/threads/thread-send.ts:175-216) mapping,

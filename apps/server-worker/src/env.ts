@@ -1,6 +1,6 @@
 /**
- * Worker bindings. `AgentDO` is owned by ticket #29 (packages/agent-do);
- * this control plane only programs against the seam in `src/seam/agent-do.ts`.
+ * Worker bindings. `AGENT_DO` is the pi-durable agent; this control plane
+ * programs against the seam in `src/seam/agent-do.ts`.
  */
 export interface Env {
   /** Control-plane tables (threads, projects, sections, hosts, settings). */
@@ -9,19 +9,8 @@ export interface Env {
   HUB: DurableObjectNamespace;
   /** Preview/file leases with alarm-based TTL eviction (bb previewLeases). */
   LEASES: DurableObjectNamespace;
-  /** Per-thread event log + turn state (ticket #29). */
+  /** Per-thread pi-durable agent (one DO per thread). */
   AGENT_DO: DurableObjectNamespace;
-  /** Additive pi-durable runtime (#581); routes only `dthr_` threads. */
-  readonly DURABLE_AGENT_DO?: DurableObjectNamespace;
-  /**
-   * Per-host command journal + session mirror (#27). Bound in the composed
-   * deployment (#31): when present, the control plane's WRITE verbs
-   * (create/send/stop) route through the journal's provider lane instead of
-   * touching the agent DO directly.
-   */
-  ORCHESTRATOR?: DurableObjectNamespace;
-  /** Provider session registry (#28); pairs with ORCHESTRATOR above. */
-  MANAGER?: DurableObjectNamespace;
   /** Per-machine daemon service DO (#30) — the agent DO's execution seam. */
   DAEMON_SERVICE?: DurableObjectNamespace;
   /**
@@ -62,9 +51,6 @@ export interface Env {
   readonly ACCESS_AUD?: string;
   /** Version banner for /system/version (bb appVersion.currentVersion). */
   readonly SERVER_VERSION?: string;
-  /** #581 cutover switch for newly created threads; legacy is the default. */
-  readonly AGENT_RUNTIME?: "legacy" | "durable";
-
   // --- composition vars (#31, #377) -------------------------------------------
   //
   // #500: the former deployment-channel scalars (relay base/key/model/budget/

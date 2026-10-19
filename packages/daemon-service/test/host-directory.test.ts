@@ -3,9 +3,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import type { HostRpcRequestFrame } from "../src/protocol.js";
-import { browseHostDirectory } from "../src/client/host-directory.js";
-import { dispatchHostRpc, hostRpcUnknownCommandRefusal } from "../src/client/connection.js";
+import type { HostRpcRequestFrame } from "../src/protocol";
+import { browseHostDirectory } from "../src/client/host-directory";
+import { dispatchHostRpc, hostRpcUnknownCommandRefusal } from "../src/client/connection";
 
 /**
  * #302 bun suite (real fs, like the tool-runtime runtime lane): the daemon
@@ -112,7 +112,11 @@ function rpcFrame(command: unknown, requestId: string): HostRpcRequestFrame {
 describe("dispatchHostRpc (bb command-router.ts:160-191)", () => {
   test("a browse answers one ok response carrying the listing", async () => {
     const socket = new CapturingSocket();
-    await dispatchHostRpc({ sandboxRoot: tmpReal, dataDir: tmpReal }, socket as unknown as WebSocket, rpcFrame({ type: "host.browse_directory", path: tmpRoot }, "req-1"));
+    await dispatchHostRpc(
+      { sandboxRoot: tmpReal, dataDir: tmpReal },
+      socket as unknown as WebSocket,
+      rpcFrame({ type: "host.browse_directory", path: tmpRoot }, "req-1"),
+    );
     expect(socket.sent).toEqual([
       {
         type: "host-rpc.response",
@@ -126,7 +130,11 @@ describe("dispatchHostRpc (bb command-router.ts:160-191)", () => {
 
   test("a browse failure answers ok:false with the dispatch error code", async () => {
     const socket = new CapturingSocket();
-    await dispatchHostRpc({ sandboxRoot: tmpReal, dataDir: tmpReal }, socket as unknown as WebSocket, rpcFrame({ type: "host.browse_directory", path: path.join(tmpReal, "readme.md") }, "req-2"));
+    await dispatchHostRpc(
+      { sandboxRoot: tmpReal, dataDir: tmpReal },
+      socket as unknown as WebSocket,
+      rpcFrame({ type: "host.browse_directory", path: path.join(tmpReal, "readme.md") }, "req-2"),
+    );
     expect(socket.sent).toEqual([
       {
         type: "host-rpc.response",

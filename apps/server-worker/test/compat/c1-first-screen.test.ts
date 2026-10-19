@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { ensureMigrations } from "../migrate.js";
-import { sidebarBootstrapResponseSchema } from "../../src/contract/api/projects.js";
-import { systemConfigResponseSchema } from "../../src/contract/api/system.js";
-import { createThread, holdRigWire, send } from "../helpers.js";
+import { ensureMigrations } from "../migrate";
+import { sidebarBootstrapResponseSchema } from "../../src/contract/api/projects";
+import { systemConfigResponseSchema } from "../../src/contract/api/system";
+import { createThread, holdRigWire, send } from "../helpers";
 import { exports } from "cloudflare:workers";
 
 /**
@@ -43,9 +43,7 @@ describe("criterion 1: first-screen dual reads", () => {
     try {
       const thread = await createThread({ title: "first-turn" });
       await send(thread.id);
-      const detail = await exports.default.fetch(
-        `https://example.com/api/v1/threads/${thread.id}`,
-      );
+      const detail = await exports.default.fetch(`https://example.com/api/v1/threads/${thread.id}`);
       expect(detail.status).toBe(200);
       const body = await detail.json<{ status: string }>();
       // M0 coarse transition: a recorded send flips the thread active.

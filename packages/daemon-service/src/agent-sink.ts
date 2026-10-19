@@ -1,8 +1,13 @@
-import type { ExecutionUpdate, ExecutionUpdateResult } from "@cap/agent-do";
+import type { ExecutionUpdate } from "./protocol";
 import { DurableObject } from "cloudflare:workers";
 
+interface ExecutionUpdateResult {
+  duplicate: boolean;
+  acked: boolean;
+}
+
 /**
- * POC agent-update sink standing in for packages/agent-do's AgentDO in this
+ * POC agent-update sink standing in for the pi-durable agent in this
  * package's L1 tests and the local smoke. It records every ExecutionUpdate
  * the service DO delivers (durably, so deliveries survive DO restarts during
  * a test) and answers with the non-duplicate ack the real agent DO would

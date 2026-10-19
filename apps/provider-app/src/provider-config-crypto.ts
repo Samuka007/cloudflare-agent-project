@@ -18,14 +18,8 @@ const IV_BYTES = 12;
 const ALGORITHM = "AES-GCM";
 
 async function deriveAesKey(masterKey: string): Promise<CryptoKey> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(masterKey),
-  );
-  return crypto.subtle.importKey("raw", digest, { name: ALGORITHM }, false, [
-    "encrypt",
-    "decrypt",
-  ]);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(masterKey));
+  return crypto.subtle.importKey("raw", digest, { name: ALGORITHM }, false, ["encrypt", "decrypt"]);
 }
 
 function toBase64(bytes: Uint8Array): string {
@@ -44,10 +38,7 @@ function fromBase64(value: string): Uint8Array {
 }
 
 /** Encrypt one provider secret into the D1 column payload format. */
-export async function encryptProviderSecret(
-  masterKey: string,
-  plaintext: string,
-): Promise<string> {
+export async function encryptProviderSecret(masterKey: string, plaintext: string): Promise<string> {
   const key = await deriveAesKey(masterKey);
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const ciphertext = await crypto.subtle.encrypt(
@@ -67,10 +58,7 @@ export async function encryptProviderSecret(
  * as a per-row warning and ride the mock-first degradation, never a partial
  * key.
  */
-export async function decryptProviderSecret(
-  masterKey: string,
-  payload: string,
-): Promise<string> {
+export async function decryptProviderSecret(masterKey: string, payload: string): Promise<string> {
   const bytes = fromBase64(payload);
   if (bytes.length <= IV_BYTES) {
     throw new Error("provider secret payload is truncated");

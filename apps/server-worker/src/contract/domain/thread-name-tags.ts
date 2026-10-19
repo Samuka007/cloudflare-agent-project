@@ -2,7 +2,7 @@
 // Ported verbatim from bb (Samuka007/bb fork of get-bb/bb) commit 8473d8c33.
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
-import type { ThreadEvent } from "./provider-event.js";
+import type { ThreadEvent } from "./provider-event";
 
 export const BB_THREAD_NAME_TAG = "bb";
 

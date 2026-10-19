@@ -8,8 +8,8 @@ import type {
   HostFileWriteResult,
   HostReadFileCommand,
   HostWriteFileCommand,
-} from "../protocol.js";
-import { HostRpcCommandError } from "./host-directory.js";
+} from "../protocol";
+import { HostRpcCommandError } from "./host-directory";
 
 /**
  * B1 (#321): the daemon side of `host.read_file` — the rootless subset of bb
@@ -137,8 +137,7 @@ export async function readHostFile(command: HostReadFileCommand): Promise<HostFi
   const contentEncoding = getContentEncoding(contents, mimeType);
   return {
     path: command.path,
-    content:
-      contentEncoding === "utf8" ? contents.toString("utf8") : contents.toString("base64"),
+    content: contentEncoding === "utf8" ? contents.toString("utf8") : contents.toString("base64"),
     contentEncoding,
     ...(mimeType !== undefined ? { mimeType } : {}),
     modifiedAtMs: stat.mtimeMs,

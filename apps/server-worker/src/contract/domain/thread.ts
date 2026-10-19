@@ -3,23 +3,23 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import { environmentWorkspaceDisplayKindSchema } from "./environment.js";
-import { gitCheckoutRefSchema } from "./git-checkout.js";
+import { environmentWorkspaceDisplayKindSchema } from "./environment";
+import { gitCheckoutRefSchema } from "./git-checkout";
 import {
   promptInputSchema,
   permissionModeSchema,
   reasoningLevelSchema,
   serviceTierSchema,
-} from "./shared-types.js";
-import { threadStatusSchema, threadStatusValues } from "./thread-status.js";
-import { threadOriginKindSchema } from "./thread-origin-kind.js";
-import { threadVisibilitySchema } from "./thread-visibility.js";
-export { threadStatusSchema, threadStatusValues } from "./thread-status.js";
-export type { ThreadStatus } from "./thread-status.js";
-export { threadOriginKindSchema, threadOriginKindValues } from "./thread-origin-kind.js";
-export type { ThreadOriginKind } from "./thread-origin-kind.js";
-export { threadVisibilitySchema, threadVisibilityValues } from "./thread-visibility.js";
-export type { ThreadVisibility } from "./thread-visibility.js";
+} from "./shared-types";
+import { threadStatusSchema, threadStatusValues } from "./thread-status";
+import { threadOriginKindSchema } from "./thread-origin-kind";
+import { threadVisibilitySchema } from "./thread-visibility";
+export { threadStatusSchema, threadStatusValues } from "./thread-status";
+export type { ThreadStatus } from "./thread-status";
+export { threadOriginKindSchema, threadOriginKindValues } from "./thread-origin-kind";
+export type { ThreadOriginKind } from "./thread-origin-kind";
+export { threadVisibilitySchema, threadVisibilityValues } from "./thread-visibility";
+export type { ThreadVisibility } from "./thread-visibility";
 
 export const threadRuntimeDisplayStatusValues = [
   ...threadStatusValues,

@@ -3,8 +3,8 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import { jsonValueSchema } from "./json-value.js";
-import { PLUGIN_INTERACTION_MAX_TITLE_LENGTH } from "./plugin-interaction-limits.js";
+import { jsonValueSchema } from "./json-value";
+import { PLUGIN_INTERACTION_MAX_TITLE_LENGTH } from "./plugin-interaction-limits";
 
 export { PLUGIN_INTERACTION_MAX_TITLE_LENGTH };
 

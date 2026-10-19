@@ -14,8 +14,8 @@ import {
   type RelayCatalogProvider,
   type RelayCatalogModel,
   type RelayImageModel,
-} from "@cap/agent-do";
-import type { WebSearchEngineProjection } from "@cap/agent-do";
+} from "@cap/agent-config";
+import type { WebSearchEngineProjection } from "@cap/agent-config";
 import {
   isValidProviderConfigId,
   ModelsYmlImportError,
@@ -63,21 +63,21 @@ import {
   type ProviderConfigImportEntry,
   type ProviderConfigRow,
   type SystemExecutionOptionsResponse,
-} from "../contract/api/system.js";
-import type { AvailableModel } from "../contract/domain/provider-types.js";
-import { appSettingsSchema } from "../contract/domain/app-settings.js";
-import { appKeybindingOverridesSchema } from "../contract/domain/app-keybindings.js";
-import { experimentsSchema } from "../contract/domain/experiments.js";
+} from "../contract/api/system";
+import type { AvailableModel } from "../contract/domain/provider-types";
+import { appSettingsSchema } from "../contract/domain/app-settings";
+import { appKeybindingOverridesSchema } from "../contract/domain/app-keybindings";
+import { experimentsSchema } from "../contract/domain/experiments";
 import {
   defaultAppTheme,
   isBuiltInThemeId,
   builtInThemeIdSchema,
   faviconColorPreferenceSchema,
-} from "../contract/domain/app-theme.js";
-import { DEFAULT_APP_KEYBINDINGS } from "../services/system/app-keybindings.js";
-import { defaultFeatureFlags } from "../contract/domain/feature-flags.js";
-import { ApiError, parseOr422, requireJsonBody } from "../shared/route-utils.js";
-import { BB_DATA_DIR_LABEL } from "../shared/bb-display.js";
+} from "../contract/domain/app-theme";
+import { DEFAULT_APP_KEYBINDINGS } from "../services/system/app-keybindings";
+import { defaultFeatureFlags } from "../contract/domain/feature-flags";
+import { ApiError, parseOr422, requireJsonBody } from "../shared/route-utils";
+import { BB_DATA_DIR_LABEL } from "../shared/bb-display";
 import {
   deleteProviderConfig,
   getProviderConfigMutationContext,
@@ -88,21 +88,21 @@ import {
   replaceProviderConfig,
   type CredentialUpdate,
   type ProviderConfigWriteFields,
-} from "../db/provider-configs.js";
-import { getImageSourceProviderId, setImageSourceProviderId } from "../db/image-source.js";
-import { getPermissionMode, setPermissionMode } from "../db/permission-mode.js";
-import { getToolCapabilities, setToolCapabilities } from "../db/tool-capabilities.js";
-import { getCompactionSettings, setCompactionSettings } from "../db/compaction-settings.js";
-import { getOriginAllowlist, setOriginAllowlist } from "../db/origin-allowlist.js";
-import { canonicalOriginAllowlist } from "../contract/domain/origin-allowlist.js";
-import { setWebSearchConfig, webSearchHasSecrets } from "../db/web-search.js";
+} from "../db/provider-configs";
+import { getImageSourceProviderId, setImageSourceProviderId } from "../db/image-source";
+import { getPermissionMode, setPermissionMode } from "../db/permission-mode";
+import { getToolCapabilities, setToolCapabilities } from "../db/tool-capabilities";
+import { getCompactionSettings, setCompactionSettings } from "../db/compaction-settings";
+import { getOriginAllowlist, setOriginAllowlist } from "../db/origin-allowlist";
+import { canonicalOriginAllowlist } from "../contract/domain/origin-allowlist";
+import { setWebSearchConfig, webSearchHasSecrets } from "../db/web-search";
 import {
   discoverProviderModelsEnriched,
   probeProviderConnection,
-} from "../services/provider-config-test.js";
-import { consumeProbeSlot } from "../services/probe-rate-limit.js";
-import { resolvePrimaryHostId } from "../services/host-records.js";
-import { validateThreadExecutionSelection } from "../services/execution-selection.js";
+} from "../services/provider-config-test";
+import { consumeProbeSlot } from "../services/probe-rate-limit";
+import { resolvePrimaryHostId } from "../services/host-records";
+import { validateThreadExecutionSelection } from "../services/execution-selection";
 import {
   getAppSettingsRow,
   getExperiments,
@@ -113,9 +113,9 @@ import {
   getStoredAppearance,
   applyAppKeybindingOverrides,
   toAppSettings,
-} from "../db/settings.js";
-import { listStoredThreadModelOverrides } from "../db/control-plane.js";
-import type { AppEnv, Env } from "../app-types.js";
+} from "../db/settings";
+import { listStoredThreadModelOverrides } from "../db/control-plane";
+import type { AppEnv, Env } from "../app-types";
 
 /**
  * System + settings face (bb apps/server/src/routes/system.ts, commit

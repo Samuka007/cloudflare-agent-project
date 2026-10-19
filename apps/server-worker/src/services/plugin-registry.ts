@@ -2,8 +2,8 @@ import {
   installedPluginSchema,
   pluginRegistryDescriptorSchema,
   type PluginRegistryDescriptor,
-} from "../contract/api/plugins.js";
-import type { Env } from "../env.js";
+} from "../contract/api/plugins";
+import type { Env } from "../env";
 
 /**
  * The static plugin registry (#382): the CAP port of bb's plugin serving
@@ -37,13 +37,8 @@ export interface PluginRegistryAsset {
   contentType: string;
 }
 
-async function readDescriptor(
-  env: Env,
-): Promise<PluginRegistryDescriptor | null> {
-  const url = new URL(
-    `/plugins/${REGISTRY_ID}/registry.json`,
-    "https://cap-server-worker.invalid",
-  );
+async function readDescriptor(env: Env): Promise<PluginRegistryDescriptor | null> {
+  const url = new URL(`/plugins/${REGISTRY_ID}/registry.json`, "https://cap-server-worker.invalid");
   const response = await env.ASSETS.fetch(new Request(url));
   if (!response.ok) return null;
   const parsed = pluginRegistryDescriptorSchema.safeParse(await response.json());
@@ -127,10 +122,7 @@ export async function loadStaticRegistryAsset(
   const contentType = ASSET_CONTENT_TYPES[file];
   if (contentType === undefined) return null;
   const descriptor = await readDescriptor(env);
-  if (
-    descriptor === null ||
-    !(file === "app.js" ? descriptor.files.js : descriptor.files.css)
-  ) {
+  if (descriptor === null || !(file === "app.js" ? descriptor.files.js : descriptor.files.css)) {
     return null;
   }
   const url = new URL(

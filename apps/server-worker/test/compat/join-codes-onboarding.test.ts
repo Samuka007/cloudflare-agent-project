@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
-import { createHostJoinCodeResponseSchema } from "../../src/contract/api/hosts.js";
-import { hostSchema } from "../../src/contract/domain/host.js";
-import { BASE, apiGet, TEST_ENROLL_KEY } from "../helpers.js";
+import { ensureMigrations } from "../migrate";
+import { createHostJoinCodeResponseSchema } from "../../src/contract/api/hosts";
+import { hostSchema } from "../../src/contract/domain/host";
+import { BASE, apiGet, TEST_ENROLL_KEY } from "../helpers";
 
 /**
  * #258 host-onboarding end to end: mint (POST /hosts/join-codes, the
@@ -32,7 +32,11 @@ async function enroll(credential: string, hostId?: string): Promise<Response> {
   return exports.default.fetch(`${BASE}/enroll`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ enrollKey: credential, hostName: "walkthrough-box", ...(hostId ? { hostId } : {}) }),
+    body: JSON.stringify({
+      enrollKey: credential,
+      hostName: "walkthrough-box",
+      ...(hostId ? { hostId } : {}),
+    }),
   });
 }
 

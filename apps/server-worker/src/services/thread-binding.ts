@@ -1,17 +1,11 @@
-import {
-  CLOUD_PLACEHOLDER_HOST_ID,
-  type CreateThreadEnvironmentArgs,
-} from "@cap/protocol";
-import { ApiError } from "../shared/api-error.js";
-import { createEnvironmentId } from "../shared/ids.js";
-import { getHostRow } from "../db/hosts.js";
-import {
-  findOrCreateEnvironmentRow,
-  getEnvironmentRow,
-} from "../db/environments.js";
-import { getDefaultProjectSource } from "../db/project-sources.js";
-import type { EnvironmentDbRow } from "../db/rows.js";
-import type { Env } from "../env.js";
+import { CLOUD_PLACEHOLDER_HOST_ID, type CreateThreadEnvironmentArgs } from "@cap/protocol";
+import { ApiError } from "../shared/api-error";
+import { createEnvironmentId } from "../shared/ids";
+import { getHostRow } from "../db/hosts";
+import { findOrCreateEnvironmentRow, getEnvironmentRow } from "../db/environments";
+import { getDefaultProjectSource } from "../db/project-sources";
+import type { EnvironmentDbRow } from "../db/rows";
+import type { Env } from "../env";
 
 /**
  * #288 binding resolution (control-plane-layer.md §2.1): the binding source

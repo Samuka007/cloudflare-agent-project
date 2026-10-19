@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+### Removed
+
+- **#590 旧 agent loop 彻底退役**：删除 `packages/agent-do` 的
+  `AgentDO`/turn FSM/event log/UX projection/thread-view/testing 全实现与测试、
+  `apps/daemon-worker` 的 orchestrator/manager/provider adapter，以及
+  provider-app 的 `ManagerDo`、relay registry、edge adapter；共享的 provider
+  catalog、web_search/image 配置、tool registry、compaction 配置迁入
+  `packages/agent-config`。server-worker 只剩 `AGENT_DO =
+  ComposedDurableAgentDO`；`AGENT_RUNTIME`、`legacy`、`DURABLE_AGENT_DO`
+  双轨开关与 `ORCHESTRATOR`/`MANAGER` 绑定全部删除；wrangler v3
+  `deleted_classes` 清掉旧 DO 存储，migration 0011 清掉 `thr_` 历史线程行。
+  全仓相对 import 统一为 bundler 无后缀样式。验证：`pnpm typecheck`、
+  `pnpm test`（server-worker 390 + agent-durable 20 + daemon-service 77 +
+  provider-app 45 + protocol/mcp/scripts）、daemon Bun runtime 185、
+  `wrangler deploy --dry-run`。
+
 ### Added
 
 - **#584-#588 (W5) pi-durable additive runtime——新线程可切 `AGENT_RUNTIME=durable`**：
@@ -18,8 +34,8 @@
   ④ #587 `PiEventBridge` 把 `watchEvents` 翻成冻结 UX envelope（turn/message/
   thinking/tool/task_failed/compaction，source-id 幂等）；⑤ #588 server-worker
   `dthr_` 新线程路由到 `DURABLE_AGENT_DO`，daemon result update 按前缀回流，
-  wrangler v2 migration 加 `ComposedDurableAgentDO`；旧 `thr_` 线程与默认
-  `legacy` 开关不动。验证：agent-durable 20 例（DO eviction/tool replay/derived
+  wrangler v2 migration 加 `ComposedDurableAgentDO`；旧 `thr_` 线程与
+  `legacy` 开关由 #590 一并删除。验证：agent-durable 20 例（DO eviction/tool replay/derived
   journal/provider/tool/bridge）、server-worker 436 例 + bash registry schema
   编译例。
 

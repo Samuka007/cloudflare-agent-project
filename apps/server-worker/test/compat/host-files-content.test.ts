@@ -1,13 +1,13 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
-import { apiGet, ensureRigReady, RIG_MODEL_ID, RIG_PROVIDER_ID } from "../helpers.js";
+import { apiGet, ensureRigReady, RIG_MODEL_ID, RIG_PROVIDER_ID } from "../helpers";
 import {
   buildHostFileContentResponse,
   decodeHostFileContent,
   remapHostFileRouteError,
-} from "../../src/services/host-files.js";
-import type { HostFileReadResult } from "../../src/contract/api/hosts.js";
-import { ApiError } from "../../src/shared/api-error.js";
+} from "../../src/services/host-files";
+import type { HostFileReadResult } from "../../src/contract/api/hosts";
+import { ApiError } from "../../src/shared/api-error";
 
 /**
  * B1 (#321): GET /threads/:id/host-files/content — the files face's minimal
@@ -101,9 +101,7 @@ describe("GET /threads/:id/host-files/content (#321)", () => {
       .bind(threadId)
       .first<{ environment_id: string }>();
     if (row === null) throw new Error("thread row missing");
-    await env.DB.prepare("DELETE FROM environments WHERE id = ?")
-      .bind(row.environment_id)
-      .run();
+    await env.DB.prepare("DELETE FROM environments WHERE id = ?").bind(row.environment_id).run();
     const response = await apiGet(
       `/api/v1/threads/${threadId}/host-files/content?path=${encodeURIComponent("/tmp/rendered.png")}`,
     );

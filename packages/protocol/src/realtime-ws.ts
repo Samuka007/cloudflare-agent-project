@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { turnPhaseSchema } from "./events.js";
-import { pendingInteractionStatusSchema } from "./pending-interactions.js";
+import { turnPhaseSchema } from "./events";
+import { pendingInteractionStatusSchema } from "./pending-interactions";
 
 /**
  * Realtime fan-out WebSocket (`/ws`), bb-shaped.

@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { ensureMigrations } from "../migrate.js";
-import { createThread, type CreatedThread } from "../helpers.js";
+import { ensureMigrations } from "../migrate";
+import { createThread, type CreatedThread } from "../helpers";
 import { env, exports } from "cloudflare:workers";
-import { threadResponseSchema } from "../../src/contract/api/threads.js";
-import type { AgentDoRpc } from "../../src/seam/agent-do.js";
+import { threadResponseSchema } from "../../src/contract/api/threads";
+import type { AgentDoRpc } from "../../src/seam/agent-do";
 
 /**
  * #61: the SPA composer ships the first message with POST /threads (bb
@@ -44,8 +44,8 @@ describe("create-with-input dispatches the first turn (#61)", () => {
     expect(dispatched.status).toBe("idle");
     // DO event log: bootstrap + the create-carried turn request.
     const types = await rawEventTypes(thread.id);
-    expect(types[0]).toBe("thread.created");
-    expect(types).toContain("turn.input");
+    expect(types[0]).toBe("client/thread/start");
+    expect(types).toContain("item/started");
     // The mock turn seals asynchronously; /events/wait resolves the moment
     // the terminal event lands — no guessed sleep.
     const wait = await exports.default.fetch(
@@ -74,7 +74,7 @@ describe("create-with-input dispatches the first turn (#61)", () => {
     // Unchanged behavior: no dispatch, coarse status stays starting.
     expect(body.status).toBe("starting");
     const types = await rawEventTypes(thread.id);
-    expect(types).toEqual(["thread.created"]);
+    expect(types).toEqual(["client/thread/start"]);
     // No user row: the timeline is empty.
     const timeline = await exports.default.fetch(
       `https://example.com/api/v1/threads/${thread.id}/timeline?segmentLimit=20`,

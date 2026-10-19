@@ -3,7 +3,7 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import type { CompactMode } from "@cap/agent-do";
+import type { CompactMode } from "@cap/agent-config";
 
 /**
  * Order is load-bearing: `reasoningRank` (index) drives model-switch

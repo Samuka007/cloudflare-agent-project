@@ -6,7 +6,7 @@ import {
   journalOf,
   dispatchViaSeam,
   sinkStub,
-} from "./helpers.js";
+} from "./helpers";
 
 /**
  * I27 — forget closure (§8.4): the client drops a buffer only on

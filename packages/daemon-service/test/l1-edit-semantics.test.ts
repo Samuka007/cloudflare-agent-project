@@ -8,7 +8,7 @@ import {
   executeDispatch,
   type ToolDispatchFrame,
   type ToolHost,
-} from "../src/client/tool-runtime.js";
+} from "../src/client/tool-runtime";
 
 /**
  * L1 per-tool semantics for edit (M1.5/T8 #98) — the vendored omp EditTool

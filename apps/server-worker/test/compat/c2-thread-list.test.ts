@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { ensureMigrations } from "../migrate.js";
-import { threadListEntrySchema } from "../../src/contract/domain/thread.js";
-import type { ThreadListEntry } from "../../src/contract/domain/thread.js";
-import { threadListQuerySchema } from "../../src/contract/api/threads.js";
-import { createThread } from "../helpers.js";
+import { ensureMigrations } from "../migrate";
+import { threadListEntrySchema } from "../../src/contract/domain/thread";
+import type { ThreadListEntry } from "../../src/contract/domain/thread";
+import { threadListQuerySchema } from "../../src/contract/api/threads";
+import { createThread } from "../helpers";
 import { exports } from "cloudflare:workers";
 
 /**

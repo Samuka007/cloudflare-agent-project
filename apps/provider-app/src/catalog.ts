@@ -6,7 +6,7 @@ import {
   relayReasoningLadder,
   type RelayModelThinking,
   type RelayReasoningLevel,
-} from "@cap/agent-do";
+} from "@cap/agent-config";
 
 /**
  * Relay catalog resolution (#350 → #450) — the D1 provider-config 正本

@@ -2,7 +2,7 @@ import {
   NEGATIVE_CACHE_TTL_MS,
   NEGOTIATE_BUCKET_CAPACITY,
   NEGOTIATE_REFILL_PER_SEC,
-} from "./constants.js";
+} from "./constants";
 
 /**
  * Edge shielding (#36) — the front's DO-request budget (engineering.md

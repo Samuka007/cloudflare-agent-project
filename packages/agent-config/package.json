@@ -1,0 +1,22 @@
+{
+  "name": "@cap/agent-config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./provider-catalog": "./src/provider-catalog.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@oh-my-pi/pi-catalog": "18.6.0",
+    "arktype": "^2.2.7",
+    "zod": "^4.6.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261001.1",
+    "typescript": "~5.9.0"
+  }
+}

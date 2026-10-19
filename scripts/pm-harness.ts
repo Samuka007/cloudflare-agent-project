@@ -38,7 +38,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import type { AP, SpawnRequest } from "../pm-autopilot/src/core.js";
+import type { AP, SpawnRequest } from "../pm-autopilot/src/core";
 
 /** omp eval-kernel global as a named unchecked view: the typeof guard below
  *  is the runtime validation (absent global → transport=missing). */

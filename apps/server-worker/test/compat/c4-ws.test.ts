@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { ensureMigrations } from "../migrate.js";
+import { ensureMigrations } from "../migrate";
 import {
   realtimeSubscriptionTargetSchema,
   THREAD_CHANGE_KINDS,
@@ -7,9 +7,9 @@ import {
   ENVIRONMENT_CHANGE_KINDS,
   HOST_CHANGE_KINDS,
   SYSTEM_CHANGE_KINDS,
-} from "../../src/contract/domain/change-kinds.js";
-import { changedMessageSchema } from "../../src/contract/domain/change-kinds.js";
-import { createThread, nextFrame, openWebSocket, send } from "../helpers.js";
+} from "../../src/contract/domain/change-kinds";
+import { changedMessageSchema } from "../../src/contract/domain/change-kinds";
+import { createThread, nextFrame, openWebSocket, send } from "../helpers";
 
 /**
  * Criterion 4 (port-inventory §6.4): same-origin /ws, `subscribe {target}`

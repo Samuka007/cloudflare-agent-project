@@ -1,14 +1,11 @@
 import { beforeAll, afterEach, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
-import {
-  ensureRigProviderRow,
-  removeRigProviderRow,
-} from "../helpers.js";
+import { ensureMigrations } from "../migrate";
+import { ensureRigProviderRow, removeRigProviderRow } from "../helpers";
 import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
 import type { ProviderConfigCatalogOverlay } from "@cap/provider-app";
-import { systemProviderProjectionsResponseSchema } from "../../src/contract/api/system.js";
-import { buildProviderProjections } from "../../src/routes/system.js";
+import { systemProviderProjectionsResponseSchema } from "../../src/contract/api/system";
+import { buildProviderProjections } from "../../src/routes/system";
 
 /**
  * Ticket #266: GET /system/provider-projections — the read-only provider
@@ -173,9 +170,7 @@ describe("GET /api/v1/system/provider-projections", () => {
     const parsed = systemProviderProjectionsResponseSchema.parse(built);
     expect(parsed.webSearch.configured).toBe(false);
     expect(parsed.webSearch.decodeError).toBe(false);
-    expect(
-      parsed.webSearch.chain.map((engine) => engine.engine),
-    ).toEqual(["brave", "public"]);
+    expect(parsed.webSearch.chain.map((engine) => engine.engine)).toEqual(["brave", "public"]);
     expect(parsed.webSearch.timeoutSeconds).toBe(60);
   });
 

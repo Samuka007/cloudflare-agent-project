@@ -11,8 +11,8 @@ import {
   type ToolHost,
   ToolRuntime,
   readNativeAddonStatus,
-} from "../src/client/tool-runtime.js";
-import { EvalKernelRuntime, evalSessionIdFromExecutionId } from "../src/client/eval-kernel.js";
+} from "../src/client/tool-runtime";
+import { EvalKernelRuntime, evalSessionIdFromExecutionId } from "../src/client/eval-kernel";
 
 /**
  * L1 for the eval kernel seam (M1.5/T10' #100) — runs under Bun (the omp eval

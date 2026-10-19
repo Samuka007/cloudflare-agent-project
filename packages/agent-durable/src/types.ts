@@ -1,6 +1,6 @@
 import type { Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { HarnessOptions, Registry } from "@earendil-works/pi-durable";
-import type { HostExecutionUpdate } from "./tools.js";
+import type { HostExecutionUpdate } from "./tools";
 
 /** Everything the DO needs from the application layer; lanes B/C/D fill this in. */
 export interface DurableAgentRuntime {
