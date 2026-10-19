@@ -68,6 +68,8 @@ import {
 export interface DaemonServiceEnv {
   /** Agent-update sink; the integration worker binds the real AgentDO. */
   AGENT_DO: DurableObjectNamespace;
+  /** #581 additive durable agent sink; `dthr_` executions route here. */
+  readonly DURABLE_AGENT_DO?: DurableObjectNamespace;
   /**
    * #62 hosts-registry D1 for the liveness projection (heartbeat →
    * last_seen_at; the port's markHostSeen). The composed deployment binds
@@ -1676,10 +1678,15 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
    * at-least-once, the agent DO dedups and re-acks (I21 recovery path).
    */
   private async forwardToAgent(update: ExecutionUpdate): Promise<void> {
-    const sinkId = this.env.AGENT_DO.idFromName(threadIdFromExecutionId(update.executionId));
+    const threadId = threadIdFromExecutionId(update.executionId);
+    const namespace =
+      threadId.startsWith("dthr_") && this.env.DURABLE_AGENT_DO !== undefined
+        ? this.env.DURABLE_AGENT_DO
+        : this.env.AGENT_DO;
+    const sinkId = namespace.idFromName(threadId);
     // AGENT_DO is the real AgentDO in production, this package's test sink
     // in L1/smoke; both expose onExecutionUpdate.
-    const stub = this.env.AGENT_DO.get(sinkId) as DurableObjectStub & {
+    const stub = namespace.get(sinkId) as DurableObjectStub & {
       onExecutionUpdate(update: ExecutionUpdate): Promise<unknown>;
     };
     try {

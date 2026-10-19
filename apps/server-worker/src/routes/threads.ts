@@ -66,7 +66,7 @@ import {
   parseOr422,
   requireJsonBody,
 } from "../shared/route-utils.js";
-import { createThreadId } from "../shared/ids.js";
+import { createDurableThreadId, createThreadId } from "../shared/ids.js";
 import {
   createThreadRecord,
   getThreadRow,
@@ -369,7 +369,8 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       projectId: payload.projectId,
       ...(payload.environment !== undefined ? { environment: payload.environment } : {}),
     });
-    const threadId = createThreadId();
+    const threadId =
+      ctx.env.AGENT_RUNTIME === "durable" ? createDurableThreadId() : createThreadId();
     const visibility =
       payload.visibility ??
       (parentThreadId !== null
@@ -837,6 +838,10 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     const turnId = activeTurnIdFromEvents(events);
     if (turnId !== null) {
       await agentDoCancelTurn(ctx.env, row.id, turnId);
+    } else if (row.id.startsWith("dthr_")) {
+      // The durable journal is the UX envelope, not the legacy raw FSM; its
+      // cancelTurn aborts the root conversation regardless of the turn id.
+      await agentDoCancelTurn(ctx.env, row.id, "durable-active");
     }
     return ctx.json({ ok: true });
   });

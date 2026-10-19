@@ -7,6 +7,22 @@
 
 ### Added
 
+- **#584-#588 (W5) pi-durable additive runtime——新线程可切 `AGENT_RUNTIME=durable`**：
+  `packages/agent-durable` 新增 `DurableAgentDO`：一线程一 Harness，DO SQLite 前缀
+  `pi_` 存储、60s heartbeat alarm + `resume()`（1.3.0 无 `wake()`）、retention 0；
+  cap RPC 面（createThread/sendMessage/getEvents/cancelTurn/compactThread）与
+  adapter-owned 无洞 `events` 派生 journal。② #585 D1 provider 行 → pi-ai
+  `createProvider` 三 API 投影 + cap rung 显式折叠（none→off、ultra/ultracode→max）；
+  ③ #586 `createHostTool`/`HostToolDispatcher` 以 `${threadId}:${taskId}` 自路由
+  executionId 接 daemon dispatch，output/truncation/host_offline 诊断保留；
+  ④ #587 `PiEventBridge` 把 `watchEvents` 翻成冻结 UX envelope（turn/message/
+  thinking/tool/task_failed/compaction，source-id 幂等）；⑤ #588 server-worker
+  `dthr_` 新线程路由到 `DURABLE_AGENT_DO`，daemon result update 按前缀回流，
+  wrangler v2 migration 加 `ComposedDurableAgentDO`；旧 `thr_` 线程与默认
+  `legacy` 开关不动。验证：agent-durable 20 例（DO eviction/tool replay/derived
+  journal/provider/tool/bridge）、server-worker 436 例 + bash registry schema
+  编译例。
+
 - **#350 (W5) provider 目录声明层——`MODEL_RELAY_CATALOG` env JSON 单源 + 三面投影同源化（#305 roadmap §2.2/§3 落地）**：
   ① 声明正本：`packages/agent-do/src/provider-catalog.ts`——公开非秘密的部署目录 JSON（providers × models ×
   capabilities × flags：id/name/api/reasoning/input/contextWindow/maxTokens/cost + description/

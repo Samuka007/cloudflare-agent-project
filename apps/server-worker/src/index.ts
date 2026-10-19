@@ -4,6 +4,7 @@ import {
   setAgentRuntime,
   type AgentDoBindings,
 } from "@cap/agent-do";
+import { DurableAgentDO, type DurableAgentEnv, type DurableAgentRuntime } from "@cap/agent-durable";
 import {
   DaemonServiceDO,
   daemonServiceWorker,
@@ -26,6 +27,7 @@ import { projectAttachmentReader } from "./services/attachment-pickup.js";
 import { NotificationHubDO } from "./ws/hub.js";
 import { LeaseStoreDO } from "./leases/lease-do.js";
 import type { Env } from "./env.js";
+import { createDurableRuntime } from "./durable-runtime.js";
 
 /**
  * Composed deployment entry (#31, wrangler.jsonc mains this file): the bb SPA
@@ -106,6 +108,20 @@ export class ComposedAgentDO extends AgentDO {
 }
 
 /**
+ * #581 additive runtime: the production subclass supplies the D1 provider
+ * catalog + daemon-host tool registry; the base owns the pi Harness, journal,
+ * and alarm.
+ */
+export class ComposedDurableAgentDO extends DurableAgentDO {
+  protected override createRuntime(
+    env: DurableAgentEnv,
+    ctx: DurableObjectState,
+  ): Promise<DurableAgentRuntime> {
+    return createDurableRuntime(env as unknown as Env, ctx);
+  }
+}
+
+/**
  * The per-host orchestrator with in-isolate adapter installation: the
  * provider lane resolves its adapter through the daemon-worker injection
  * registry, so the install must happen in the DO's own isolate.
@@ -113,9 +129,7 @@ export class ComposedAgentDO extends AgentDO {
 export class ComposedHostOrchestratorDO extends HostOrchestratorDO {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env as unknown as ConstructorParameters<typeof HostOrchestratorDO>[1]);
-    setProviderAdapter(
-      createEdgeAgentAdapter(env as { MANAGER: DurableObjectNamespace }),
-    );
+    setProviderAdapter(createEdgeAgentAdapter(env as { MANAGER: DurableObjectNamespace }));
   }
 }
 
@@ -157,6 +171,7 @@ export default {
       const serviceEnv: DaemonServiceWorkerEnv = {
         DAEMON_SERVICE: requireDaemonService(env),
         AGENT_DO: env.AGENT_DO,
+        ...(env.DURABLE_AGENT_DO === undefined ? {} : { DURABLE_AGENT_DO: env.DURABLE_AGENT_DO }),
         // #195 S3: the rejection path consumes the retry-update flag and
         // broadcasts host-disconnected through the hub (bb internal/session.ts:56-57).
         HUB: env.HUB,

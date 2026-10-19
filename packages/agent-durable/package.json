@@ -1,0 +1,25 @@
+{
+  "name": "@cap/agent-durable",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cap/protocol": "workspace:*",
+    "@earendil-works/chord": "1.3.0",
+    "@earendil-works/pi-ai": "1.3.0",
+    "@earendil-works/pi-durable": "1.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.3.6",
+    "@cloudflare/workers-types": "^5.20261001.1",
+    "typescript": "~5.9.0",
+    "vitest": "^4.1.0"
+  }
+}

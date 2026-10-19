@@ -11,6 +11,8 @@ export interface Env {
   LEASES: DurableObjectNamespace;
   /** Per-thread event log + turn state (ticket #29). */
   AGENT_DO: DurableObjectNamespace;
+  /** Additive pi-durable runtime (#581); routes only `dthr_` threads. */
+  readonly DURABLE_AGENT_DO?: DurableObjectNamespace;
   /**
    * Per-host command journal + session mirror (#27). Bound in the composed
    * deployment (#31): when present, the control plane's WRITE verbs
@@ -60,6 +62,8 @@ export interface Env {
   readonly ACCESS_AUD?: string;
   /** Version banner for /system/version (bb appVersion.currentVersion). */
   readonly SERVER_VERSION?: string;
+  /** #581 cutover switch for newly created threads; legacy is the default. */
+  readonly AGENT_RUNTIME?: "legacy" | "durable";
 
   // --- composition vars (#31, #377) -------------------------------------------
   //

@@ -37,6 +37,10 @@ export function createThreadId(): string {
   return createId("thr");
 }
 
+export function createDurableThreadId(): string {
+  return createId("dthr");
+}
+
 export function createThreadSectionId(): string {
   return createId("sec");
 }
