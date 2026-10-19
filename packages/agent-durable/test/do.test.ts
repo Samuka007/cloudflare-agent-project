@@ -41,11 +41,15 @@ describe("DurableAgentDO", () => {
     });
     expect(page.events.map((event) => event.type)).toEqual([
       "client/thread/start",
+      "item/started",
       "turn/started",
       "item/completed",
       "turn/completed",
     ]);
-    expect(page.events[2]?.data).toMatchObject({
+    expect(page.events[1]?.data).toMatchObject({
+      item: { type: "userMessage", content: [{ type: "text", text: "hi" }] },
+    });
+    expect(page.events[3]?.data).toMatchObject({
       item: { type: "agentMessage", text: "done" },
     });
     expect(page.latestSeq).toBe(page.events.length);

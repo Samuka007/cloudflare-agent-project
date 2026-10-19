@@ -135,6 +135,22 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
     await this.#watchReady;
     await this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_MS);
     await this.#applyExecution(args.execution);
+    const sink = this.#sink;
+    if (sink === undefined) throw new Error("journal not initialized");
+    await sink.append({
+      id: `pi-user-${args.clientRequestId}`,
+      threadId,
+      type: "item/started",
+      data: {
+        turnId,
+        item: {
+          type: "userMessage",
+          id: `itm-um-${args.clientRequestId}`,
+          content: args.content,
+        },
+      },
+      createdAt: Date.now(),
+    });
     await this.#thread.submit(
       promptText(args.content),
       args.clientRequestId,
