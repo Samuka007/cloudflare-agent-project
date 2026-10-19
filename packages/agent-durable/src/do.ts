@@ -47,6 +47,7 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
   #hub: DurableObjectNamespace | undefined;
   #threadId: string | undefined;
   #watchStarted = false;
+  #watchReady: Promise<void> | undefined;
   #turnOrdinal = 0;
   #currentTurnId: string | undefined;
   #created = false;
@@ -64,6 +65,7 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
       this.#created = ctx.storage.kv.get<boolean>("threadCreated") ?? false;
       const threadId = ctx.storage.kv.get<string>("threadId");
       if (threadId !== undefined) this.#journal(threadId);
+      await this.#watchReady;
       this.#thread.resume();
     });
   }
@@ -82,6 +84,7 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
     const duplicated = this.#created;
     if (!duplicated) {
       this.#journal(args.threadId);
+      await this.#watchReady;
       this.ctx.storage.kv.put("threadId", args.threadId);
       this.ctx.storage.kv.put("machineId", args.machineId ?? "");
       const sink = this.#sink;
@@ -129,6 +132,7 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
       this.ctx.storage.kv.put("currentTurnId", turnId);
     }
     if (turnId === undefined) throw new Error("steer_without_active_turn");
+    await this.#watchReady;
     await this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_MS);
     await this.#applyExecution(args.execution);
     await this.#thread.submit(
@@ -232,13 +236,13 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
       sink: this.#sink,
       initialTurnOrdinal: this.#turnOrdinal,
     });
-    this.#attachWatcher();
+    this.#watchReady = this.#attachWatcher();
   }
 
-  #attachWatcher(): void {
-    if (this.#watchStarted) return;
+  #attachWatcher(): Promise<void> {
+    if (this.#watchStarted) return this.#watchReady ?? Promise.resolve();
     this.#watchStarted = true;
-    void this.#thread
+    return this.#thread
       .watch()
       .then((stream) => {
         stream.start(async (events) => {
