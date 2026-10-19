@@ -62,11 +62,14 @@ export class PiEventBridge {
     now?: () => number;
     /** Resume the adapter-owned turn counter after a DO restart. */
     initialTurnOrdinal?: number;
+    /** Resume the in-flight turn id after a DO restart (steer continuity). */
+    initialTurnId?: string;
   }) {
     this.#threadId = options.threadId;
     this.#sink = options.sink;
     this.#now = options.now ?? Date.now;
     this.#turnOrdinal = options.initialTurnOrdinal ?? 0;
+    this.#currentTurnId = options.initialTurnId;
   }
 
   async ingest(events: readonly AgentEvent[]): Promise<ThreadEventEnvelope[]> {

@@ -235,6 +235,7 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
       threadId,
       sink: this.#sink,
       initialTurnOrdinal: this.#turnOrdinal,
+      ...(this.#currentTurnId === undefined ? {} : { initialTurnId: this.#currentTurnId }),
     });
     this.#watchReady = this.#attachWatcher();
   }
