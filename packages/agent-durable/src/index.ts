@@ -40,3 +40,5 @@ export type {
   HostToolStatus,
   HostToolTransport,
 } from "./tools.js";
+export { PiEventBridge } from "./events.js";
+export type { ThreadEventSink } from "./events.js";
