@@ -838,6 +838,10 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     const turnId = activeTurnIdFromEvents(events);
     if (turnId !== null) {
       await agentDoCancelTurn(ctx.env, row.id, turnId);
+    } else if (row.id.startsWith("dthr_")) {
+      // The durable journal is the UX envelope, not the legacy raw FSM; its
+      // cancelTurn aborts the root conversation regardless of the turn id.
+      await agentDoCancelTurn(ctx.env, row.id, "durable-active");
     }
     return ctx.json({ ok: true });
   });
