@@ -171,16 +171,18 @@ omp（can1357/oh-my-pi）fork 自 pi-mono，包名同形（`@oh-my-pi/pi-*` ↔ 
 | pi-mcp | omp 无独立包（omp 经扩展层接 MCP） | — | 无 | ✅ 零 pi 依赖可直搬（下方排名 1） |
 | pi-codemode | omp 无（omp 用 eval kernel） | — | 无 | ✅ 零依赖（排名 2） |
 | pi-telemetry | omp 无独立契约包 | — | 无 | ✅ 零依赖（排名 3） |
-| pi-durable | omp 无（omp session JSONL 自带持久） | — | journal-first 语义已同构 | 设计参考级（排名 4） |
+| pi-durable | omp 无（omp session JSONL 自带持久） | pi 1.3.0 重写为 chord+durable harness；DO SQLite adapter + Workers eviction/wake tests（test-workers/） | W5 #571 整替候选（edge harness）；host tools 仍 omp | **已发布可评估**：`@earendil-works/pi-durable@1.3.0`（2026-10-15，MIT，experimental）；不再是设计参考级 |
 | pi-env | omp 无 | — | daemon 缝同构先例 | 文档级参考（排名 6） |
 | pi-evals | omp 无 | — | 无 | 方法论参考（排名 5） |
+
+> 2026-10-19 更新：pi-durable 已从“设计参考级”升为 W5 #571 整替候选。证据：npm 1.3.0（2026-10-15）、`storage/sqlite/cloudflare` 的 `openDurableObjectSqliteStorage(ctx.storage)`、`test-workers/wake.test.ts` 的 mid-stream eviction → alarm 恢复、5600 行 normative spec。旧判据（#312 时代）只看到设计文档，未看到 DO adapter/Workers tests。
 
 ### 3.2 可直接搬资产排名（对另一 TS agent 栈的可移植价值；四 lane 调研汇裁）
 
 1. **pi/mcp**：deps 仅 `cross-spawn`（mcp/package.json:53-55），自带 OAuth(PKCE/动态注册/refresh)、stdio+Streamable HTTP+in-memory 三传输、conformance 测试套件（test/mcp-conformance/）。接任何 AgentTool 抽象 ~30 行；**切票 C2 的首选底座**（edge 侧走 streamable-http=fetch 可行；daemon 侧 stdio 需进程语义）。
 2. **pi/codemode**：deps 仅 `quickjs-wasi`；QuickJS 沙箱（interrupt flag/heap cap/store/TS declarations 渲染）成熟自足（codemode/README.md:47-184）。future eval/codemode 形态备选。
 3. **pi/telemetry**：零 workspace 依赖的 span 契约 + schema 类型化校验 + conformance 框架（telemetry/src/index.ts:14-357）。未来可观测面选型时的现成契约层。
-4. **pi/durable 的 storage facade + compaction task**（src/storage/*、src/harness/compaction.ts）：设计文档级参考（storage 三后端 facade、compaction 作为 durable task 用 pi-ai 的 token 估算/重试）；代码与 chord/pi-ai 耦合，只抄设计。
+4. **pi/durable**（`@earendil-works/pi-durable@1.3.0`）：不再只是设计参考——已有 `storage/sqlite/cloudflare` DO adapter、`test-workers/wake.test.ts` 的 eviction/mid-stream 恢复测试、80+ 测试与 storage/env conformance；W5 #571 按整替候选评估（provider/host-tools/UX 三个适配面待 spike）。旧判据“代码与 chord/pi-ai 耦合，只抄设计”保留为历史。
 5. **pi/evals 的 docs-lift 方法**（docker 双臂 without_docs vs with_docs 对照 + StructuredOutputJudge，evals/README.md:7-18, :113-127）：我方未来对 relay/provider 文档做行为评测的方法论蓝本。
 6. **pi/env 的语义对照法**（env/docs/semantics.md「RemoteExecutionEnv 与本地 NodeExecutionEnv 语义等价」+ 16MiB 帧协议 protocol.md:12-26）：#307 cloud-only fs 与 daemon 缝论证的文档先例。
 7. **pi 测试生态**（compaction 族 11 测试 + session 族 + 2.3MB/951KB fixtures；根 test.sh 无 API key hermetic 跑法）：#314 的移植正本。
