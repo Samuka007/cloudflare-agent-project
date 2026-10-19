@@ -149,7 +149,7 @@ export class EdgeAgentProviderAdapter implements ProviderAdapter {
     pending: Promise<AdapterCommandOutcome>,
     timeoutMs: number,
   ): Promise<AdapterCommandOutcome> {
-    let timer: number | null = null;
+    let timer: Parameters<typeof clearTimeout>[0] | null = null;
     const expired = new Promise<AdapterCommandOutcome>((resolve) => {
       timer = setTimeout(() => {
         resolve({

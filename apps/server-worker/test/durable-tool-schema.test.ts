@@ -21,6 +21,7 @@ describe("durable runtime tool projection", () => {
       }),
     );
     const args: unknown = validateToolArguments(tool, {
+      type: "toolCall",
       id: "call-1",
       name: "bash",
       arguments: { command: "echo hi" },
