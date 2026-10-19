@@ -1,14 +1,14 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { ensureMigrations } from "../migrate.js";
+import { ensureMigrations } from "../migrate";
 import {
   threadArchiveAllResponseSchema,
   threadChildSummaryResponseSchema,
   threadResponseSchema,
   threadTimelineResponseSchema,
-} from "../../src/contract/api/threads.js";
-import { buildTimelinePage } from "../../src/services/timeline.js";
-import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view.js";
-import type { UxThreadEvent } from "../../src/seam/agent-do.js";
+} from "../../src/contract/api/threads";
+import { buildTimelinePage } from "../../src/services/timeline";
+import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view";
+import type { UxThreadEvent } from "../../src/seam/agent-do";
 import {
   BASE,
   createThread,
@@ -16,7 +16,7 @@ import {
   RIG_MODEL_ID,
   RIG_PROVIDER_ID,
   send,
-} from "../helpers.js";
+} from "../helpers";
 import { exports } from "cloudflare:workers";
 
 /**
@@ -158,9 +158,7 @@ describe("#121: buildTimelinePage older pagination (24-row long thread)", () => 
       segmentLimit: 20,
       beforeAnchor: { anchorSeq: 105, anchorId: seq105.id },
     });
-    expect(older.rows.map((row) => row.id)).toEqual(
-      rows.slice(0, 4).map((row) => row.id),
-    );
+    expect(older.rows.map((row) => row.id)).toEqual(rows.slice(0, 4).map((row) => row.id));
     for (const row of older.rows) {
       expect(row.sourceSeqStart).toBeLessThan(105);
     }
@@ -177,13 +175,7 @@ describe("#121: buildTimelinePage older pagination (24-row long thread)", () => 
     // seq-derived), but the real ux journal does produce same-seq row pairs:
     // the reasoning+agentMessage completion pair the ux projection emits at
     // model.call_completed (extraUx). Tie the anchor sequence with that pair.
-    events.push(
-      uxEvent(
-        "turn/started",
-        { turnId: "tie" },
-        124,
-      ),
-    );
+    events.push(uxEvent("turn/started", { turnId: "tie" }, 124));
     events.push(
       uxEvent(
         "item/reasoning/textDelta",

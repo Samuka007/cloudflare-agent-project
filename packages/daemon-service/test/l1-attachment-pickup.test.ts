@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
-import type { ProjectAttachmentContentResult, ProjectAttachmentReader } from "../src/worker.js";
-import { setAttachmentReader } from "../src/worker.js";
-import { SimulatedClient, uniqueHostId, testEnv, workerFetch } from "./helpers.js";
+import type { ProjectAttachmentContentResult, ProjectAttachmentReader } from "../src/worker";
+import { setAttachmentReader } from "../src/worker";
+import { SimulatedClient, uniqueHostId, testEnv, workerFetch } from "./helpers";
 
 /**
  * L1 attachment pickup route (#318) — the daemon face's

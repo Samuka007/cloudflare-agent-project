@@ -29,7 +29,7 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { openTab, snapshot } from "./jev-loop.js";
+import { openTab, snapshot } from "./jev-loop";
 
 // ---------------------------------------------------------------------------
 // Frozen channel definitions (pre-registered 2026-10-05)

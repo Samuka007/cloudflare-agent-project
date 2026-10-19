@@ -7,7 +7,7 @@ import {
   providerModelFamilySchema,
   relayCatalogModelSchema,
   relayImageModelSchema,
-} from "@cap/agent-do";
+} from "@cap/agent-config";
 import { discoveredModelEntrySchema } from "@cap/daemon-service";
 import {
   appSettingsSchema,
@@ -22,8 +22,8 @@ import {
   permissionModeSchema,
   pluginThemeMetaSchema,
   providerInfoSchema,
-} from "../domain/index.js";
-import { hostPlatformSchema } from "../hdc/local.js";
+} from "../domain/index";
+import { hostPlatformSchema } from "../hdc/local";
 
 export const systemExecutionOptionsModelLoadErrorCodeSchema = z.enum([
   "missing_executable",
@@ -116,8 +116,8 @@ export type SystemVoiceTranscriptionForm = Record<string, string | Blob>;
 
 // SystemProviderInfo is the same shape as ProviderInfo from domain.
 // Re-export with the API-facing name for backward compatibility.
-export { providerInfoSchema as systemProviderInfoSchema } from "../domain/index.js";
-export type { ProviderInfo as SystemProviderInfo } from "../domain/index.js";
+export { providerInfoSchema as systemProviderInfoSchema } from "../domain/index";
+export type { ProviderInfo as SystemProviderInfo } from "../domain/index";
 
 export const systemVoiceTranscriptionResponseSchema = z.object({
   text: z.string(),

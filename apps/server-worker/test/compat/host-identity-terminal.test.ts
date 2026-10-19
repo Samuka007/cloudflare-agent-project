@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
-import { apiGet, BASE, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers.js";
-import { hostSchema } from "../../src/contract/domain/host.js";
+import { ensureMigrations } from "../migrate";
+import { apiGet, BASE, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers";
+import { hostSchema } from "../../src/contract/domain/host";
 
 /**
  * #195 S3/S4: host identity + protocol-upgrade data face (G4/G5/G7/G12) and

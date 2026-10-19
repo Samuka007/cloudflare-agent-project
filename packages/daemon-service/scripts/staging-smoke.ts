@@ -49,10 +49,7 @@ const JournalOpSchema = z.object({
 });
 
 const SessionResponseSchema = z.object({
-  session: z
-    .object({ bootId: z.string(), hostId: z.string().optional() })
-    .nullable()
-    .optional(),
+  session: z.object({ bootId: z.string(), hostId: z.string().optional() }).nullable().optional(),
 });
 
 const JournalResponseSchema = z.object({ ops: z.array(JournalOpSchema) });
@@ -117,7 +114,9 @@ const hostId = hostIdFromEnvOrArgs();
 const cfClientId = argValue("--cf-client-id") ?? process.env.DAEMON_CF_ACCESS_CLIENT_ID;
 const cfClientSecret = argValue("--cf-client-secret") ?? process.env.DAEMON_CF_ACCESS_CLIENT_SECRET;
 if ((cfClientId === undefined) !== (cfClientSecret === undefined)) {
-  throw new Error("CF Access pair must be both-or-neither: --cf-client-id/--cf-client-secret or DAEMON_CF_ACCESS_CLIENT_ID/DAEMON_CF_ACCESS_CLIENT_SECRET");
+  throw new Error(
+    "CF Access pair must be both-or-neither: --cf-client-id/--cf-client-secret or DAEMON_CF_ACCESS_CLIENT_ID/DAEMON_CF_ACCESS_CLIENT_SECRET",
+  );
 }
 
 const stamp = Date.now().toString(36);
@@ -128,11 +127,12 @@ const customCommand = argValue("--command");
 // `&&` composition keeps the exit-0 + marker-in-output gate verbatim for
 // custom commands: marker only prints when the command itself succeeded.
 const command =
-  customCommand === undefined
-    ? `echo ${marker} $(uname -m)`
-    : `${customCommand} && echo ${marker}`;
+  customCommand === undefined ? `echo ${marker} $(uname -m)` : `${customCommand} && echo ${marker}`;
 
-const headers: Record<string, string> = { "content-type": "application/json", authorization: `Bearer ${hostKey}` };
+const headers: Record<string, string> = {
+  "content-type": "application/json",
+  authorization: `Bearer ${hostKey}`,
+};
 if (cfClientId !== undefined && cfClientSecret !== undefined) {
   headers["CF-Access-Client-Id"] = cfClientId;
   headers["CF-Access-Client-Secret"] = cfClientSecret;
@@ -279,7 +279,9 @@ async function main(): Promise<void> {
 main()
   .then(() => process.exit(0))
   .catch((error: unknown) => {
-    console.error(`[staging-smoke] FAIL: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `[staging-smoke] FAIL: ${error instanceof Error ? error.message : String(error)}`,
+    );
     journalOps(executionId)
       .then((ops) => {
         for (const op of ops) console.error(`[staging-smoke] journal: ${JSON.stringify(op)}`);

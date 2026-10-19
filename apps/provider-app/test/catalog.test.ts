@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { relayCatalogModelSchema, type RelayCatalogProvider } from "@cap/agent-do";
-import { resolveOverlayCatalog } from "../src/catalog.js";
+import { relayCatalogModelSchema, type RelayCatalogProvider } from "@cap/agent-config";
+import { resolveOverlayCatalog } from "../src/catalog";
 
 /**
  * #350 → #450 → #500 → #534 catalog directory resolution — the projection
@@ -83,7 +83,13 @@ describe("#450/#500 resolveOverlayCatalog (D1 rows are the sole 正本)", () => 
         // OR over the provider's rows: glm-5.3 declares image input.
         imageInput: true,
       },
-      { id: "backup", displayName: "backup", api: undefined, serviceTier: false, imageInput: false },
+      {
+        id: "backup",
+        displayName: "backup",
+        api: undefined,
+        serviceTier: false,
+        imageInput: false,
+      },
     ]);
     expect(resolution.models.map((model) => [model.providerId, model.id])).toEqual([
       ["main", "glm-5.3"],
@@ -140,15 +146,11 @@ describe("#450/#500 resolveOverlayCatalog (D1 rows are the sole 正本)", () => 
     const resolution = resolveOverlayCatalog({
       mixed: {
         api: "openai-responses",
-        models: [
-          { id: "glm-5.3", api: "anthropic-messages" },
-          { id: "glm-5.3-flash" },
-        ],
+        models: [{ id: "glm-5.3", api: "anthropic-messages" }, { id: "glm-5.3-flash" }],
       },
       legacy: { models: [{ id: "claude-panel" }] },
     });
-    const apiOf = (id: string) =>
-      resolution.models.find((model) => model.id === id)?.api;
+    const apiOf = (id: string) => resolution.models.find((model) => model.id === id)?.api;
     // Model-level api wins over the provider face.
     expect(apiOf("glm-5.3")).toBe("anthropic-messages");
     // Provider-level covers rows without their own api.
@@ -229,7 +231,9 @@ describe("#534 the pi ladder gate and the legacy compat read", () => {
     const resolution = resolveOverlayCatalog({
       // The loader path: stored JSON decodes through the SAME schema
       // (skip-with-warning) before the overlay ever sees a row.
-      legacy: { models: [relayCatalogModelSchema.parse(JSON.parse(JSON.stringify(LEGACY_BUDGET_ROW)))] },
+      legacy: {
+        models: [relayCatalogModelSchema.parse(JSON.parse(JSON.stringify(LEGACY_BUDGET_ROW)))],
+      },
     });
     const row = resolution.models[0];
     expect(row?.reasoningLevels).toEqual(["none", "low", "high"]);
@@ -293,9 +297,7 @@ describe("#534 the pi ladder gate and the legacy compat read", () => {
   });
 
   test("strictness lives on: unknown fields and a dangling defaultLevel still fail loudly", () => {
-    expect(() =>
-      relayCatalogModelSchema.parse({ id: "m", contextwindow: 200000 }),
-    ).toThrow();
+    expect(() => relayCatalogModelSchema.parse({ id: "m", contextwindow: 200000 })).toThrow();
     expect(() =>
       relayCatalogModelSchema.parse({
         id: "m",
@@ -304,7 +306,10 @@ describe("#534 the pi ladder gate and the legacy compat read", () => {
     ).toThrow();
     expect(() =>
       // minimal has no bb rung — the edge refuses it (the importer warns).
-      relayCatalogModelSchema.parse({ id: "m", thinking: { mode: "effort", efforts: ["minimal"] } }),
+      relayCatalogModelSchema.parse({
+        id: "m",
+        thinking: { mode: "effort", efforts: ["minimal"] },
+      }),
     ).toThrow();
   });
 });

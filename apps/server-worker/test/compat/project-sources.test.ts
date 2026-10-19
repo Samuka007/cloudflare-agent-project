@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { env, exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
-import { projectSourceSchema } from "../../src/contract/domain/index.js";
+import { ensureMigrations } from "../migrate";
+import { projectSourceSchema } from "../../src/contract/domain/index";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 
 /**

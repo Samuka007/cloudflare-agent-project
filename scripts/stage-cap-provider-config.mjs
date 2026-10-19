@@ -17,19 +17,17 @@ import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dirname, "..");
-const distDir = resolve(
-  repoRoot,
-  "bb/plugins/cap-provider-config/dist",
-);
-const stageDir = resolve(
-  repoRoot,
-  "apps/server-worker/public/plugins/cap-provider-config",
-);
+const distDir = resolve(repoRoot, "bb/plugins/cap-provider-config/dist");
+const stageDir = resolve(repoRoot, "apps/server-worker/public/plugins/cap-provider-config");
 
 const readAsset = (name) => readFile(resolve(distDir, name));
 
 const meta = JSON.parse(await readAsset("app.meta.json"));
-if (typeof meta.pluginVersion !== "string" || typeof meta.sdkMajor !== "number" || typeof meta.sdkVersion !== "string") {
+if (
+  typeof meta.pluginVersion !== "string" ||
+  typeof meta.sdkMajor !== "number" ||
+  typeof meta.sdkVersion !== "string"
+) {
   throw new Error("app.meta.json is missing pluginVersion/sdkMajor/sdkVersion");
 }
 const js = await readAsset("app.js");
@@ -59,15 +57,9 @@ const descriptor = {
 await rm(stageDir, { recursive: true, force: true });
 await mkdir(resolve(stageDir, "assets"), { recursive: true });
 await copyFile(resolve(distDir, "app.js"), resolve(stageDir, "assets/app.js"));
-await copyFile(
-  resolve(distDir, "app.meta.json"),
-  resolve(stageDir, "assets/app.meta.json"),
-);
+await copyFile(resolve(distDir, "app.meta.json"), resolve(stageDir, "assets/app.meta.json"));
 if (css !== null) {
   await copyFile(resolve(distDir, "app.css"), resolve(stageDir, "assets/app.css"));
 }
-await writeFile(
-  resolve(stageDir, "registry.json"),
-  `${JSON.stringify(descriptor, null, 2)}\n`,
-);
+await writeFile(resolve(stageDir, "registry.json"), `${JSON.stringify(descriptor, null, 2)}\n`);
 console.log(`== plugin staged: cap-provider-config hash ${hash}, sdk ${descriptor.sdkVersion} ==`);

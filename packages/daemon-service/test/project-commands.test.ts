@@ -5,14 +5,14 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { promisify } from "node:util";
 
-import type { HostRpcRequestFrame } from "../src/protocol.js";
+import type { HostRpcRequestFrame } from "../src/protocol";
 import {
   checkHostPathsExist,
   cloneProject,
   inspectProjectPath,
   resolveProjectCloneDefaultPath,
-} from "../src/client/project.js";
-import { dispatchHostRpc } from "../src/client/connection.js";
+} from "../src/client/project";
+import { dispatchHostRpc } from "../src/client/connection";
 
 /**
  * #445 runtime suite (real fs + real git, the host-directory.test.ts lane):

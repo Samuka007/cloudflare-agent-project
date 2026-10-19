@@ -1,11 +1,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { ensureMigrations } from "../migrate.js";
+import { ensureMigrations } from "../migrate";
 import {
   threadTimelineResponseSchema,
   threadEventsQuerySchema,
-} from "../../src/contract/api/threads.js";
-import { timelineRowSchema } from "../../src/contract/thread-timeline.js";
-import { createThread, send } from "../helpers.js";
+} from "../../src/contract/api/threads";
+import { timelineRowSchema } from "../../src/contract/thread-timeline";
+import { createThread, send } from "../helpers";
 import { exports } from "cloudflare:workers";
 
 /**

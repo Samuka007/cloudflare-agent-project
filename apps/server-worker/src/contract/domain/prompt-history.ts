@@ -3,7 +3,7 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import { promptInputSchema, type PromptInput } from "./shared-types.js";
+import { promptInputSchema, type PromptInput } from "./shared-types";
 
 export const PROMPT_HISTORY_ENTRY_LIMIT = 50;
 

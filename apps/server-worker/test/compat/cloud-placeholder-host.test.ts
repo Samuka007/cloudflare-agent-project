@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
-import { ensureMigrations } from "../migrate.js";
-import { hostSchema, type Host } from "../../src/contract/domain/host.js";
-import { BASE, apiGet, createThread, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers.js";
+import { ensureMigrations } from "../migrate";
+import { hostSchema, type Host } from "../../src/contract/domain/host";
+import { BASE, apiGet, createThread, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers";
 
 /**
  * #386: the cloud placeholder is a REAL hosts row (migration 0004) — bb's

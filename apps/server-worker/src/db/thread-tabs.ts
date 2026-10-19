@@ -1,7 +1,7 @@
-import type { Env } from "../env.js";
-import { toThreadTabsDbRow, type ThreadTabsDbRow } from "./rows.js";
-import type { ThreadTabsResponse } from "../contract/api/thread-tabs.js";
-import type { ThreadTab } from "../contract/api/thread-tabs.js";
+import type { Env } from "../env";
+import { toThreadTabsDbRow, type ThreadTabsDbRow } from "./rows";
+import type { ThreadTabsResponse } from "../contract/api/thread-tabs";
+import type { ThreadTab } from "../contract/api/thread-tabs";
 
 /**
  * thread_tabs persistence (bb packages/db/src/data/thread-tabs.ts:14-69).

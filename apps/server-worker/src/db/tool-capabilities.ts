@@ -9,7 +9,7 @@
  * ruling): D1 is the sole 正本, no env fallback exists.
  */
 
-import type { ExperimentalToolConfig } from "@cap/agent-do";
+import type { ExperimentalToolConfig } from "@cap/agent-config";
 
 /** The capability slice this module needs (the worker Env satisfies it). */
 export interface ToolCapabilitiesEnv {

@@ -7,7 +7,7 @@ import type {
   DiscoveredModelEntry,
   HostDiscoverModelsCommand,
   HostDiscoverModelsResult,
-} from "../protocol.js";
+} from "../protocol";
 
 /**
  * #447: the daemon side of `host.discover_models` — the pi-catalog-backed

@@ -9,7 +9,7 @@ import {
   readNativeAddonStatus,
   type ToolDispatchFrame,
   type ToolHost,
-} from "../src/client/tool-runtime.js";
+} from "../src/client/tool-runtime";
 
 /**
  * L1 for the security_scan host-face disablement (#522, user ruling

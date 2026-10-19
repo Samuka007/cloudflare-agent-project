@@ -1,6 +1,6 @@
 /**
  * #560 projection switch, cap face: the ux timeline now materializes through
- * bb thread-view (@cap/agent-do/thread-view → buildThreadTimelineFromEvents)
+ * bb thread-view (services/thread-view → buildThreadTimelineFromEvents)
  * instead of the retired porting-layer fold in services/timeline.ts. This
  * module owns everything cap-specific on top of the bb projection:
  *
@@ -19,15 +19,15 @@
  *
  * D5 (batch-spawn anchors + background delegation seals) runs inside the
  * materializer — it rewrites rows before bb sees them (see
- * @cap/agent-do/thread-view materializer.ts).
+ * services/thread-view/materializer.ts).
  */
-import { projectUxWindowThroughThreadView } from "@cap/agent-do/thread-view";
+import { projectUxWindowThroughThreadView } from "./thread-view/index";
 import { threadEventDataSchemas } from "@cap/protocol";
-import type { UxThreadEvent } from "../seam/agent-do.js";
-import { timelineRowSchema, type TimelineRow } from "../contract/thread-timeline.js";
-import { activeThinkingSchema, type ActiveThinking } from "../contract/domain/active-thinking.js";
-import type { ThreadStatus } from "../contract/domain/thread-status.js";
-import type { ThreadContextWindowUsage } from "../contract/api/shared.js";
+import type { UxThreadEvent } from "../seam/agent-do";
+import { timelineRowSchema, type TimelineRow } from "../contract/thread-timeline";
+import { activeThinkingSchema, type ActiveThinking } from "../contract/domain/active-thinking";
+import type { ThreadStatus } from "../contract/domain/thread-status";
+import type { ThreadContextWindowUsage } from "../contract/api/shared";
 
 // --- D7: provider-unhandled debug rows ------------------------------------
 // Moved verbatim from the porting layer (services/timeline.ts) — the

@@ -9,7 +9,7 @@ import {
   ProviderProjectionError,
   resolveProviderApi,
   type DurableProviderSource,
-} from "../src/provider.js";
+} from "../src/provider";
 
 const source: DurableProviderSource = {
   providerId: "relay-a",

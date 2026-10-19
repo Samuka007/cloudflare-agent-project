@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { Env } from "../env.js";
+import type { Env } from "../env";
 
 /**
  * previewLeases → Durable Object port (bb apps/server/src/routes/files.ts:

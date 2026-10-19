@@ -2,7 +2,7 @@ import { createHostId as createProtocolHostId } from "@cap/protocol";
 import {
   GENERATED_ID_ALPHABET,
   GENERATED_ID_SUFFIX_LENGTH,
-} from "../contract/domain/raw-thread-id.js";
+} from "../contract/domain/raw-thread-id";
 
 /**
  * Ported from bb `packages/db/src/ids.ts` (commit 8473d8c33). bb uses nanoid's
@@ -31,10 +31,6 @@ export function createEnvironmentId(): string {
 
 export function createProjectId(): string {
   return createId("proj");
-}
-
-export function createThreadId(): string {
-  return createId("thr");
 }
 
 export function createDurableThreadId(): string {

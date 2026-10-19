@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
-import { openWebSocket } from "../helpers.js";
+import { openWebSocket } from "../helpers";
 
 /**
  * #193 S1: the hub side of the host changed broadcast — bb's registerDaemon

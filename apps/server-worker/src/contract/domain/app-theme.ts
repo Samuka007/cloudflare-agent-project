@@ -3,7 +3,7 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import { defaultResolvedCodeTheme, resolvedCodeThemeSchema } from "./code-theme.js";
+import { defaultResolvedCodeTheme, resolvedCodeThemeSchema } from "./code-theme";
 
 /**
  * App color palette ("theme"), distinct from light/dark *mode* (which stays a

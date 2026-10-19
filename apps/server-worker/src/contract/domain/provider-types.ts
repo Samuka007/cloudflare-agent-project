@@ -7,7 +7,7 @@ import {
   permissionModeSchema,
   promptMentionCommandTriggerSchema,
   reasoningLevelSchema,
-} from "./shared-types.js";
+} from "./shared-types";
 
 export const modelReasoningEffortSchema = z.object({
   reasoningEffort: reasoningLevelSchema,

@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { exports } from "cloudflare:workers";
 import { DAEMON_PROTOCOL_VERSION } from "@cap/daemon-service";
-import { ensureMigrations } from "../migrate.js";
-import { projectAttachmentReader } from "../../src/services/attachment-pickup.js";
+import { ensureMigrations } from "../migrate";
+import { projectAttachmentReader } from "../../src/services/attachment-pickup";
 import {
   ensureRigReady,
   env,
@@ -10,8 +10,8 @@ import {
   RIG_PROVIDER_ID,
   TEST_ENROLL_KEY,
   TEST_HOST_KEY,
-} from "../helpers.js";
-import type { Env } from "../../src/env.js";
+} from "../helpers";
+import type { Env } from "../../src/env";
 
 /**
  * #318 A3: the attachment pickup bridge — the deployment half of the daemon

@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { ensureMigrations } from "../migrate.js";
-import { createThread, send, type CreatedThread } from "../helpers.js";
+import { ensureMigrations } from "../migrate";
+import { createThread, send, type CreatedThread } from "../helpers";
 import { env, exports } from "cloudflare:workers";
-import { threadResponseSchema } from "../../src/contract/api/threads.js";
+import { threadResponseSchema } from "../../src/contract/api/threads";
 
 /**
  * #477: idle 线程永久渲染 Working... — server truth idle, UI judged running.
@@ -37,9 +37,7 @@ async function threadRowStatus(threadId: string): Promise<string | undefined> {
 }
 
 async function readThreadDetail(thread: CreatedThread) {
-  const response = await exports.default.fetch(
-    `https://example.com/api/v1/threads/${thread.id}`,
-  );
+  const response = await exports.default.fetch(`https://example.com/api/v1/threads/${thread.id}`);
   expect(response.status).toBe(200);
   return threadResponseSchema.parse(await response.json());
 }

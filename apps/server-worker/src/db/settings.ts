@@ -1,12 +1,12 @@
-import type { Env } from "../env.js";
-import { defaultAppSettings, type AppSettings } from "../contract/domain/app-settings.js";
+import type { Env } from "../env";
+import { defaultAppSettings, type AppSettings } from "../contract/domain/app-settings";
 import {
   defaultExperiments,
   experimentsSchema,
   type Experiments,
-} from "../contract/domain/experiments.js";
-import type { AppKeybindingOverrides } from "../contract/domain/app-keybindings.js";
-import { toAppSettingsDbRow, type AppSettingsDbRow } from "./rows.js";
+} from "../contract/domain/experiments";
+import type { AppKeybindingOverrides } from "../contract/domain/app-keybindings";
+import { toAppSettingsDbRow, type AppSettingsDbRow } from "./rows";
 
 /**
  * app_settings / system_experiments / app_theme persistence, ported from bb
@@ -141,4 +141,4 @@ export async function setStoredAppearance(env: Env, appearance: StoredAppearance
     .run();
 }
 
-export { applyAppKeybindingOverrides } from "../contract/domain/app-keybindings.js";
+export { applyAppKeybindingOverrides } from "../contract/domain/app-keybindings";

@@ -1,10 +1,10 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
+import { ensureMigrations } from "../migrate";
 import {
   pluginListResponseSchema,
   pluginRegistryDescriptorSchema,
-} from "../../src/contract/api/plugins.js";
+} from "../../src/contract/api/plugins";
 
 /**
  * #382 the minimal plugin serving face: the static registry entry parses
@@ -81,13 +81,9 @@ describe("static plugin registry", () => {
   });
 
   it("404s unknown ids, unknown files, and undeclared files", async () => {
-    const unknownId = await request(
-      `/api/v1/plugins/other/assets/app.js?h=${FIXTURE_HASH}`,
-    );
+    const unknownId = await request(`/api/v1/plugins/other/assets/app.js?h=${FIXTURE_HASH}`);
     expect(unknownId.status).toBe(404);
-    const unknownFile = await request(
-      `/api/v1/plugins/cap-provider-config/assets/app.mjs`,
-    );
+    const unknownFile = await request(`/api/v1/plugins/cap-provider-config/assets/app.mjs`);
     expect(unknownFile.status).toBe(404);
     // The fixture declares css:false — the css asset is not tracked, so the
     // registry hands back the bb "unknown plugin asset" 404 rather than a

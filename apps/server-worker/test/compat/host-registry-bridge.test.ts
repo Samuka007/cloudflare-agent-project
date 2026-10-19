@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
-import { hostSchema } from "../../src/contract/domain/host.js";
-import { BASE, apiGet, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers.js";
+import { ensureMigrations } from "../migrate";
+import { hostSchema } from "../../src/contract/domain/host";
+import { BASE, apiGet, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers";
 
 /**
  * #49 bridge: the daemon client's attach handshake (daemon-service /enroll +

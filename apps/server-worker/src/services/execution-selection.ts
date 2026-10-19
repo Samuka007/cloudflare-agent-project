@@ -23,19 +23,16 @@ import {
   type RelayCatalogProvider,
   type RelayReasoningLevel,
   type RelaySelection,
-} from "@cap/agent-do";
-import {
-  classifyExecutionSettingsChange,
-  resolveOverlayCatalog,
-  type RelayCatalogResolution,
-} from "@cap/provider-app";
-import type { RuntimeThreadExecutionOptions } from "../../../daemon-worker/src/provider-types.js";
+} from "@cap/agent-config";
+import { resolveOverlayCatalog, type RelayCatalogResolution } from "@cap/provider-app";
+import { classifyExecutionSettingsChange } from "./execution-settings";
 import {
   resolvedThreadExecutionOptionsSchema,
   type PermissionMode,
   type ResolvedThreadExecutionOptions,
-} from "../contract/domain/shared-types.js";
-import { ApiError } from "../shared/api-error.js";
+  type RuntimeThreadExecutionOptions,
+} from "../contract/domain/shared-types";
+import { ApiError } from "../shared/api-error";
 
 /** The create/send payload slice this service validates (all optional). */
 export interface ThreadExecutionSelectionInput {
@@ -304,9 +301,7 @@ export function resolveThreadExecutionOverridePatch(
     providerId: row.providerId,
     modelOverride: "model" in patch ? (patch.model ?? null) : row.modelOverride,
     reasoningLevelOverride:
-      "reasoningLevel" in patch
-        ? (patch.reasoningLevel ?? null)
-        : row.reasoningLevelOverride,
+      "reasoningLevel" in patch ? (patch.reasoningLevel ?? null) : row.reasoningLevelOverride,
   };
   try {
     resolveStoredThreadExecution(candidate, overlayProviders);
@@ -322,9 +317,7 @@ export function resolveThreadExecutionOverridePatch(
     const resolved = validateThreadExecutionSelection(
       {
         providerId: row.providerId,
-        ...(candidate.modelOverride !== null
-          ? { model: candidate.modelOverride }
-          : {}),
+        ...(candidate.modelOverride !== null ? { model: candidate.modelOverride } : {}),
       },
       overlayProviders,
     );

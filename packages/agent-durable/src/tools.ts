@@ -11,7 +11,7 @@ export const DEFAULT_HOST_TOOL_TIMEOUT_MS = 600_000;
 
 export type HostToolStatus = "ok" | "error" | "timeout" | "cancelled" | "outcome_unknown";
 
-/** The daemon-service dispatch frame, structurally (no @cap/agent-do import). */
+/** The daemon-service dispatch frame, structurally. */
 export interface HostToolFrame {
   tool: string;
   arguments: Record<string, unknown>;

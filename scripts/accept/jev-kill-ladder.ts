@@ -57,7 +57,7 @@ import {
   type LlmStepAdjudicator,
   type UpgradeContext,
   type UpgradeVerdict,
-} from "./jev-loop.js";
+} from "./jev-loop";
 
 // ---------------------------------------------------------------------------
 // Pre-registered thresholds — frozen 2026-10-04, before the first live run

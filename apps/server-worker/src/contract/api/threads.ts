@@ -28,13 +28,13 @@ import {
   threadTimelinePendingTodosSchema,
   threadVisibilitySchema,
   threadWithRuntimeSchema,
-} from "../domain/index.js";
-import type { CallerExecutionInputSource } from "../domain/index.js";
+} from "../domain/index";
+import type { CallerExecutionInputSource } from "../domain/index";
 import {
   timelineDeltaSchema,
   timelineRowSchema,
   timelineWorkflowWorkRowSchema,
-} from "../thread-timeline.js";
+} from "../thread-timeline";
 import {
   environmentArgsSchema,
   createThreadEnvironmentArgsSchema,
@@ -44,7 +44,7 @@ import {
   threadContextWindowUsageSchema,
   workspaceFileListResponseSchema,
   workspacePathListResponseSchema,
-} from "./shared.js";
+} from "./shared";
 
 export const sendMessageModeSchema = z.enum([
   "queue-if-active",

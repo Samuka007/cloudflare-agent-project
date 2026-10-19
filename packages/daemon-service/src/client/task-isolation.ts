@@ -7,7 +7,7 @@ import type {
   IsolationHandle,
   WorktreeBaseline,
 } from "@oh-my-pi/pi-coding-agent/task/worktree";
-import { log } from "./log.js";
+import { log } from "./log";
 import {
   cherryPickRangeWithGitlinkResolution,
   defaultGitRunner,
@@ -15,8 +15,8 @@ import {
   precheckLandingPatch,
   renderLandingRefusal,
   type GitRunner,
-} from "./task-apply-guard.js";
-import type { ToolDispatchFrame, ToolExecutionResult, ToolHost } from "./tool-runtime.js";
+} from "./task-apply-guard";
+import type { ToolDispatchFrame, ToolExecutionResult, ToolHost } from "./tool-runtime";
 
 /**
  * Task isolation backend (M1.5/T20 #110) — the daemon half of `task.isolated`.

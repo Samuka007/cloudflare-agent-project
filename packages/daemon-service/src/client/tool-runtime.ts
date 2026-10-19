@@ -2,13 +2,13 @@ import { createRequire } from "node:module";
 import { existsSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { log } from "./log.js";
-import type { WorkspaceRef } from "../protocol.js";
+import { log } from "./log";
+import type { WorkspaceRef } from "../protocol";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { EvalKernelRuntime } from "./eval-kernel.js";
-import { threadIdFromExecutionId } from "../execution-id.js";
-import { IsolationManager, type TaskIsolationConfig } from "./task-isolation.js";
-import { createFindExecTool } from "./find-exec.js";
+import { EvalKernelRuntime } from "./eval-kernel";
+import { threadIdFromExecutionId } from "../execution-id";
+import { IsolationManager, type TaskIsolationConfig } from "./task-isolation";
+import { createFindExecTool } from "./find-exec";
 
 /**
  * Vendored omp tool runtime (M1.5/T5' #128): host construction, native-addon

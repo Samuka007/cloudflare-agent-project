@@ -1,12 +1,12 @@
 import { beforeAll, afterEach, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
+import { ensureMigrations } from "../migrate";
 import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
 import {
   systemConfigResponseSchema,
   systemToolCapabilitiesResponseSchema,
   type SystemToolCapabilitiesResponse,
-} from "../../src/contract/api/system.js";
+} from "../../src/contract/api/system";
 
 /**
  * #502 the experimental tool-capability write face (the D1 `tool_capabilities`

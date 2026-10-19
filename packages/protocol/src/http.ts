@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { promptContentSchema, threadEventEnvelopeSchema } from "./events.js";
+import { promptContentSchema, threadEventEnvelopeSchema } from "./events";
 import {
   createThreadEnvironmentArgsSchema,
   environmentSummarySchema,
   hostSummarySchema,
-} from "./environments.js";
+} from "./environments";
 
 /**
  * Frozen HTTP surface (`/api/v1`), bb-shaped so the bb SPA can be pointed at

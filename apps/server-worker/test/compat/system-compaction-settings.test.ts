@@ -1,11 +1,11 @@
 import { beforeAll, afterEach, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
-import { RIG_MODEL_ID, RIG_PROVIDER_ID, ensureRigReady } from "../helpers.js";
+import { ensureMigrations } from "../migrate";
+import { RIG_MODEL_ID, RIG_PROVIDER_ID, ensureRigReady } from "../helpers";
 import {
   systemCompactionSettingsResponseSchema,
   type SystemCompactionSettingsResponse,
-} from "../../src/contract/api/system.js";
+} from "../../src/contract/api/system";
 
 /**
  * #547 the compaction-preference write face (the D1 `compaction_settings`

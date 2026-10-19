@@ -37,7 +37,7 @@ import {
   RELEVANCE_SCALE,
   type LocateComponent,
   type LocateReport,
-} from "./jev-locate.js";
+} from "./jev-locate";
 
 /**
  * Nearest-rank quantile, mirroring jev-loop's percentile() convention but

@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import type { HostMkdirCommand, HostPathMutationResult } from "../protocol.js";
-import { HostRpcCommandError } from "./host-directory.js";
+import type { HostMkdirCommand, HostPathMutationResult } from "../protocol";
+import { HostRpcCommandError } from "./host-directory";
 
 /**
  * #494: the daemon side of `host.mkdir` — the Add-project folder browser's

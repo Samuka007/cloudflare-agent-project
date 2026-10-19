@@ -3,9 +3,9 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import { draculaLightCodeTheme } from "./code-themes/dracula-light.js";
-import { nordLightCodeTheme } from "./code-themes/nord-light.js";
-import { jsonObjectSchema, type JsonObject } from "./json-value.js";
+import { draculaLightCodeTheme } from "./code-themes/dracula-light";
+import { nordLightCodeTheme } from "./code-themes/nord-light";
+import { jsonObjectSchema, type JsonObject } from "./json-value";
 
 export const DEFAULT_CODE_THEME_DARK = "pierre-dark";
 export const DEFAULT_CODE_THEME_LIGHT = "pierre-light";

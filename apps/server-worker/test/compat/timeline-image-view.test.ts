@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { ensureMigrations } from "../migrate.js";
-import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view.js";
-import type { TimelineImageViewWorkRow, TimelineRow } from "../../src/contract/thread-timeline.js";
-import type { UxThreadEvent } from "../../src/seam/agent-do.js";
+import { ensureMigrations } from "../migrate";
+import { projectThreadTimeline, rowsForConversationOutline } from "../../src/services/thread-view";
+import type { TimelineImageViewWorkRow, TimelineRow } from "../../src/contract/thread-timeline";
+import type { UxThreadEvent } from "../../src/seam/agent-do";
 
 /**
  * B1 (#321): the timeline projection's image-view row producer — the journal

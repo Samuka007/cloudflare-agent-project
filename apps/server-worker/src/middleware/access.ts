@@ -1,7 +1,7 @@
 import type { Context, Next } from "hono";
 import { z } from "zod";
-import { ApiError } from "../shared/api-error.js";
-import type { Env } from "../app-types.js";
+import { ApiError } from "../shared/api-error";
+import type { Env } from "../app-types";
 
 /**
  * Cloudflare Access JWT gate (spec #17 认证 decision). When armed, every

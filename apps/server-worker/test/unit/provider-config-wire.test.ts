@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   discoverProviderModels,
   probeProviderConnection,
-} from "../../src/services/provider-config-test.js";
+} from "../../src/services/provider-config-test";
 
 /**
  * #362 wire faces with a stubbed fetch (the services take a FetchImpl seam

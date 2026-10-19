@@ -2,15 +2,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { establishSession, type ClientRuntime } from "../src/client/connection.js";
-import { loadIdentity, type ClientConfig } from "../src/client/identity.js";
+import { establishSession, type ClientRuntime } from "../src/client/connection";
+import { loadIdentity, type ClientConfig } from "../src/client/identity";
 import {
   cfAccessHeaders,
   decodeCfAccessConfig,
   type CfAccessConfig,
-} from "../src/client/cf-access.js";
-import { decodeTaskIsolationConfig } from "../src/client/task-isolation.js";
-import { Executor } from "../src/client/executor.js";
+} from "../src/client/cf-access";
+import { decodeTaskIsolationConfig } from "../src/client/task-isolation";
+import { Executor } from "../src/client/executor";
 
 /**
  * L1 CF Access service-token injection (#420, cutover checklist step 5 of

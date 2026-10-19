@@ -1,5 +1,5 @@
-import type { ToolResultPayload } from "@cap/agent-do";
-import { threadIdFromExecutionId } from "./execution-id.js";
+import { threadIdFromExecutionId } from "./execution-id";
+import type { ToolResultPayload } from "./protocol";
 
 /**
  * The execution journal (unified-turn-state §1.2, model two): an append-only

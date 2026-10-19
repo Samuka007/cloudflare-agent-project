@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { ServiceFrame, ToolExecServiceFrame } from "../src/protocol.js";
+import type { ServiceFrame, ToolExecServiceFrame } from "../src/protocol";
 import {
   SimulatedClient,
   uniqueHostId,
@@ -9,7 +9,7 @@ import {
   executionViewOf,
   sinkStub,
   serviceStub,
-} from "./helpers.js";
+} from "./helpers";
 
 /**
  * L1 host-tool relay (M1.5/T5' #128): the tool-agnostic agent-do dispatch

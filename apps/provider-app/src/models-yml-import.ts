@@ -36,8 +36,8 @@ import {
   type RelayEffort,
   type RelayThinkingMode,
   type ResponsesEffort,
-} from "@cap/agent-do";
-import { isValidProviderConfigId } from "./provider-configs.js";
+} from "@cap/agent-config";
+import { isValidProviderConfigId } from "./provider-configs";
 
 /** The fragment-level parse failures the route surfaces as honest 4xx. */
 export class ModelsYmlImportError extends Error {
@@ -444,13 +444,15 @@ function mapModelEntry(
   }
   // The pi thinking seat under construction (typed local — `entry` stays a
   // plain record until the seats are final).
-  let thinkingSeat: {
-    mode: RelayThinkingMode;
-    efforts: RelayEffort[];
-    defaultLevel?: RelayEffort;
-    effortMap?: Partial<Record<RelayEffort, ResponsesEffort>>;
-    requiresEffort?: boolean;
-  } | undefined;
+  let thinkingSeat:
+    | {
+        mode: RelayThinkingMode;
+        efforts: RelayEffort[];
+        defaultLevel?: RelayEffort;
+        effortMap?: Partial<Record<RelayEffort, ResponsesEffort>>;
+        requiresEffort?: boolean;
+      }
+    | undefined;
   if (merged.thinking !== undefined) {
     const thinking = normalizeThinking(merged.thinking, subject);
     modelWarnings.push(...thinking.warnings);
@@ -675,7 +677,9 @@ export function parseModelsYml(text: string): ModelsYmlImportParse {
         for (const [index, rawModel] of provider.models.entries()) {
           const record = asRecord(rawModel);
           const fallbackId =
-            record !== null && typeof record.id === "string" ? record.id : `models[${String(index)}]`;
+            record !== null && typeof record.id === "string"
+              ? record.id
+              : `models[${String(index)}]`;
           // overrideTargetsKnown only admits mapping values, so asRecord
           // returning null here is unreachable in practice — and harmless:
           // mapModelEntry treats a null override as "no merge".
@@ -691,7 +695,9 @@ export function parseModelsYml(text: string): ModelsYmlImportParse {
     }
     if (overrides !== null) {
       const consumedExplicit = new Set(models.map((model) => model.id));
-      const orphans = [...overrideTargetsKnown].filter((targetId) => !consumedExplicit.has(targetId));
+      const orphans = [...overrideTargetsKnown].filter(
+        (targetId) => !consumedExplicit.has(targetId),
+      );
       if (orphans.length > 0) {
         warnings.push(
           `provider "${id}": modelOverrides for ${String(orphans.length)} discovered-only models ` +

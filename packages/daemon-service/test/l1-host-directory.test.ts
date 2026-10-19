@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
-import type { HostRpcRequestFrame, HostRpcResponseFrame } from "../src/protocol.js";
-import { hostDirectoryListingSchema } from "../src/protocol.js";
-import { SimulatedClient, serviceStub, uniqueHostId } from "./helpers.js";
+import type { HostRpcRequestFrame, HostRpcResponseFrame } from "../src/protocol";
+import { hostDirectoryListingSchema } from "../src/protocol";
+import { SimulatedClient, serviceStub, uniqueHostId } from "./helpers";
 
 /**
  * L1 host online RPC (#302): the control plane's one-shot daemon question —

@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
+import { ensureMigrations } from "../migrate";
 import {
   ensureRigReady,
   send,
@@ -9,16 +9,16 @@ import {
   RIG_PROVIDER_ID,
   TEST_ENROLL_KEY,
   TEST_HOST_KEY,
-} from "../helpers.js";
-import { threadResponseSchema } from "../../src/contract/api/threads.js";
-import { threadListEntrySchema } from "../../src/contract/domain/thread.js";
-import { getEnvironmentRow } from "../../src/db/environments.js";
-import type { Env } from "../../src/env.js";
+} from "../helpers";
+import { threadResponseSchema } from "../../src/contract/api/threads";
+import { threadListEntrySchema } from "../../src/contract/domain/thread";
+import { getEnvironmentRow } from "../../src/db/environments";
+import type { Env } from "../../src/env";
 import {
   resolveThreadRuntimeState,
   resolveThreadRuntimeStateAsync,
-} from "../../src/services/runtime-display.js";
-import type { ThreadDbRow } from "../../src/db/rows.js";
+} from "../../src/services/runtime-display";
+import type { ThreadDbRow } from "../../src/db/rows";
 
 /**
  * #291 execution-suspension display face (streaming contract §9.3 row 4,
@@ -69,7 +69,10 @@ const NO_TURN_CREATE = {
 } as const;
 
 /** Bind a thread to a fleet host through the public create face (#288). */
-async function createBoundThread(hostId: string, title: string): Promise<CreatedThread & { environmentId: string }> {
+async function createBoundThread(
+  hostId: string,
+  title: string,
+): Promise<CreatedThread & { environmentId: string }> {
   const response = await exports.default.fetch("https://example.com/api/v1/threads", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -77,13 +80,17 @@ async function createBoundThread(hostId: string, title: string): Promise<Created
       ...NO_TURN_CREATE,
       projectId: "proj_personal",
       title,
-      environment: { type: "host", hostId, workspace: { type: "unmanaged", path: `/tmp/${title}` } },
+      environment: {
+        type: "host",
+        hostId,
+        workspace: { type: "unmanaged", path: `/tmp/${title}` },
+      },
     }),
   });
   expect(response.status).toBe(201);
-  const body = threadResponseSchema.pick({ id: true, projectId: true, environmentId: true }).parse(
-    await response.json(),
-  );
+  const body = threadResponseSchema
+    .pick({ id: true, projectId: true, environmentId: true })
+    .parse(await response.json());
   if (typeof body.environmentId !== "string") {
     throw new Error("bound create returned no environmentId");
   }

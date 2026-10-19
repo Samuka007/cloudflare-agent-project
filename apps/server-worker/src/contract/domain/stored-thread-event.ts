@@ -3,16 +3,16 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import { threadEventSchema, threadEventTypeSchema } from "./provider-event.js";
+import { threadEventSchema, threadEventTypeSchema } from "./provider-event";
 import {
   systemMessageKindSchema,
   systemMessageSubjectSchema,
   turnRequestEventDataSchema,
   turnRequestTargetSchema,
-} from "./thread-events.js";
-import { threadEventScopeSchema, type ThreadEventScope } from "./thread-event-scope.js";
-import type { ThreadEvent, ThreadEventType } from "./provider-event.js";
-import type { TurnRequestTarget } from "./thread-events.js";
+} from "./thread-events";
+import { threadEventScopeSchema, type ThreadEventScope } from "./thread-event-scope";
+import type { ThreadEvent, ThreadEventType } from "./provider-event";
+import type { TurnRequestTarget } from "./thread-events";
 
 type ThreadEventByType = {
   [TType in ThreadEventType]: Extract<ThreadEvent, { type: TType }>;

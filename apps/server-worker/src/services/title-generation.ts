@@ -1,4 +1,4 @@
-import type { PromptInput } from "../contract/domain/shared-types.js";
+import type { PromptInput } from "../contract/domain/shared-types";
 
 /**
  * bb apps/server/src/services/threads/title-generation.ts:53-68, ported

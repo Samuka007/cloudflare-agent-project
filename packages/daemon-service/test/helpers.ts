@@ -1,9 +1,9 @@
 import { env, exports } from "cloudflare:workers";
-import type { DispatchOutcome } from "@cap/agent-do";
-import { DAEMON_PROTOCOL_VERSION } from "../src/constants.js";
-import type { DaemonServiceDO } from "../src/service-do.js";
-import type { TestAgentSinkDO } from "../src/agent-sink.js";
-import { serviceFrameSchema } from "../src/protocol.js";
+import type { DispatchOutcome } from "../src/protocol";
+import { DAEMON_PROTOCOL_VERSION } from "../src/constants";
+import type { DaemonServiceDO } from "../src/service-do";
+import type { TestAgentSinkDO } from "../src/agent-sink";
+import { serviceFrameSchema } from "../src/protocol";
 import type {
   ExecSpawnServiceFrame,
   ExecOutputAckServiceFrame,
@@ -11,8 +11,8 @@ import type {
   ObservedExecution,
   ServiceFrame,
   ToolExecServiceFrame,
-} from "../src/protocol.js";
-import type { JournalOp } from "../src/journal.js";
+} from "../src/protocol";
+import type { JournalOp } from "../src/journal";
 
 /**
  * L1 rig (docs/research/testing-strategy-cloudflare-do.md §4.1): the service

@@ -1,16 +1,10 @@
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
-import {
-  createThread,
-  holdRigWire,
-  send,
-  TEST_ENROLL_KEY,
-  TEST_HOST_KEY,
-} from "../helpers.js";
-import { threadResponseSchema } from "../../src/contract/api/threads.js";
-import type { ThreadDbRow } from "../../src/db/rows.js";
-import { resolveThreadRuntimeState } from "../../src/services/runtime-display.js";
+import { ensureMigrations } from "../migrate";
+import { createThread, holdRigWire, send, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers";
+import { threadResponseSchema } from "../../src/contract/api/threads";
+import type { ThreadDbRow } from "../../src/db/rows";
+import { resolveThreadRuntimeState } from "../../src/services/runtime-display";
 
 /**
  * #148: the thread runtime display never preempts an in-flight turn with a

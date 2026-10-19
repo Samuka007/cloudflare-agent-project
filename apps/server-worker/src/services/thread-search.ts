@@ -1,5 +1,5 @@
-import type { ThreadListRow } from "../db/control-plane.js";
-import type { ThreadSearchHighlightRange, ThreadSearchMatch } from "../contract/api/threads.js";
+import type { ThreadListRow } from "../db/control-plane";
+import type { ThreadSearchHighlightRange, ThreadSearchMatch } from "../contract/api/threads";
 
 /**
  * Title-level thread search, the M0 face of bb GET /threads/search (apps/

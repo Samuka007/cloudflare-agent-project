@@ -1,4 +1,4 @@
-import type { Env } from "./env.js";
+import type { Env } from "./env";
 
 export type { Env };
 export type HonoBindings = Env;

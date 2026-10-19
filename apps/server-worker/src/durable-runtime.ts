@@ -1,4 +1,4 @@
-import { TOOL_REGISTRY } from "@cap/agent-do";
+import { TOOL_REGISTRY } from "@cap/agent-config";
 import {
   createHostTool,
   createModelsFromProviders,
@@ -12,7 +12,7 @@ import {
 import { loadProviderConfigOverlay } from "@cap/provider-app";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import { createRegistry, defineExtension } from "@earendil-works/pi-durable";
-import type { Env } from "./env.js";
+import type { Env } from "./env";
 
 interface DaemonDispatchRpc {
   dispatch(request: {
@@ -30,8 +30,8 @@ interface DaemonDispatchRpc {
 /**
  * Production runtime for `ComposedDurableAgentDO`: D1 provider rows →
  * pi-ai Models; cap's host registry rows → per-tool wrappers over the
- * daemon-service dispatch seam. Edge-owned tools are not wired yet (their
- * executors live on the legacy AgentDO).
+ * daemon-service dispatch seam. Only daemon-dispatch rows are registered;
+ * edge-owned executors are intentionally absent from this runtime.
  */
 export async function createDurableRuntime(
   env: Env,

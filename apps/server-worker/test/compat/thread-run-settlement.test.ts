@@ -1,11 +1,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { ensureMigrations } from "../migrate.js";
-import { threadResponseSchema } from "../../src/contract/api/threads.js";
-import { createThread, send, type CreatedThread } from "../helpers.js";
+import { ensureMigrations } from "../migrate";
+import { threadResponseSchema } from "../../src/contract/api/threads";
+import { createThread, send, type CreatedThread } from "../helpers";
 import { exports } from "cloudflare:workers";
-import { deriveSettledTurnEvent } from "../../src/services/thread-run-settlement.js";
-import { evaluateThreadLifecycleEvent } from "../../src/contract/domain/thread-lifecycle.js";
-import type { UxThreadEvent } from "../../src/seam/agent-do.js";
+import { deriveSettledTurnEvent } from "../../src/services/thread-run-settlement";
+import { evaluateThreadLifecycleEvent } from "../../src/contract/domain/thread-lifecycle";
+import type { UxThreadEvent } from "../../src/seam/agent-do";
 
 /**
  * #52: terminal turn events must settle the coarse M0 execution status.

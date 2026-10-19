@@ -1,6 +1,6 @@
-import type { UploadedPromptAttachment } from "../contract/api/projects.js";
-import type { PromptInput } from "../contract/domain/shared-types.js";
-import { ApiError } from "../shared/api-error.js";
+import type { UploadedPromptAttachment } from "../contract/api/projects";
+import type { PromptInput } from "../contract/domain/shared-types";
+import { ApiError } from "../shared/api-error";
 
 /**
  * Project attachment storage on R2 — bb
@@ -19,7 +19,7 @@ import { ApiError } from "../shared/api-error.js";
  * instead of a filesystem extension lookup.
  *
  * This reuses the {@link https://github.com/Samuka007/cloudflare-agent-project | BlobRef}
- * precedent shape (key + size + sha256, packages/agent-do/src/event-log.ts)
+ * precedent shape (key + size + sha256)
  * but is a separate object family — never the `blob/<threadId>/...` event
  * string bypass.
  */

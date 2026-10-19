@@ -8,7 +8,7 @@ import {
   executionViewOf,
   sinkStub,
   serviceStub,
-} from "./helpers.js";
+} from "./helpers";
 
 /**
  * Exec roundtrip over the real WS path (§6.1 normal sequence, service half):

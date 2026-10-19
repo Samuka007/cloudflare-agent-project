@@ -1,4 +1,4 @@
-import type { Env } from "../env.js";
+import type { Env } from "../env";
 import type { PendingInteractionRow } from "@cap/protocol";
 
 /**

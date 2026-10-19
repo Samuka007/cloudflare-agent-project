@@ -1,5 +1,5 @@
-import { CLIENT_RING_BUFFER_BYTES, OUTPUT_CHUNK_BYTES } from "../constants.js";
-import type { ToolExecutionResult } from "./tool-runtime.js";
+import { CLIENT_RING_BUFFER_BYTES, OUTPUT_CHUNK_BYTES } from "../constants";
+import type { ToolExecutionResult } from "./tool-runtime";
 
 /**
  * Per-execution output buffer (§8.1/§8.3): the retransmit source. Byte

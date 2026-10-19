@@ -1,10 +1,10 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
 import { DAEMON_PROTOCOL_VERSION } from "@cap/daemon-service";
-import composedWorker from "../../src/index.js";
-import { ensureMigrations } from "../migrate.js";
-import { TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers.js";
-import type { Env } from "../../src/env.js";
+import composedWorker from "../../src/index";
+import { ensureMigrations } from "../migrate";
+import { TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers";
+import type { Env } from "../../src/env";
 
 /**
  * #398/SEC-W5-002: the composed daemon face fails closed when the deployment
@@ -88,7 +88,10 @@ describe("daemon face fail-closed (#398/SEC-W5-002)", () => {
     const open = await composedWorker.fetch(
       new Request("https://example.com/session/open", {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: "Bearer [REDACTED-staging-secret]" },
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer [REDACTED-staging-secret]",
+        },
         body: JSON.stringify({
           hostId: "host_failcl_c1",
           bootId: `boot_failcl_${Date.now()}`,

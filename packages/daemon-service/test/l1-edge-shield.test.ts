@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { serviceStub, testEnv, uniqueHostId, workerFetch } from "./helpers.js";
-import { DAEMON_PROTOCOL_VERSION } from "../src/constants.js";
-import { DEPLOYMENT_AUTH_MIRROR_DO_ID } from "../src/worker.js";
-import { authKvKey, setNegativeCacheTtlMsForTest, sha256Hex } from "../src/edge.js";
+import { serviceStub, testEnv, uniqueHostId, workerFetch } from "./helpers";
+import { DAEMON_PROTOCOL_VERSION } from "../src/constants";
+import { DEPLOYMENT_AUTH_MIRROR_DO_ID } from "../src/worker";
+import { authKvKey, setNegativeCacheTtlMsForTest, sha256Hex } from "../src/edge";
 
 /**
  * Edge shield (#36): the front's DO-request budget. Covers the auth ladder

@@ -1,12 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { HostRpcCommand } from "@cap/daemon-service";
-import {
-  activeTurnIdFromEvents,
-  resolveCompactMode,
-  type CompactMode,
-  type RelaySelection,
-} from "@cap/agent-do";
+import { resolveCompactMode, type CompactMode, type RelaySelection } from "@cap/agent-config";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import {
   classifyThreadSelectionChange,
@@ -14,7 +9,7 @@ import {
   resolveStoredThreadExecution,
   resolveThreadDefaultExecutionOptions,
   validateThreadExecutionSelection,
-} from "../services/execution-selection.js";
+} from "../services/execution-selection";
 import {
   createThreadRequestSchema,
   deleteThreadRequestSchema,
@@ -31,15 +26,15 @@ import {
   resolvePendingInteractionRequestSchema,
   threadCompactRequestSchema,
   type ThreadResponse,
-} from "../contract/api/threads.js";
-import { getPermissionMode } from "../db/permission-mode.js";
-import { promptHistoryResponseSchema } from "../contract/api/projects.js";
+} from "../contract/api/threads";
+import { getPermissionMode } from "../db/permission-mode";
+import { promptHistoryResponseSchema } from "../contract/api/projects";
 import {
   PROMPT_HISTORY_ENTRY_LIMIT,
   resolvedThreadExecutionOptionsSchema,
   takeVisiblePromptHistoryEntries,
-} from "../contract/domain/index.js";
-import { updateThreadTabsRequestSchema } from "../contract/api/thread-tabs.js";
+} from "../contract/domain/index";
+import { updateThreadTabsRequestSchema } from "../contract/api/thread-tabs";
 /**
  * bb events route responses are ThreadEventRow[]; the M0 log lives in the
  * agent DO whose UX projection shares the bb envelope ({id, scope, threadId,
@@ -59,14 +54,14 @@ interface PortedThreadEventRow {
 import {
   CLIENT_TURN_REQUEST_ID_ALPHABET,
   formatClientTurnRequestIdSuffix,
-} from "../contract/domain/protocol-ids.js";
-import { ApiError } from "../shared/api-error.js";
+} from "../contract/domain/protocol-ids";
+import { ApiError } from "../shared/api-error";
 import {
   parseBoundedPositiveOptionalInteger,
   parseOr422,
   requireJsonBody,
-} from "../shared/route-utils.js";
-import { createDurableThreadId, createThreadId } from "../shared/ids.js";
+} from "../shared/route-utils";
+import { createDurableThreadId } from "../shared/ids";
 import {
   createThreadRecord,
   getThreadRow,
@@ -79,43 +74,40 @@ import {
   updateThreadRecord,
   getThreadSection,
   getProject,
-} from "../db/control-plane.js";
-import type { ThreadDbRow } from "../db/rows.js";
-import { getEnvironmentRow } from "../db/environments.js";
-import { environmentSchema } from "../contract/domain/environment.js";
-import { getHostRow } from "../db/hosts.js";
-import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs.js";
-import { mirrorPendingInteraction } from "../db/pending-interactions.js";
-import { getAppSettingsRow, toAppSettings } from "../db/settings.js";
-import { getCompactionSettings } from "../db/compaction-settings.js";
+} from "../db/control-plane";
+import type { ThreadDbRow } from "../db/rows";
+import { getEnvironmentRow } from "../db/environments";
+import { environmentSchema } from "../contract/domain/environment";
+import { getHostRow } from "../db/hosts";
+import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs";
+import { mirrorPendingInteraction } from "../db/pending-interactions";
+import { getAppSettingsRow, toAppSettings } from "../db/settings";
+import { getCompactionSettings } from "../db/compaction-settings";
 import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
-import {
-  toThreadListEntries,
-  toThreadResponseWithSpawnCheck,
-} from "../services/runtime-display.js";
-import { toHostRecord } from "../services/host-records.js";
+import { toThreadListEntries, toThreadResponseWithSpawnCheck } from "../services/runtime-display";
+import { toHostRecord } from "../services/host-records";
 import {
   THREAD_SEARCH_LIMIT_PER_GROUP_DEFAULT,
   THREAD_SEARCH_LIMIT_PER_GROUP_MAX,
   buildTitleSearchResponse,
   countNonWhitespaceChars,
-} from "../services/thread-search.js";
-import { deriveTitleFallback } from "../services/title-generation.js";
+} from "../services/thread-search";
+import { deriveTitleFallback } from "../services/title-generation";
 
 import {
   requirePublicInteractionRow,
   toPublicPendingInteraction,
   toPublicPendingInteractions,
-} from "../services/pending-interactions.js";
-import { settleThreadTurnStatus } from "../services/thread-run-settlement.js";
+} from "../services/pending-interactions";
+import { settleThreadTurnStatus } from "../services/thread-run-settlement";
 import {
   HOST_COMMAND_TIMEOUT_MS,
   buildHostFileContentResponse,
   daemonServiceStubOrNull,
   hostFileHostUnavailable,
   remapHostFileRouteError,
-} from "../services/host-files.js";
-import { hostFileReadResultSchema } from "../contract/api/hosts.js";
+} from "../services/host-files";
+import { hostFileReadResultSchema } from "../contract/api/hosts";
 // #554 ⑤: the projection itself is the bb direct-import face
 // (services/thread-view.ts); this module keeps the response assembly
 // (pagination/cache/outline) in services/timeline.ts.
@@ -123,22 +115,22 @@ import {
   buildConversationOutline,
   buildTimelinePage,
   timelineLatestRowsCache,
-} from "../services/timeline.js";
-import type { TimelineRow } from "../contract/thread-timeline.js";
-import { projectThreadTimeline, rowsForConversationOutline } from "../services/thread-view.js";
-import { computeTimelineRowDelta } from "../contract/thread-timeline.js";
-import { validatePromptAttachmentReferences } from "../services/attachments.js";
+} from "../services/timeline";
+import type { TimelineRow } from "../contract/thread-timeline";
+import { projectThreadTimeline, rowsForConversationOutline } from "../services/thread-view";
+import { computeTimelineRowDelta } from "../contract/thread-timeline";
+import { validatePromptAttachmentReferences } from "../services/attachments";
 import {
   agentDoCancelTurn,
   agentDoCompactThread,
   agentDoFor,
   type UxThreadEvent,
-} from "../seam/agent-do.js";
-import { resolveThreadBinding } from "../services/thread-binding.js";
-import { parseStandaloneBuiltinCompactCommand } from "../contract/domain/shared-types.js";
-import type { PromptInput } from "../contract/domain/shared-types.js";
+} from "../seam/agent-do";
+import { resolveThreadBinding } from "../services/thread-binding";
+import { parseStandaloneBuiltinCompactCommand } from "../contract/domain/shared-types";
+import type { PromptInput } from "../contract/domain/shared-types";
 import type { PromptContent } from "@cap/protocol";
-import type { AppEnv, Env } from "../app-types.js";
+import type { AppEnv, Env } from "../app-types";
 
 /**
  * #496: the DO refuses a dispatch that would ride no selection (no journaled
@@ -369,8 +361,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       projectId: payload.projectId,
       ...(payload.environment !== undefined ? { environment: payload.environment } : {}),
     });
-    const threadId =
-      ctx.env.AGENT_RUNTIME === "durable" ? createDurableThreadId() : createThreadId();
+    const threadId = createDurableThreadId();
     const visibility =
       payload.visibility ??
       (parentThreadId !== null
@@ -831,18 +822,9 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // same direct-read pattern every journal consumer above uses. See
     // agentDoCancelTurn for why the orchestrator's thread/stop is not used.
     const row = await requirePublicThread(ctx);
-    const { events } = await agentDoFor(ctx.env, row.id).getEvents({
-      sinceSeq: 0,
-      project: "raw",
-    });
-    const turnId = activeTurnIdFromEvents(events);
-    if (turnId !== null) {
-      await agentDoCancelTurn(ctx.env, row.id, turnId);
-    } else if (row.id.startsWith("dthr_")) {
-      // The durable journal is the UX envelope, not the legacy raw FSM; its
-      // cancelTurn aborts the root conversation regardless of the turn id.
-      await agentDoCancelTurn(ctx.env, row.id, "durable-active");
-    }
+    // The durable DO's cancelTurn aborts the root conversation regardless of
+    // the turn id; no journal inspection is needed.
+    await agentDoCancelTurn(ctx.env, row.id, "durable-active");
     return ctx.json({ ok: true });
   });
 
@@ -913,18 +895,6 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
         mode === "remote" ? eligibleRemote !== null : true,
       );
       if (compactMode === "remote") remote = eligibleRemote ?? undefined;
-    }
-    const { events } = await agentDoFor(ctx.env, row.id).getEvents({
-      sinceSeq: 0,
-      project: "raw",
-    });
-    if (activeTurnIdFromEvents(events) !== null) {
-      throw new ApiError({
-        status: 409,
-        code: "thread_not_writable",
-        message: "Thread has an active turn; stop it before compacting",
-        details: { reason: "already_active" },
-      });
     }
     try {
       await agentDoCompactThread(ctx.env, row.id, {

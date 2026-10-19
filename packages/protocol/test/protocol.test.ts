@@ -18,7 +18,7 @@ import {
   threadEventsResponseSchema,
   timelineResponseSchema,
   type ThreadEventEnvelope,
-} from "../src/index.js";
+} from "../src/index";
 
 /** A complete canned turn as fake-edge emits it, seq-contiguous. */
 function cannedTurnEnvelopes(threadId: string): ThreadEventEnvelope[] {
@@ -439,8 +439,12 @@ describe("contextWindowUsage event (#308)", () => {
 
   it("rejects a guessed row: unknown window, negative fill, non-boolean estimated", () => {
     for (const bad of [
-      envelope({ contextWindowUsage: { usedTokens: 10, modelContextWindow: null, estimated: false } }),
-      envelope({ contextWindowUsage: { usedTokens: -1, modelContextWindow: 200_000, estimated: false } }),
+      envelope({
+        contextWindowUsage: { usedTokens: 10, modelContextWindow: null, estimated: false },
+      }),
+      envelope({
+        contextWindowUsage: { usedTokens: -1, modelContextWindow: 200_000, estimated: false },
+      }),
       envelope({ contextWindowUsage: { usedTokens: 10, modelContextWindow: 200_000 } }),
     ]) {
       expect(() => parseThreadEvent(bad)).toThrow();
@@ -483,19 +487,20 @@ describe("prompt content image union (#317)", () => {
   it("rejects a non-URL image member and an unknown type", () => {
     expect(promptContentSchema.safeParse({ type: "image", url: "not a url" }).success).toBe(false);
     expect(promptContentSchema.safeParse({ type: "localImage" }).success).toBe(false);
-    expect(promptContentSchema.safeParse({ type: "video", url: "https://x.test/v.mp4" }).success)
-      .toBe(false);
+    expect(
+      promptContentSchema.safeParse({ type: "video", url: "https://x.test/v.mp4" }).success,
+    ).toBe(false);
   });
 });
 
 describe("tool-result not-executed contract (#454)", () => {
   it("renders the human message per code, detail after the em dash", () => {
-    expect(toolNotExecutedMessage("host_offline")).toBe(
-      "tool not executed: bound host offline",
-    );
+    expect(toolNotExecutedMessage("host_offline")).toBe("tool not executed: bound host offline");
     expect(
       toolNotExecutedMessage("host_offline", 'override target "h1" has no live daemon session'),
-    ).toBe('tool not executed: bound host offline — override target "h1" has no live daemon session');
+    ).toBe(
+      'tool not executed: bound host offline — override target "h1" has no live daemon session',
+    );
     expect(toolNotExecutedMessage("unknown_host", 'no registered host "h2"')).toBe(
       'tool not executed: unknown host — no registered host "h2"',
     );
@@ -513,7 +518,12 @@ describe("tool-result not-executed contract (#454)", () => {
   });
 
   it("rejects a bogus code and accepts the closed set", () => {
-    for (const code of ["host_offline", "unknown_host", "exec_tier_required", "registry_unavailable"]) {
+    for (const code of [
+      "host_offline",
+      "unknown_host",
+      "exec_tier_required",
+      "registry_unavailable",
+    ]) {
       expect(toolResultErrorCodeSchema.parse(code)).toBe(code);
     }
     expect(toolResultErrorCodeSchema.safeParse("offline").success).toBe(false);

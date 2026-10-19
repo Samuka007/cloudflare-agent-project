@@ -1,7 +1,7 @@
 /**
  * executionId derivation (unified-turn-state §0: `${threadId}:${callSeq}`).
  *
- * The canonical generators live in packages/agent-do (the agent DO mints
+ * The canonical generator lives in packages/agent-durable (the agent DO mints
  * executionIds when `tool.call` is journaled). This package only needs the
  * reverse projection — threadId from an executionId — for self-routing
  * (§4.1: any node holding an executionId knows the owning thread), and it

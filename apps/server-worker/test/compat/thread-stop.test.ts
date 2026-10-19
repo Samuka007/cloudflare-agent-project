@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
-import { ensureMigrations } from "../migrate.js";
-import { createThread, type CreatedThread } from "../helpers.js";
-import { threadResponseSchema } from "../../src/contract/api/threads.js";
-import type { AgentDoRpc } from "../../src/seam/agent-do.js";
+import { ensureMigrations } from "../migrate";
+import { createThread, type CreatedThread } from "../helpers";
+import { threadResponseSchema } from "../../src/contract/api/threads";
+import type { AgentDoRpc } from "../../src/seam/agent-do";
 
 /**
  * #226: POST /threads/:id/stop must cancel the in-flight turn through the

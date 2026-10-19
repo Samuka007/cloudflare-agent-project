@@ -31,16 +31,8 @@
     "bindings": [
       { "name": "HUB", "class_name": "NotificationHubDO" },
       { "name": "LEASES", "class_name": "LeaseStoreDO" },
-      // Per-thread event log + turn state (#29), composed wrapper for
-      // per-isolate relay registration (#31).
-      { "name": "AGENT_DO", "class_name": "ComposedAgentDO" },
-      // #581 additive pi-durable runtime; new `dthr_` threads only.
-      { "name": "DURABLE_AGENT_DO", "class_name": "ComposedDurableAgentDO" },
-      // Per-host command journal + session mirror (#27), composed wrapper
-      // for in-isolate adapter installation (#31).
-      { "name": "ORCHESTRATOR", "class_name": "ComposedHostOrchestratorDO" },
-      // Provider session registry + harness (#28).
-      { "name": "MANAGER", "class_name": "ManagerDo" },
+      // The one per-thread pi-durable agent.
+      { "name": "AGENT_DO", "class_name": "ComposedDurableAgentDO" },
       // Per-machine daemon service DO (#30) — client WS face + exec journal.
       { "name": "DAEMON_SERVICE", "class_name": "DaemonServiceDO" },
     ],
@@ -71,6 +63,12 @@
       "tag": "v2",
       "new_sqlite_classes": ["ComposedDurableAgentDO"],
     },
+    {
+      // The legacy agent loop, provider manager, and host orchestrator are
+      // gone. Deleting the classes also deletes their DO storage.
+      "tag": "v3",
+      "deleted_classes": ["ComposedAgentDO", "ComposedHostOrchestratorDO", "ManagerDo"],
+    },
   ],
   "kv_namespaces": [
     {
@@ -86,9 +84,6 @@
     "crons": ["*/5 * * * *"],
   },
   "vars": {
-    // #581 cutover flag: legacy keeps every existing/new thread on AgentDO;
-    // durable routes only newly created `dthr_` threads to the pi runtime.
-    "AGENT_RUNTIME": "legacy",
     // SEC-W5-001 (#397) fail-closed, #505: no gate flag — gate state IS the
     // ACCESS_TEAM_DOMAIN + ACCESS_AUD Worker secret pair (`wrangler secret
     // put`). Both present = JWT verification on /api/v1/* and /ws; either

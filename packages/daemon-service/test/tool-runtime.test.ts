@@ -11,7 +11,7 @@ import {
   readNativeAddonStatus,
   type ToolDispatchFrame,
   type ToolHost,
-} from "../src/client/tool-runtime.js";
+} from "../src/client/tool-runtime";
 
 /**
  * L1 for the vendored omp runtime (M1.5/T5' #128) — runs under Bun (the
@@ -231,9 +231,8 @@ describe("T6 #96 — manage_skill: SKILL.md exclusive management", () => {
     // Value import stays dynamic: it must observe the resolver AFTER
     // createToolHost re-pointed it (runtime discipline — a static import
     // would read the pre-pin freeze and see the operator's ~/.omp/agent).
-    const { getManagedSkillsDir } = await import(
-      "@oh-my-pi/pi-coding-agent/autolearn/managed-skills",
-    );
+    const { getManagedSkillsDir } =
+      await import("@oh-my-pi/pi-coding-agent/autolearn/managed-skills");
     expect(getManagedSkillsDir()).toBe(join(agentDir, "managed-skills"));
     expect(process.env.PI_CODING_AGENT_DIR).toBe(agentDir);
   });

@@ -7,8 +7,8 @@ import {
   parseRetryAfterMs,
   RECONNECT_BACKOFF_MAX_MS,
   RECONNECT_BACKOFF_MIN_MS,
-} from "../src/client/backoff.js";
-import { runSessionLoop, type SessionLoopClock } from "../src/client/session-loop.js";
+} from "../src/client/backoff";
+import { runSessionLoop, type SessionLoopClock } from "../src/client/session-loop";
 
 /**
  * L1 negotiation backoff (issue #35): ONE exponential chain (×2, ±20%

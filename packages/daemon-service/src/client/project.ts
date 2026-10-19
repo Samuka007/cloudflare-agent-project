@@ -3,13 +3,13 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { HostRpcCommandError } from "./host-directory.js";
+import { HostRpcCommandError } from "./host-directory";
 import type {
   ProjectCloneCommand,
   ProjectInspectCommand,
   ProjectPathInspection,
   ProjectPathResult,
-} from "../protocol.js";
+} from "../protocol";
 
 /**
  * #445: the daemon face of the project online-RPC commands — verbatim port of

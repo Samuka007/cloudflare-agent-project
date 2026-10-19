@@ -1,17 +1,17 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { ensureMigrations } from "../migrate.js";
+import { ensureMigrations } from "../migrate";
 import {
   threadConversationOutlineResponseSchema,
   threadResponseSchema,
   threadTimelineResponseSchema,
-} from "../../src/contract/api/threads.js";
+} from "../../src/contract/api/threads";
 import {
   timelineRowSchema,
   type TimelineUserConversationRow,
-} from "../../src/contract/thread-timeline.js";
-import { uploadedPromptAttachmentSchema } from "../../src/contract/api/projects.js";
+} from "../../src/contract/thread-timeline";
+import { uploadedPromptAttachmentSchema } from "../../src/contract/api/projects";
 import { exports } from "cloudflare:workers";
-import { ensureRigReady, RIG_MODEL_ID, RIG_PROVIDER_ID } from "../helpers.js";
+import { ensureRigReady, RIG_MODEL_ID, RIG_PROVIDER_ID } from "../helpers";
 
 /**
  * #320 A5: the timeline projection feeds the user row's attachment block from

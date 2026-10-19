@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { encryptProviderSecret } from "@cap/provider-app";
-import { ensureMigrations } from "./migrate.js";
+import { ensureMigrations } from "./migrate";
 
 /** Base URL for SELF requests; any origin works inside the pool. */
 export const BASE = "https://example.com";
@@ -48,7 +48,9 @@ export async function ensureRigProviderRow(): Promise<void> {
       RIG_RELAY_BASE_URL,
       "anthropic-messages",
       apiKeyEnc,
-      JSON.stringify([{ id: RIG_MODEL_ID, reasoningLevels: ["none"], defaultReasoningLevel: "none" }]),
+      JSON.stringify([
+        { id: RIG_MODEL_ID, reasoningLevels: ["none"], defaultReasoningLevel: "none" },
+      ]),
       Date.now(),
       Date.now(),
     )
@@ -66,7 +68,7 @@ export async function removeRigProviderRow(): Promise<void> {
  * reply" + a real receipt). The provider dials `${baseUrl}/v1/messages`.
  */
 const RIG_SSE_BODY = [
-  'event: message_start',
+  "event: message_start",
   'data: {"type":"message_start","message":{"id":"msg_rig","type":"message","role":"assistant","model":"rig-model","content":[],"stop_reason":null,"usage":{"input_tokens":24,"output_tokens":1}}}',
   "",
   "event: content_block_start",

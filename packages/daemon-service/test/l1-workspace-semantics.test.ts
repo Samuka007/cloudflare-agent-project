@@ -2,9 +2,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Executor } from "../src/client/executor.js";
-import { ToolRuntime, type ToolDispatchFrame } from "../src/client/tool-runtime.js";
-import type { WorkspaceRef } from "../src/protocol.js";
+import { Executor } from "../src/client/executor";
+import { ToolRuntime, type ToolDispatchFrame } from "../src/client/tool-runtime";
+import type { WorkspaceRef } from "../src/protocol";
 
 /**
  * L1 workspace semantics (#290 C1-C4) — the ticket acceptance face: the SAME

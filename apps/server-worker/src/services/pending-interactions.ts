@@ -2,8 +2,8 @@ import type { PendingInteractionRow } from "@cap/protocol";
 import {
   pendingInteractionSchema,
   type PendingInteraction,
-} from "../contract/domain/pending-interactions.js";
-import { ApiError } from "../shared/api-error.js";
+} from "../contract/domain/pending-interactions";
+import { ApiError } from "../shared/api-error";
 
 /**
  * Journal fold → bb public PendingInteraction (#225). The SPA parses these

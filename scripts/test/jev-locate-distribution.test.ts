@@ -11,7 +11,7 @@ import {
   DISTRIBUTION_MIN_CLASS_QUESTIONS,
   histogram,
   summarize,
-} from "../accept/jev-locate-distribution.js";
+} from "../accept/jev-locate-distribution";
 
 describe("deriveBands (frozen rule P5)", () => {
   it("derives tertile bands from a spread distribution", () => {

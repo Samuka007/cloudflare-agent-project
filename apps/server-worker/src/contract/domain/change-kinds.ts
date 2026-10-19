@@ -4,7 +4,7 @@
 //
 import { z } from "zod";
 import { turnPhaseSchema } from "@cap/protocol";
-import { threadEventTypeValues, type ThreadEventType } from "./provider-event.js";
+import { threadEventTypeValues, type ThreadEventType } from "./provider-event";
 
 export const THREAD_CHANGE_KINDS = [
   "thread-created",

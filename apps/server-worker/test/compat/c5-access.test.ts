@@ -1,10 +1,10 @@
 import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
-import { ensureMigrations } from "../migrate.js";
-import { accessGate } from "../../src/middleware/access.js";
-import { verifyAccessToken } from "../../src/middleware/access.js";
-import { createApp } from "../../src/app.js";
-import { ApiError } from "../../src/shared/api-error.js";
-import type { Env } from "../../src/env.js";
+import { ensureMigrations } from "../migrate";
+import { accessGate } from "../../src/middleware/access";
+import { verifyAccessToken } from "../../src/middleware/access";
+import { createApp } from "../../src/app";
+import { ApiError } from "../../src/shared/api-error";
+import type { Env } from "../../src/env";
 import { exports } from "cloudflare:workers";
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPublicHttpsBaseUrl } from "../../src/contract/api/system.js";
+import { isPublicHttpsBaseUrl } from "../../src/contract/api/system";
 
 /**
  * SEC-W5-003 baseUrl validator: the probe faces decrypt stored credentials

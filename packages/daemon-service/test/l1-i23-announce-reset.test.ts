@@ -7,8 +7,8 @@ import {
   dispatchViaSeam,
   executionViewOf,
   sinkStub,
-} from "./helpers.js";
-import type { ObservedExecution } from "../src/protocol.js";
+} from "./helpers";
+import type { ObservedExecution } from "../src/protocol";
 
 /**
  * I23 — announce full reset (§8.2): every session/open's first announce

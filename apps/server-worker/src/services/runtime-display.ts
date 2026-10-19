@@ -1,10 +1,10 @@
-import type { Env } from "../env.js";
-import type { ThreadDbRow } from "../db/rows.js";
-import { getEnvironmentRow } from "../db/environments.js";
-import { getThreadHierarchyDepth, type ThreadListRow } from "../db/control-plane.js";
-import type { ThreadListEntry, ThreadRuntimeState } from "../contract/domain/thread.js";
-import type { ThreadResponse } from "../contract/api/threads.js";
-import { daemonConnected } from "./host-records.js";
+import type { Env } from "../env";
+import type { ThreadDbRow } from "../db/rows";
+import { getEnvironmentRow } from "../db/environments";
+import { getThreadHierarchyDepth, type ThreadListRow } from "../db/control-plane";
+import type { ThreadListEntry, ThreadRuntimeState } from "../contract/domain/thread";
+import type { ThreadResponse } from "../contract/api/threads";
+import { daemonConnected } from "./host-records";
 
 /** bb thread-parent.ts:6. */
 export const MAX_THREAD_HIERARCHY_DEPTH = 4;

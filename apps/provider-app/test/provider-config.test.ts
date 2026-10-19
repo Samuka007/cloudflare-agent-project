@@ -1,14 +1,11 @@
 import { describe, expect, test } from "vitest";
-import type { RelayCatalogProvider } from "@cap/agent-do";
+import type { RelayCatalogProvider } from "@cap/agent-config";
 import {
   decryptProviderSecret,
-  imageGenerationSourceFromOverlay,
   encryptProviderSecret,
   loadProviderConfigCatalogOverlay,
   resolveOverlayCatalog,
-  RelayProviderRegistry,
-} from "../src/index.js";
-import { DEFAULT_IMAGE_TIMEOUT_SECONDS } from "@cap/agent-do";
+} from "../src/index";
 
 /**
  * #362/#450 provider configurable panel: the crypto half (AES-256-GCM over the
@@ -95,129 +92,10 @@ describe("#362/#450 the overlay IS the directory (loader rows are row-level whol
 // #434 point 6 retired seedProviderConfigRows: the CRUD display face lists
 // ONLY user rows. The wire-level guarantees live in the server-worker L1
 // suite (system-provider-configs.test.ts).
-describe("#362 RelayProviderRegistry overlay (standalone credentials)", () => {
-  test("an overlay row resolves with its OWN wire identity, never deployment slots", () => {
-    const registry = RelayProviderRegistry.create();
-    registry.applyOverlay({
-      providers: OVERLAY_PROVIDERS,
-      imageSourceProviderId: null,
-      credentials: { panelp: { apiKey: "k-panel", baseUrl: "https://panel.example.com" } },
-    });
-    const standalone = registry.resolve({ providerId: "panelp", model: "panel-only" });
-    expect(standalone.config.apiKey).toBe("k-panel");
-    expect(standalone.config.baseUrl).toBe("https://panel.example.com");
-    // The SAME-ID row the panel rewrote (envp) has no credential slot — its
-    // wire slots stay empty (the #450/#500 standalone posture: a user row is
-    // never hit with a shared credential).
-    const rewritten = registry.resolve({ providerId: "envp", model: "panel-model" });
-    expect(rewritten.config.apiKey).toBe("");
-    expect(rewritten.config.baseUrl).toBe("");
-  });
-
-  test("an incomplete overlay row fails dispatch with the named credential error", () => {
-    const registry = RelayProviderRegistry.create();
-    registry.applyOverlay({
-      providers: OVERLAY_PROVIDERS,
-      imageSourceProviderId: null,
-      credentials: {},
-    });
-    // #434 point ⑦: no row-level mock. resolve() still answers (the config
-    // slots are honestly empty), but dispatch refuses to fabricate a client.
-    expect(() => registry.providerFor({ providerId: "panelp", model: "panel-only" })).toThrow(
-      /panelp.*no usable credential/s,
-    );
-    // The refusal never fabricates a credential into the row's wire slots.
-    const resolved = registry.resolve({ providerId: "panelp", model: "panel-only" });
-    expect(resolved.config.apiKey).toBe("");
-    expect(resolved.config.baseUrl).toBe("");
-  });
-
-  test("applyOverlay clears the instance cache — stale wire clients never survive a rotation", () => {
-    const registry = RelayProviderRegistry.create();
-    registry.applyOverlay({
-      providers: OVERLAY_PROVIDERS,
-      imageSourceProviderId: null,
-      credentials: { panelp: { apiKey: "k-one", baseUrl: "https://panel.example.com" } },
-    });
-    const first = registry.providerFor({ providerId: "panelp", model: "panel-only" });
-    registry.applyOverlay({
-      providers: OVERLAY_PROVIDERS,
-      imageSourceProviderId: null,
-      credentials: { panelp: { apiKey: "k-two", baseUrl: "https://panel.example.com" } },
-    });
-    const second = registry.providerFor({ providerId: "panelp", model: "panel-only" });
-    expect(second).not.toBe(first);
-    expect(registry.resolve({ providerId: "panelp", model: "panel-only" }).config.apiKey).toBe(
-      "k-two",
-    );
-  });
-
+describe("#362 catalog overlay", () => {
   test("the catalog overlay loader never returns credential material", async () => {
     // No DB binding → null (the loader is a no-op without D1), which is the
     // zero-secret-by-construction contract for pure catalog faces.
     await expect(loadProviderConfigCatalogOverlay({})).resolves.toBeNull();
-  });
-
-  test("imageGenerationSourceFromOverlay resolves the explicitly seated openai-images row", () => {
-    expect(imageGenerationSourceFromOverlay(null)).toBeNull();
-    expect(
-      imageGenerationSourceFromOverlay({
-        providers: {},
-        imageSourceProviderId: null,
-        credentials: {},
-      }),
-    ).toBeNull();
-    // #448: a seat is mandatory — rows without the seat supply nothing.
-    expect(
-      imageGenerationSourceFromOverlay({
-        providers: {
-          imagey: {
-            api: "openai-images",
-            baseUrl: "https://images.example.com/v1/",
-            models: [{ id: "image-model" }, { id: "spare" }],
-          },
-        },
-        imageSourceProviderId: null,
-        credentials: { imagey: { apiKey: "sk-image-362" } },
-      }),
-    ).toBeNull();
-    const source = imageGenerationSourceFromOverlay({
-      providers: {
-        imagey: {
-          api: "openai-images",
-          baseUrl: "https://images.example.com/v1/",
-          models: [{ id: "image-model" }, { id: "spare" }],
-        },
-      },
-      imageSourceProviderId: "imagey",
-      credentials: { imagey: { apiKey: "sk-image-362" } },
-    });
-    expect(source).toEqual({
-      baseUrl: "https://images.example.com/v1",
-      apiKey: "sk-image-362",
-      model: "image-model",
-      timeoutSeconds: DEFAULT_IMAGE_TIMEOUT_SECONDS,
-    });
-    // A seat naming a missing or non-image row is honestly unconfigured.
-    expect(
-      imageGenerationSourceFromOverlay({
-        providers: {},
-        imageSourceProviderId: "gone",
-        credentials: {},
-      }),
-    ).toBeNull();
-    expect(
-      imageGenerationSourceFromOverlay({
-        providers: {
-          texty: {
-            api: "anthropic-messages",
-            baseUrl: "https://relay.example.com",
-            models: [{ id: "m" }],
-          },
-        },
-        imageSourceProviderId: "texty",
-        credentials: { texty: { apiKey: "k" } },
-      }),
-    ).toBeNull();
   });
 });

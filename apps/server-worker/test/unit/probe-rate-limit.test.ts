@@ -4,7 +4,7 @@ import {
   PROBE_RATE_LIMIT_MAX,
   PROBE_RATE_LIMIT_WINDOW_MS,
   resetProbeRateLimiter,
-} from "../../src/services/probe-rate-limit.js";
+} from "../../src/services/probe-rate-limit";
 
 /**
  * SEC-W5-003 probe-face throttle semantics: a fixed window shared per

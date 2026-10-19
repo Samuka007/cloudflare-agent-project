@@ -1,4 +1,4 @@
-import { log } from "./log.js";
+import { log } from "./log";
 
 /**
  * One live WS session's end-latch (issue #38): what the socket's close

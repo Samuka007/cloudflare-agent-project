@@ -1,12 +1,12 @@
-export { DurableAgentDO, HEARTBEAT_MS, type DurableAgentEnv } from "./do.js";
-export { DurableThread } from "./thread.js";
+export { DurableAgentDO, HEARTBEAT_MS, type DurableAgentEnv } from "./do";
+export { DurableThread } from "./thread";
 export {
   createDurableAgentRuntime,
   resetDurableAgentRuntimeFactory,
   resolveDurableAgentRuntime,
   setDurableAgentRuntimeFactory,
-} from "./injection.js";
-export type { DurableAgentRuntime, DurableAgentRuntimeFactory } from "./types.js";
+} from "./injection";
+export type { DurableAgentRuntime, DurableAgentRuntimeFactory } from "./types";
 export {
   createModelsFromProviders,
   DURABLE_PROVIDER_APIS,
@@ -17,14 +17,14 @@ export {
   projectProvider,
   ProviderProjectionError,
   resolveProviderApi,
-} from "./provider.js";
+} from "./provider";
 export type {
   DurableModelRow,
   DurableProviderApi,
   DurableProviderSource,
   ProviderProjectionErrorCode,
-} from "./provider.js";
-export { createHostTool, DEFAULT_HOST_TOOL_TIMEOUT_MS, HostToolDispatcher } from "./tools.js";
+} from "./provider";
+export { createHostTool, DEFAULT_HOST_TOOL_TIMEOUT_MS, HostToolDispatcher } from "./tools";
 export type {
   HostDispatchClient,
   HostDispatchOutcome,
@@ -35,6 +35,6 @@ export type {
   HostToolSpec,
   HostToolStatus,
   HostToolTransport,
-} from "./tools.js";
-export { PiEventBridge } from "./events.js";
-export type { ThreadEventSink } from "./events.js";
+} from "./tools";
+export { PiEventBridge } from "./events";
+export type { ThreadEventSink } from "./events";

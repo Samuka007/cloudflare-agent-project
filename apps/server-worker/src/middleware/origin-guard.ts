@@ -1,7 +1,7 @@
 import type { Context, Next } from "hono";
-import { ApiError } from "../shared/api-error.js";
-import { parseOriginLike } from "../contract/domain/origin-allowlist.js";
-import { getOriginAllowlist, type OriginAllowlistEnv } from "../db/origin-allowlist.js";
+import { ApiError } from "../shared/api-error";
+import { parseOriginLike } from "../contract/domain/origin-allowlist";
+import { getOriginAllowlist, type OriginAllowlistEnv } from "../db/origin-allowlist";
 
 /**
  * Origin guard, ported from bb apps/server/src/browser-request-guard.ts

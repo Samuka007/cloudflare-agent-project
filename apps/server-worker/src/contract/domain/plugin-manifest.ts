@@ -3,7 +3,7 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import { uiCodeThemeDeclarationSchema } from "./code-theme.js";
+import { uiCodeThemeDeclarationSchema } from "./code-theme";
 
 const requiredManifestString = z.string().trim().min(1);
 

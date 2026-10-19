@@ -39,7 +39,7 @@
  * in jev-loop.ts.
  */
 
-import type { JudgeAnswer } from "../../pm-autopilot/src/core.js";
+import type { JudgeAnswer } from "../../pm-autopilot/src/core";
 import { writeFileSync } from "node:fs";
 import {
   askJev,
@@ -51,7 +51,7 @@ import {
   type JevElementRec,
   type JevJudgeFn,
   type JevSnapshot,
-} from "./jev-loop.js";
+} from "./jev-loop";
 
 // ---------------------------------------------------------------------------
 // Frozen output contract (#242 acceptance: two-consumer contract freeze)

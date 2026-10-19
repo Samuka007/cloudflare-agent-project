@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 
-import { hostMkdirRequestSchema, hostPathMutationResultSchema } from "../contract/api/files.js";
-import { HOST_COMMAND_TIMEOUT_MS, hostOnlineRpcOrThrow } from "../services/host-rpc.js";
-import { remapHostFileRouteError } from "../services/host-files.js";
-import { requirePrimaryHostId } from "../services/host-records.js";
-import { ApiError } from "../shared/api-error.js";
-import { requireJsonBody } from "../shared/route-utils.js";
-import type { AppEnv } from "../app-types.js";
+import { hostMkdirRequestSchema, hostPathMutationResultSchema } from "../contract/api/files";
+import { HOST_COMMAND_TIMEOUT_MS, hostOnlineRpcOrThrow } from "../services/host-rpc";
+import { remapHostFileRouteError } from "../services/host-files";
+import { requirePrimaryHostId } from "../services/host-records";
+import { ApiError } from "../shared/api-error";
+import { requireJsonBody } from "../shared/route-utils";
+import type { AppEnv } from "../app-types";
 
 /**
  * Host file primitives — the bb routes/files.ts family, hosted at

@@ -3,7 +3,7 @@
 // Cross-package imports rewritten to workspace-relative paths; no semantic edits.
 //
 import { z } from "zod";
-import { environmentStatusSchema, hostStatusSchema, threadStatusSchema } from "./domain/index.js";
+import { environmentStatusSchema, hostStatusSchema, threadStatusSchema } from "./domain/index";
 
 /** Base public error envelope shared by server routes. Route-specific schemas
  *  may extend this with typed fields such as structured `details` while

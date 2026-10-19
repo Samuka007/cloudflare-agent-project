@@ -3,7 +3,7 @@ import type {
   ExecutionUpdate,
   ToolDispatchRequest,
   ToolResultPayload,
-} from "@cap/agent-do";
+} from "./protocol";
 import { DurableObject } from "cloudflare:workers";
 import {
   DAEMON_PROTOCOL_VERSION,
@@ -16,10 +16,10 @@ import {
   RESULT_INLINE_LIMIT_BYTES,
   SPAWN_ACK_TIMEOUT_MS,
   SYNC_SPAWN_DEFER_TIMEOUT_MS,
-} from "./constants.js";
-import { DoOverloadError } from "./edge.js";
-import { threadIdFromExecutionId } from "./execution-id.js";
-import { markHostSeen } from "./hosts-registry.js";
+} from "./constants";
+import { DoOverloadError } from "./edge";
+import { threadIdFromExecutionId } from "./execution-id";
+import { markHostSeen } from "./hosts-registry";
 import {
   emptyServiceState,
   foldOp,
@@ -27,7 +27,7 @@ import {
   type JournalOp,
   type ReconcileAction,
   type ServiceStateData,
-} from "./journal.js";
+} from "./journal";
 import {
   clientFrameSchema,
   type BootAnnounceReceived,
@@ -45,7 +45,7 @@ import {
   observedFingerprint,
   type ServiceFrame,
   type ToolExitedFrame,
-} from "./protocol.js";
+} from "./protocol";
 
 /**
  * Daemon service DO — per-machine claim authority (unified-turn-state §1.2,
@@ -66,10 +66,8 @@ import {
  */
 
 export interface DaemonServiceEnv {
-  /** Agent-update sink; the integration worker binds the real AgentDO. */
+  /** Agent-update sink; the integration worker binds the pi-durable agent. */
   AGENT_DO: DurableObjectNamespace;
-  /** #581 additive durable agent sink; `dthr_` executions route here. */
-  readonly DURABLE_AGENT_DO?: DurableObjectNamespace;
   /**
    * #62 hosts-registry D1 for the liveness projection (heartbeat →
    * last_seen_at; the port's markHostSeen). The composed deployment binds
@@ -1679,14 +1677,10 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
    */
   private async forwardToAgent(update: ExecutionUpdate): Promise<void> {
     const threadId = threadIdFromExecutionId(update.executionId);
-    const namespace =
-      threadId.startsWith("dthr_") && this.env.DURABLE_AGENT_DO !== undefined
-        ? this.env.DURABLE_AGENT_DO
-        : this.env.AGENT_DO;
-    const sinkId = namespace.idFromName(threadId);
-    // AGENT_DO is the real AgentDO in production, this package's test sink
-    // in L1/smoke; both expose onExecutionUpdate.
-    const stub = namespace.get(sinkId) as DurableObjectStub & {
+    const sinkId = this.env.AGENT_DO.idFromName(threadId);
+    // AGENT_DO is the pi-durable agent in production, this package's test
+    // sink in L1/smoke; both expose onExecutionUpdate.
+    const stub = this.env.AGENT_DO.get(sinkId) as DurableObjectStub & {
       onExecutionUpdate(update: ExecutionUpdate): Promise<unknown>;
     };
     try {

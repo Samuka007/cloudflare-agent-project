@@ -42,10 +42,7 @@
     "bindings": [
       { "name": "HUB", "class_name": "NotificationHubDO" },
       { "name": "LEASES", "class_name": "LeaseStoreDO" },
-      { "name": "AGENT_DO", "class_name": "ComposedAgentDO" },
-      { "name": "DURABLE_AGENT_DO", "class_name": "ComposedDurableAgentDO" },
-      { "name": "ORCHESTRATOR", "class_name": "ComposedHostOrchestratorDO" },
-      { "name": "MANAGER", "class_name": "ManagerDo" },
+      { "name": "AGENT_DO", "class_name": "ComposedDurableAgentDO" },
       { "name": "DAEMON_SERVICE", "class_name": "DaemonServiceDO" },
     ],
   },
@@ -65,6 +62,12 @@
       // #581 additive class; staging has already applied v1.
       "tag": "v2",
       "new_sqlite_classes": ["ComposedDurableAgentDO"],
+    },
+    {
+      // Legacy loop / manager / orchestrator classes are deleted with their
+      // DO storage; the pi-durable class is now the only agent.
+      "tag": "v3",
+      "deleted_classes": ["ComposedAgentDO", "ComposedHostOrchestratorDO", "ManagerDo"],
     },
   ],
   "r2_buckets": [
@@ -101,9 +104,6 @@
     "crons": ["*/5 * * * *"],
   },
   "vars": {
-    // #581 cutover: legacy keeps every thread on AgentDO; flip to "durable"
-    // to mint `dthr_` threads onto the pi runtime.
-    "AGENT_RUNTIME": "legacy",
     // SEC-W5-001 (#397) fail-closed, #505: no gate flag — gate state IS the
     // ACCESS_TEAM_DOMAIN + ACCESS_AUD Worker secret pair (`wrangler secret
     // put`); both present = the gate verifies Access JWTs on /api/v1/* and

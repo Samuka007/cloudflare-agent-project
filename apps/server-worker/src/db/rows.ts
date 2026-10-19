@@ -199,12 +199,7 @@ export function toHostDbRow(row: Row): HostDbRow {
 // --- environments (#288) -------------------------------------------------------
 
 export type EnvironmentStatus =
-  | "provisioning"
-  | "ready"
-  | "retiring"
-  | "error"
-  | "destroying"
-  | "destroyed";
+  "provisioning" | "ready" | "retiring" | "error" | "destroying" | "destroyed";
 export type WorkspaceProvisionType = "unmanaged" | "managed-worktree" | "personal";
 
 export interface EnvironmentDbRow {

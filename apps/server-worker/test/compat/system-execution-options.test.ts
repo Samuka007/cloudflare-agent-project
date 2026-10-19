@@ -1,14 +1,14 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { exports } from "cloudflare:workers";
-import { ensureRigProviderRow, removeRigProviderRow } from "../helpers.js";
-import { ensureMigrations } from "../migrate.js";
+import { ensureRigProviderRow, removeRigProviderRow } from "../helpers";
+import { ensureMigrations } from "../migrate";
 import {
   systemConfigResponseSchema,
   systemExecutionOptionsResponseSchema,
   systemVersionResponseSchema,
-} from "../../src/contract/api/system.js";
-import { buildExecutionOptions } from "../../src/routes/system.js";
-import type { RelayCatalogProvider } from "@cap/agent-do";
+} from "../../src/contract/api/system";
+import { buildExecutionOptions } from "../../src/routes/system";
+import type { RelayCatalogProvider } from "@cap/agent-config";
 
 /**
  * Ticket #41: GET /system/execution-options — the model catalog behind the

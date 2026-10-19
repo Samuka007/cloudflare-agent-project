@@ -6,7 +6,7 @@ import {
   opsOfKind,
   dispatchViaSeam,
   executionViewOf,
-} from "./helpers.js";
+} from "./helpers";
 
 /**
  * I29 — backpressure honesty (§8.3): a windowed client pauses its uplink at

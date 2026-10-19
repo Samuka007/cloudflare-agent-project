@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { BACKOFF_JITTER_FRACTION, RECONNECT_BACKOFF_MIN_MS } from "../src/client/backoff.js";
-import { runSessionLoop, type SessionLoopClock } from "../src/client/session-loop.js";
-import { watchSocketClose, WSSession } from "../src/client/ws-session.js";
+import { BACKOFF_JITTER_FRACTION, RECONNECT_BACKOFF_MIN_MS } from "../src/client/backoff";
+import { runSessionLoop, type SessionLoopClock } from "../src/client/session-loop";
+import { watchSocketClose, WSSession } from "../src/client/ws-session";
 
 /**
  * L1 server-initiated WS close (issue #38): a close event must END the

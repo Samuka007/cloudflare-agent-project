@@ -7,8 +7,8 @@ import {
   executeDispatch,
   type ToolDispatchFrame,
   type ToolHost,
-} from "../src/client/tool-runtime.js";
-import { findExecPayloadSchema, type FindExecPayload } from "@cap/agent-do/find-protocol";
+} from "../src/client/tool-runtime";
+import { findExecPayloadSchema, type FindExecPayload } from "../src/find-protocol";
 
 /**
  * L1 per-tool semantics for find's EXECUTION phase (#523, user ruling

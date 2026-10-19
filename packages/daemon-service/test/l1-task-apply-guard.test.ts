@@ -13,7 +13,7 @@ import {
   renderLandingRefusal,
   resolveGitlinkByAncestry,
   type GitRunner,
-} from "../src/client/task-apply-guard.js";
+} from "../src/client/task-apply-guard";
 
 /**
  * L1 for the task-apply landing guard (#419) — runs under Bun (real git

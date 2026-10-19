@@ -9,7 +9,7 @@ import {
   watchEvents,
 } from "@earendil-works/pi-durable";
 import { openDurableObjectSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/cloudflare";
-import type { DurableAgentRuntime } from "./types.js";
+import type { DurableAgentRuntime } from "./types";
 
 const context = BACKGROUND_CONTEXT;
 const PI_STORAGE_PREFIX = "pi_";

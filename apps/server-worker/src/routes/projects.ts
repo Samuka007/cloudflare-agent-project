@@ -16,30 +16,26 @@ import {
   updateProjectRequestSchema,
   updateThreadSectionRequestSchema,
   projectWithThreadsResponseSchema,
-} from "../contract/api/projects.js";
-import type { ProviderCommand } from "../contract/api/projects.js";
+} from "../contract/api/projects";
+import type { ProviderCommand } from "../contract/api/projects";
 import {
   PROMPT_HISTORY_ENTRY_LIMIT,
   projectSourceSchema,
   takeVisiblePromptHistoryEntries,
-} from "../contract/domain/index.js";
-import { threadListEntrySchema } from "../contract/domain/thread.js";
-import {
-  copyProjectAttachments,
-  readAttachment,
-  storeAttachment,
-} from "../services/attachments.js";
-import { ApiError } from "../shared/api-error.js";
+} from "../contract/domain/index";
+import { threadListEntrySchema } from "../contract/domain/thread";
+import { copyProjectAttachments, readAttachment, storeAttachment } from "../services/attachments";
+import { ApiError } from "../shared/api-error";
 import {
   parseBoundedPositiveOptionalInteger,
   parseOr422,
   requireJsonBody,
-} from "../shared/route-utils.js";
+} from "../shared/route-utils";
 import {
   copyProjectAttachmentsRequestSchema,
   projectAttachmentContentQuerySchema,
-} from "../contract/api/projects.js";
-import { createProjectId, createThreadSectionId } from "../shared/ids.js";
+} from "../contract/api/projects";
+import { createProjectId, createThreadSectionId } from "../shared/ids";
 import {
   createProject,
   createThreadSection,
@@ -52,7 +48,7 @@ import {
   renameThreadSection,
   setProjectGitRemoteUrlIfMissing,
   updateProject,
-} from "../db/control-plane.js";
+} from "../db/control-plane";
 import {
   countProjectSources,
   createProjectSourceRow,
@@ -61,12 +57,12 @@ import {
   getProjectSourceForProject,
   listProjectSources,
   updateProjectSourceRow,
-} from "../db/project-sources.js";
-import { hostOnlineRpcOrThrow, requireUsableHostRow } from "../services/host-rpc.js";
-import { requirePublicProject, requirePublicStandardProject } from "../services/entity-lookup.js";
-import { toThreadListEntries } from "../services/runtime-display.js";
-import type { AppEnv, Env } from "../app-types.js";
-import type { ProjectRow } from "../db/rows.js";
+} from "../db/project-sources";
+import { hostOnlineRpcOrThrow, requireUsableHostRow } from "../services/host-rpc";
+import { requirePublicProject, requirePublicStandardProject } from "../services/entity-lookup";
+import { toThreadListEntries } from "../services/runtime-display";
+import type { AppEnv, Env } from "../app-types";
+import type { ProjectRow } from "../db/rows";
 
 /**
  * Projects + sidebar-bootstrap + thread-sections + sources face (bb
@@ -82,7 +78,7 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
    * is BUILT_IN_PROVIDER_COMMANDS (provider-command-typeahead.ts:15-23) plus
    * host-discovered skills/project commands; this port has no host to probe
    * and no skills discovery, and its compact engine is the DO-side
-   * summarizer (packages/agent-do compactThread) — provider-agnostic, so the
+   * summarizer (pi-durable compactThread) — provider-agnostic, so the
    * single builtin row serves every provider unconditionally (bb's
    * includeBuiltinCompact = supportsManualCompaction(provider) holds for
    * every provider here). The query still validates so unknown fields 422

@@ -1,8 +1,8 @@
 import type { DaemonServiceDO, HostRpcCommand } from "@cap/daemon-service";
-import { ApiError } from "../shared/api-error.js";
-import { getHostRow } from "../db/hosts.js";
-import type { HostDbRow } from "../db/rows.js";
-import type { Env } from "../env.js";
+import { ApiError } from "../shared/api-error";
+import { getHostRow } from "../db/hosts";
+import type { HostDbRow } from "../db/rows";
+import type { Env } from "../env";
 
 /**
  * #445: the host online-RPC seam the add-source face shares with the

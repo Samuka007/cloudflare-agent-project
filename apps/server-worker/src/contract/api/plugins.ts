@@ -42,9 +42,7 @@ export const pluginUpdateStateSchema = z.object({
   blockedVersion: z.string().optional(),
   blockedReasons: z.array(z.string()).optional(),
   lastCheckAt: z.number().optional(),
-  lastFailure: z
-    .object({ version: z.string(), at: z.number(), detail: z.string() })
-    .optional(),
+  lastFailure: z.object({ version: z.string(), at: z.number(), detail: z.string() }).optional(),
 });
 export type PluginUpdateState = z.infer<typeof pluginUpdateStateSchema>;
 
@@ -133,9 +131,7 @@ export const pluginContributionsResponseSchema = z.object({
   cliCommands: z.array(z.never()),
   mentionProviders: z.array(z.never()),
 });
-export type PluginContributionsResponse = z.infer<
-  typeof pluginContributionsResponseSchema
->;
+export type PluginContributionsResponse = z.infer<typeof pluginContributionsResponseSchema>;
 
 /**
  * The staged per-plugin descriptor (written by scripts/stage-bb-spa.sh next
@@ -157,6 +153,4 @@ export const pluginRegistryDescriptorSchema = z.object({
   hash: z.string().regex(/^[0-9a-f]{16}$/),
   files: z.object({ js: z.boolean(), css: z.boolean() }),
 });
-export type PluginRegistryDescriptor = z.infer<
-  typeof pluginRegistryDescriptorSchema
->;
+export type PluginRegistryDescriptor = z.infer<typeof pluginRegistryDescriptorSchema>;

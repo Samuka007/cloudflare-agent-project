@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
-import { apiGet } from "../helpers.js";
+import { apiGet } from "../helpers";
 
 /**
  * #302: GET /hosts/:id/directory — the Add-project path browser's listing,

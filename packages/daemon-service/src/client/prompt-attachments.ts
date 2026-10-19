@@ -1,7 +1,7 @@
 import { mkdir, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PromptContent } from "@cap/protocol";
-import type { FetchProjectAttachment } from "./project-attachments.js";
+import type { FetchProjectAttachment } from "./project-attachments";
 
 /**
  * Attachment staging (#318) — bb

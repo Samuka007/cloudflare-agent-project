@@ -10,7 +10,7 @@ import {
   computeChannelGap,
   HEURISTIC_PROBE_EXPRESSION,
   type Candidate,
-} from "../accept/jev-recall-audit.js";
+} from "../accept/jev-recall-audit";
 
 const cand = (role: string, name: string): Candidate => ({ role, name });
 
