@@ -79,8 +79,8 @@ async function rawSeatRow(): Promise<{
   secrets_enc: string | null;
   secrets_meta: string | null;
 } | null> {
-  return env.DB.prepare(
-    "SELECT chain, timeout_seconds, engines, secrets_enc, secrets_meta FROM web_search WHERE id = 'web_search'",
+  return env.DB_V2.prepare(
+    "SELECT web_search_chain AS chain, web_search_timeout_seconds AS timeout_seconds, web_search_engines AS engines, web_search_secrets_enc AS secrets_enc, web_search_secrets_meta AS secrets_meta FROM settings_agent WHERE id = 'agent'",
   ).first<{
     chain: string;
     timeout_seconds: number;
@@ -92,7 +92,7 @@ async function rawSeatRow(): Promise<{
 
 afterEach(async () => {
   // The seat is single-row; every case starts from the unconfigured state.
-  await env.DB.prepare("DELETE FROM web_search WHERE id = 'web_search'").run();
+  await env.DB_V2.prepare("DELETE FROM settings_agent WHERE id = 'agent'").run();
 });
 
 describe("GET /api/v1/system/web-search", () => {
@@ -160,8 +160,8 @@ describe("GET /api/v1/system/web-search", () => {
     // A hand-edited row carrying a browser-backed engine can never come from
     // the write face; the loader refuses the chain (L1) and the faces report
     // decodeError instead of silently substituting defaults.
-    await env.DB.prepare(
-      "INSERT INTO web_search (id, chain, timeout_seconds, engines, secrets_enc, secrets_meta, updated_at) VALUES ('web_search', '[\"google\"]', 60, NULL, NULL, NULL, ?)",
+    await env.DB_V2.prepare(
+      "INSERT INTO settings_agent (id, web_search_chain, web_search_timeout_seconds, updated_at) VALUES ('agent', '[\"google\"]', 60, ?)",
     )
       .bind(Date.now())
       .run();

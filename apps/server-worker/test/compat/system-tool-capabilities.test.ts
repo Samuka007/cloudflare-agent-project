@@ -73,14 +73,14 @@ async function rawSeatRow(): Promise<{
   context_notes: number;
   checkpoint: number;
 } | null> {
-  return env.DB.prepare(
-    "SELECT external_thinking, context_notes, checkpoint FROM tool_capabilities WHERE id = 'tool_capabilities'",
+  return env.DB_V2.prepare(
+    "SELECT external_thinking, context_notes, checkpoint FROM settings_agent WHERE id = 'agent'",
   ).first<{ external_thinking: number; context_notes: number; checkpoint: number }>();
 }
 
 afterEach(async () => {
   // The seat is single-row; every case starts from the absent state.
-  await env.DB.prepare("DELETE FROM tool_capabilities WHERE id = 'tool_capabilities'").run();
+  await env.DB_V2.prepare("DELETE FROM settings_agent WHERE id = 'agent'").run();
 });
 
 describe("GET /api/v1/system/tool-capabilities", () => {
@@ -95,8 +95,8 @@ describe("GET /api/v1/system/tool-capabilities", () => {
 
   it("reflects the stored gates; a hand-edited non-0/1 value stays off", async () => {
     // A direct D1 write outside the face: the decode is strict (=== 1).
-    await env.DB.prepare(
-      "INSERT INTO tool_capabilities (id, external_thinking, context_notes, checkpoint, updated_at) VALUES ('tool_capabilities', 2, 1, 0, ?)",
+    await env.DB_V2.prepare(
+      "INSERT INTO settings_agent (id, external_thinking, context_notes, checkpoint, updated_at) VALUES ('agent', 2, 1, 0, ?)",
     )
       .bind(Date.now())
       .run();
@@ -192,7 +192,7 @@ describe("PUT /api/v1/system/tool-capabilities", () => {
 
   it("an absent row again serves the honest posture (configured:false)", async () => {
     await putFace({ externalThinking: true, contextNotes: false, checkpoint: false });
-    await env.DB.prepare("DELETE FROM tool_capabilities WHERE id = 'tool_capabilities'").run();
+    await env.DB_V2.prepare("DELETE FROM settings_agent WHERE id = 'agent'").run();
     expect(await getFace()).toEqual({
       configured: false,
       externalThinking: false,
