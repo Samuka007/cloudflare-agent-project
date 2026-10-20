@@ -206,7 +206,12 @@ describe("delete terminal (#195 S4, G11) + destroyed 404 shape (G12)", () => {
   // the seeded cloud placeholder — the row the guard anchors on; production
   // can never reach a placeholder-less fleet.
   async function wipeHosts(): Promise<void> {
-    await env.DB.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
+    // T5 (#597): the registry the faces serve is DB_V2; the wipe goes
+    // child-first for the greenfield FKs (sources → environments → hosts;
+    // referencing threads unbind via SET NULL).
+    await env.DB_V2.prepare("DELETE FROM project_sources WHERE host_id <> 'cloud'").run();
+    await env.DB_V2.prepare("DELETE FROM environments WHERE host_id <> 'cloud'").run();
+    await env.DB_V2.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
   }
 
   it("DELETE of the placeholder refuses with the empty-machine judgment (#386)", async () => {
@@ -218,7 +223,7 @@ describe("delete terminal (#195 S4, G11) + destroyed 404 shape (G12)", () => {
     const body = await refused.json<{ code: string; message: string }>();
     expect(body.code).toBe("placeholder_host_removal_refused");
     expect(body.message).toBe("placeholder holds empty-machine semantics");
-    const row = await env.DB.prepare("SELECT destroyed_at FROM hosts WHERE id = 'cloud'").first<{
+    const row = await env.DB_V2.prepare("SELECT destroyed_at FROM hosts WHERE id = 'cloud'").first<{
       destroyed_at: number | null;
     }>();
     expect(row?.destroyed_at).toBeNull();
@@ -269,7 +274,7 @@ describe("delete terminal (#195 S4, G11) + destroyed 404 shape (G12)", () => {
     } catch {
       // the server-initiated close already tore the socket down
     }
-    const row = await env.DB.prepare("SELECT destroyed_at FROM hosts WHERE id = ?")
+    const row = await env.DB_V2.prepare("SELECT destroyed_at FROM hosts WHERE id = ?")
       .bind(hostId)
       .first<{ destroyed_at: number | null }>();
     expect(row?.destroyed_at).not.toBeNull();

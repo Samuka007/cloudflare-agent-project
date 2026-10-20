@@ -36,33 +36,12 @@ import {
   projectAttachmentContentQuerySchema,
 } from "../contract/api/projects";
 import { createProjectId, createThreadSectionId } from "../shared/ids";
-import {
-  createProject,
-  createThreadSection,
-  deleteThreadSection,
-  getPersonalProject,
-  getThreadSection,
-  listPublicProjects,
-  listThreadSections,
-  listThreads,
-  renameThreadSection,
-  setProjectGitRemoteUrlIfMissing,
-  updateProject,
-} from "../db/control-plane";
-import {
-  countProjectSources,
-  createProjectSourceRow,
-  deleteProjectSourceRow,
-  getProjectSourceByHost,
-  getProjectSourceForProject,
-  listProjectSources,
-  updateProjectSourceRow,
-} from "../db/project-sources";
+import type { ProjectRecord } from "../db/repositories";
+import { workerRepos } from "../db/repositories/worker-repos";
 import { hostOnlineRpcOrThrow, requireUsableHostRow } from "../services/host-rpc";
 import { requirePublicProject, requirePublicStandardProject } from "../services/entity-lookup";
 import { toThreadListEntries } from "../services/runtime-display";
 import type { AppEnv, Env } from "../app-types";
-import type { ProjectRow } from "../db/rows";
 
 /**
  * Projects + sidebar-bootstrap + thread-sections + sources face (bb
@@ -99,7 +78,8 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
 
   routes.get("/projects", async (ctx) => {
     const query = parseOr422(projectListQuerySchema, ctx.req.query());
-    const rows = await listPublicProjects(ctx.env);
+    const repos = workerRepos(ctx.env);
+    const rows = await repos.projects.listPublic();
     const filtered =
       query.includePersonal === "true" ? rows : rows.filter((row) => row.kind !== "personal");
     const includeThreads = (query.include ?? "").split(",").includes("threads");
@@ -109,7 +89,7 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
           filtered.map(async (row) =>
             projectResponseSchema.parse({
               ...toPublicProject(row),
-              sources: await listProjectSources(ctx.env, row.id),
+              sources: await repos.projects.listSources(row.id),
             }),
           ),
         ),
@@ -126,28 +106,24 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
 
   routes.post("/projects", async (ctx) => {
     const payload = await requireJsonBody(ctx, createProjectRequestSchema);
-    const row = await createProject(ctx.env, {
+    const repos = workerRepos(ctx.env);
+    const row = await repos.projects.create({
       id: createProjectId(),
       name: payload.name,
       kind: "standard",
       gitRemoteUrl: null,
     });
-    await ctx.env.DB.prepare(
-      "INSERT INTO project_sources (id, project_id, is_default, type, host_id, path, created_at, updated_at) VALUES (?, ?, 1, 'local_path', ?, ?, ?, ?)",
-    )
-      .bind(
-        `src_${crypto.randomUUID().replaceAll("-", "").slice(0, 10)}`,
-        row.id,
-        payload.source.hostId,
-        payload.source.path,
-        row.createdAt,
-        row.createdAt,
-      )
-      .run();
+    // T5 (#597): the create-time default source rides the aggregate — the
+    // repo mints the src_* id and lands the first-source-is-default rule.
+    await repos.projects.createSource({
+      projectId: row.id,
+      hostId: payload.source.hostId,
+      path: payload.source.path,
+    });
     return ctx.json(
       projectResponseSchema.parse({
         ...toPublicProject(row),
-        sources: await listProjectSources(ctx.env, row.id),
+        sources: await repos.projects.listSources(row.id),
       }),
       201,
     );
@@ -156,8 +132,9 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
   routes.get("/sidebar-bootstrap", async (ctx) => {
     // bb buildSidebarBootstrapResponse (projects.ts:249-277): sections,
     // projects with threads, and the personal singleton (500 when absent).
-    const sections = await listThreadSections(ctx.env);
-    const personal = await getPersonalProject(ctx.env);
+    const repos = workerRepos(ctx.env);
+    const sections = await repos.sections.list();
+    const personal = await repos.projects.getPersonal();
     if (personal?.deletedAt !== null) {
       throw new ApiError({
         status: 500,
@@ -167,7 +144,7 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
       });
     }
     const projects = await Promise.all(
-      (await listPublicProjects(ctx.env))
+      (await repos.projects.listPublic())
         .filter((row) => row.kind !== "personal")
         .map(async (row) =>
           projectWithThreadsResponseSchema.parse(await toProjectWithThreads(ctx.env, row)),
@@ -189,7 +166,7 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
     return ctx.json(
       projectResponseSchema.parse({
         ...toPublicProject(row),
-        sources: await listProjectSources(ctx.env, row.id),
+        sources: await workerRepos(ctx.env).projects.listSources(row.id),
       }),
     );
   });
@@ -201,7 +178,8 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
     const project = await requirePublicStandardProject(ctx.env, projectId);
     const payload = await requireJsonBody(ctx, createProjectSourceRequestSchema);
     await requireUsableHostRow(ctx.env, payload.hostId);
-    if (await getProjectSourceByHost(ctx.env, projectId, payload.hostId)) {
+    const repos = workerRepos(ctx.env);
+    if (await repos.projects.getSourceByHost(projectId, payload.hostId)) {
       throw projectSourceHostConflict();
     }
     let resolved: { path: string; gitRemoteUrl: string | null };
@@ -231,7 +209,7 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
         ),
       };
     }
-    const source = await createProjectSourceRow(ctx.env, {
+    const source = await repos.projects.createSource({
       projectId,
       hostId: payload.hostId,
       path: resolved.path,
@@ -243,7 +221,7 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
       throw projectSourceHostConflict();
     }
     if (resolved.gitRemoteUrl !== null) {
-      await setProjectGitRemoteUrlIfMissing(ctx.env, projectId, resolved.gitRemoteUrl);
+      await repos.projects.setGitRemoteUrlIfMissing(projectId, resolved.gitRemoteUrl);
     }
     await hub(ctx).notifyProject(projectId, ["project-sources-changed"]);
     return ctx.json(projectSourceSchema.parse(source), 201);
@@ -253,10 +231,8 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
     const projectId = ctx.req.param("id");
     await requirePublicStandardProject(ctx.env, projectId);
     const payload = await requireJsonBody(ctx, updateProjectSourceRequestSchema);
-    const existing = await getProjectSourceForProject(ctx.env, {
-      projectId,
-      sourceId: ctx.req.param("sourceId"),
-    });
+    const repos = workerRepos(ctx.env);
+    const existing = await repos.projects.getSource(projectId, ctx.req.param("sourceId"));
     if (existing === null) {
       throw new ApiError({
         status: 404,
@@ -269,7 +245,7 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
     // unreachable here — updateProjectSourceRequestSchema pins type
     // "local_path" and the port's source rows are local_path-only, so the
     // mismatch class returns with the second source type, if ever.
-    const source = await updateProjectSourceRow(ctx.env, existing.id, {
+    const source = await repos.projects.updateSource(existing.id, {
       ...(payload.path !== undefined ? { path: payload.path } : {}),
       ...(payload.isDefault !== undefined ? { isDefault: payload.isDefault } : {}),
     });
@@ -287,10 +263,8 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
   routes.delete("/projects/:id/sources/:sourceId", async (ctx) => {
     const projectId = ctx.req.param("id");
     await requirePublicStandardProject(ctx.env, projectId);
-    const existing = await getProjectSourceForProject(ctx.env, {
-      projectId,
-      sourceId: ctx.req.param("sourceId"),
-    });
+    const repos = workerRepos(ctx.env);
+    const existing = await repos.projects.getSource(projectId, ctx.req.param("sourceId"));
     if (existing === null) {
       throw new ApiError({
         status: 404,
@@ -298,14 +272,14 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
         message: "Project source not found",
       });
     }
-    if ((await countProjectSources(ctx.env, projectId)) <= 1) {
+    if ((await repos.projects.countSources(projectId)) <= 1) {
       throw new ApiError({
         status: 409,
         code: "invalid_request",
         message: "Cannot delete the last source of a project",
       });
     }
-    await deleteProjectSourceRow(ctx.env, existing.id);
+    await repos.projects.deleteSource(existing.id);
     await hub(ctx).notifyProject(projectId, ["project-sources-changed"]);
     return ctx.json({ ok: true });
   });
@@ -313,7 +287,7 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
   routes.patch("/projects/:id", async (ctx) => {
     const payload = await requireJsonBody(ctx, updateProjectRequestSchema);
     await requirePublicProject(ctx.env, ctx.req.param("id"));
-    const updated = await updateProject(ctx.env, {
+    const updated = await workerRepos(ctx.env).projects.update({
       id: ctx.req.param("id"),
       ...(payload.name !== undefined ? { name: payload.name } : {}),
     });
@@ -323,14 +297,14 @@ export function registerProjectRoutes(app: Hono<AppEnv>): void {
     return ctx.json(
       projectResponseSchema.parse({
         ...toPublicProject(updated),
-        sources: await listProjectSources(ctx.env, updated.id),
+        sources: await workerRepos(ctx.env).projects.listSources(updated.id),
       }),
     );
   });
 
   routes.delete("/projects/:id", async (ctx) => {
     await requirePublicProject(ctx.env, ctx.req.param("id"));
-    await updateProject(ctx.env, {
+    await workerRepos(ctx.env).projects.update({
       id: ctx.req.param("id"),
       deletedAt: Date.now(),
     });
@@ -455,7 +429,7 @@ export function registerThreadSectionRoutes(app: Hono<AppEnv>): void {
 
   routes.post("/thread-sections", async (ctx) => {
     const payload = await requireJsonBody(ctx, createThreadSectionRequestSchema);
-    const section = await createThreadSection(ctx.env, {
+    const section = await workerRepos(ctx.env).sections.create({
       id: createThreadSectionId(),
       name: payload.name,
     });
@@ -471,7 +445,7 @@ export function registerThreadSectionRoutes(app: Hono<AppEnv>): void {
 
   routes.patch("/thread-sections", async (ctx) => {
     const payload = await requireJsonBody(ctx, updateThreadSectionRequestSchema);
-    const updated = await renameThreadSection(ctx.env, payload);
+    const updated = await workerRepos(ctx.env).sections.rename(payload.id, payload.name);
     if (!updated) {
       throw new ApiError({ status: 404, code: "section_not_found", message: "Section not found" });
     }
@@ -486,11 +460,12 @@ export function registerThreadSectionRoutes(app: Hono<AppEnv>): void {
 
   routes.delete("/thread-sections", async (ctx) => {
     const payload = await requireJsonBody(ctx, deleteThreadSectionRequestSchema);
-    const existed = await getThreadSection(ctx.env, payload.id);
+    const repos = workerRepos(ctx.env);
+    const existed = await repos.sections.get(payload.id);
     if (!existed) {
       throw new ApiError({ status: 404, code: "section_not_found", message: "Section not found" });
     }
-    await deleteThreadSection(ctx.env, payload.id);
+    await repos.sections.delete(payload.id);
     return ctx.json(
       threadSectionMutationResponseSchema.parse({
         id: existed.id,
@@ -503,7 +478,7 @@ export function registerThreadSectionRoutes(app: Hono<AppEnv>): void {
   app.route("/api/v1", routes);
 }
 
-function toPublicProject(row: ProjectRow) {
+function toPublicProject(row: ProjectRecord) {
   return {
     id: row.id,
     kind: row.kind,
@@ -515,11 +490,12 @@ function toPublicProject(row: ProjectRow) {
 }
 
 /** bb buildProjectsWithThreadsResponseFromRows: visible, non-archived threads. */
-async function toProjectWithThreads(env: Env, row: ProjectRow) {
-  const threads = await listThreads(env, { projectId: row.id, archived: false });
+async function toProjectWithThreads(env: Env, row: ProjectRecord) {
+  const repos = workerRepos(env);
+  const threads = await repos.threads.list({ projectId: row.id, archived: false });
   return {
     ...toPublicProject(row),
-    sources: await listProjectSources(env, row.id),
+    sources: await repos.projects.listSources(row.id),
     threads: (await toThreadListEntries(env, threads)).map((entry) =>
       threadListEntrySchema.parse(entry),
     ),

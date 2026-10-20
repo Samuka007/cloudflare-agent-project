@@ -19,7 +19,8 @@ beforeAll(async () => {
 });
 
 async function seedHostRow(hostId: string): Promise<void> {
-  await env.DB.prepare(
+  // T5 (#597): the files face's host lookups ride the drizzle-era DB_V2.
+  await env.DB_V2.prepare(
     `INSERT INTO hosts (id, name, type, connect_machine_id, max_permission_mode, destroyed_at,
                         last_seen_at, last_rejected_protocol_version, created_at, updated_at)
      VALUES (?, ?, 'persistent', NULL, 'full', NULL, NULL, NULL, ?, ?)`,

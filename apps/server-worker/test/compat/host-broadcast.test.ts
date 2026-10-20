@@ -213,7 +213,8 @@ describe("host route moments (#193 S1)", () => {
     const body = await listing.json<unknown[]>();
     expect(body.some((entry) => hostSchema.parse(entry).id === hostId)).toBe(false);
 
-    const row = await env.DB.prepare("SELECT destroyed_at FROM hosts WHERE id = ?")
+    // T5 (#597): the tombstone the delete face writes lives on DB_V2.
+    const row = await env.DB_V2.prepare("SELECT destroyed_at FROM hosts WHERE id = ?")
       .bind(hostId)
       .first<{ destroyed_at: number | null }>();
     expect(row?.destroyed_at).not.toBeNull();

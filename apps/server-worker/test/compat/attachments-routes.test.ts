@@ -21,13 +21,24 @@ function apiFetch(path: string, init?: RequestInit): Promise<Response> {
 }
 
 async function seedProject(): Promise<string> {
+  // T5 (#597): the create-time source rides the ProjectsRepo on DB_V2, whose
+  // project_sources.host_id FK restores bb's referential discipline the
+  // legacy raw INSERT (FK-less) silently ignored — so the fixture now seeds
+  // the machine the source anchors on, exactly as bb's schema requires.
+  const hostId = `host_${Math.random().toString(36).slice(2, 8)}`;
+  const now = Date.now();
+  await env.DB_V2.prepare(
+    "INSERT INTO hosts (id, name, type, connect_machine_id, max_permission_mode, destroyed_at, last_seen_at, last_rejected_protocol_version, created_at, updated_at) VALUES (?, ?, 'persistent', NULL, 'full', NULL, NULL, NULL, ?, ?)",
+  )
+    .bind(hostId, hostId, now, now)
+    .run();
   const response = await apiFetch("/api/v1/projects", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       name: `attachments-${Math.random().toString(36).slice(2, 8)}`,
       source: {
-        hostId: `host_${Math.random().toString(36).slice(2, 8)}`,
+        hostId,
         type: "local_path",
         path: "/tmp/attachments-lane",
       },

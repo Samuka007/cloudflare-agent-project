@@ -25,10 +25,13 @@
     {
       // #62 liveness projection: the per-host daemon service DO stamps the
       // registry's last_seen_at on daemon heartbeats (bb markHostSeen).
-      // Same database as DB; the second binding keeps the DO seam explicit.
+      // T5 (#597) reader cutover: same database as DB_V2 — the drizzle-era
+      // registry the hosts face and the #49 attach bridge serve. The second
+      // binding keeps the DO seam explicit (T7 folds markHostSeen into the
+      // typed control-plane client).
       "binding": "HOSTS_DB",
-      "database_name": "cap-control-plane",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_name": "cap-control-plane-v2",
+      "database_id": "00000000-0000-0000-0000-000000000002",
     },
     {
       // W6 db campaign (#591/#594): the drizzle-era control plane
