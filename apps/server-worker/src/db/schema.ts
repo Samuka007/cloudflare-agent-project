@@ -115,7 +115,9 @@ export const projectSources = sqliteTable(
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
-    type: text("type").notNull().default("local_path"),
+    // $type<> is compile-time only (no DDL bytes, no ledger migration): the
+    // repo layer types vocabulary columns back onto the domain unions (header).
+    type: text("type").$type<"local_path">().notNull().default("local_path"),
     // No cascade: hosts are tombstoned, never hard-deleted (see header).
     hostId: text("host_id")
       .notNull()
@@ -188,19 +190,15 @@ export const threads = sqliteTable(
       onDelete: "set null",
     }),
     status: text("status", { enum: threadStatusValues }).notNull().default("starting"),
-    parentThreadId: text("parent_thread_id").references(
-      (): AnySQLiteColumn => threads.id,
-      { onDelete: "set null" },
-    ),
-    sourceThreadId: text("source_thread_id").references(
-      (): AnySQLiteColumn => threads.id,
-      { onDelete: "set null" },
-    ),
+    parentThreadId: text("parent_thread_id").references((): AnySQLiteColumn => threads.id, {
+      onDelete: "set null",
+    }),
+    sourceThreadId: text("source_thread_id").references((): AnySQLiteColumn => threads.id, {
+      onDelete: "set null",
+    }),
     originKind: text("origin_kind", { enum: threadOriginKindValues }),
     originPluginId: text("origin_plugin_id"),
-    visibility: text("visibility", { enum: threadVisibilityValues })
-      .notNull()
-      .default("visible"),
+    visibility: text("visibility", { enum: threadVisibilityValues }).notNull().default("visible"),
     // ── pending badge fields (the pending_interactions mirror table's grave
     //    marker). pendingSince = createdAt of the earliest unresolved
     //    interaction; NULL = nothing pending (badge off, age signal on).
@@ -220,12 +218,7 @@ export const threads = sqliteTable(
   },
   (t) => [
     index("threads_project_updated_idx").on(t.projectId, t.updatedAt),
-    index("threads_project_archived_deleted_idx").on(
-      t.projectId,
-      t.archivedAt,
-      t.deletedAt,
-      t.id,
-    ),
+    index("threads_project_archived_deleted_idx").on(t.projectId, t.archivedAt, t.deletedAt, t.id),
     // The pinned block's sort key is CASE-scoped (#337 ruling): the partial
     // index only covers pinned rows.
     index("threads_pin_sort_idx")
@@ -235,12 +228,7 @@ export const threads = sqliteTable(
     index("threads_environment_idx").on(t.environmentId),
     index("threads_parent_idx").on(t.parentThreadId),
     index("threads_source_origin_idx").on(t.sourceThreadId, t.originKind),
-    index("threads_section_archived_deleted_idx").on(
-      t.sectionId,
-      t.archivedAt,
-      t.deletedAt,
-      t.id,
-    ),
+    index("threads_section_archived_deleted_idx").on(t.sectionId, t.archivedAt, t.deletedAt, t.id),
     index("threads_archived_status_idx").on(t.archivedAt, t.status),
   ],
 );
@@ -285,9 +273,7 @@ export const environments = sqliteTable(
     workspaceProvisionType: text("workspace_provision_type", {
       enum: workspaceProvisionTypeValues,
     }).notNull(),
-    status: text("status", { enum: environmentStatusValues })
-      .notNull()
-      .default("provisioning"),
+    status: text("status", { enum: environmentStatusValues }).notNull().default("provisioning"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -332,9 +318,7 @@ export const settingsApp = sqliteTable(
     id: text("id").primaryKey(), // always 'app'
     // app_settings booleans
     caffeinate: integer("caffeinate", { mode: "boolean" }).notNull().default(false),
-    showKeyboardHints: integer("show_keyboard_hints", { mode: "boolean" })
-      .notNull()
-      .default(true),
+    showKeyboardHints: integer("show_keyboard_hints", { mode: "boolean" }).notNull().default(true),
     steerActiveThreadOnEnter: integer("steer_active_thread_on_enter", { mode: "boolean" })
       .notNull()
       .default(false),
