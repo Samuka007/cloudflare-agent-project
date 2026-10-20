@@ -31,22 +31,13 @@
       "database_id": "4e823d64-cc93-4922-b576-ec1a455c02aa",
     },
     {
-      // #62 liveness projection: daemon heartbeats stamp hosts.last_seen_at
-      // (bb markHostSeen). T5 (#597) reader cutover: same database as DB_V2 —
-      // the drizzle-era registry the hosts face serves; explicit DO seam
-      // binding (T7 folds markHostSeen into the typed client).
-      "binding": "HOSTS_DB",
-      "database_name": "cap-control-plane-v2",
-      "database_id": "d112159b-bcba-411c-821e-28342314174b",
-    },
-    {
       // W6 db campaign (#591/#594): the drizzle-era control plane —
       // src/db/schema.ts → drizzle-kit ledger (drizzle/) → `wrangler d1
       // migrations apply DB_V2 --remote` in scripts/deploy-staging.sh (the
       // d1_migrations table is the only apply record; nothing replays).
       // EXPAND phase: this database is apply-only until the reader-cutover
       // tickets repoint the repositories; the legacy cap-control-plane
-      // database (DB/HOSTS_DB) and its 14-file replay chain stay untouched.
+      // database (DB) and its 14-file replay chain stay untouched.
       "binding": "DB_V2",
       "database_name": "cap-control-plane-v2",
       "database_id": "d112159b-bcba-411c-821e-28342314174b",
@@ -61,6 +52,18 @@
       { "name": "DAEMON_SERVICE", "class_name": "DaemonServiceDO" },
     ],
   },
+  "services": [
+    {
+      // T7 #599: the ControlPlane typed RPC face — self service binding to
+      // this worker's `control_plane` named entrypoint (public traffic
+      // cannot reach a named entrypoint; the binding IS the capability).
+      // The daemon service DO's liveness projection rides it; the retired
+      // HOSTS_DB D1 binding needed no replacement secret.
+      "binding": "CONTROL_PLANE",
+      "service": "cap-server-staging",
+      "entrypoint": "control_plane",
+    },
+  ],
   "migrations": [
     {
       "tag": "v1",

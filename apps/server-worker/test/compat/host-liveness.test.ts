@@ -3,7 +3,9 @@ import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate";
 import { hostSchema } from "../../src/contract/domain/host";
 import type { Host } from "../../src/contract/domain/host";
-import { LIVENESS_PROJECTION_INTERVAL_MS } from "@cap/daemon-service";
+// T7 #599: the throttle is the server-side policy now (the stamp rides the
+// CONTROL_PLANE binding; the constant moved with it).
+import { LIVENESS_PROJECTION_INTERVAL_MS } from "../../src/control-plane/registry";
 import { BASE, apiGet, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers";
 
 /**

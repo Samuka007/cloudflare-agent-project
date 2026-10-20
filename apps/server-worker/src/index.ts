@@ -12,6 +12,7 @@ import { NotificationHubDO } from "./ws/hub";
 import { LeaseStoreDO } from "./leases/lease-do";
 import type { Env } from "./env";
 import { createDurableRuntime } from "./durable-runtime";
+import { control_plane } from "./control-plane/entrypoint";
 
 /**
  * Composed deployment entry: the bb SPA (Workers Assets) → server control
@@ -21,6 +22,11 @@ import { createDurableRuntime } from "./durable-runtime";
  */
 
 export { NotificationHubDO, LeaseStoreDO, DaemonServiceDO };
+// T7 #599: the named entrypoint behind the CONTROL_PLANE service binding —
+// the typed RPC face the daemon-service DO's liveness projection rides.
+// Named entrypoints are unreachable from public traffic; only binding-
+// targeted fetches land here.
+export { control_plane };
 
 /**
  * The per-thread pi-durable agent. The production subclass supplies the D1

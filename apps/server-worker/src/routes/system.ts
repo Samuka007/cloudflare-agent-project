@@ -30,6 +30,7 @@ import {
   type WebSearchStoredEngines,
   type WebSearchStoredSecrets,
 } from "@cap/provider-app";
+import { providerConfigEnvFor } from "../control-plane/server";
 import {
   systemProviderProjectionsResponseSchema,
   systemConfigResponseSchema,
@@ -500,7 +501,7 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
     // #450: the D1 provider rows ARE the directory — a panel-side provider
     // appears here on the next request (no redeploy, no reload); zero rows
     // serve the honest empty picker.
-    const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+    const overlay = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(ctx.env));
     return ctx.json(
       systemExecutionOptionsResponseSchema.parse(
         buildExecutionOptions(
@@ -517,7 +518,7 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
   // /system/providers (the D1 正本); this face still has no PUT anywhere —
   // POST /system/config/reload remains a deliberate no-op for it.
   routes.get("/system/provider-projections", async (ctx) => {
-    const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+    const overlay = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(ctx.env));
     return ctx.json(
       systemProviderProjectionsResponseSchema.parse(
         buildProviderProjections(
@@ -592,7 +593,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
 
   /** The stored truth after a write (loader shape — status included). */
   const rowAfterWrite = async (env: Env, id: string): Promise<ProviderConfigRow> => {
-    const load = await loadProviderConfigOverlay(env);
+    const load = await loadProviderConfigOverlay(providerConfigEnvFor(env));
     const row = load?.rows.find((candidate) => candidate.id === id);
     if (row === undefined) {
       throw new ApiError({
@@ -755,7 +756,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   // api=openai-images candidates; write = strict {providerId: string|null},
   // validated against the D1 正本 before the seat moves.
   const imageSourceCandidates = async (env: Env): Promise<string[]> => {
-    const overlay = await loadProviderConfigCatalogOverlay(env);
+    const overlay = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(env));
     return Object.entries(overlay?.providers ?? {})
       .filter(([, provider]) => provider.api === IMAGE_SOURCE_API_FAMILY)
       .map(([id]) => id)
@@ -815,7 +816,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   // stored value, null = clear, value = set), validated through the SAME
   // resolveWebSearchConfig path the stored-row loader runs.
   const webSearchFaceOf = async (env: Env) => {
-    const overlay = await loadProviderConfigCatalogOverlay(env);
+    const overlay = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(env));
     const ws = overlay?.webSearch;
     return systemWebSearchResponseSchema.parse({
       configured: ws?.configured ?? false,
@@ -845,7 +846,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
 
   routes.put("/system/web-search", async (ctx) => {
     const payload = await requireJsonBody(ctx, systemWebSearchPutRequestSchema);
-    const load = await loadProviderConfigOverlay(ctx.env);
+    const load = await loadProviderConfigOverlay(providerConfigEnvFor(ctx.env));
     const row = load?.webSearch;
     if (row?.decodeError) {
       throw new ApiError({
@@ -1024,7 +1025,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   routes.put("/system/compaction-settings", async (ctx) => {
     const payload = await requireJsonBody(ctx, systemCompactionSettingsPutRequestSchema);
     if (payload.remote !== null) {
-      const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+      const overlay = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(ctx.env));
       validateThreadExecutionSelection(
         { providerId: payload.remote.providerId, model: payload.remote.model },
         overlay?.providers ?? {},
@@ -1088,7 +1089,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   });
 
   routes.get("/system/providers", async (ctx) => {
-    const load = await loadProviderConfigOverlay(ctx.env);
+    const load = await loadProviderConfigOverlay(providerConfigEnvFor(ctx.env));
     // #434 (point 6): the display face lists ONLY user rows — the D1 正本.
     // The env seed's read faces are provider-projections and
     // execution-options (the #388 merged-face posture is retired with the
@@ -1098,7 +1099,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
 
   routes.get("/system/providers/:id", async (ctx) => {
     const id = requireValidId(ctx.req.param("id"));
-    const load = await loadProviderConfigOverlay(ctx.env);
+    const load = await loadProviderConfigOverlay(providerConfigEnvFor(ctx.env));
     const row = load?.rows.find((candidate) => candidate.id === id);
     if (row !== undefined) {
       return ctx.json(providerConfigRowSchema.parse(row));

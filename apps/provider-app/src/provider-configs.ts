@@ -1,10 +1,15 @@
 /**
- * #362/#450 the D1 provider-config overlay loader — the user-face
- * configuration 正本 (provider_configs table) and the ONLY directory source
- * (#450: the env MODEL_RELAY_CATALOG / MODEL_RELAY_PROVIDER_CREDENTIALS
+ * #362/#450 the provider-config overlay loader — the user-face
+ * configuration 正本 (the provider_configs aggregate) and the ONLY directory
+ * source (#450: the env MODEL_RELAY_CATALOG / MODEL_RELAY_PROVIDER_CREDENTIALS
  * seeds are deleted; there is no env branch anywhere on the provider path).
  * #434: the CRUD display face lists ONLY these user rows; the read faces
  * (execution-options / projections) project the same rows.
+ *
+ * T7 #599: the rows arrive through the ControlPlane typed client
+ * (ProviderConfigEnv.controlPlane) — the direct D1 batch is retired and the
+ * storage layout is server-private. The assembly (decode, decrypt,
+ * warnings, fingerprint) stays HERE, on the consumer side of the seam.
  *
  * Discipline carried from #350/#266:
  * - Bad rows are skipped WITH a warning — never silently deleted. The row
@@ -37,6 +42,7 @@ import {
   type WebSearchConfig,
   type WebSearchProjection,
 } from "@cap/agent-config";
+import type { AgentSnapshot, AgentWebSearchRow, ControlPlaneClient } from "@cap/protocol";
 import { decryptProviderSecret } from "./provider-config-crypto";
 
 /** One provider's decrypted credential slot (never a face). */
@@ -47,9 +53,15 @@ export interface RelayProviderCredential {
 
 export type RelayProviderCredentialMap = Record<string, RelayProviderCredential>;
 
-/** The env slice this loader reads (structural — the worker Env satisfies it). */
+/**
+ * The env slice this loader reads. T7 #599: the direct D1 handle is gone —
+ * the four provider-settings domains arrive through the ControlPlane typed
+ * client (the server-worker Local adapter in-process; the service-binding
+ * Rpc adapter when the consumers split into their own worker). Table
+ * structures are server-private storage; this interface is the ABI.
+ */
 export interface ProviderConfigEnv {
-  DB?: D1Database;
+  controlPlane?: ControlPlaneClient;
   PROVIDER_CONFIG_MASTER_KEY?: string;
 }
 
@@ -120,43 +132,6 @@ export interface ProviderConfigFullOverlay extends ProviderConfigCatalogOverlay 
   webSearchConfig: WebSearchConfig | null;
 }
 
-interface ProviderConfigDbRow {
-  id: string;
-  display_name: string | null;
-  base_url: string | null;
-  api: string | null;
-  service_tier: number | null;
-  api_key_enc: string | null;
-  models: string | null;
-  created_at: number;
-  updated_at: number;
-}
-
-/** The #449 web_search row (single-row seat, the image_source precedent). */
-interface WebSearchDbRow {
-  id: string;
-  /** JSON array of engine ids, in chain order. */
-  chain: string;
-  timeout_seconds: number | null;
-  /** JSON non-secret engine settings (searxng endpoint/categories/…). */
-  engines: string | null;
-  /** AES-GCM JSON of the secret half (brave apiKey, searxng token/basic*). */
-  secrets_enc: string | null;
-  /** JSON secret-PRESENCE map — the no-decrypt faces read presence only. */
-  secrets_meta: string | null;
-  updated_at: number;
-}
-
-/** The #502 tool_capabilities row (single-row seat, same precedent). */
-interface ToolCapabilitiesDbRow {
-  id: string;
-  /** 0/1 gates (#150): think / context_notes+new_context / checkpoint+rewind. */
-  external_thinking: number | null;
-  context_notes: number | null;
-  checkpoint: number | null;
-  updated_at: number;
-}
-
 /** Non-secret engine settings as stored (plaintext `engines` column). */
 export interface WebSearchStoredEngines {
   searxng?: {
@@ -210,8 +185,6 @@ export interface WebSearchFaceEngines {
   };
 }
 
-const WEB_SEARCH_ROW_ID = "web_search";
-const TOOL_CAPABILITIES_ROW_ID = "tool_capabilities";
 const PROVIDER_CONFIG_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** The three halves assembleWebSearch derives from the stored row. */
@@ -244,12 +217,12 @@ function parseJsonCell(label: string, raw: string | null, warnings: string[]): u
  * projection faces report it, and no defaults are silently substituted.
  */
 async function assembleWebSearch(
-  row: WebSearchDbRow | undefined,
+  row: AgentWebSearchRow | null,
   options: { decrypt: boolean },
   masterKey: string | undefined,
   warnings: string[],
 ): Promise<WebSearchAssembly> {
-  if (row === undefined) {
+  if (row === null) {
     return {
       overlay: {
         configured: false,
@@ -266,11 +239,14 @@ async function assembleWebSearch(
     return {
       overlay: { configured: true, decodeError: true, projection: null, engines: null },
       config: null,
-      fingerprint: JSON.stringify({ decodeError: true, updatedAt: row.updated_at }),
+      fingerprint: JSON.stringify({ decodeError: true, updatedAt: row.updatedAt }),
     };
   };
   let secrets: WebSearchStoredSecrets | undefined;
-  if (options.decrypt && row.secrets_enc !== null) {
+  // The wire warning keeps the stored-cell vocabulary (`secrets_enc`) — it
+  // names the persisted cell, which is server-side storage now but still
+  // exactly what an operator would go look at.
+  if (options.decrypt && row.secretsEnc !== null) {
     if (masterKey === undefined || masterKey === "") {
       warnings.push(
         "web_search config row: secrets_enc present but PROVIDER_CONFIG_MASTER_KEY is not configured — engines needing secrets will report unconfigured",
@@ -278,7 +254,7 @@ async function assembleWebSearch(
     } else {
       try {
         secrets = JSON.parse(
-          await decryptProviderSecret(masterKey, row.secrets_enc),
+          await decryptProviderSecret(masterKey, row.secretsEnc),
         ) as WebSearchStoredSecrets;
       } catch (error) {
         return fail(
@@ -296,7 +272,7 @@ async function assembleWebSearch(
   if (chain === undefined) return fail("chain is not valid JSON");
   const patch = {
     chain,
-    ...(row.timeout_seconds !== null ? { timeoutSeconds: row.timeout_seconds } : {}),
+    ...(row.timeoutSeconds !== null ? { timeoutSeconds: row.timeoutSeconds } : {}),
     engines: {
       ...(secrets?.brave?.apiKey !== undefined ? { brave: { apiKey: secrets.brave.apiKey } } : {}),
       ...(secrets?.exa?.apiKey !== undefined ? { exa: { apiKey: secrets.exa.apiKey } } : {}),
@@ -312,7 +288,7 @@ async function assembleWebSearch(
   // Presence map: the decrypt half derives it from the real secrets; the
   // catalog half reads the plaintext meta column. The "(stored)" marker is
   // presence-only — the projection emits booleans, never a value.
-  const meta = parseJsonCell("secrets_meta", row.secrets_meta, warnings) as
+  const meta = parseJsonCell("secrets_meta", row.secretsMeta, warnings) as
     WebSearchSecretsMeta | undefined;
   const faceEngines: WebSearchFaceEngines = {
     brave: {
@@ -361,7 +337,7 @@ async function assembleWebSearch(
       timeoutSeconds: config.timeoutSeconds,
       engines: storedEngines ?? {},
       secretsMeta: meta ?? {},
-      updatedAt: row.updated_at,
+      updatedAt: row.updatedAt,
     }),
   };
 }
@@ -515,67 +491,36 @@ async function readProviderConfigs(
   env: ProviderConfigEnv,
   options: { decrypt: boolean },
 ): Promise<ProviderConfigLoad | null> {
-  const db = env.DB;
-  if (db === undefined) return null;
-  // #448 the 产图源 seat rides every load so a selection flip hot-applies
-  // through the same fingerprint gate as a row edit. ONE batch round trip
-  // with the rows read — the turn-boundary refresh awaits this loader, and
-  // an extra DO event-loop yield here races the read faces (observed: the
-  // L1 send→read tests see a completed mock turn where one round trip sees
-  // an in-flight one).
-  const [imageSourceResult, rowsResult, webSearchResult, toolCapabilitiesResult] = await db.batch([
-    db.prepare("SELECT provider_id FROM image_source WHERE id = 'image_source'"),
-    db.prepare(
-      "SELECT id, display_name, base_url, api, service_tier, api_key_enc, models, created_at, updated_at FROM provider_configs ORDER BY id",
-    ),
-    db.prepare(
-      `SELECT id, chain, timeout_seconds, engines, secrets_enc, secrets_meta, updated_at
-       FROM ${WEB_SEARCH_ROW_ID} WHERE id = '${WEB_SEARCH_ROW_ID}'`,
-    ),
-    // #502 the tool-capability seat rides the same single batch (one round
-    // trip — the turn-boundary refresh awaits this loader) so a gate flip
-    // hot-applies through the same fingerprint gate as a row edit.
-    db.prepare(
-      `SELECT id, external_thinking, context_notes, checkpoint, updated_at
-       FROM ${TOOL_CAPABILITIES_ROW_ID} WHERE id = '${TOOL_CAPABILITIES_ROW_ID}'`,
-    ),
-  ] as const);
-  // The seat row's cell: narrow at the boundary (unknown → string|null).
-  const seatRow: unknown = imageSourceResult?.results[0];
-  let imageSourceProviderId: string | null = null;
-  if (typeof seatRow === "object" && seatRow !== null && "provider_id" in seatRow) {
-    const seatValue: unknown = seatRow.provider_id;
-    if (typeof seatValue === "string") imageSourceProviderId = seatValue;
-  }
-  // One boundary cast: the rows statement is the SAME typed query the
-  // pre-batch `.all<ProviderConfigDbRow>()` trusted — batch erases the
-  // per-statement generic, this restores it.
-  const result = rowsResult as { results: ProviderConfigDbRow[] };
-  // Same boundary cast as `result` — the web_search statement returns 0..1 rows.
-  const webSearchRows = webSearchResult as { results: WebSearchDbRow[] };
-  const webSearchRow = webSearchRows.results[0];
-  // Same boundary cast — the tool_capabilities statement returns 0..1 rows.
-  const toolCapabilitiesRows = toolCapabilitiesResult as { results: ToolCapabilitiesDbRow[] };
-  const toolCapabilitiesRow = toolCapabilitiesRows.results[0];
+  const client = env.controlPlane;
+  if (client === undefined) return null;
+  // T7 #599: the four provider-settings domains arrive through the typed
+  // ControlPlane face. The ONE-round-trip shape is preserved (the snapshot
+  // is a single client call — the turn-boundary refresh awaits this loader,
+  // and an extra DO event-loop yield here races the read faces: observed,
+  // the L1 send→read tests see a completed mock turn where one round trip
+  // sees an in-flight one). The decode/decrypt/warning/fingerprint pipeline
+  // below is byte-identical to the D1-batch era.
+  const snapshot: AgentSnapshot = await client.getAgentSnapshot();
+  const { imageSourceProviderId, webSearch: webSearchRow } = snapshot;
   // Absent row = the ruled omp posture (all gates off — the shared defaults,
   // one owner), never an env override; the 0/1 decode is strict (the
   // service_tier precedent).
   const toolCapabilities: ToolCapabilitiesOverlayRow =
-    toolCapabilitiesRow === undefined
+    snapshot.toolCapabilities === null
       ? { ...DEFAULT_EXPERIMENTAL_TOOL_CONFIG, configured: false }
       : {
           configured: true,
-          externalThinking: toolCapabilitiesRow.external_thinking === 1,
-          contextNotes: toolCapabilitiesRow.context_notes === 1,
-          checkpoint: toolCapabilitiesRow.checkpoint === 1,
+          externalThinking: snapshot.toolCapabilities.externalThinking,
+          contextNotes: snapshot.toolCapabilities.contextNotes,
+          checkpoint: snapshot.toolCapabilities.checkpoint,
         };
   const rows: ProviderConfigRecord[] = [];
   const providers: Record<string, RelayCatalogProvider> = {};
   const credentials: RelayProviderCredentialMap = {};
   const warnings: string[] = [];
   let maxUpdatedAt = 0;
-  for (const row of result.results) {
-    maxUpdatedAt = Math.max(maxUpdatedAt, row.updated_at);
+  for (const row of snapshot.providers) {
+    maxUpdatedAt = Math.max(maxUpdatedAt, row.updatedAt);
     const rowWarnings: string[] = [];
     const declaredApi = row.api !== null && row.api !== "" ? row.api : null;
     // #485: the row-level api seat IS the model family (see decodeRowModels).
@@ -605,7 +550,7 @@ async function readProviderConfigs(
       decodedModels = decoded.models;
       rowWarnings.push(...decoded.warnings);
     }
-    if (options.decrypt && row.api_key_enc !== null) {
+    if (options.decrypt && row.apiKeyEnc !== null) {
       if (env.PROVIDER_CONFIG_MASTER_KEY === undefined || env.PROVIDER_CONFIG_MASTER_KEY === "") {
         rowWarnings.push(
           skipWarning(
@@ -616,8 +561,8 @@ async function readProviderConfigs(
       } else {
         try {
           credentials[row.id] = {
-            apiKey: await decryptProviderSecret(env.PROVIDER_CONFIG_MASTER_KEY, row.api_key_enc),
-            ...(row.base_url !== null && row.base_url !== "" ? { baseUrl: row.base_url } : {}),
+            apiKey: await decryptProviderSecret(env.PROVIDER_CONFIG_MASTER_KEY, row.apiKeyEnc),
+            ...(row.baseUrl !== null && row.baseUrl !== "" ? { baseUrl: row.baseUrl } : {}),
           };
         } catch (error) {
           rowWarnings.push(
@@ -648,9 +593,9 @@ async function readProviderConfigs(
     }
     if (dispatchable && (declaredApi === null || isAdmittedProviderApi(declaredApi))) {
       const shell = {
-        ...(row.display_name !== null ? { displayName: row.display_name } : {}),
-        ...(row.base_url !== null && row.base_url !== "" ? { baseUrl: row.base_url } : {}),
-        ...(row.service_tier === 1 ? { serviceTier: true } : {}),
+        ...(row.displayName !== null ? { displayName: row.displayName } : {}),
+        ...(row.baseUrl !== null && row.baseUrl !== "" ? { baseUrl: row.baseUrl } : {}),
+        ...(row.serviceTier ? { serviceTier: true } : {}),
       };
       // The decode above resolved the SAME family from the same declaredApi,
       // so each branch's cast is the family pairing re-asserted for the type.
@@ -666,19 +611,19 @@ async function readProviderConfigs(
     warnings.push(...rowWarnings);
     rows.push({
       id: row.id,
-      displayName: row.display_name,
-      baseUrl: row.base_url,
+      displayName: row.displayName,
+      baseUrl: row.baseUrl,
       api: row.api,
-      serviceTier: row.service_tier === 1,
+      serviceTier: row.serviceTier,
       // The contract face is an array; a row whose models column never
       // parsed keeps its raw value visible inside a one-element wrapper.
       models: Array.isArray(models) ? models : [models],
-      hasApiKey: row.api_key_enc !== null,
+      hasApiKey: row.apiKeyEnc !== null,
       status: rowWarnings.length > 0 ? "warning" : "ok",
       warnings: rowWarnings,
       dispatchable,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
     });
   }
   const webSearch = await assembleWebSearch(

@@ -2,11 +2,17 @@ import { beforeAll, afterEach, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate";
 import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
+import { providerConfigEnvFor } from "../../src/control-plane/server";
 import {
   systemConfigResponseSchema,
   systemToolCapabilitiesResponseSchema,
   type SystemToolCapabilitiesResponse,
 } from "../../src/contract/api/system";
+import type { Env } from "../../src/env";
+
+/** The rig env vs src Env: only the DO-namespace generics differ; the
+ * bindings are the same objects (thread-suspension-face.test.ts precedent). */
+const appEnv = env as unknown as Env;
 
 /**
  * #502 the experimental tool-capability write face (the D1 `tool_capabilities`
@@ -105,7 +111,7 @@ describe("GET /api/v1/system/tool-capabilities", () => {
 
 describe("PUT /api/v1/system/tool-capabilities", () => {
   it("replaces the seat; GET, the loader overlay and /system/config re-read the truth", async () => {
-    const before = await loadProviderConfigCatalogOverlay(env);
+    const before = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(appEnv));
     expect(before?.toolCapabilities).toEqual({
       configured: false,
       externalThinking: false,
@@ -132,7 +138,7 @@ describe("PUT /api/v1/system/tool-capabilities", () => {
     });
     // The loader overlay (the agent DO's input) carries the seat and a NEW
     // content fingerprint — the flip hot-applies at the next turn boundary.
-    const after = await loadProviderConfigCatalogOverlay(env);
+    const after = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(appEnv));
     expect(after?.toolCapabilities).toEqual(put.face);
     expect(after?.fingerprint).not.toBe(before?.fingerprint);
     // The featureFlags projection (GET /system/config) resolves the seat.

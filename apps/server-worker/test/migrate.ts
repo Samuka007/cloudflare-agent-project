@@ -79,6 +79,11 @@ export function ensureMigrations(): Promise<void> {
         await env.DB.prepare(statement).run();
       }
     }
+    // W6 db campaign (#591): the drizzle-era repositories (threads badge
+    // reads in listThreads, #600) hit env.DB_V2 from inside the app, so the
+    // shared rig must bring the ledger database up alongside the legacy
+    // chain — order-independent across suite files (the #609 two-branch
+    // ledger test already tolerates any first-applier).
     await applyD1Migrations(env.DB_V2);
   })();
   return applied;
