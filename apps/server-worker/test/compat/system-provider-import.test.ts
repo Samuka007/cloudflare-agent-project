@@ -12,7 +12,9 @@ import {
 
 /**
  * Ticket #364: the omp models.yml paste-import route
- * (POST /api/v1/system/providers/import-models-yml). Acceptance faces:
+ * (POST /api/v1/system/providers/import-models-yml; T6 re-point — the rows
+ * land in the drizzle-era database through the T4 repositories). Acceptance
+ * faces:
  *
  * - Paste → provider rows created through the SAME insert path as the CRUD
  *   face, with #350 zod-validated model rows; bad model rows skip with
@@ -63,7 +65,7 @@ async function listProviders(): Promise<ProviderRow[]> {
 }
 
 async function rawD1Row(id: string): Promise<{ api_key_enc: string | null } | null> {
-  return env.DB.prepare("SELECT api_key_enc FROM provider_configs WHERE id = ?")
+  return env.DB_V2.prepare("SELECT api_key_enc FROM provider_configs WHERE id = ?")
     .bind(id)
     .first<{ api_key_enc: string | null }>();
 }
@@ -71,7 +73,7 @@ async function rawD1Row(id: string): Promise<{ api_key_enc: string | null } | nu
 afterEach(async () => {
   // The suite shares one worker (isolate:false): a leftover D1 row would
   // leak onto later files' execution-options faces.
-  await env.DB.prepare("DELETE FROM provider_configs").run();
+  await env.DB_V2.prepare("DELETE FROM provider_configs").run();
 });
 
 describe("#364 import face", () => {

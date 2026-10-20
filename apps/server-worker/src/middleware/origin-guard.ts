@@ -1,7 +1,8 @@
 import type { Context, Next } from "hono";
+import type { AppEnv } from "../app-types";
 import { ApiError } from "../shared/api-error";
 import { parseOriginLike } from "../contract/domain/origin-allowlist";
-import { getOriginAllowlist, type OriginAllowlistEnv } from "../db/origin-allowlist";
+import { createSettingsRepository } from "../db/repositories/settings";
 
 /**
  * Origin guard, ported from bb apps/server/src/browser-request-guard.ts
@@ -79,16 +80,18 @@ const GUARD_EXEMPT_PREFIXES: string[] = [];
 
 // Inferred Promise<Response | void> — see access.ts for why this is not
 // annotated.
-export async function originGuard(ctx: Context, next: Next) {
+export async function originGuard(ctx: Context<AppEnv>, next: Next) {
   const origin = ctx.req.header("origin");
   if (
     origin !== undefined &&
     !GUARD_EXEMPT_PREFIXES.some((prefix) => ctx.req.path.startsWith(prefix))
   ) {
-    // #506: ONE D1 read per Origin-carrying request, stashed on the context
+    // #506: ONE allowlist read per Origin-carrying request, stashed on the context
     // so the CORS leg shares the same bytes (the provider-overlay loaders'
     // request-boundary discipline — never a second query for the same row).
-    const allowlist = await getOriginAllowlist(ctx.env as OriginAllowlistEnv);
+    // T6 (#598): the seat lives in the drizzle-era `settings_app` row — the
+    // same database the /system/origin-allowlist write face lands in.
+    const allowlist = await createSettingsRepository(ctx.env.DB_V2).getOriginAllowlist();
     ctx.set("originAllowlist", allowlist);
     const trusted = isTrustedOrigin(origin, allowlist, requestTargets(ctx));
     if (!trusted) {

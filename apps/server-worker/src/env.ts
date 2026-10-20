@@ -5,6 +5,14 @@
 export interface Env {
   /** Control-plane tables (threads, projects, sections, hosts, settings). */
   DB: D1Database;
+  /**
+   * The drizzle-era control plane (W6 db campaign, #591/#594):
+   * src/db/schema.ts → drizzle/ ledger, applied by the CI deploy hook. The
+   * reader-cutover tickets (T5/T6) serve their faces from here through the
+   * repositories; the legacy DB binding keeps serving the not-yet-cut-over
+   * readers until the campaign retires it (T9).
+   */
+  DB_V2: D1Database;
   /** Public WS fan-out + event waiters + disconnect grace. */
   HUB: DurableObjectNamespace;
   /** Preview/file leases with alarm-based TTL eviction (bb previewLeases). */

@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { applyD1Migrations } from "./migrations-ledger";
 import controlPlaneSql from "../migrations/0001_control_plane.sql";
 import environmentsSql from "../migrations/0002_environments.sql";
 import providerConfigsSql from "../migrations/0003_provider_configs.sql";
@@ -62,6 +63,12 @@ export function splitMigrationStatements(file: string): string[] {
  * storage scope, so migrations applied there are invisible to tests).
  * Miniflare 5 removed the per-binding `migrations` option the old
  * pool-workers pattern relied on.
+ *
+ * T6 (#598): the /system faces read the drizzle-era control plane
+ * (env.DB_V2) through the repositories, so the rig bootstraps BOTH schemas —
+ * the legacy replay chain above AND the drizzle ledger (apply-once, the
+ * same semantics the CI deploy hook runs). Every suite's beforeAll
+ * (ensureMigrations) can then hit either storage era.
  */
 let applied: Promise<void> | null = null;
 
@@ -72,6 +79,7 @@ export function ensureMigrations(): Promise<void> {
         await env.DB.prepare(statement).run();
       }
     }
+    await applyD1Migrations(env.DB_V2);
   })();
   return applied;
 }

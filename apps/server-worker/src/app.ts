@@ -41,7 +41,7 @@ export function createApp(_env: Env): Hono<AppEnv> {
   );
 
   // Guarded surface: /api/v1/* + /ws (bb guards both, server.ts:490-499).
-  app.use("/api/v1/*", async (ctx: Context, next: Next) => {
+  app.use("/api/v1/*", async (ctx: Context<AppEnv>, next: Next) => {
     await originGuard(ctx, next);
   });
   app.use("/api/v1/*", async (ctx: Context, next: Next) => {
@@ -64,7 +64,7 @@ export function createApp(_env: Env): Hono<AppEnv> {
       },
     }),
   );
-  app.use("/ws", async (ctx: Context, next: Next) => {
+  app.use("/ws", async (ctx: Context<AppEnv>, next: Next) => {
     await originGuard(ctx, next);
   });
   app.use("/ws", async (ctx: Context, next: Next) => {

@@ -69,6 +69,24 @@ export interface ProviderConfigMutationContext {
   api: string | null;
 }
 
+/**
+ * One stored row in seam-neutral shape (the T6 route faces' list read): the
+ * models JSON stays RAW text (a corrupt cell rides the CRUD face unrepaired —
+ * skip-with-warning), and the credential crosses as PRESENCE only — zero
+ * ciphertext leaves this seam.
+ */
+export interface ProviderConfigStoredRow {
+  id: string;
+  displayName: string | null;
+  baseUrl: string | null;
+  api: string | null;
+  serviceTier: boolean;
+  hasCredential: boolean;
+  models: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // ─── Interface ───────────────────────────────────────────────────────────────
 
 export interface ProviderConfigsRepository {
@@ -91,6 +109,12 @@ export interface ProviderConfigsRepository {
     credential: CredentialUpdate,
   ): Promise<void>;
   delete(id: string): Promise<void>;
+  /**
+   * Every stored row in (id) order — the CRUD display face's input (legacy
+   * `SELECT … FROM provider_configs ORDER BY id` parity). Zero ciphertext:
+   * `hasCredential` presence only.
+   */
+  list(): Promise<ProviderConfigStoredRow[]>;
   /**
    * The stored credential, decrypted for wire use (test-connection). Null
    * when the row has no key or the master key is not configured. The
@@ -216,6 +240,21 @@ function buildProviderConfigsRepository(
 
     async delete(id): Promise<void> {
       await db.delete(providerConfigs).where(eq(providerConfigs.id, id)).run();
+    },
+
+    async list(): Promise<ProviderConfigStoredRow[]> {
+      const rows = await db.select().from(providerConfigs).orderBy(providerConfigs.id).all();
+      return rows.map((row) => ({
+        id: row.id,
+        displayName: row.displayName,
+        baseUrl: row.baseUrl,
+        api: row.api,
+        serviceTier: row.serviceTier,
+        hasCredential: row.apiKeyEnc !== null,
+        models: row.models,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      }));
     },
 
     async readSecret(id): Promise<string | null> {

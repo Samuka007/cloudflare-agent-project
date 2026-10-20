@@ -477,12 +477,18 @@ function buildSettingsRepository(
         return { configured: false, mode: DEFAULT_PERMISSION_MODE };
       }
       const raw = row.permissionMode;
+      // Column-scoped configured bit (legacy table-presence parity, the
+      // web-search/tool-gate halves' discipline): the collapsed row is
+      // SHARED with the sibling agent domains — their writes must never
+      // report the permission posture as configured (surfaced by the T6
+      // re-point; a row-presence key would flip the bit on any sibling
+      // write). NULL = the ruled default, never written.
       // Strict vocabulary decode (the #502 seat precedent): a hand-edited
       // value outside the enum is not a posture — it falls back to the ruled
       // default while `configured` stays true (the value IS stored).
       const mode =
         permissionModeValues.find((candidate) => candidate === raw) ?? DEFAULT_PERMISSION_MODE;
-      return { configured: true, mode };
+      return { configured: raw !== null, mode };
     },
 
     async setPermissionMode(mode: PermissionMode): Promise<void> {

@@ -19,8 +19,6 @@ import type { WebSearchEngineProjection } from "@cap/agent-config";
 import {
   isValidProviderConfigId,
   ModelsYmlImportError,
-  loadProviderConfigCatalogOverlay,
-  loadProviderConfigOverlay,
   parseModelsYml,
   resolveOverlayCatalog,
   type ProviderConfigCatalogOverlay,
@@ -75,27 +73,17 @@ import {
   faviconColorPreferenceSchema,
 } from "../contract/domain/app-theme";
 import { DEFAULT_APP_KEYBINDINGS } from "../services/system/app-keybindings";
+import { applyAppKeybindingOverrides } from "../contract/domain/app-keybindings";
 import { defaultFeatureFlags } from "../contract/domain/feature-flags";
 import { ApiError, parseOr422, requireJsonBody } from "../shared/route-utils";
 import { BB_DATA_DIR_LABEL } from "../shared/bb-display";
 import {
-  deleteProviderConfig,
-  getProviderConfigMutationContext,
-  getProviderConfigTarget,
-  insertProviderConfig,
-  patchProviderConfig,
-  readProviderConfigSecret,
-  replaceProviderConfig,
+  createProviderConfigsRepository,
+  createSettingsRepository,
   type CredentialUpdate,
   type ProviderConfigWriteFields,
-} from "../db/provider-configs";
-import { getImageSourceProviderId, setImageSourceProviderId } from "../db/image-source";
-import { getPermissionMode, setPermissionMode } from "../db/permission-mode";
-import { getToolCapabilities, setToolCapabilities } from "../db/tool-capabilities";
-import { getCompactionSettings, setCompactionSettings } from "../db/compaction-settings";
-import { getOriginAllowlist, setOriginAllowlist } from "../db/origin-allowlist";
+} from "../db/repositories";
 import { canonicalOriginAllowlist } from "../contract/domain/origin-allowlist";
-import { setWebSearchConfig, webSearchHasSecrets } from "../db/web-search";
 import {
   discoverProviderModelsEnriched,
   probeProviderConnection,
@@ -103,17 +91,8 @@ import {
 import { consumeProbeSlot } from "../services/probe-rate-limit";
 import { resolvePrimaryHostId } from "../services/host-records";
 import { validateThreadExecutionSelection } from "../services/execution-selection";
-import {
-  getAppSettingsRow,
-  getExperiments,
-  getKeybindingOverrides,
-  setAppSettings,
-  setExperiments,
-  setStoredAppearance,
-  getStoredAppearance,
-  applyAppKeybindingOverrides,
-  toAppSettings,
-} from "../db/settings";
+import { webSearchHasSecrets } from "../db/repositories/settings";
+import { loadProviderConfigFaces } from "../services/provider-config-faces";
 import { listStoredThreadModelOverrides } from "../db/control-plane";
 import type { AppEnv, Env } from "../app-types";
 
@@ -363,18 +342,21 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
 
   routes.get("/system/config", async (ctx) => {
     const url = new URL(ctx.req.url);
-    const settingsRow = await getAppSettingsRow(ctx.env);
-    const overrides = await getKeybindingOverrides(ctx.env);
-    const experiments = await getExperiments(ctx.env);
-    const stored = await getStoredAppearance(ctx.env);
+    const settings = createSettingsRepository(ctx.env.DB_V2);
+    const [generalSettings, overrides, experiments, stored, toolCapabilities] = await Promise.all([
+      settings.getAppSettings(),
+      settings.getKeybindingOverrides(),
+      settings.getExperiments(),
+      settings.getStoredAppearance(),
+      settings.getToolCapabilities(),
+    ]);
     const draft = buildSystemConfig(url);
-    // #502: the tool-gate vocabulary projects the D1 `tool_capabilities`
+    // #502: the tool-gate vocabulary projects the drizzle `settings_agent`
     // seat (the row is the single 正本 — an absent row is the all-off omp
     // posture). Read-time resolution, the same posture as the rest of the
     // config face's D1 legs.
-    const toolCapabilities = await getToolCapabilities(ctx.env);
     const candidate = {
-      generalSettings: toAppSettings(settingsRow),
+      generalSettings,
       keybindings: applyAppKeybindingOverrides(DEFAULT_APP_KEYBINDINGS, overrides),
       defaultKeybindings: DEFAULT_APP_KEYBINDINGS,
       keybindingOverrides: overrides,
@@ -413,30 +395,26 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
   // bb mounts settings under /api/v1/settings/* (public-api.ts:1349-1382).
   routes.put("/settings/general", async (ctx) => {
     const payload = await requireJsonBody(ctx, appSettingsSchema);
-    await setAppSettings(ctx.env, payload);
+    const settings = createSettingsRepository(ctx.env.DB_V2);
+    await settings.setAppSettings(payload);
     await hub(ctx.env).notifySystem(["config-changed"]);
-    const row = await getAppSettingsRow(ctx.env);
-    return ctx.json(toAppSettings(row));
+    return ctx.json(await settings.getAppSettings());
   });
 
   routes.put("/settings/keyboard", async (ctx) => {
     const payload = await requireJsonBody(ctx, appKeybindingOverridesSchema);
-    await ctx.env.DB.prepare(
-      `INSERT INTO app_settings (id, keybinding_overrides, updated_at) VALUES ('app_settings', ?, ?)
-       ON CONFLICT(id) DO UPDATE SET keybinding_overrides = excluded.keybinding_overrides, updated_at = excluded.updated_at`,
-    )
-      .bind(JSON.stringify(payload), Date.now())
-      .run();
+    const settings = createSettingsRepository(ctx.env.DB_V2);
+    await settings.setKeybindingOverrides(payload);
     await hub(ctx.env).notifySystem(["config-changed"]);
-    const row = await getAppSettingsRow(ctx.env);
-    return ctx.json(toAppSettings(row));
+    return ctx.json(await settings.getAppSettings());
   });
 
   routes.put("/settings/experiments", async (ctx) => {
     const payload = await requireJsonBody(ctx, experimentsSchema);
-    await setExperiments(ctx.env, payload);
+    const settings = createSettingsRepository(ctx.env.DB_V2);
+    await settings.setExperiments(payload);
     await hub(ctx.env).notifySystem(["config-changed"]);
-    return ctx.json(await getExperiments(ctx.env));
+    return ctx.json(await settings.getExperiments());
   });
 
   routes.put("/settings/appearance", async (ctx) => {
@@ -448,14 +426,15 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
         message: "Unknown theme id",
       });
     }
-    const stored = await getStoredAppearance(ctx.env);
+    const settings = createSettingsRepository(ctx.env.DB_V2);
+    const stored = await settings.getStoredAppearance();
     const fallbackThemeId = builtInThemeIdSchema.options[0] ?? defaultAppTheme.themeId;
     const themeId = payload.themeId ?? stored?.themeId ?? fallbackThemeId;
     const faviconColor =
       payload.faviconColor !== undefined ? payload.faviconColor : (stored?.faviconColor ?? null);
-    await setStoredAppearance(ctx.env, { themeId, faviconColor });
+    await settings.setStoredAppearance({ themeId, faviconColor });
     await hub(ctx.env).notifySystem(["config-changed"]);
-    return ctx.json(toAppSettings(await getAppSettingsRow(ctx.env)));
+    return ctx.json(await settings.getAppSettings());
   });
 
   routes.post("/system/config/reload", (ctx) => {
@@ -491,11 +470,11 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
     // #450: the D1 provider rows ARE the directory — a panel-side provider
     // appears here on the next request (no redeploy, no reload); zero rows
     // serve the honest empty picker.
-    const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+    const faces = await loadProviderConfigFaces(ctx.env);
     return ctx.json(
       systemExecutionOptionsResponseSchema.parse(
         buildExecutionOptions(
-          overlay?.providers ?? {},
+          faces.catalog.providers,
           projectStoredOverrideRows(
             await listStoredThreadModelOverrides(ctx.env, query.providerId),
           ),
@@ -508,22 +487,9 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
   // /system/providers (the D1 正本); this face still has no PUT anywhere —
   // POST /system/config/reload remains a deliberate no-op for it.
   routes.get("/system/provider-projections", async (ctx) => {
-    const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+    const faces = await loadProviderConfigFaces(ctx.env);
     return ctx.json(
-      systemProviderProjectionsResponseSchema.parse(
-        buildProviderProjections(
-          overlay ?? {
-            providers: {},
-            imageSourceProviderId: null,
-            webSearch: {
-              configured: false,
-              decodeError: false,
-              projection: null,
-              engines: null,
-            },
-          },
-        ),
-      ),
+      systemProviderProjectionsResponseSchema.parse(buildProviderProjections(faces.catalog)),
     );
   });
 
@@ -581,10 +547,14 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     models: modelsOverride ?? payload.models ?? [],
   });
 
-  /** The stored truth after a write (loader shape — status included). */
+  /**
+   * The stored truth after a write (T4 repository + shared assembler shape —
+   * status included). The drizzle-era successor of the loader re-read (#598):
+   * the write landed in DB_V2, so the re-read comes from the same database.
+   */
   const rowAfterWrite = async (env: Env, id: string): Promise<ProviderConfigRow> => {
-    const load = await loadProviderConfigOverlay(env);
-    const row = load?.rows.find((candidate) => candidate.id === id);
+    const load = await loadProviderConfigFaces(env);
+    const row = load.rows.find((candidate) => candidate.id === id);
     if (row === undefined) {
       throw new ApiError({
         status: 500,
@@ -746,17 +716,18 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   // api=openai-images candidates; write = strict {providerId: string|null},
   // validated against the D1 正本 before the seat moves.
   const imageSourceCandidates = async (env: Env): Promise<string[]> => {
-    const overlay = await loadProviderConfigCatalogOverlay(env);
-    return Object.entries(overlay?.providers ?? {})
+    const faces = await loadProviderConfigFaces(env);
+    return Object.entries(faces.catalog.providers)
       .filter(([, provider]) => provider.api === IMAGE_SOURCE_API_FAMILY)
       .map(([id]) => id)
       .sort();
   };
 
   routes.get("/system/image-source", async (ctx) => {
+    const settings = createSettingsRepository(ctx.env.DB_V2);
     return ctx.json(
       systemImageSourceResponseSchema.parse({
-        providerId: await getImageSourceProviderId(ctx.env),
+        providerId: await settings.getImageSourceProviderId(),
         candidates: await imageSourceCandidates(ctx.env),
       }),
     );
@@ -766,7 +737,10 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     const payload = await requireJsonBody(ctx, systemImageSourcePutRequestSchema);
     if (payload.providerId !== null) {
       const id = requireValidId(payload.providerId);
-      const target = await getProviderConfigTarget(ctx.env, id);
+      const target = await createProviderConfigsRepository(
+        ctx.env.DB_V2,
+        ctx.env.PROVIDER_CONFIG_MASTER_KEY,
+      ).getTarget(id);
       if (target === null) {
         throw new ApiError({
           status: 404,
@@ -789,7 +763,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         });
       }
     }
-    await setImageSourceProviderId(ctx.env, payload.providerId);
+    await createSettingsRepository(ctx.env.DB_V2).setImageSourceProviderId(payload.providerId);
     await hub(ctx.env).notifySystem(["config-changed"]);
     return ctx.json(
       systemImageSourceResponseSchema.parse({
@@ -806,16 +780,20 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   // stored value, null = clear, value = set), validated through the SAME
   // resolveWebSearchConfig path the stored-row loader runs.
   const webSearchFaceOf = async (env: Env) => {
-    const overlay = await loadProviderConfigCatalogOverlay(env);
-    const ws = overlay?.webSearch;
+    const faces = await loadProviderConfigFaces(env);
+    // The T6 face loader's catalog always carries the webSearch half (the
+    // absent-row posture included — a non-nullish ws), but the projection
+    // and engine detail stay nullable: the loud decodeError posture serves
+    // neither.
+    const ws = faces.catalog.webSearch;
     return systemWebSearchResponseSchema.parse({
-      configured: ws?.configured ?? false,
-      decodeError: ws?.decodeError ?? false,
-      chain: ws?.projection?.chain ?? [],
-      timeoutSeconds: ws?.projection?.timeoutSeconds ?? null,
-      browserBackedEngines: ws?.projection?.browserBackedEngines ?? [...BROWSER_BACKED_ENGINES],
+      configured: ws.configured,
+      decodeError: ws.decodeError,
+      chain: ws.projection?.chain ?? [],
+      timeoutSeconds: ws.projection?.timeoutSeconds ?? null,
+      browserBackedEngines: ws.projection?.browserBackedEngines ?? [...BROWSER_BACKED_ENGINES],
       availableEngines: [...SEARCH_ENGINE_IDS],
-      engines: ws?.engines ?? {
+      engines: ws.engines ?? {
         brave: { hasApiKey: false },
         exa: { hasApiKey: false },
         searxng: {
@@ -836,9 +814,8 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
 
   routes.put("/system/web-search", async (ctx) => {
     const payload = await requireJsonBody(ctx, systemWebSearchPutRequestSchema);
-    const load = await loadProviderConfigOverlay(ctx.env);
-    const row = load?.webSearch;
-    if (row?.decodeError) {
+    const faces = await loadProviderConfigFaces(ctx.env);
+    if (faces.catalog.webSearch.decodeError) {
       throw new ApiError({
         status: 422,
         code: "web_search_row_broken",
@@ -846,33 +823,37 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
           "the stored web_search row failed to decode/decrypt — repair it in D1 before editing through this face (keep-semantics cannot read the stored values)",
       });
     }
-    const prior = load?.webSearchConfig;
-    // Tri-state merge: undefined = keep the stored value, null = clear,
-    // value = set. Cleared and unset fields collapse to absent in storage.
+    // Tri-state merge against the RAW decoded half (the T4 seam's decrypted
+    // secrets + plaintext engine cells): undefined = keep the stored value,
+    // null = clear, value = set. Cleared and unset fields collapse to absent
+    // in storage. (The loud gate above already proved the stored half
+    // resolves — raw values are the resolved ones, so the merge reads them
+    // directly instead of the loader's decrypt-half config.)
+    const prior = faces.webSearchHalf;
     const tri = (
       priorValue: string | undefined,
       next: string | null | undefined,
     ): string | undefined => (next === undefined ? priorValue : (next ?? undefined));
-    const braveApiKey = tri(prior?.engines.brave?.apiKey, payload.engines?.brave?.apiKey);
-    const exaApiKey = tri(prior?.engines.exa?.apiKey, payload.engines?.exa?.apiKey);
-    const sxToken = tri(prior?.engines.searxng?.token, payload.engines?.searxng?.token);
+    const braveApiKey = tri(prior?.secrets?.brave?.apiKey, payload.engines?.brave?.apiKey);
+    const exaApiKey = tri(prior?.secrets?.exa?.apiKey, payload.engines?.exa?.apiKey);
+    const sxToken = tri(prior?.secrets?.searxng?.token, payload.engines?.searxng?.token);
     const sxUser = tri(
-      prior?.engines.searxng?.basicUsername,
+      prior?.secrets?.searxng?.basicUsername,
       payload.engines?.searxng?.basicUsername,
     );
     const sxPass = tri(
-      prior?.engines.searxng?.basicPassword,
+      prior?.secrets?.searxng?.basicPassword,
       payload.engines?.searxng?.basicPassword,
     );
-    const sxEndpoint = tri(prior?.engines.searxng?.endpoint, payload.engines?.searxng?.endpoint);
+    const sxEndpoint = tri(prior?.engines?.searxng?.endpoint, payload.engines?.searxng?.endpoint);
     const sxCategories = tri(
-      prior?.engines.searxng?.categories,
+      prior?.engines?.searxng?.categories,
       payload.engines?.searxng?.categories,
     );
-    const sxLanguage = tri(prior?.engines.searxng?.language, payload.engines?.searxng?.language);
+    const sxLanguage = tri(prior?.engines?.searxng?.language, payload.engines?.searxng?.language);
     const sxSafesearch =
       payload.engines?.searxng?.safesearch === undefined
-        ? prior?.engines.searxng?.safesearch
+        ? prior?.engines?.searxng?.safesearch
         : (payload.engines.searxng.safesearch ?? undefined);
     const effectiveEngines = {
       ...(braveApiKey !== undefined ? { brave: { apiKey: braveApiKey } } : {}),
@@ -894,7 +875,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     try {
       effective = resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, {
         chain: payload.chain ?? prior?.chain ?? DEFAULT_WEB_SEARCH_CONFIG.chain,
-        timeoutSeconds: payload.timeoutSeconds ?? prior?.timeoutSeconds,
+        timeoutSeconds: payload.timeoutSeconds ?? prior?.timeoutSeconds ?? undefined,
         engines: effectiveEngines,
       });
     } catch (error) {
@@ -962,8 +943,10 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
           "(set the Worker secret first; credential-free engines still work)",
       });
     }
-    await setWebSearchConfig(
-      ctx.env,
+    await createSettingsRepository(
+      ctx.env.DB_V2,
+      ctx.env.PROVIDER_CONFIG_MASTER_KEY,
+    ).setWebSearchConfig(
       {
         chain: effective.chain,
         timeoutSeconds: effective.timeoutSeconds,
@@ -985,17 +968,24 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   // AGENT_DO_* gate envs are deleted). Read = the stored gates (+ whether
   // the row exists at all); write = wholesale replace of the three booleans.
   routes.get("/system/tool-capabilities", async (ctx) => {
-    return ctx.json(systemToolCapabilitiesResponseSchema.parse(await getToolCapabilities(ctx.env)));
+    return ctx.json(
+      systemToolCapabilitiesResponseSchema.parse(
+        await createSettingsRepository(ctx.env.DB_V2).getToolCapabilities(),
+      ),
+    );
   });
 
   routes.put("/system/tool-capabilities", async (ctx) => {
     const payload = await requireJsonBody(ctx, systemToolCapabilitiesPutRequestSchema);
-    await setToolCapabilities(ctx.env, payload);
+    const settings = createSettingsRepository(ctx.env.DB_V2);
+    await settings.setToolCapabilities(payload);
     // Hot-apply broadcast (#382): the seat rides the same overlay fingerprint
     // as the provider rows, so the next turn picks the gates up (the
     // image-source/web-search writes ride the same path).
     await hub(ctx.env).notifySystem(["config-changed"]);
-    return ctx.json(systemToolCapabilitiesResponseSchema.parse(await getToolCapabilities(ctx.env)));
+    return ctx.json(
+      systemToolCapabilitiesResponseSchema.parse(await settings.getToolCapabilities()),
+    );
   });
 
   // #547 the compaction-preference face: the D1 `compaction_settings`
@@ -1008,20 +998,21 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   // named errors instead of a silent mis-route. Read-per-compact, so a
   // write hot-applies without a redeploy.
   routes.get("/system/compaction-settings", async (ctx) => {
-    const state = await getCompactionSettings(ctx.env);
+    const state = await createSettingsRepository(ctx.env.DB_V2).getCompactionSettings();
     return ctx.json(systemCompactionSettingsResponseSchema.parse(state));
   });
 
   routes.put("/system/compaction-settings", async (ctx) => {
     const payload = await requireJsonBody(ctx, systemCompactionSettingsPutRequestSchema);
     if (payload.remote !== null) {
-      const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+      const faces = await loadProviderConfigFaces(ctx.env);
       validateThreadExecutionSelection(
         { providerId: payload.remote.providerId, model: payload.remote.model },
-        overlay?.providers ?? {},
+        faces.catalog.providers,
       );
     }
-    await setCompactionSettings(ctx.env, {
+    const settings = createSettingsRepository(ctx.env.DB_V2);
+    await settings.setCompactionSettings({
       methodOrder: payload.methodOrder,
       remote: payload.remote,
     });
@@ -1029,7 +1020,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     // request, so the next /compact picks the preference up (the
     // tool-capabilities write path).
     await hub(ctx.env).notifySystem(["config-changed"]);
-    const state = await getCompactionSettings(ctx.env);
+    const state = await settings.getCompactionSettings();
     return ctx.json(systemCompactionSettingsResponseSchema.parse(state));
   });
 
@@ -1044,7 +1035,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   routes.get("/system/origin-allowlist", async (ctx) => {
     return ctx.json(
       systemOriginAllowlistResponseSchema.parse({
-        origins: [...(await getOriginAllowlist(ctx.env))],
+        origins: [...(await createSettingsRepository(ctx.env.DB_V2).getOriginAllowlist())],
       }),
     );
   });
@@ -1052,7 +1043,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   routes.put("/system/origin-allowlist", async (ctx) => {
     const payload = await requireJsonBody(ctx, systemOriginAllowlistPutRequestSchema);
     const origins = canonicalOriginAllowlist(payload.origins);
-    await setOriginAllowlist(ctx.env, origins);
+    await createSettingsRepository(ctx.env.DB_V2).setOriginAllowlist(origins);
     // Hot-apply broadcast (#382): connected panels refresh their system
     // faces exactly like a settings write (system.ts:348 precedent).
     await hub(ctx.env).notifySystem(["config-changed"]);
@@ -1066,31 +1057,36 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   // default-execution-options face read the seat per request/turn, so a
   // write hot-applies without a redeploy.
   routes.get("/system/permission-mode", async (ctx) => {
-    return ctx.json(systemPermissionModeResponseSchema.parse(await getPermissionMode(ctx.env)));
+    return ctx.json(
+      systemPermissionModeResponseSchema.parse(
+        await createSettingsRepository(ctx.env.DB_V2).getPermissionMode(),
+      ),
+    );
   });
 
   routes.put("/system/permission-mode", async (ctx) => {
     const payload = await requireJsonBody(ctx, systemPermissionModePutRequestSchema);
-    await setPermissionMode(ctx.env, payload.mode);
+    const settings = createSettingsRepository(ctx.env.DB_V2);
+    await settings.setPermissionMode(payload.mode);
     // Hot-apply broadcast (#382): the seat is read per dispatch, so the next
     // turn/defaults read picks the mode up (the tool-capabilities write path).
     await hub(ctx.env).notifySystem(["config-changed"]);
-    return ctx.json(systemPermissionModeResponseSchema.parse(await getPermissionMode(ctx.env)));
+    return ctx.json(systemPermissionModeResponseSchema.parse(await settings.getPermissionMode()));
   });
 
   routes.get("/system/providers", async (ctx) => {
-    const load = await loadProviderConfigOverlay(ctx.env);
+    const faces = await loadProviderConfigFaces(ctx.env);
     // #434 (point 6): the display face lists ONLY user rows — the D1 正本.
     // The env seed's read faces are provider-projections and
     // execution-options (the #388 merged-face posture is retired with the
     // seed-row projection; the seed stays redeploy-managed).
-    return ctx.json(providerConfigsListResponseSchema.parse({ providers: load?.rows ?? [] }));
+    return ctx.json(providerConfigsListResponseSchema.parse({ providers: faces.rows }));
   });
 
   routes.get("/system/providers/:id", async (ctx) => {
     const id = requireValidId(ctx.req.param("id"));
-    const load = await loadProviderConfigOverlay(ctx.env);
-    const row = load?.rows.find((candidate) => candidate.id === id);
+    const faces = await loadProviderConfigFaces(ctx.env);
+    const row = faces.rows.find((candidate) => candidate.id === id);
     if (row !== undefined) {
       return ctx.json(providerConfigRowSchema.parse(row));
     }
@@ -1112,7 +1108,11 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         message: `invalid provider id "${payload.id}"`,
       });
     }
-    if ((await getProviderConfigTarget(ctx.env, payload.id)) !== null) {
+    const configs = createProviderConfigsRepository(
+      ctx.env.DB_V2,
+      ctx.env.PROVIDER_CONFIG_MASTER_KEY,
+    );
+    if ((await configs.getTarget(payload.id)) !== null) {
       throw new ApiError({
         status: 409,
         code: "provider_config_exists",
@@ -1125,8 +1125,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     }
     const credential = credentialOf(payload.apiKey);
     refuseKeyWithoutMasterKey(ctx.env, credential);
-    await insertProviderConfig(
-      ctx.env,
+    await configs.insert(
       payload.id,
       writeFieldsOf(payload, payload.models !== undefined ? storedModels : undefined),
       credential,
@@ -1141,7 +1140,11 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   routes.put("/system/providers/:id", async (ctx) => {
     const id = requireValidId(ctx.req.param("id"));
     const payload = await requireJsonBody(ctx, providerConfigReplaceRequestSchema);
-    const current = await getProviderConfigMutationContext(ctx.env, id);
+    const configs = createProviderConfigsRepository(
+      ctx.env.DB_V2,
+      ctx.env.PROVIDER_CONFIG_MASTER_KEY,
+    );
+    const current = await configs.getMutationContext(id);
     if (current === null) {
       throw new ApiError({
         status: 404,
@@ -1158,7 +1161,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     // PUT writes the visible face wholesale (writeFieldsOf): an absent
     // baseUrl IS the next value (null), so the gate compares that target.
     refuseCredentialReplayAcrossBaseUrl(current, payload.baseUrl ?? null, credential);
-    await replaceProviderConfig(ctx.env, id, writeFieldsOf(payload, storedPutModels), credential);
+    await configs.replace(id, writeFieldsOf(payload, storedPutModels), credential);
     await hub(ctx.env).notifySystem(["config-changed"]);
     return ctx.json(await rowAfterWrite(ctx.env, id));
   });
@@ -1167,7 +1170,11 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
     const id = requireValidId(ctx.req.param("id"));
     const payload = await requireJsonBody(ctx, providerConfigPatchRequestSchema);
     let storedModels: unknown[] = [];
-    const current = await getProviderConfigMutationContext(ctx.env, id);
+    const configs = createProviderConfigsRepository(
+      ctx.env.DB_V2,
+      ctx.env.PROVIDER_CONFIG_MASTER_KEY,
+    );
+    const current = await configs.getMutationContext(id);
     if (current === null) {
       throw new ApiError({
         status: 404,
@@ -1182,8 +1189,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
       // A family flip validates the EFFECTIVE model set — the payload's rows
       // when present, else the stored ones — so image ids cannot be stranded
       // on a freshly chat-ified row (or chat seats on a new image row).
-      const effectiveModels =
-        payload.models ?? (await getProviderConfigTarget(ctx.env, id))?.models ?? [];
+      const effectiveModels = payload.models ?? (await configs.getTarget(id))?.models ?? [];
       const storedPatchModels = foldModelFamilyPairing(
         effectiveModels,
         payload.api !== undefined ? payload.api : current.api,
@@ -1199,8 +1205,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
       payload.baseUrl !== undefined ? (payload.baseUrl ?? null) : current.baseUrl,
       credential,
     );
-    await patchProviderConfig(
-      ctx.env,
+    await configs.patch(
       id,
       {
         ...(payload.displayName !== undefined ? { displayName: payload.displayName } : {}),
@@ -1217,14 +1222,18 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
 
   routes.delete("/system/providers/:id", async (ctx) => {
     const id = requireValidId(ctx.req.param("id"));
-    if ((await getProviderConfigTarget(ctx.env, id)) === null) {
+    const configs = createProviderConfigsRepository(
+      ctx.env.DB_V2,
+      ctx.env.PROVIDER_CONFIG_MASTER_KEY,
+    );
+    if ((await configs.getTarget(id)) === null) {
       throw new ApiError({
         status: 404,
         code: "provider_config_not_found",
         message: `provider config "${id}" not found`,
       });
     }
-    await deleteProviderConfig(ctx.env, id);
+    await configs.delete(id);
     await hub(ctx.env).notifySystem(["config-changed"]);
     return ctx.json({ ok: true });
   });
@@ -1232,7 +1241,11 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   routes.post("/system/providers/:id/test", async (ctx) => {
     assertProbeSlotAvailable(ctx);
     const id = requireValidId(ctx.req.param("id"));
-    const target = await getProviderConfigTarget(ctx.env, id);
+    const configs = createProviderConfigsRepository(
+      ctx.env.DB_V2,
+      ctx.env.PROVIDER_CONFIG_MASTER_KEY,
+    );
+    const target = await configs.getTarget(id);
     if (target === null) {
       throw new ApiError({
         status: 404,
@@ -1273,7 +1286,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
       api: target.api,
       baseUrl: target.baseUrl,
       model: modelEntry.id,
-      apiKey: await readProviderConfigSecret(ctx.env, id),
+      apiKey: await configs.readSecret(id),
     });
     return ctx.json(providerConfigTestResponseSchema.parse(verdict));
   });
@@ -1312,6 +1325,10 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
   // whole batch when at least one row landed.
   routes.post("/system/providers/import-models-yml", async (ctx) => {
     const payload = await requireJsonBody(ctx, providerConfigImportRequestSchema);
+    const configs = createProviderConfigsRepository(
+      ctx.env.DB_V2,
+      ctx.env.PROVIDER_CONFIG_MASTER_KEY,
+    );
     let parsed: ModelsYmlImportParse;
     try {
       parsed = parseModelsYml(payload.yaml);
@@ -1338,7 +1355,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         hasApiKey: candidate.apiKey !== null,
         warnings: candidate.warnings,
       };
-      if ((await getProviderConfigTarget(ctx.env, candidate.id)) !== null) {
+      if ((await configs.getTarget(candidate.id)) !== null) {
         entries.push({
           ...entryBase,
           verdict: "skipped",
@@ -1398,8 +1415,7 @@ function registerProviderConfigRoutes(routes: Hono<AppEnv>): void {
         });
         continue;
       }
-      await insertProviderConfig(
-        ctx.env,
+      await configs.insert(
         candidate.id,
         {
           displayName: null,
@@ -1442,7 +1458,11 @@ async function discoverForSavedRow(
   typedKey: string | undefined,
   hostId: string | undefined,
 ) {
-  const target = await getProviderConfigTarget(ctx.env, id);
+  const configs = createProviderConfigsRepository(
+    ctx.env.DB_V2,
+    ctx.env.PROVIDER_CONFIG_MASTER_KEY,
+  );
+  const target = await configs.getTarget(id);
   if (target === null) {
     throw new ApiError({
       status: 404,
@@ -1462,7 +1482,7 @@ async function discoverForSavedRow(
   }
   // An explicitly typed key (panel re-entry) wins for this one probe;
   // otherwise the row's decrypted stored secret rides — never echoed back.
-  const apiKey = typedKey ?? (await readProviderConfigSecret(ctx.env, id));
+  const apiKey = typedKey ?? (await configs.readSecret(id));
   return discoverProviderModelsEnriched(ctx.env, {
     baseUrl: target.baseUrl,
     apiKey,

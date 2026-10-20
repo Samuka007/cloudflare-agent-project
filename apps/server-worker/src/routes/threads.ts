@@ -27,7 +27,7 @@ import {
   threadCompactRequestSchema,
   type ThreadResponse,
 } from "../contract/api/threads";
-import { getPermissionMode } from "../db/permission-mode";
+import { createSettingsRepository } from "../db/repositories/settings";
 import { promptHistoryResponseSchema } from "../contract/api/projects";
 import {
   PROMPT_HISTORY_ENTRY_LIMIT,
@@ -81,8 +81,6 @@ import { environmentSchema } from "../contract/domain/environment";
 import { getHostRow } from "../db/hosts";
 import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs";
 import { mirrorPendingInteraction } from "../db/pending-interactions";
-import { getAppSettingsRow, toAppSettings } from "../db/settings";
-import { getCompactionSettings } from "../db/compaction-settings";
 import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
 import { toThreadListEntries, toThreadResponseWithSpawnCheck } from "../services/runtime-display";
 import { toHostRecord } from "../services/host-records";
@@ -534,7 +532,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
   routes.get("/threads/:id/default-execution-options", async (ctx) => {
     const row = await requirePublicThread(ctx);
     const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
-    const permissionMode = (await getPermissionMode(ctx.env)).mode;
+    const permissionMode = (await createSettingsRepository(ctx.env.DB_V2).getPermissionMode()).mode;
     return ctx.json(
       resolvedThreadExecutionOptionsSchema
         .nullable()
@@ -856,7 +854,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     row: ThreadDbRow,
     explicitMode?: CompactMode,
   ): Promise<{ ok: true }> {
-    const seat = await getCompactionSettings(ctx.env);
+    const seat = await createSettingsRepository(ctx.env.DB_V2).getCompactionSettings();
     const remoteOf = async (): Promise<{ providerId: string; model: string } | null> => {
       if (seat.remote === null) return null;
       const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
@@ -942,8 +940,8 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // packaged staging Worker has no dev term, so the flag alone decides).
     // Read per-request, so unlike bb's server-start constant the latest-rows
     // delta cache below MUST key on it (bb data.ts:334-337).
-    const includeUnhandledProviderEvents = toAppSettings(
-      await getAppSettingsRow(ctx.env),
+    const includeUnhandledProviderEvents = (
+      await createSettingsRepository(ctx.env.DB_V2).getAppSettings()
     ).showUnhandledProviderEvents;
     let segmentLimit = THREAD_TIMELINE_DEFAULT_SEGMENT_LIMIT;
     if (query.segmentLimit !== undefined) {

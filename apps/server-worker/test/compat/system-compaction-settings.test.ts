@@ -8,8 +8,9 @@ import {
 } from "../../src/contract/api/system";
 
 /**
- * #547 the compaction-preference write face (the D1 `compaction_settings`
- * single-row seat, the sole 正本 — zero env fallback):
+ * #547 the compaction-preference write face (the drizzle-era
+ * `settings_agent` compaction columns — the collapsed successor of the
+ * legacy single-row seat, the sole 正本; T6 re-point, zero env fallback):
  * GET/PUT /api/v1/system/compaction-settings. Acceptance faces exercised:
  *
  * - absent row = the #309 posture (configured:false, methodOrder ["soft"],
@@ -65,19 +66,19 @@ async function putFace(
 }
 
 async function rawSeatRow(): Promise<{
-  method_order: string;
-  remote_provider_id: string | null;
-  remote_model: string | null;
+  compaction_method_order: string;
+  compaction_remote_provider_id: string | null;
+  compaction_remote_model: string | null;
 } | null> {
-  return env.DB.prepare(
-    "SELECT method_order, remote_provider_id, remote_model FROM compaction_settings WHERE id = 'compaction_settings'",
+  return env.DB_V2.prepare(
+    "SELECT compaction_method_order, compaction_remote_provider_id, compaction_remote_model FROM settings_agent WHERE id = 'agent'",
   ).first();
 }
 
 afterEach(async () => {
   // The absent-row posture is the shared-worker default: every test leaves
-  // the seat deleted so other suites read the #309 face.
-  await env.DB.prepare("DELETE FROM compaction_settings WHERE id = 'compaction_settings'").run();
+  // the agent row deleted so other suites read the #309 face.
+  await env.DB_V2.prepare("DELETE FROM settings_agent").run();
 });
 
 describe("GET /api/v1/system/compaction-settings (#547)", () => {
@@ -91,8 +92,8 @@ describe("GET /api/v1/system/compaction-settings (#547)", () => {
   });
 
   it("a hand-edited method_order decodes through the omp resolution", async () => {
-    await env.DB.prepare(
-      "INSERT INTO compaction_settings (id, method_order, remote_provider_id, remote_model, updated_at) VALUES ('compaction_settings', ?, NULL, NULL, ?)",
+    await env.DB_V2.prepare(
+      "INSERT INTO settings_agent (id, compaction_method_order, compaction_remote_provider_id, compaction_remote_model, updated_at) VALUES ('agent', ?, NULL, NULL, ?)",
     )
       .bind(JSON.stringify(["snap", "bogus", "snap", "remote", 42]), Date.now())
       .run();
@@ -104,8 +105,8 @@ describe("GET /api/v1/system/compaction-settings (#547)", () => {
   });
 
   it("a hand-edited remote row without a model is remote-ineligible, not a poisoned read", async () => {
-    await env.DB.prepare(
-      "INSERT INTO compaction_settings (id, method_order, remote_provider_id, remote_model, updated_at) VALUES ('compaction_settings', ?, ?, NULL, ?)",
+    await env.DB_V2.prepare(
+      "INSERT INTO settings_agent (id, compaction_method_order, compaction_remote_provider_id, compaction_remote_model, updated_at) VALUES ('agent', ?, ?, NULL, ?)",
     )
       .bind(JSON.stringify(["remote"]), RIG_PROVIDER_ID, Date.now())
       .run();
@@ -130,8 +131,8 @@ describe("PUT /api/v1/system/compaction-settings (#547)", () => {
     });
     // The row is the stored truth (no merge semantics with the prior row).
     const row = await rawSeatRow();
-    expect(row?.method_order).toBe(JSON.stringify(["remote", "snap", "soft"]));
-    expect(row?.remote_model).toBe(RIG_MODEL_ID);
+    expect(row?.compaction_method_order).toBe(JSON.stringify(["remote", "snap", "soft"]));
+    expect(row?.compaction_remote_model).toBe(RIG_MODEL_ID);
 
     // Wholesale replace to a different posture.
     const replace = await putFace({ methodOrder: ["snap"], remote: null });
