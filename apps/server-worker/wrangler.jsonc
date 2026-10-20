@@ -4,6 +4,10 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-29",
   "compatibility_flags": ["nodejs_compat"],
+  // #602: @cap/agent-durable statically imports its drizzle-kit generated
+  // journal DDL as text (src/db/bootstrap.ts) — this worker bundles that
+  // source, so the loader rule must ride the deploy config too.
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": true }],
   "assets": {
     "directory": "public",
     "binding": "ASSETS",

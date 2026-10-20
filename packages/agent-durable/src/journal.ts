@@ -1,35 +1,29 @@
 import type { DaemonThreadEventInput, ThreadEventEnvelope } from "@cap/protocol";
+import { asc, desc, eq, gt, lte, max } from "drizzle-orm";
+import { drizzle, type DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
+import { ensureJournalSchema } from "./db/bootstrap";
+import { events } from "./db/schema";
 import type { ThreadEventSink } from "./events";
 
-interface EventRow {
-  [key: string]: SqlStorageValue;
-  seq: number;
-  id: string;
-  type: string;
-  data: string;
-  created_at: number;
-}
+type EventRow = typeof events.$inferSelect;
 
 /**
  * Adapter-side derived journal (#575): cap's existing event log shape, owned
  * by the durable DO. `(id)` is the idempotency key; `seq` is DO-owned.
+ *
+ * W6 db campaign T10/#602: the seven handwritten SQL statements went through
+ * the drizzle durable-sqlite query builder; the physical schema (column names,
+ * types, unique id) is unchanged, so pre-drizzle rows read and append exactly
+ * as before. Consumers (`PiEventBridge`, the `getEvents` routes) are untouched.
  */
 export class DurableEventSink implements ThreadEventSink {
-  readonly #sql: SqlStorage;
+  readonly #db: DrizzleSqliteDODatabase;
   #threadId: string;
 
-  constructor(sql: SqlStorage, threadId: string) {
-    this.#sql = sql;
+  constructor(storage: DurableObjectStorage, threadId: string) {
+    this.#db = drizzle(storage);
     this.#threadId = threadId;
-    this.#sql.exec(
-      `CREATE TABLE IF NOT EXISTS events (
-        seq INTEGER PRIMARY KEY,
-        id TEXT NOT NULL UNIQUE,
-        type TEXT NOT NULL,
-        data TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-      )`,
-    );
+    ensureJournalSchema(this.#db);
   }
 
   bindThread(threadId: string): void {
@@ -40,14 +34,16 @@ export class DurableEventSink implements ThreadEventSink {
     const existing = this.#rowById(input.id);
     if (existing !== undefined) return Promise.resolve(this.#toEnvelope(existing));
     const seq = this.latestSeq() + 1;
-    this.#sql.exec(
-      "INSERT INTO events (seq, id, type, data, created_at) VALUES (?, ?, ?, ?, ?)",
-      seq,
-      input.id,
-      input.type,
-      JSON.stringify(input.data),
-      input.createdAt,
-    );
+    this.#db
+      .insert(events)
+      .values({
+        seq,
+        id: input.id,
+        type: input.type,
+        data: JSON.stringify(input.data),
+        createdAt: input.createdAt,
+      })
+      .run();
     const row = this.#rowById(input.id);
     if (row === undefined) {
       return Promise.reject(new Error(`event ${input.id} was not persisted`));
@@ -60,40 +56,39 @@ export class DurableEventSink implements ThreadEventSink {
   }
 
   read(sinceSeq: number, limit: number): ThreadEventEnvelope[] {
-    const rows = this.#sql
-      .exec<EventRow>(
-        "SELECT seq, id, type, data, created_at FROM events WHERE seq > ? ORDER BY seq ASC LIMIT ?",
-        sinceSeq,
-        limit,
-      )
-      .toArray();
+    const rows = this.#db
+      .select()
+      .from(events)
+      .where(gt(events.seq, sinceSeq))
+      .orderBy(asc(events.seq))
+      .limit(limit)
+      .all();
     return rows.map((row) => this.#toEnvelope(row));
   }
 
   /** Older page: the newest `limit` rows at or below `beforeSeq` (the
    * timeline anchor is included so the route can validate it). */
   readBefore(beforeSeq: number, limit: number): ThreadEventEnvelope[] {
-    const rows = this.#sql
-      .exec<EventRow>(
-        "SELECT seq, id, type, data, created_at FROM events WHERE seq <= ? ORDER BY seq DESC LIMIT ?",
-        beforeSeq,
-        limit,
-      )
-      .toArray();
+    const rows = this.#db
+      .select()
+      .from(events)
+      .where(lte(events.seq, beforeSeq))
+      .orderBy(desc(events.seq))
+      .limit(limit)
+      .all();
     return rows.reverse().map((row) => this.#toEnvelope(row));
   }
 
   latestSeq(): number {
-    const row = this.#sql
-      .exec<{ latest: number | null }>("SELECT MAX(seq) AS latest FROM events")
-      .toArray()[0];
+    const row = this.#db
+      .select({ latest: max(events.seq) })
+      .from(events)
+      .get();
     return row?.latest ?? 0;
   }
 
   #rowById(id: string): EventRow | undefined {
-    return this.#sql
-      .exec<EventRow>("SELECT seq, id, type, data, created_at FROM events WHERE id = ?", id)
-      .toArray()[0];
+    return this.#db.select().from(events).where(eq(events.id, id)).get();
   }
 
   #toEnvelope(row: EventRow): ThreadEventEnvelope {
@@ -105,7 +100,7 @@ export class DurableEventSink implements ThreadEventSink {
       type: row.type,
       // The row was written from a validated DaemonThreadEventInput.
       data: data as Record<string, unknown>,
-      createdAt: row.created_at,
+      createdAt: row.createdAt,
     };
   }
 }
