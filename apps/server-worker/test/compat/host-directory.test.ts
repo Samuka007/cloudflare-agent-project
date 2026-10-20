@@ -18,7 +18,8 @@ beforeAll(async () => {
 });
 
 async function seedHostRow(hostId: string, destroyedAt: number | null): Promise<void> {
-  await env.DB.prepare(
+  // T5 (#597): requireHostRow reads the drizzle-era DB_V2 registry.
+  await env.DB_V2.prepare(
     `INSERT INTO hosts (id, name, type, connect_machine_id, max_permission_mode, destroyed_at,
                         last_seen_at, last_rejected_protocol_version, created_at, updated_at)
      VALUES (?, ?, 'persistent', NULL, 'full', ?, NULL, NULL, ?, ?)`,

@@ -115,6 +115,7 @@ import {
   applyAppKeybindingOverrides,
   toAppSettings,
 } from "../db/settings";
+import { workerRepos } from "../db/repositories/worker-repos";
 import { listStoredThreadModelOverrides } from "../db/control-plane";
 import type { AppEnv, Env } from "../app-types";
 
@@ -422,15 +423,23 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
 
   routes.put("/settings/keyboard", async (ctx) => {
     const payload = await requireJsonBody(ctx, appKeybindingOverridesSchema);
-    await ctx.env.DB.prepare(
-      `INSERT INTO app_settings (id, keybinding_overrides, updated_at) VALUES ('app_settings', ?, ?)
-       ON CONFLICT(id) DO UPDATE SET keybinding_overrides = excluded.keybinding_overrides, updated_at = excluded.updated_at`,
-    )
-      .bind(JSON.stringify(payload), Date.now())
-      .run();
+    // T5 (#597): the route layer's last direct SQL write lands on the T4
+    // settings repository (settings_app on the drizzle-era DB_V2). The rest
+    // of the settings face keeps the legacy seat until T6 (#598) collapses
+    // both — the read-back below merges the fresh overrides over the legacy
+    // row so the echoed response stays coherent within this request.
+    const settings = workerRepos(ctx.env).settings;
+    await settings.setKeybindingOverrides(payload);
     await hub(ctx.env).notifySystem(["config-changed"]);
-    const row = await getAppSettingsRow(ctx.env);
-    return ctx.json(toAppSettings(row));
+    const [overrides, row] = await Promise.all([
+      settings.getKeybindingOverrides(),
+      getAppSettingsRow(ctx.env),
+    ]);
+    return ctx.json(
+      toAppSettings(
+        row === null ? null : { ...row, keybindingOverridesJson: JSON.stringify(overrides) },
+      ),
+    );
   });
 
   routes.put("/settings/experiments", async (ctx) => {

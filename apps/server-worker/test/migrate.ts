@@ -63,6 +63,12 @@ export function splitMigrationStatements(file: string): string[] {
  * storage scope, so migrations applied there are invisible to tests).
  * Miniflare 5 removed the per-binding `migrations` option the old
  * pool-workers pattern relied on.
+ *
+ * T5 (#597): the same gate applies the drizzle ledger to DB_V2 — the
+ * five-aggregate faces read the drizzle-era control plane through the
+ * repositories, so every compat suite needs both schema generations ready
+ * regardless of which suite applies the ledger first (the apply is
+ * idempotent: one d1_migrations row per tag, replays are skips).
  */
 let applied: Promise<void> | null = null;
 

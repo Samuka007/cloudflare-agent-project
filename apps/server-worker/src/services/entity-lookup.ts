@@ -1,6 +1,6 @@
 import { ApiError } from "../shared/api-error";
-import { getProject } from "../db/control-plane";
-import type { ProjectRow } from "../db/rows";
+import type { ProjectRecord } from "../db/repositories";
+import { workerRepos } from "../db/repositories/worker-repos";
 import type { Env } from "../env";
 
 /**
@@ -9,10 +9,11 @@ import type { Env } from "../env";
  * (:196-205, the personal singleton answers the same plain project_not_found
  * as an unknown id). Shared by the projects routes and the hosts add-source
  * discovery routes (#445).
+ *
+ * T5 (#597): reads the drizzle-era control plane through the ProjectsRepo.
  */
-
-export async function requirePublicProject(env: Env, projectId: string): Promise<ProjectRow> {
-  const row = await getProject(env, projectId);
+export async function requirePublicProject(env: Env, projectId: string): Promise<ProjectRecord> {
+  const row = await workerRepos(env).projects.get(projectId);
   if (!row) {
     throw new ApiError({ status: 404, code: "project_not_found", message: "Project not found" });
   }
@@ -30,7 +31,7 @@ export async function requirePublicProject(env: Env, projectId: string): Promise
 export async function requirePublicStandardProject(
   env: Env,
   projectId: string,
-): Promise<ProjectRow> {
+): Promise<ProjectRecord> {
   const row = await requirePublicProject(env, projectId);
   if (row.kind !== "standard") {
     throw new ApiError({ status: 404, code: "project_not_found", message: "Project not found" });

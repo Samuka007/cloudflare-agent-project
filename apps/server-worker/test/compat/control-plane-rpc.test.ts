@@ -57,9 +57,17 @@ async function seed(sql: string, ...binds: (string | number | null)[]): Promise<
     .run();
 }
 
-async function row(sql: string, ...binds: (string | number | null)[]): Promise<Row | null> {
+/** hosts-side fixtures ride DB_V2 — the T5 reader cutover moved the hosts
+ * face (and the #599 markSeen stamp) onto the drizzle-era database. */
+async function seedHosts(sql: string, ...binds: (string | number | null)[]): Promise<void> {
+  await appEnv.DB_V2.prepare(sql)
+    .bind(...binds)
+    .run();
+}
+
+async function hostsRow(sql: string, ...binds: (string | number | null)[]): Promise<Row | null> {
   return (
-    (await appEnv.DB.prepare(sql)
+    (await appEnv.DB_V2.prepare(sql)
       .bind(...binds)
       .first<Row>()) ?? null
   );
@@ -70,7 +78,7 @@ afterEach(async () => {
   await seed("DELETE FROM image_source WHERE id = 'image_source'");
   await seed("DELETE FROM web_search WHERE id = 'web_search'");
   await seed("DELETE FROM tool_capabilities WHERE id = 'tool_capabilities'");
-  await seed("DELETE FROM hosts WHERE id = 'rpc-face-rig-host'");
+  await seedHosts("DELETE FROM hosts WHERE id = 'rpc-face-rig-host'");
 });
 
 describe("CONTROL_PLANE binding → control_plane entrypoint (#599)", () => {
@@ -138,7 +146,7 @@ describe("CONTROL_PLANE binding → control_plane entrypoint (#599)", () => {
 
   it("hosts.markSeen stamps last_seen_at and the throttle is the server's policy", async () => {
     const at = Date.now();
-    await seed(
+    await seedHosts(
       `INSERT INTO hosts (id, name, type, connect_machine_id, max_permission_mode, destroyed_at, last_seen_at, last_rejected_protocol_version, created_at, updated_at)
        VALUES ('rpc-face-rig-host', 'rpc-rig', 'persistent', NULL, 'full', NULL, NULL, NULL, ?, ?)`,
       at,
@@ -152,17 +160,21 @@ describe("CONTROL_PLANE binding → control_plane entrypoint (#599)", () => {
     const first = await rpc({ method: "hosts.markSeen", args });
     expect(first.status).toBe(200);
     expect(controlPlaneResponseSchema.parse(first.envelope).ok).toBe(true);
-    expect(await row("SELECT last_seen_at FROM hosts WHERE id = 'rpc-face-rig-host'")).toEqual({
-      last_seen_at: at + 60_000,
-    });
+    expect(await hostsRow("SELECT last_seen_at FROM hosts WHERE id = 'rpc-face-rig-host'")).toEqual(
+      {
+        last_seen_at: at + 60_000,
+      },
+    );
 
     // Within the server-owned window the stamp does NOT move — the daemon
     // side fires freely, the server decides (markSeen 节流内聚 Hosts repo).
     const second = await rpc({ method: "hosts.markSeen", args: { ...args, at: at + 61_000 } });
     expect(second.status).toBe(200);
-    expect(await row("SELECT last_seen_at FROM hosts WHERE id = 'rpc-face-rig-host'")).toEqual({
-      last_seen_at: at + 60_000,
-    });
+    expect(await hostsRow("SELECT last_seen_at FROM hosts WHERE id = 'rpc-face-rig-host'")).toEqual(
+      {
+        last_seen_at: at + 60_000,
+      },
+    );
 
     // Unknown host: a quiet no-op (rows are created by the attach bridge).
     const unknown = await rpc({ method: "hosts.markSeen", args: { hostId: "no-such-host", at } });

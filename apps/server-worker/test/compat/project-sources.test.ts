@@ -55,7 +55,9 @@ async function seedHost(destroyedAt: number | null = null): Promise<string> {
   seedCounter += 1;
   const id = `host445_${seedCounter}_${Math.random().toString(36).slice(2, 8)}`;
   const now = Date.now();
-  await env.DB.prepare(
+  // T5 (#597): the sources/environments the face serves live on DB_V2 (the
+  // greenfield schema's FKs anchor them to hosts/projects rows there).
+  await env.DB_V2.prepare(
     "INSERT INTO hosts (id, name, type, connect_machine_id, max_permission_mode, destroyed_at, last_seen_at, last_rejected_protocol_version, created_at, updated_at) VALUES (?, ?, 'persistent', NULL, 'full', ?, NULL, NULL, ?, ?)",
   )
     .bind(id, `445-${id}`, destroyedAt, now, now)
@@ -76,7 +78,9 @@ async function seedProject(): Promise<{ id: string; name: string }> {
 }
 
 async function sourceCount(projectId: string): Promise<number> {
-  const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM project_sources WHERE project_id = ?")
+  const row = await env.DB_V2.prepare(
+    "SELECT COUNT(*) AS n FROM project_sources WHERE project_id = ?",
+  )
     .bind(projectId)
     .first();
   return Number(row?.n ?? 0);
@@ -328,12 +332,12 @@ describe("GET /environments destroyed-host hygiene (#445 ruling)", () => {
     const now = Date.now();
     const envColumns =
       "id, project_id, host_id, path, workspace_provision_type, status, created_at, updated_at";
-    await env.DB.prepare(
+    await env.DB_V2.prepare(
       `INSERT INTO environments (${envColumns}) VALUES ('env445_live', ?, ?, '/repo/live', 'unmanaged', 'ready', ?, ?)`,
     )
       .bind(project.id, liveHost, now, now)
       .run();
-    await env.DB.prepare(
+    await env.DB_V2.prepare(
       `INSERT INTO environments (${envColumns}) VALUES ('env445_dead', ?, ?, '/repo/dead', 'unmanaged', 'ready', ?, ?)`,
     )
       .bind(project.id, deadHost, now, now)
@@ -350,7 +354,7 @@ describe("GET /environments destroyed-host hygiene (#445 ruling)", () => {
     const detail = await getJson("/api/v1/environments/env445_dead");
     expect(detail.status).toBe(200);
 
-    await env.DB.prepare(
+    await env.DB_V2.prepare(
       "DELETE FROM environments WHERE id IN ('env445_live', 'env445_dead')",
     ).run();
   });

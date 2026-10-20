@@ -3,8 +3,8 @@ import {
   evaluateThreadLifecycleEvent,
   type ThreadLifecycleEvent,
 } from "../contract/domain/thread-lifecycle";
-import { getThreadRow, updateThreadRecord } from "../db/control-plane";
-import type { ThreadDbRow } from "../db/rows";
+import { workerRepos } from "../db/repositories/worker-repos";
+import type { ThreadRecord } from "../db/repositories";
 import type { Env } from "../env";
 
 /**
@@ -68,7 +68,7 @@ export function deriveSettledTurnEvent(
 }
 
 export interface ThreadTurnSettlement {
-  row: ThreadDbRow;
+  row: ThreadRecord;
   event: ThreadLifecycleEvent;
 }
 
@@ -81,14 +81,14 @@ export interface ThreadTurnSettlement {
  */
 export async function settleThreadTurnStatus(
   env: Env,
-  row: ThreadDbRow,
+  row: ThreadRecord,
   events: readonly UxThreadEvent[],
 ): Promise<ThreadTurnSettlement | null> {
   const event = deriveSettledTurnEvent(events);
   if (event === null) {
     return null;
   }
-  const current = await getThreadRow(env, row.id);
+  const current = await workerRepos(env).threads.get(row.id);
   if (current === null) {
     return null;
   }
@@ -96,7 +96,7 @@ export async function settleThreadTurnStatus(
   if ("noop" in evaluation || evaluation.to === current.status) {
     return null;
   }
-  const updated = await updateThreadRecord(env, current.id, { status: evaluation.to });
+  const updated = await workerRepos(env).threads.update(current.id, { status: evaluation.to });
   if (updated === null) {
     return null;
   }

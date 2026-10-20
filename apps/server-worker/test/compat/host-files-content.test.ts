@@ -23,7 +23,9 @@ beforeAll(async () => {
 });
 
 async function seedHostRow(hostId: string): Promise<void> {
-  await env.DB.prepare(
+  // T5 (#597): the binding face's environments FK lives on DB_V2, so the
+  // host row the thread binds must exist there.
+  await env.DB_V2.prepare(
     `INSERT INTO hosts (id, name, type, connect_machine_id, max_permission_mode, destroyed_at,
                         last_seen_at, last_rejected_protocol_version, created_at, updated_at)
      VALUES (?, ?, 'persistent', NULL, 'full', NULL, NULL, NULL, ?, ?)`,
@@ -94,20 +96,31 @@ describe("GET /threads/:id/host-files/content (#321)", () => {
     expect(body.code).toBe("host_unavailable");
   });
 
-  it("404s a dangling environment binding (bb requireEnvironment)", async () => {
+  it("unbinding the environment row degrades to the deployment posture (#597 inversion)", async () => {
     await seedHostRow("host_b1_dangling");
     const threadId = await createThreadOnHost("host_b1_dangling");
-    const row = await env.DB.prepare("SELECT environment_id FROM threads WHERE id = ?")
+    const row = await env.DB_V2.prepare("SELECT environment_id FROM threads WHERE id = ?")
       .bind(threadId)
       .first<{ environment_id: string }>();
     if (row === null) throw new Error("thread row missing");
-    await env.DB.prepare("DELETE FROM environments WHERE id = ?").bind(row.environment_id).run();
+    await env.DB_V2.prepare("DELETE FROM environments WHERE id = ?").bind(row.environment_id).run();
+    // T5 (#597) documented inversion: the legacy schema had no FKs, so a
+    // deleted environment left a DANGLING threads.environment_id and the
+    // face answered bb's requireEnvironment 404 environment_not_found. The
+    // greenfield schema declares the FK ON DELETE SET NULL — the binding
+    // row cannot dangle by construction; the thread unbinds to the
+    // deployment default and the face answers the honest placeholder
+    // posture (the same branch a personal-workspace thread rides above).
+    const unbound = await env.DB_V2.prepare("SELECT environment_id FROM threads WHERE id = ?")
+      .bind(threadId)
+      .first<{ environment_id: string | null }>();
+    expect(unbound?.environment_id).toBeNull();
     const response = await apiGet(
       `/api/v1/threads/${threadId}/host-files/content?path=${encodeURIComponent("/tmp/rendered.png")}`,
     );
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(502);
     const body = await response.json<{ code: string }>();
-    expect(body.code).toBe("environment_not_found");
+    expect(body.code).toBe("host_unavailable");
   });
 });
 

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { ApiError } from "../shared/api-error";
 import { environmentSchema } from "../contract/domain/environment";
-import { getEnvironmentRow, listEnvironmentRows } from "../db/environments";
+import { workerRepos } from "../db/repositories/worker-repos";
 import type { AppEnv } from "../app-types";
 
 /**
@@ -14,6 +14,10 @@ import type { AppEnv } from "../app-types";
  * still live (the bindable-workspace inventory); the id face answers any
  * stored row (existing thread bindings stay readable, honestly, even after
  * the host tombstones — tools then answer host_offline, #436 posture).
+ *
+ * T5 (#597): the face rides the EnvironmentsRepo on the drizzle-era control
+ * plane (env.DB_V2) — the list filter is the repo's host-liveness join, the
+ * id face is the unfiltered row read.
  */
 export function registerEnvironmentRoutes(app: Hono<AppEnv>): void {
   const routes = new Hono<AppEnv>();
@@ -27,12 +31,14 @@ export function registerEnvironmentRoutes(app: Hono<AppEnv>): void {
         message: "projectId must not be empty",
       });
     }
-    const rows = await listEnvironmentRows(ctx.env, projectId ? { projectId } : {});
+    const rows = await workerRepos(ctx.env).environments.list(
+      projectId !== undefined ? { projectId } : {},
+    );
     return ctx.json(rows.map((row) => environmentSchema.parse(row)));
   });
 
   routes.get("/environments/:id", async (ctx) => {
-    const row = await getEnvironmentRow(ctx.env, ctx.req.param("id"));
+    const row = await workerRepos(ctx.env).environments.get(ctx.req.param("id"));
     if (row === null) {
       throw new ApiError({
         status: 404,

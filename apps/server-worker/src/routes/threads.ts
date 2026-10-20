@@ -62,24 +62,20 @@ import {
   requireJsonBody,
 } from "../shared/route-utils";
 import { createDurableThreadId } from "../shared/ids";
-import {
-  createThreadRecord,
-  getThreadRow,
-  listThreads,
-  markThreadDeleted,
-  countNonDeletedAssignedChildThreads,
-  pinThread,
-  setThreadArchived,
-  unpinThread,
-  updateThreadRecord,
-  getThreadSection,
-  getProject,
-} from "../db/control-plane";
-import type { ThreadDbRow } from "../db/rows";
-import { getEnvironmentRow } from "../db/environments";
+/**
+ * T5 route migration A (#597): the five aggregates (threads/tabs, projects,
+ * hosts, environments, sections) ride the repositories on the drizzle-era
+ * control plane (env.DB_V2, worker-repos.ts). The imports below are the one
+ * face OUTSIDE this batch's aggregates, kept on the legacy DB on purpose:
+ * the single-row seat reads (permission mode / app settings / compaction
+ * order) move with the system/settings face in T6 (#598). (The pending
+ * mirror left with T8, #600 — the interactions face rides the pushed row
+ * fields now.)
+ */
+import type { ThreadRecord } from "../db/repositories";
+import { workerRepos } from "../db/repositories/worker-repos";
 import { environmentSchema } from "../contract/domain/environment";
-import { getHostRow } from "../db/hosts";
-import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs";
+
 import { getAppSettingsRow, toAppSettings } from "../db/settings";
 import { getCompactionSettings } from "../db/compaction-settings";
 import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
@@ -189,7 +185,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       });
     }
     if (query.projectId !== undefined) {
-      const project = await getProject(ctx.env, query.projectId);
+      const project = await workerRepos(ctx.env).projects.get(query.projectId);
       if (project?.deletedAt !== null) {
         throw new ApiError({
           status: 404,
@@ -207,11 +203,11 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     }
     if (
       query.sectionId !== undefined &&
-      (await getThreadSection(ctx.env, query.sectionId)) === null
+      (await workerRepos(ctx.env).sections.get(query.sectionId)) === null
     ) {
       throw new ApiError({ status: 404, code: "section_not_found", message: "Section not found" });
     }
-    const rows = await listThreads(ctx.env, {
+    const rows = await workerRepos(ctx.env).threads.list({
       ...(query.projectId !== undefined ? { projectId: query.projectId } : {}),
       ...(query.parentThreadId !== undefined ? { parentThreadId: query.parentThreadId } : {}),
       ...(query.sourceThreadId !== undefined ? { sourceThreadId: query.sourceThreadId } : {}),
@@ -270,7 +266,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // bb searchThreadsWithPendingInteractionState splits the visible,
     // non-deleted set into an archived and an active group (data/threads.ts:
     // 1113-1132); the title-level M0 scan serves both from one listing.
-    const rows = await listThreads(ctx.env, {});
+    const rows = await workerRepos(ctx.env).threads.list({});
     const response = buildTitleSearchResponse({ rows, query: searchQuery, limitPerGroup });
     // The two groups are disjoint (archived split), so one face pass each.
     const [activeEntries, archivedEntries] = await Promise.all([
@@ -310,12 +306,13 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
 
   routes.post("/threads", async (ctx) => {
     const payload = await requireJsonBody(ctx, createThreadRequestSchema);
-    const project = await getProject(ctx.env, payload.projectId);
+    const repos = workerRepos(ctx.env);
+    const project = await repos.projects.get(payload.projectId);
     if (project?.deletedAt !== null) {
       throw new ApiError({ status: 404, code: "project_not_found", message: "Project not found" });
     }
     if (payload.sectionId !== null && payload.sectionId !== undefined) {
-      if ((await getThreadSection(ctx.env, payload.sectionId)) === null) {
+      if ((await repos.sections.get(payload.sectionId)) === null) {
         throw new ApiError({
           status: 404,
           code: "section_not_found",
@@ -326,7 +323,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     let parentThreadId: string | null = null;
     let sourceThreadId: string | null = null;
     if (payload.parentThreadId !== undefined) {
-      const parent = await getThreadRow(ctx.env, payload.parentThreadId);
+      const parent = await repos.threads.get(payload.parentThreadId);
       if (parent?.deletedAt !== null) {
         throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
       }
@@ -365,9 +362,9 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     const visibility =
       payload.visibility ??
       (parentThreadId !== null
-        ? ((await getThreadRow(ctx.env, parentThreadId))?.visibility ?? "visible")
+        ? ((await repos.threads.get(parentThreadId))?.visibility ?? "visible")
         : "visible");
-    const row = await createThreadRecord(ctx.env, {
+    const row = await repos.threads.create({
       id: threadId,
       projectId: payload.projectId,
       environmentId: binding.environmentId,
@@ -437,11 +434,11 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
         // turn seals (and the DO settles the row idle) inside the dispatch
         // chain, and re-flipping active over that settlement re-arms the
         // stuck-Working face the detail settlement exists to clear.
-        const flipped = await updateThreadRecord(ctx.env, threadId, {
+        const flipped = await repos.threads.update(threadId, {
           status: "active",
           expectedStatus: "starting",
         });
-        dispatchedRow = (await getThreadRow(ctx.env, threadId)) ?? row;
+        dispatchedRow = (await repos.threads.get(threadId)) ?? row;
         if (flipped !== null && flipped.row.status === "active") {
           await hub(ctx).notifyThread(threadId, ["status-changed"], {
             projectId: payload.projectId,
@@ -495,15 +492,17 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // both includes; host rides the binding row's hostId with live status.
     const environment =
       includes.size > 0 && row.environmentId !== null
-        ? await getEnvironmentRow(ctx.env, row.environmentId)
+        ? await workerRepos(ctx.env).environments.get(row.environmentId)
         : null;
     const host =
       includes.has("host") && environment !== null
-        ? await getHostRow(ctx.env, environment.hostId).then((hostRow) =>
-            hostRow !== null && hostRow.destroyedAt === null
-              ? toHostRecord(ctx.env, hostRow)
-              : null,
-          )
+        ? await workerRepos(ctx.env)
+            .hosts.get(environment.hostId)
+            .then((hostRow) =>
+              hostRow !== null && hostRow.destroyedAt === null
+                ? toHostRecord(ctx.env, hostRow)
+                : null,
+            )
         : null;
     const response = (await toThreadResponseWithSpawnCheck(ctx.env, row)) as ThreadResponse & {
       environment?: unknown;
@@ -546,7 +545,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     const payload = await requireJsonBody(ctx, updateThreadRequestSchema);
     const row = await requirePublicThread(ctx);
     if (payload.sectionId !== undefined && payload.sectionId !== null) {
-      if ((await getThreadSection(ctx.env, payload.sectionId)) === null) {
+      if ((await workerRepos(ctx.env).sections.get(payload.sectionId)) === null) {
         throw new ApiError({
           status: 404,
           code: "section_not_found",
@@ -574,7 +573,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
               {},
           )
         : null;
-    const updated = await updateThreadRecord(ctx.env, row.id, {
+    const updated = await workerRepos(ctx.env).threads.update(row.id, {
       ...(payload.title !== undefined ? { title: payload.title } : {}),
       ...(payload.sectionId !== undefined ? { sectionId: payload.sectionId } : {}),
       ...(payload.parentThreadId !== undefined ? { parentThreadId: payload.parentThreadId } : {}),
@@ -625,7 +624,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       projectId: row.projectId,
       environment: payload.environment,
     });
-    const updated = await updateThreadRecord(ctx.env, row.id, {
+    const updated = await workerRepos(ctx.env).threads.update(row.id, {
       environmentId: resolved.environmentId,
     });
     if (updated === null) {
@@ -642,7 +641,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
   routes.delete("/threads/:id", async (ctx) => {
     const payload = await requireJsonBody(ctx, deleteThreadRequestSchema);
     const row = await requirePublicThread(ctx);
-    const childCount = await countNonDeletedAssignedChildThreads(ctx.env, row.id);
+    const childCount = await workerRepos(ctx.env).threads.countNonDeletedChildren(row.id);
     if (childCount > 0 && !payload.childThreadsConfirmed) {
       throw new ApiError({
         status: 409,
@@ -651,7 +650,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
         details: { childThreadCount: childCount },
       });
     }
-    await markThreadDeleted(ctx.env, row.id);
+    await workerRepos(ctx.env).threads.markDeleted(row.id);
     // bb markThreadDeleted broadcasts (packages/db/src/data/threads.ts:1800-1803).
     await hub(ctx).notifyThread(row.id, ["thread-deleted"]);
     await hub(ctx).notifyProject(row.projectId, ["threads-changed"]);
@@ -722,7 +721,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       // the payload always carries providerId here, so `explicit` is set.
       const current = resolveStoredThreadExecution(row, overlay?.providers ?? {});
       if (classifyThreadSelectionChange(current, next.resolved) === "live" && next.explicit) {
-        const updated = await updateThreadRecord(ctx.env, row.id, {
+        const updated = await workerRepos(ctx.env).threads.update(row.id, {
           ...(payload.model !== undefined ? { modelOverride: payload.model } : {}),
           ...(payload.reasoningLevel !== undefined
             ? { reasoningLevelOverride: payload.reasoningLevel }
@@ -795,7 +794,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       // version), and re-flipping active over that settlement re-arms the
       // stuck-Working face.
       if (row.status !== "active") {
-        const flipped = await updateThreadRecord(ctx.env, row.id, {
+        const flipped = await workerRepos(ctx.env).threads.update(row.id, {
           status: "active",
           expectedUpdatedAt: row.updatedAt,
         });
@@ -854,7 +853,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
    */
   async function compactThreadFace(
     ctx: Context<AppEnv>,
-    row: ThreadDbRow,
+    row: ThreadRecord,
     explicitMode?: CompactMode,
   ): Promise<{ ok: true }> {
     const seat = await getCompactionSettings(ctx.env);
@@ -1117,7 +1116,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     const row = await requirePublicThread(ctx);
     let hostId = CLOUD_PLACEHOLDER_HOST_ID;
     if (row.environmentId !== null) {
-      const environment = await getEnvironmentRow(ctx.env, row.environmentId);
+      const environment = await workerRepos(ctx.env).environments.get(row.environmentId);
       if (environment === null) {
         throw new ApiError({
           status: 404,
@@ -1199,7 +1198,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
    */
   routes.get("/threads/:id/child-summary", async (ctx) => {
     const row = await requirePublicThread(ctx);
-    const nonDeletedChildCount = await countNonDeletedAssignedChildThreads(ctx.env, row.id);
+    const nonDeletedChildCount = await workerRepos(ctx.env).threads.countNonDeletedChildren(row.id);
     return ctx.json({ nonDeletedChildCount });
   });
 
@@ -1272,7 +1271,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
 
   routes.post("/threads/:id/archive", async (ctx) => {
     const row = await requirePublicThread(ctx);
-    const updated = await setThreadArchived(ctx.env, row.id, true);
+    const updated = await workerRepos(ctx.env).threads.setArchived(row.id, true);
     if (!updated) {
       throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
     }
@@ -1295,17 +1294,18 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
    */
   routes.post("/threads/:id/archive-all", async (ctx) => {
     const row = await requirePublicThread(ctx);
-    const childThreads = await listThreads(ctx.env, {
+    const repos = workerRepos(ctx.env);
+    const childThreads = await repos.threads.list({
       parentThreadId: row.id,
       archived: false,
       includeHidden: true,
     });
-    const hiddenSourceThreads = await listThreads(ctx.env, {
+    const hiddenSourceThreads = await repos.threads.list({
       sourceThreadId: row.id,
       archived: false,
       visibility: "hidden",
     });
-    const targets: ThreadDbRow[] = [...childThreads, ...hiddenSourceThreads].filter(
+    const targets: ThreadRecord[] = [...childThreads, ...hiddenSourceThreads].filter(
       (thread) => thread.id !== row.id,
     );
     if (row.archivedAt === null) {
@@ -1313,7 +1313,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     }
     const archivedThreadIds: string[] = [];
     for (const target of targets) {
-      const updated = await setThreadArchived(ctx.env, target.id, true);
+      const updated = await repos.threads.setArchived(target.id, true);
       if (updated === null || updated.archivedAt === target.archivedAt) {
         continue;
       }
@@ -1325,7 +1325,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
 
   routes.post("/threads/:id/unarchive", async (ctx) => {
     const row = await requirePublicThread(ctx);
-    const updated = await setThreadArchived(ctx.env, row.id, false);
+    const updated = await workerRepos(ctx.env).threads.setArchived(row.id, false);
     if (!updated) {
       throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
     }
@@ -1337,7 +1337,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
 
   routes.post("/threads/:id/pin", async (ctx) => {
     const row = await requirePublicThread(ctx);
-    const updated = await pinThread(ctx.env, row.id, null);
+    const updated = await workerRepos(ctx.env).threads.pin(row.id, null);
     if (!updated) {
       throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
     }
@@ -1349,7 +1349,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
 
   routes.post("/threads/:id/unpin", async (ctx) => {
     const row = await requirePublicThread(ctx);
-    const updated = await unpinThread(ctx.env, row.id);
+    const updated = await workerRepos(ctx.env).threads.unpin(row.id);
     if (!updated) {
       throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
     }
@@ -1361,7 +1361,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
 
   routes.post("/threads/:id/read", async (ctx) => {
     const row = await requirePublicThread(ctx);
-    const updated = await updateThreadRecord(ctx.env, row.id, { lastReadAt: Date.now() });
+    const updated = await workerRepos(ctx.env).threads.update(row.id, { lastReadAt: Date.now() });
     if (!updated) {
       throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
     }
@@ -1371,7 +1371,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
 
   routes.post("/threads/:id/unread", async (ctx) => {
     const row = await requirePublicThread(ctx);
-    const updated = await updateThreadRecord(ctx.env, row.id, { lastReadAt: null });
+    const updated = await workerRepos(ctx.env).threads.update(row.id, { lastReadAt: null });
     if (!updated) {
       throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
     }
@@ -1383,13 +1383,13 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
 
   routes.get("/threads/:id/tabs", async (ctx) => {
     const row = await requirePublicThread(ctx);
-    return ctx.json(await getStoredThreadTabs(ctx.env, row.id));
+    return ctx.json(await workerRepos(ctx.env).threads.getTabs(row.id));
   });
 
   routes.put("/threads/:id/tabs", async (ctx) => {
     const payload = await requireJsonBody(ctx, updateThreadTabsRequestSchema);
     const row = await requirePublicThread(ctx);
-    const result = await replaceStoredThreadTabs(ctx.env, {
+    const result = await workerRepos(ctx.env).threads.replaceTabs({
       threadId: row.id,
       expectedRevision: payload.expectedRevision,
       tabs: payload.tabs,
@@ -1571,11 +1571,12 @@ function promptContentFromInput(input: readonly PromptInput[]): PromptContent[] 
 
 /** bb requirePublicThread (entity-lookup.ts): 404 on missing or deleted. */
 async function requirePublicThread(ctx: { env: Env; req: { param(name: string): string } }) {
-  const thread = await getThreadRow(ctx.env, ctx.req.param("id"));
+  const repos = workerRepos(ctx.env);
+  const thread = await repos.threads.get(ctx.req.param("id"));
   if (thread?.deletedAt !== null) {
     throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
   }
-  const project = await getProject(ctx.env, thread.projectId);
+  const project = await repos.projects.get(thread.projectId);
   if (project?.deletedAt !== null) {
     throw new ApiError({ status: 404, code: "thread_not_found", message: "Thread not found" });
   }

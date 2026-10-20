@@ -68,15 +68,17 @@ async function readHost(hostId: string): Promise<Host | null> {
   return row ? hostSchema.parse(row) : null;
 }
 
+/** T5 (#597): the heartbeat stamp and the hosts face share the drizzle-era
+ * DB_V2 (HOSTS_DB rides the same database since the reader cutover). */
 async function storedLastSeenAt(hostId: string): Promise<number | null> {
-  const row = await env.DB.prepare("SELECT last_seen_at FROM hosts WHERE id = ?")
+  const row = await env.DB_V2.prepare("SELECT last_seen_at FROM hosts WHERE id = ?")
     .bind(hostId)
     .first<{ last_seen_at: number | null }>();
   return row?.last_seen_at ?? null;
 }
 
 async function backdateLastSeenAt(hostId: string, at: number): Promise<void> {
-  await env.DB.prepare("UPDATE hosts SET last_seen_at = ? WHERE id = ?").bind(at, hostId).run();
+  await env.DB_V2.prepare("UPDATE hosts SET last_seen_at = ? WHERE id = ?").bind(at, hostId).run();
 }
 
 /**

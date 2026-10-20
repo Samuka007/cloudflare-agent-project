@@ -69,7 +69,8 @@ describe("daemon attach → /hosts registry bridge (#49)", () => {
   it("attach refreshes last_seen_at without touching owner-owned fields", async () => {
     const hostId = "local-bridge-refresh";
     expect((await enroll(hostId)).status).toBe(201);
-    await env.DB.prepare(
+    // T5 (#597): the registry the enroll bridge and /hosts serve is DB_V2.
+    await env.DB_V2.prepare(
       "UPDATE hosts SET name = 'renamed', max_permission_mode = 'accept-edits' WHERE id = ?",
     )
       .bind(hostId)
@@ -86,7 +87,7 @@ describe("daemon attach → /hosts registry bridge (#49)", () => {
   it("never resurrects a destroyed host", async () => {
     const hostId = "local-bridge-destroyed";
     const now = Date.now();
-    await env.DB.prepare(
+    await env.DB_V2.prepare(
       `INSERT INTO hosts (id, name, type, connect_machine_id, max_permission_mode, destroyed_at,
                           last_seen_at, last_rejected_protocol_version, created_at, updated_at)
        VALUES (?, 'gone', 'persistent', NULL, 'full', ?, NULL, NULL, ?, ?)`,

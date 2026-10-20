@@ -27,9 +27,10 @@ import { threadResponseSchema } from "../../src/contract/api/threads";
  */
 beforeAll(ensureMigrations);
 
-/** Raw D1 read — bypasses every face; the control-plane truth probe. */
+/** Raw D1 read — bypasses every face; the control-plane truth probe.
+ * T5 (#597): the thread row lives on the drizzle-era DB_V2. */
 async function threadRowStatus(threadId: string): Promise<string | undefined> {
-  const { results } = await env.DB.prepare("SELECT id, status FROM threads WHERE id = ?")
+  const { results } = await env.DB_V2.prepare("SELECT id, status FROM threads WHERE id = ?")
     .bind(threadId)
     .all();
   const row = results[0] as { status: string } | undefined;
