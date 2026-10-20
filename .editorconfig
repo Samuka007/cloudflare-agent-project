@@ -1,0 +1,14 @@
+# Editor defaults aligned with .prettierrc.json (prettier's own defaults:
+# 2-space indent, LF, final newline, no trailing whitespace).
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false

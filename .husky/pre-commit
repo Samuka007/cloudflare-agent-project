@@ -1,0 +1,10 @@
+# Issue #592: staged violations are rejected at commit time.
+# set -e is load-bearing: lint-staged's non-zero exit must fail the hook
+# (without it the exit code comes from the last command — typecheck passing
+# would mask lint failures).
+# lint-staged: eslint --fix + prettier --write on staged files only;
+# typecheck cannot be scoped to staged files (tsc is program-wide), so the
+# full workspace typecheck runs in the hook as the last gate.
+set -e
+pnpm exec lint-staged
+pnpm typecheck

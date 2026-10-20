@@ -53,6 +53,28 @@
 - One commit per describable behavior; tests and consumer updates in the same commit.
 - Conventional commit prefixes: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`.
 
+## Toolchain
+
+- **Bootstrap**: fresh clone → `pnpm bootstrap` (`scripts/bootstrap.sh`:
+  submodules → frozen install → bb dist build). CI (`ci.yml`) runs the same
+  order; keep the two in sync when adding a gate.
+- **Lint**: `pnpm lint` runs eslint once per workspace scope
+  (`scripts/lint-split.mjs`), not a single `eslint .`. Rationale (#592):
+  typescript-eslint's projectService holds every project's TS program in one
+  process (~7 GB summed; `apps/server-worker` alone peaks ~2 GB on
+  workers-types + decorators), which OOM managers SIGTERM on dev boxes
+  (exit 143). Per-scope processes cap the footprint at the worst single
+  scope. File scope is unchanged: `eslint.config.mjs` is the single source.
+  New workspace packages are picked up automatically (`packages/*`, `apps/*`,
+  `scripts`).
+- **Pre-commit** (husky + lint-staged): staged files get eslint --fix +
+  prettier --write; the full `pnpm typecheck` runs as the last gate. The
+  hook has `set -e` — do not remove it, or a lint-staged failure is masked
+  by typecheck's exit code.
+- **Editor**: `.vscode/` ships flat-config eslint + prettier-on-save settings
+  and the recommended extension set; `.editorconfig` mirrors prettier's
+  defaults. Keep them aligned with `.prettierrc.json`.
+
 ## Submodule: bb
 
 - `bb/` is a fork of `get-bb/bb` pinned as a git submodule.

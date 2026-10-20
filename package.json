@@ -6,16 +6,29 @@
     "node": ">=22.19.0"
   },
   "scripts": {
+    "bootstrap": "bash scripts/bootstrap.sh",
     "build:bb": "pnpm --filter @bb/domain --filter @bb/thread-view --filter @bb/server-contract --filter @bb/host-daemon-contract --filter @bb/hono-typed-routes run build",
-    "lint": "eslint .",
+    "lint": "node scripts/lint-split.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "pnpm --filter @cap/protocol run typecheck && pnpm --filter @cap/mcp run typecheck && pnpm --filter @cap/agent-config run typecheck && pnpm --filter @cap/agent-durable run typecheck && pnpm --filter @cap/daemon-service run typecheck && pnpm --filter @cap/provider-app run typecheck && pnpm --filter @cap/server-worker run typecheck && pnpm --filter @cap/scripts run typecheck",
+    "prepare": "husky",
     "test": "pnpm -r --filter '!./bb/**' run test"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix --no-warn-ignored",
+      "prettier --write"
+    ],
+    "*.{js,cjs,mjs,json,md,yml,yaml,css}": [
+      "prettier --write"
+    ]
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
     "eslint": "^9.37.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
     "prettier": "^3.6.2",
     "typescript": "~5.9.0",
     "typescript-eslint": "^8.71.0",
