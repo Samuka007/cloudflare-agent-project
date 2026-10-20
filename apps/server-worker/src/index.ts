@@ -22,6 +22,12 @@ import { createDurableRuntime } from "./durable-runtime";
 
 export { NotificationHubDO, LeaseStoreDO, DaemonServiceDO };
 
+// Deployment-transition scaffolding (two-step #590 retirement): unbound inert
+// stubs keeping the dormant legacy classes exportable until the v3
+// deleted_classes migration lands. Removed together with v3 restoration —
+// see legacy-do-stubs.ts. Never bind these.
+export { ComposedAgentDO, ComposedHostOrchestratorDO, ManagerDo } from "./legacy-do-stubs";
+
 /**
  * The per-thread pi-durable agent. The production subclass supplies the D1
  * provider catalog + daemon-host tool registry; the base owns the pi Harness,

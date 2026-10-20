@@ -76,12 +76,8 @@
       "tag": "v2",
       "new_sqlite_classes": ["ComposedDurableAgentDO"],
     },
-    {
-      // Legacy loop / manager / orchestrator classes are deleted with their
-      // DO storage; the pi-durable class is now the only agent.
-      "tag": "v3",
-      "deleted_classes": ["ComposedAgentDO", "ComposedHostOrchestratorDO", "ManagerDo"],
-    },
+    // v3 withdrawn (see wrangler.jsonc) — restored in the immediate follow-up
+    // commit once the live script no longer binds the legacy classes.
   ],
   "r2_buckets": [
     {
