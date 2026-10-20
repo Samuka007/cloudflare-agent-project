@@ -83,6 +83,7 @@ import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs"
 import { getAppSettingsRow, toAppSettings } from "../db/settings";
 import { getCompactionSettings } from "../db/compaction-settings";
 import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
+import { providerConfigEnvFor } from "../control-plane/server";
 import { toThreadListEntries, toThreadResponseWithSpawnCheck } from "../services/runtime-display";
 import { toHostRecord } from "../services/host-records";
 import {
@@ -349,7 +350,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // #362/#450: the selection validates against the D1 directory (the sole
     // 正本 — a panel-side provider is selectable the moment it exists; no
     // rows → the fail-closed empty directory).
-    const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+    const overlay = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(ctx.env));
     const selection = validateThreadExecutionSelection(payload, overlay?.providers ?? {});
     const providerId = selection.resolved.providerId;
     // #288: the binding source chain resolves once, here — explicit choice >
@@ -532,7 +533,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
    */
   routes.get("/threads/:id/default-execution-options", async (ctx) => {
     const row = await requirePublicThread(ctx);
-    const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+    const overlay = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(ctx.env));
     const permissionMode = (await getPermissionMode(ctx.env)).mode;
     return ctx.json(
       resolvedThreadExecutionOptionsSchema
@@ -569,7 +570,8 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
                 ? { reasoningLevel: payload.reasoningLevel }
                 : {}),
             },
-            (await loadProviderConfigCatalogOverlay(ctx.env))?.providers ?? {},
+            (await loadProviderConfigCatalogOverlay(providerConfigEnvFor(ctx.env)))?.providers ??
+              {},
           )
         : null;
     const updated = await updateThreadRecord(ctx.env, row.id, {
@@ -698,7 +700,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // the turn (and any replay) pins the new row.
     let executionRide: RelaySelection | undefined;
     if (payload.model !== undefined || payload.reasoningLevel !== undefined) {
-      const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+      const overlay = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(ctx.env));
       // #496: a reasoning-only change validates against the thread's STORED
       // model (the row override), never a deployment default — the channel
       // names no default model anymore; a row without an override still
@@ -746,7 +748,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // the fallback card's PATCH, a model-less follow-up still rode the
     // create-time pin).
     if (executionRide === undefined) {
-      const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+      const overlay = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(ctx.env));
       const stored = resolveStoredThreadExecution(row, overlay?.providers ?? {});
       executionRide = {
         providerId: stored.providerId,
@@ -858,7 +860,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     const seat = await getCompactionSettings(ctx.env);
     const remoteOf = async (): Promise<{ providerId: string; model: string } | null> => {
       if (seat.remote === null) return null;
-      const overlay = await loadProviderConfigCatalogOverlay(ctx.env);
+      const overlay = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(ctx.env));
       const validated = validateThreadExecutionSelection(
         { providerId: seat.remote.providerId, model: seat.remote.model },
         overlay?.providers ?? {},

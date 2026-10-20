@@ -5,12 +5,12 @@ import type {
   ToolResultPayload,
 } from "./protocol";
 import { DurableObject } from "cloudflare:workers";
+import type { ControlPlaneFetcher } from "@cap/protocol";
 import {
   DAEMON_PROTOCOL_VERSION,
   DEFAULT_EXEC_TIMEOUT_MS,
   DISCONNECT_GRACE_MS,
   HEARTBEAT_INTERVAL_MS,
-  LIVENESS_PROJECTION_INTERVAL_MS,
   LEASE_TIMEOUT_MS,
   MAX_FRAME_BYTES,
   RESULT_INLINE_LIMIT_BYTES,
@@ -69,12 +69,15 @@ export interface DaemonServiceEnv {
   /** Agent-update sink; the integration worker binds the pi-durable agent. */
   AGENT_DO: DurableObjectNamespace;
   /**
-   * #62 hosts-registry D1 for the liveness projection (heartbeat →
-   * last_seen_at; the port's markHostSeen). The composed deployment binds
-   * the same control-plane database as the app's DB; standalone rigs omit
+   * T7 #599: the ControlPlane typed RPC face (the composed worker's
+   * `control_plane` named entrypoint, reached through the CONTROL_PLANE
+   * service binding) for the liveness projection — heartbeat →
+   * last_seen_at (the port's markHostSeen). The direct D1 write is retired
+   * with the HOSTS_DB binding: the hosts table layout is server-private
+   * storage, never a cross-worker ABI. Standalone rigs (L1, hookup) omit
    * the binding and the projection skips. Optional for exactly that reason.
    */
-  HOSTS_DB?: D1Database;
+  CONTROL_PLANE?: ControlPlaneFetcher;
   /**
    * #193 S1 host changed broadcast: the realtime hub DO
    * (server-worker NotificationHubDO). The DO's six host-change moments
@@ -82,7 +85,7 @@ export interface DaemonServiceEnv {
    * fan out through its notifyHost + markDaemon* RPC surface, bb
    * registerDaemon (hub.ts:456-476) / closeSession (data/sessions.ts:128).
    * Optional — standalone rigs (L1, hookup) omit it and the broadcast skips,
-   * exactly the HOSTS_DB posture above.
+   * exactly the CONTROL_PLANE posture above.
    */
   HUB?: DurableObjectNamespace;
 }
@@ -924,10 +927,12 @@ export class DaemonServiceDO extends DurableObject<DaemonServiceEnv> {
    */
   private async projectLiveness(hostId: string): Promise<void> {
     await this.ready();
-    const db = this.env.HOSTS_DB;
-    if (db === undefined) return;
+    const controlPlane = this.env.CONTROL_PLANE;
+    if (controlPlane === undefined) return;
     try {
-      await markHostSeen(db, hostId, Date.now(), LIVENESS_PROJECTION_INTERVAL_MS);
+      // T7 #599: the stamp rides the ControlPlane typed RPC face; the ≥30s
+      // write throttle is the server's policy now (#591 markSeen ruling).
+      await markHostSeen(controlPlane, hostId, Date.now());
     } catch (error) {
       console.error(`host liveness projection failed for ${hostId}:`, error);
     }

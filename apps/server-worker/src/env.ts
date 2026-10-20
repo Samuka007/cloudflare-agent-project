@@ -5,6 +5,16 @@
 export interface Env {
   /** Control-plane tables (threads, projects, sections, hosts, settings). */
   DB: D1Database;
+  /**
+   * T7 #599: the ControlPlane typed RPC face — the self service binding to
+   * this worker's `control_plane` named entrypoint (public traffic cannot
+   * reach a named entrypoint; the binding IS the capability). Consumed by
+   * the daemon-service DO's liveness projection, whose direct D1 write
+   * (HOSTS_DB) it retires. Optional: standalone rigs omit it and the
+   * projection skips, exactly the old absent-HOSTS_DB posture.
+   */
+  readonly CONTROL_PLANE?: Fetcher;
+
   /** Drizzle-era control plane (db campaign #591): the repositories' database. */
   DB_V2: D1Database;
   /** Public WS fan-out + event waiters + disconnect grace. */

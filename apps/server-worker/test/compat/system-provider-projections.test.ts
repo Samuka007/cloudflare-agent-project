@@ -4,8 +4,14 @@ import { ensureMigrations } from "../migrate";
 import { ensureRigProviderRow, removeRigProviderRow } from "../helpers";
 import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
 import type { ProviderConfigCatalogOverlay } from "@cap/provider-app";
+import { providerConfigEnvFor } from "../../src/control-plane/server";
 import { systemProviderProjectionsResponseSchema } from "../../src/contract/api/system";
 import { buildProviderProjections } from "../../src/routes/system";
+import type { Env } from "../../src/env";
+
+/** The rig env vs src Env: only the DO-namespace generics differ; the
+ * bindings are the same objects (thread-suspension-face.test.ts precedent). */
+const appEnv = env as unknown as Env;
 
 /**
  * Ticket #266: GET /system/provider-projections — the read-only provider
@@ -34,7 +40,7 @@ const EMPTY_OVERLAY = {
 } satisfies Pick<ProviderConfigCatalogOverlay, "providers" | "imageSourceProviderId" | "webSearch">;
 
 async function loadedOverlay(): Promise<ProviderConfigCatalogOverlay> {
-  const overlay = await loadProviderConfigCatalogOverlay(env);
+  const overlay = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(appEnv));
   if (overlay === null) throw new Error("the rig D1 binding must load an overlay");
   return overlay;
 }
