@@ -26,6 +26,23 @@
       "database_name": "cap-control-plane",
       "database_id": "00000000-0000-0000-0000-000000000000",
     },
+    {
+      // W6 db campaign (#591/#594): the drizzle-era control plane
+      // (src/db/schema.ts → drizzle/ ledger, applied by the deploy hook —
+      // see wrangler.staging.jsonc for the phase note). Placeholder id in
+      // the undeployed default config (same convention as DB above); the
+      // vitest rig uses it as the second local D1 (env.DB_V2) for the
+      // ledger-migration suite. Staging provisioning substitutes the real
+      // id in wrangler.staging.jsonc.
+      "binding": "DB_V2",
+      "database_name": "cap-control-plane-v2",
+      // Distinct from DB's zero placeholder: miniflare keys LOCAL D1 storage
+      // by database id, and a shared id would fuse env.DB and env.DB_V2 into
+      // one sqlite file — the legacy suites' old-shape tables would collide
+      // with the drizzle baseline. Never deployed (staging uses the real id).
+      "database_id": "00000000-0000-0000-0000-000000000002",
+      "migrations_dir": "drizzle",
+    },
   ],
   "durable_objects": {
     "bindings": [
