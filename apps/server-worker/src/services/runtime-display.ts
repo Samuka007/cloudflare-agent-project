@@ -1,7 +1,9 @@
 import type { Env } from "../env";
 import type { ThreadDbRow } from "../db/rows";
-import { getEnvironmentRow } from "../db/environments";
-import { getThreadHierarchyDepth, type ThreadListRow } from "../db/control-plane";
+// Type-only legacy shapes: repo records are structural supersets, so every
+// T5 call site passes repo records into these assemblies unchanged.
+import type { ThreadListRow } from "../db/control-plane";
+import { workerRepos } from "../db/repositories/worker-repos";
 import type { ThreadListEntry, ThreadRuntimeState } from "../contract/domain/thread";
 import type { ThreadResponse } from "../contract/api/threads";
 import { daemonConnected } from "./host-records";
@@ -60,7 +62,7 @@ export async function resolveThreadRuntimeStateAsync(
   if (row.environmentId === null || !admitsHostFace(row.status)) {
     return resolveThreadRuntimeState(row);
   }
-  const environment = await getEnvironmentRow(env, row.environmentId);
+  const environment = await workerRepos(env).environments.get(row.environmentId);
   if (environment === null) {
     return resolveThreadRuntimeState(row);
   }
@@ -100,7 +102,7 @@ export async function toThreadResponseWithSpawnCheck(
   env: Env,
   row: ThreadDbRow,
 ): Promise<ThreadResponse> {
-  const depth = await getThreadHierarchyDepth(env, row.id);
+  const depth = await workerRepos(env).threads.hierarchyDepth(row.id);
   return {
     ...(await toThreadResponseAsync(env, row)),
     canSpawnChild: depth < MAX_THREAD_HIERARCHY_DEPTH,

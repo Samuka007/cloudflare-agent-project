@@ -1,19 +1,21 @@
 import { beforeAll, afterEach, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate";
-import { decryptProviderSecret } from "@cap/provider-app";
+import { decryptProviderSecret, loadProviderConfigOverlay } from "@cap/provider-app";
+import { providerConfigEnvFor } from "../../src/control-plane/server";
 import {
   systemWebSearchResponseSchema,
   type SystemWebSearchResponse,
 } from "../../src/contract/api/system";
-import { createSettingsRepository } from "../../src/db/repositories/settings";
+import { setWebSearchConfig } from "../../src/db/web-search";
 import type { Env } from "../../src/env";
-import { loadProviderConfigFaces } from "../../src/services/provider-config-faces";
+
+/** The rig env vs src Env: only the DO-namespace generics differ; the
+ * bindings are the same objects (thread-suspension-face.test.ts precedent). */
+const appEnv = env as unknown as Env;
 
 /**
- * #449 the web-search engine-chain write face (the drizzle-era
- * `settings_agent.web_search_*` columns — the collapsed successor of the
- * legacy `web_search` row; T6 re-point — the row is still the
+ * #449 the web-search engine-chain write face (the D1 `web_search` row, the
  * sole 正本 — the AGENT_DO_WEB_SEARCH env path is deleted, #450 zero-env
  * ruling): GET/PUT /api/v1/system/web-search. Acceptance faces exercised:
  *
@@ -29,11 +31,6 @@ import { loadProviderConfigFaces } from "../../src/services/provider-config-face
  */
 
 beforeAll(ensureMigrations);
-
-// The rig env (cloudflare:workers) shares every binding object with the
-// module Env; only the DO namespace generics differ (the attachment-pickup
-// precedent for the cast).
-const moduleEnv = env as unknown as Env;
 
 const BASE = "https://example.com";
 // The L1 rig master key (vitest miniflare bindings) — the deployment injects
@@ -76,26 +73,26 @@ async function putFace(
 }
 
 async function rawSeatRow(): Promise<{
-  web_search_chain: string;
-  web_search_timeout_seconds: number;
-  web_search_engines: string | null;
-  web_search_secrets_enc: string | null;
-  web_search_secrets_meta: string | null;
+  chain: string;
+  timeout_seconds: number;
+  engines: string | null;
+  secrets_enc: string | null;
+  secrets_meta: string | null;
 } | null> {
-  return env.DB_V2.prepare(
-    "SELECT web_search_chain, web_search_timeout_seconds, web_search_engines, web_search_secrets_enc, web_search_secrets_meta FROM settings_agent WHERE id = 'agent'",
+  return env.DB.prepare(
+    "SELECT chain, timeout_seconds, engines, secrets_enc, secrets_meta FROM web_search WHERE id = 'web_search'",
   ).first<{
-    web_search_chain: string;
-    web_search_timeout_seconds: number;
-    web_search_engines: string | null;
-    web_search_secrets_enc: string | null;
-    web_search_secrets_meta: string | null;
+    chain: string;
+    timeout_seconds: number;
+    engines: string | null;
+    secrets_enc: string | null;
+    secrets_meta: string | null;
   }>();
 }
 
 afterEach(async () => {
   // The seat is single-row; every case starts from the unconfigured state.
-  await env.DB_V2.prepare("DELETE FROM settings_agent").run();
+  await env.DB.prepare("DELETE FROM web_search WHERE id = 'web_search'").run();
 });
 
 describe("GET /api/v1/system/web-search", () => {
@@ -152,20 +149,19 @@ describe("GET /api/v1/system/web-search", () => {
     const face = await getFace();
     expect(face.chain.map((entry) => entry.engine)).toEqual(["public", "duckduckgo", "searxng"]);
     expect(face.engines.searxng.endpoint).toBe("https://searx.example.com");
-    // The raw D1 row is the 正本 the faces (and thus the agent DO, via T7's
-    // client) read.
+    // The raw D1 row is the 正本 the loader (and thus the agent DO) reads.
     const row = await rawSeatRow();
     if (!row) throw new Error("web_search row must exist");
-    expect(JSON.parse(row.web_search_chain)).toEqual(["public", "duckduckgo", "searxng"]);
-    expect(row.web_search_timeout_seconds).toBe(90);
+    expect(JSON.parse(row.chain)).toEqual(["public", "duckduckgo", "searxng"]);
+    expect(row.timeout_seconds).toBe(90);
   });
 
   it("reports a broken stored row loudly and refuses keep-semantics on it", async () => {
     // A hand-edited row carrying a browser-backed engine can never come from
     // the write face; the loader refuses the chain (L1) and the faces report
     // decodeError instead of silently substituting defaults.
-    await env.DB_V2.prepare(
-      "INSERT INTO settings_agent (id, web_search_chain, web_search_timeout_seconds, web_search_engines, web_search_secrets_enc, web_search_secrets_meta, updated_at) VALUES ('agent', '[\"google\"]', 60, NULL, NULL, NULL, ?)",
+    await env.DB.prepare(
+      "INSERT INTO web_search (id, chain, timeout_seconds, engines, secrets_enc, secrets_meta, updated_at) VALUES ('web_search', '[\"google\"]', 60, NULL, NULL, NULL, ?)",
     )
       .bind(Date.now())
       .run();
@@ -194,13 +190,11 @@ describe("GET /api/v1/system/web-search", () => {
 });
 
 describe("PUT /api/v1/system/web-search", () => {
-  // The fingerprint is the hot-apply gate's change signal (#449): the DO
-  // reads it through the legacy loader until the T7 typed client, so this
-  // pin asserts the V2-side assembly — the gate's post-cutover input.
-  it("bumps the overlay fingerprint on a chain write (#449)", async () => {
-    const before = (await loadProviderConfigFaces(moduleEnv)).catalog.fingerprint;
+  it("bumps the overlay fingerprint so warm DO isolates hot-apply (#449)", async () => {
+    const before = (await loadProviderConfigOverlay(providerConfigEnvFor(appEnv)))?.fingerprint;
     await putFace({ chain: ["public"] });
-    const after = (await loadProviderConfigFaces(moduleEnv)).catalog.fingerprint;
+    const after = (await loadProviderConfigOverlay(providerConfigEnvFor(appEnv)))?.fingerprint;
+    expect(before).toBeDefined();
     expect(after).not.toBe(before);
   });
 
@@ -232,7 +226,7 @@ describe("PUT /api/v1/system/web-search", () => {
     expect(put.face?.timeoutSeconds).toBe(300);
     const row = await rawSeatRow();
     if (!row) throw new Error("web_search row must exist");
-    expect(row.web_search_timeout_seconds).toBe(300);
+    expect(row.timeout_seconds).toBe(300);
   });
 
   it("stores secrets tri-state and AES-GCM at rest (brave + exa)", async () => {
@@ -257,14 +251,12 @@ describe("PUT /api/v1/system/web-search", () => {
     // Encryption at rest: the D1 column never carries plaintext.
     const row = await rawSeatRow();
     if (!row) throw new Error("web_search row must exist");
-    expect(row.web_search_secrets_enc).not.toBeNull();
-    if (row.web_search_secrets_enc === null) throw new Error("secrets must be stored");
-    expect(row.web_search_secrets_enc).not.toContain(BRAVE_KEY);
-    expect(row.web_search_secrets_enc).not.toContain(EXA_KEY);
-    expect(row.web_search_secrets_enc).not.toContain(SEARXNG_TOKEN);
-    const decrypted = JSON.parse(
-      await decryptProviderSecret(RIG_MASTER_KEY, row.web_search_secrets_enc),
-    ) as {
+    expect(row.secrets_enc).not.toBeNull();
+    if (row.secrets_enc === null) throw new Error("secrets_enc must be stored");
+    expect(row.secrets_enc).not.toContain(BRAVE_KEY);
+    expect(row.secrets_enc).not.toContain(EXA_KEY);
+    expect(row.secrets_enc).not.toContain(SEARXNG_TOKEN);
+    const decrypted = JSON.parse(await decryptProviderSecret(RIG_MASTER_KEY, row.secrets_enc)) as {
       brave?: { apiKey?: string };
       exa?: { apiKey?: string };
       searxng?: { token?: string };
@@ -282,11 +274,9 @@ describe("PUT /api/v1/system/web-search", () => {
     expect(rotated.face?.engines.brave.hasApiKey).toBe(true);
     const rotateRow = await rawSeatRow();
     if (!rotateRow) throw new Error("web_search row must exist after rotate");
-    if (rotateRow.web_search_secrets_enc === null) {
-      throw new Error("secrets must be stored after rotate");
-    }
+    if (rotateRow.secrets_enc === null) throw new Error("secrets_enc must be stored after rotate");
     const decryptedAfterRotate = JSON.parse(
-      await decryptProviderSecret(RIG_MASTER_KEY, rotateRow.web_search_secrets_enc),
+      await decryptProviderSecret(RIG_MASTER_KEY, rotateRow.secrets_enc),
     ) as { brave?: { apiKey?: string }; searxng?: { token?: string } };
     expect(decryptedAfterRotate.brave?.apiKey).toBe(BRAVE_KEY_ROTATED);
     expect(decryptedAfterRotate.searxng?.token).toBe(SEARXNG_TOKEN);
@@ -308,7 +298,8 @@ describe("PUT /api/v1/system/web-search", () => {
 
   it("guards the master-key gate at the db layer (fail-closed)", async () => {
     await expect(
-      createSettingsRepository(env.DB_V2, undefined).setWebSearchConfig(
+      setWebSearchConfig(
+        { DB: env.DB, PROVIDER_CONFIG_MASTER_KEY: undefined },
         {
           chain: ["brave"],
           timeoutSeconds: 60,

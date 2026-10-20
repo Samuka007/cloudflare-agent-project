@@ -3,7 +3,9 @@ import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate";
 import { hostSchema } from "../../src/contract/domain/host";
 import type { Host } from "../../src/contract/domain/host";
-import { LIVENESS_PROJECTION_INTERVAL_MS } from "@cap/daemon-service";
+// T7 #599: the throttle is the server-side policy now (the stamp rides the
+// CONTROL_PLANE binding; the constant moved with it).
+import { LIVENESS_PROJECTION_INTERVAL_MS } from "../../src/control-plane/registry";
 import { BASE, apiGet, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers";
 
 /**
@@ -66,15 +68,17 @@ async function readHost(hostId: string): Promise<Host | null> {
   return row ? hostSchema.parse(row) : null;
 }
 
+/** T5 (#597): the heartbeat stamp and the hosts face share the drizzle-era
+ * DB_V2 (HOSTS_DB rides the same database since the reader cutover). */
 async function storedLastSeenAt(hostId: string): Promise<number | null> {
-  const row = await env.DB.prepare("SELECT last_seen_at FROM hosts WHERE id = ?")
+  const row = await env.DB_V2.prepare("SELECT last_seen_at FROM hosts WHERE id = ?")
     .bind(hostId)
     .first<{ last_seen_at: number | null }>();
   return row?.last_seen_at ?? null;
 }
 
 async function backdateLastSeenAt(hostId: string, at: number): Promise<void> {
-  await env.DB.prepare("UPDATE hosts SET last_seen_at = ? WHERE id = ?").bind(at, hostId).run();
+  await env.DB_V2.prepare("UPDATE hosts SET last_seen_at = ? WHERE id = ?").bind(at, hostId).run();
 }
 
 /**

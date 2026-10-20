@@ -1,4 +1,4 @@
-import { asc, eq, isNull } from "drizzle-orm";
+import { asc, eq, isNull, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { z } from "zod";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
@@ -58,6 +58,13 @@ export interface HostsRepo {
   listActive(): Promise<HostRecord[]>;
   /** #49 daemon attach bridge: markHostSeen/upsert on enroll + session/open. */
   upsertAttached(hostId: string, info?: HostAttachmentInfo): Promise<void>;
+  /**
+   * #62 heartbeat liveness stamp (moved off the legacy env.DB write when the
+   * hosts reader cut over to DB_V2). The ≥minIntervalMs SQL throttle is THIS
+   * repository's policy (#591 ruling: markSeen 节流内聚 Hosts repo) — the
+   * daemon side fires per heartbeat, the repo decides which stamps land.
+   */
+  markSeen(hostId: string, at: number, minIntervalMs: number): Promise<void>;
   update(hostId: string, update: UpdateHostArgs): Promise<HostRecord | null>;
 }
 
@@ -77,6 +84,15 @@ export function createHostsRepo(db: D1Database): HostsRepo {
         .where(isNull(hosts.destroyedAt))
         .orderBy(asc(hosts.createdAt), asc(hosts.id))
         .all();
+    },
+
+    async markSeen(hostId, at, minIntervalMs) {
+      await drizzleDb
+        .update(hosts)
+        .set({ lastSeenAt: at, updatedAt: at })
+        .where(
+          sql`${hosts.id} = ${hostId} and (${hosts.lastSeenAt} is null or ${at} - ${hosts.lastSeenAt} >= ${minIntervalMs})`,
+        );
     },
 
     async upsertAttached(hostId, info) {

@@ -64,11 +64,11 @@ export function splitMigrationStatements(file: string): string[] {
  * Miniflare 5 removed the per-binding `migrations` option the old
  * pool-workers pattern relied on.
  *
- * T6 (#598): the /system faces read the drizzle-era control plane
- * (env.DB_V2) through the repositories, so the rig bootstraps BOTH schemas —
- * the legacy replay chain above AND the drizzle ledger (apply-once, the
- * same semantics the CI deploy hook runs). Every suite's beforeAll
- * (ensureMigrations) can then hit either storage era.
+ * T5 (#597): the same gate applies the drizzle ledger to DB_V2 — the
+ * five-aggregate faces read the drizzle-era control plane through the
+ * repositories, so every compat suite needs both schema generations ready
+ * regardless of which suite applies the ledger first (the apply is
+ * idempotent: one d1_migrations row per tag, replays are skips).
  */
 let applied: Promise<void> | null = null;
 
@@ -79,6 +79,11 @@ export function ensureMigrations(): Promise<void> {
         await env.DB.prepare(statement).run();
       }
     }
+    // W6 db campaign (#591): the drizzle-era repositories (threads badge
+    // reads in listThreads, #600) hit env.DB_V2 from inside the app, so the
+    // shared rig must bring the ledger database up alongside the legacy
+    // chain — order-independent across suite files (the #609 two-branch
+    // ledger test already tolerates any first-applier).
     await applyD1Migrations(env.DB_V2);
   })();
   return applied;

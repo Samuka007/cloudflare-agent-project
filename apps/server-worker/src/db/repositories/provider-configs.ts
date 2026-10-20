@@ -87,6 +87,24 @@ export interface ProviderConfigStoredRow {
   updatedAt: number;
 }
 
+/**
+ * The snapshot-feed row (#600 wiring): identical to {@link ProviderConfigStoredRow}
+ * but CIPHER-BEARING — the dispatch/overlay half decrypts api_key_enc downstream
+ * (provider-app assembly), so the ciphertext crosses this seam by design. Never
+ * serve this on a CRUD/display face.
+ */
+export interface ProviderConfigCipherRow {
+  id: string;
+  displayName: string | null;
+  baseUrl: string | null;
+  api: string | null;
+  serviceTier: boolean;
+  apiKeyEnc: string | null;
+  models: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // ─── Interface ───────────────────────────────────────────────────────────────
 
 export interface ProviderConfigsRepository {
@@ -115,6 +133,8 @@ export interface ProviderConfigsRepository {
    * `hasCredential` presence only.
    */
   list(): Promise<ProviderConfigStoredRow[]>;
+  /** The snapshot feed (#591 agent-snapshot): cipher included, display faces need not apply. */
+  listWithCipher(): Promise<ProviderConfigCipherRow[]>;
   /**
    * The stored credential, decrypted for wire use (test-connection). Null
    * when the row has no key or the master key is not configured. The
@@ -251,6 +271,21 @@ function buildProviderConfigsRepository(
         api: row.api,
         serviceTier: row.serviceTier,
         hasCredential: row.apiKeyEnc !== null,
+        models: row.models,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      }));
+    },
+
+    async listWithCipher() {
+      const rows = await db.select().from(providerConfigs).orderBy(providerConfigs.id).all();
+      return rows.map((row) => ({
+        id: row.id,
+        displayName: row.displayName,
+        baseUrl: row.baseUrl,
+        api: row.api,
+        serviceTier: row.serviceTier,
+        apiKeyEnc: row.apiKeyEnc,
         models: row.models,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,

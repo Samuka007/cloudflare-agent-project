@@ -6,3 +6,4 @@ export * from "./environments";
 export * from "./http";
 export * from "./pending-interactions";
 export * from "./realtime-ws";
+export * from "./control-plane";

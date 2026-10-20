@@ -1,10 +1,15 @@
 /**
- * #362/#450 the D1 provider-config overlay loader — the user-face
- * configuration 正本 (provider_configs table) and the ONLY directory source
- * (#450: the env MODEL_RELAY_CATALOG / MODEL_RELAY_PROVIDER_CREDENTIALS
+ * #362/#450 the provider-config overlay loader — the user-face
+ * configuration 正本 (the provider_configs aggregate) and the ONLY directory
+ * source (#450: the env MODEL_RELAY_CATALOG / MODEL_RELAY_PROVIDER_CREDENTIALS
  * seeds are deleted; there is no env branch anywhere on the provider path).
  * #434: the CRUD display face lists ONLY these user rows; the read faces
  * (execution-options / projections) project the same rows.
+ *
+ * T7 #599: the rows arrive through the ControlPlane typed client
+ * (ProviderConfigEnv.controlPlane) — the direct D1 batch is retired and the
+ * storage layout is server-private. The assembly (decode, decrypt,
+ * warnings, fingerprint) stays HERE, on the consumer side of the seam.
  *
  * Discipline carried from #350/#266:
  * - Bad rows are skipped WITH a warning — never silently deleted. The row
@@ -37,6 +42,7 @@ import {
   type WebSearchConfig,
   type WebSearchProjection,
 } from "@cap/agent-config";
+import type { AgentSnapshot, AgentWebSearchRow, ControlPlaneClient } from "@cap/protocol";
 import { decryptProviderSecret } from "./provider-config-crypto";
 
 /** One provider's decrypted credential slot (never a face). */
@@ -47,9 +53,15 @@ export interface RelayProviderCredential {
 
 export type RelayProviderCredentialMap = Record<string, RelayProviderCredential>;
 
-/** The env slice this loader reads (structural — the worker Env satisfies it). */
+/**
+ * The env slice this loader reads. T7 #599: the direct D1 handle is gone —
+ * the four provider-settings domains arrive through the ControlPlane typed
+ * client (the server-worker Local adapter in-process; the service-binding
+ * Rpc adapter when the consumers split into their own worker). Table
+ * structures are server-private storage; this interface is the ABI.
+ */
 export interface ProviderConfigEnv {
-  DB?: D1Database;
+  controlPlane?: ControlPlaneClient;
   PROVIDER_CONFIG_MASTER_KEY?: string;
 }
 
@@ -120,43 +132,6 @@ export interface ProviderConfigFullOverlay extends ProviderConfigCatalogOverlay 
   webSearchConfig: WebSearchConfig | null;
 }
 
-interface ProviderConfigDbRow {
-  id: string;
-  display_name: string | null;
-  base_url: string | null;
-  api: string | null;
-  service_tier: number | null;
-  api_key_enc: string | null;
-  models: string | null;
-  created_at: number;
-  updated_at: number;
-}
-
-/** The #449 web_search row (single-row seat, the image_source precedent). */
-interface WebSearchDbRow {
-  id: string;
-  /** JSON array of engine ids, in chain order. */
-  chain: string;
-  timeout_seconds: number | null;
-  /** JSON non-secret engine settings (searxng endpoint/categories/…). */
-  engines: string | null;
-  /** AES-GCM JSON of the secret half (brave apiKey, searxng token/basic*). */
-  secrets_enc: string | null;
-  /** JSON secret-PRESENCE map — the no-decrypt faces read presence only. */
-  secrets_meta: string | null;
-  updated_at: number;
-}
-
-/** The #502 tool_capabilities row (single-row seat, same precedent). */
-interface ToolCapabilitiesDbRow {
-  id: string;
-  /** 0/1 gates (#150): think / context_notes+new_context / checkpoint+rewind. */
-  external_thinking: number | null;
-  context_notes: number | null;
-  checkpoint: number | null;
-  updated_at: number;
-}
-
 /** Non-secret engine settings as stored (plaintext `engines` column). */
 export interface WebSearchStoredEngines {
   searxng?: {
@@ -210,8 +185,6 @@ export interface WebSearchFaceEngines {
   };
 }
 
-const WEB_SEARCH_ROW_ID = "web_search";
-const TOOL_CAPABILITIES_ROW_ID = "tool_capabilities";
 const PROVIDER_CONFIG_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** The three halves assembleWebSearch derives from the stored row. */
@@ -232,6 +205,141 @@ function parseJsonCell(label: string, raw: string | null, warnings: string[]): u
     );
     return undefined;
   }
+}
+
+/**
+ * Assemble the #449 web_search halves from the stored row: the secret-free
+ * overlay projection, the dispatch config (decrypt half only), and the
+ * fingerprint content. Validation runs through resolveWebSearchConfig — the
+ * SAME single path the panel write face uses, so a stored row can never
+ * serve a chain the write face would have rejected. A broken row is a loud
+ * decodeError (skip-with-warning discipline): the row stays in D1, the
+ * projection faces report it, and no defaults are silently substituted.
+ */
+async function assembleWebSearch(
+  row: AgentWebSearchRow | null,
+  options: { decrypt: boolean },
+  masterKey: string | undefined,
+  warnings: string[],
+): Promise<WebSearchAssembly> {
+  if (row === null) {
+    return {
+      overlay: {
+        configured: false,
+        decodeError: false,
+        projection: projectWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG),
+        engines: null,
+      },
+      config: null,
+      fingerprint: null,
+    };
+  }
+  const fail = (reason: string): WebSearchAssembly => {
+    warnings.push(`web_search config row: ${reason} — decodeError (row kept, no chain served)`);
+    return {
+      overlay: { configured: true, decodeError: true, projection: null, engines: null },
+      config: null,
+      fingerprint: JSON.stringify({ decodeError: true, updatedAt: row.updatedAt }),
+    };
+  };
+  let secrets: WebSearchStoredSecrets | undefined;
+  // The wire warning keeps the stored-cell vocabulary (`secrets_enc`) — it
+  // names the persisted cell, which is server-side storage now but still
+  // exactly what an operator would go look at.
+  if (options.decrypt && row.secretsEnc !== null) {
+    if (masterKey === undefined || masterKey === "") {
+      warnings.push(
+        "web_search config row: secrets_enc present but PROVIDER_CONFIG_MASTER_KEY is not configured — engines needing secrets will report unconfigured",
+      );
+    } else {
+      try {
+        secrets = JSON.parse(
+          await decryptProviderSecret(masterKey, row.secretsEnc),
+        ) as WebSearchStoredSecrets;
+      } catch (error) {
+        return fail(
+          `secrets_enc is not decryptable (${error instanceof Error ? error.message : String(error)})`,
+        );
+      }
+    }
+  }
+  const storedEngines = parseJsonCell("engines", row.engines, warnings) as
+    WebSearchStoredEngines | undefined;
+  if (row.engines !== null && storedEngines === undefined) {
+    return fail("engines is not valid JSON");
+  }
+  const chain = parseJsonCell("chain", row.chain, warnings) as string[] | undefined;
+  if (chain === undefined) return fail("chain is not valid JSON");
+  const patch = {
+    chain,
+    ...(row.timeoutSeconds !== null ? { timeoutSeconds: row.timeoutSeconds } : {}),
+    engines: {
+      ...(secrets?.brave?.apiKey !== undefined ? { brave: { apiKey: secrets.brave.apiKey } } : {}),
+      ...(secrets?.exa?.apiKey !== undefined ? { exa: { apiKey: secrets.exa.apiKey } } : {}),
+      searxng: { ...storedEngines?.searxng, ...secrets?.searxng },
+    },
+  };
+  let config: WebSearchConfig;
+  try {
+    config = resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, patch);
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error));
+  }
+  // Presence map: the decrypt half derives it from the real secrets; the
+  // catalog half reads the plaintext meta column. The "(stored)" marker is
+  // presence-only — the projection emits booleans, never a value.
+  const meta = parseJsonCell("secrets_meta", row.secretsMeta, warnings) as
+    WebSearchSecretsMeta | undefined;
+  const faceEngines: WebSearchFaceEngines = {
+    brave: {
+      // The decrypt half reads the real secrets; the catalog half the meta.
+      hasApiKey: options.decrypt
+        ? secrets?.brave?.apiKey !== undefined
+        : meta?.brave?.apiKey === true,
+    },
+    exa: {
+      hasApiKey: options.decrypt ? secrets?.exa?.apiKey !== undefined : meta?.exa?.apiKey === true,
+    },
+    searxng: {
+      endpoint: storedEngines?.searxng?.endpoint ?? null,
+      categories: storedEngines?.searxng?.categories ?? null,
+      language: storedEngines?.searxng?.language ?? null,
+      safesearch: storedEngines?.searxng?.safesearch ?? null,
+      hasToken: options.decrypt
+        ? secrets?.searxng?.token !== undefined
+        : meta?.searxng?.token === true,
+      hasBasicAuth: options.decrypt
+        ? secrets?.searxng?.basicUsername !== undefined ||
+          secrets?.searxng?.basicPassword !== undefined
+        : meta?.searxng?.basic === true,
+    },
+  };
+  const overlay: WebSearchOverlayRow = {
+    configured: true,
+    decodeError: false,
+    projection: options.decrypt
+      ? projectWebSearchConfig(config)
+      : projectWebSearchConfig({
+          ...config,
+          engines: {
+            brave: meta?.brave?.apiKey === true ? { apiKey: "(stored)" } : config.engines.brave,
+            exa: meta?.exa?.apiKey === true ? { apiKey: "(stored)" } : config.engines.exa,
+            searxng: config.engines.searxng,
+          },
+        }),
+    engines: faceEngines,
+  };
+  return {
+    overlay,
+    config: options.decrypt ? config : null,
+    fingerprint: JSON.stringify({
+      chain: config.chain,
+      timeoutSeconds: config.timeoutSeconds,
+      engines: storedEngines ?? {},
+      secretsMeta: meta ?? {},
+      updatedAt: row.updatedAt,
+    }),
+  };
 }
 
 /** Type guard: the provider-level api seat admits the #361 relay families +
@@ -373,236 +481,6 @@ export interface ProviderConfigLoad {
   warnings: string[];
 }
 
-// ─── Seam-neutral assembly core (T6 route faces + this loader share it) ──────
-
-/**
- * One provider_configs row in seam-neutral shape: the worker's repository
- * seam (T6) hands these over WITHOUT ever crossing the api_key_enc
- * ciphertext — credential presence rides `hasCredential`, and the decrypt
- * half re-attaches the ciphertext separately (rowSecrets on the raw load).
- * `models` stays the RAW stored JSON text: a corrupt cell must ride the CRUD
- * face unrepaired (skip-with-warning), so the assembler owns the parse.
- */
-export interface ProviderConfigRawRow {
-  id: string;
-  displayName: string | null;
-  baseUrl: string | null;
-  api: string | null;
-  serviceTier: boolean;
-  hasCredential: boolean;
-  models: string | null;
-  createdAt: number;
-  updatedAt: number;
-}
-
-/**
- * The decoded `web_search` half as the repository seam hands it over (the
- * JSON cells already parsed, the ciphertext already decrypted or flagged);
- * `decodeError: true` marks the caller's own decode failure — the assembler
- * serves the loud posture without re-warning (the caller owns its message).
- */
-export interface WebSearchDecodedHalf {
-  configured: boolean;
-  decodeError: boolean;
-  chain: string[];
-  timeoutSeconds: number | null;
-  engines: WebSearchStoredEngines | null;
-  secrets: WebSearchStoredSecrets | null;
-  secretsMeta: WebSearchSecretsMeta | null;
-  updatedAt: number;
-}
-
-/** Everything the assembler needs, free of any D1 handle (T1: 组装留 provider-app). */
-export interface ProviderConfigRawLoad {
-  rows: ProviderConfigRawRow[];
-  /**
-   * Ciphertext by row id — the decrypt half only (this module's D1 loader).
-   * The repository-driven route faces omit it: zero ciphertext ever crosses
-   * their seam, so `credentials` comes back empty there.
-   */
-  rowSecrets?: Record<string, string | null>;
-  imageSourceProviderId: string | null;
-  toolCapabilities: ToolCapabilitiesOverlayRow;
-  /** The decoded web-search half; null = the absent-row ruled-default posture. */
-  webSearch: WebSearchDecodedHalf | null;
-}
-
-/**
- * Assemble the full provider-config load from seam-neutral inputs — the ONE
- * decode home for the row records (skip-with-warning discipline), the
- * effective catalog projection, the web-search halves, and the content
- * fingerprint. The D1 loader below feeds it from the legacy batch; the
- * worker's T6 route faces feed it from the drizzle repositories. Row decode
- * logic is byte-identical for both callers.
- */
-export async function assembleProviderConfigLoad(
-  raw: ProviderConfigRawLoad,
-  options: { decrypt: boolean; masterKey?: string },
-  warnings: string[] = [],
-): Promise<ProviderConfigLoad> {
-  const rows: ProviderConfigRecord[] = [];
-  const providers: Record<string, RelayCatalogProvider> = {};
-  const credentials: RelayProviderCredentialMap = {};
-  let maxUpdatedAt = 0;
-  for (const row of raw.rows) {
-    maxUpdatedAt = Math.max(maxUpdatedAt, row.updatedAt);
-    const ciphertext = raw.rowSecrets?.[row.id] ?? null;
-    const decoded = await decodeProviderConfigRow(row, ciphertext, options);
-    if (decoded.credential !== undefined) credentials[row.id] = decoded.credential;
-    if (decoded.provider !== null) providers[row.id] = decoded.provider;
-    rows.push(decoded.record);
-    warnings.push(...decoded.warnings);
-  }
-  const webSearch = assembleDecodedWebSearchHalf(raw.webSearch, options.decrypt, warnings);
-  const fingerprint = await fingerprintOf(
-    providers,
-    credentials,
-    maxUpdatedAt,
-    raw.imageSourceProviderId,
-    webSearch.fingerprint,
-    JSON.stringify(raw.toolCapabilities),
-  );
-  return {
-    rows,
-    catalog: {
-      providers,
-      imageSourceProviderId: raw.imageSourceProviderId,
-      webSearch: webSearch.overlay,
-      toolCapabilities: raw.toolCapabilities,
-      fingerprint,
-    },
-    credentials,
-    webSearchConfig: webSearch.config,
-    warnings,
-  };
-}
-
-/**
- * The shared per-row decode: the CRUD-face record (skip-with-warning
- * discipline), the effective-catalog entry, and — decrypt half only — the
- * decrypted credential slot. Byte-identical for the D1 loader and the
- * repository-driven route faces.
- */
-async function decodeProviderConfigRow(
-  raw: ProviderConfigRawRow,
-  ciphertext: string | null,
-  options: { decrypt: boolean; masterKey?: string },
-): Promise<{
-  record: ProviderConfigRecord;
-  provider: RelayCatalogProvider | null;
-  credential?: RelayProviderCredential;
-  warnings: string[];
-}> {
-  const rowWarnings: string[] = [];
-  const declaredApi = raw.api !== null && raw.api !== "" ? raw.api : null;
-  // #485: the row-level api seat IS the model family (see decodeRowModels).
-  const family: ProviderModelFamily = declaredApi === IMAGE_SOURCE_API_FAMILY ? "image" : "chat";
-  let models: unknown = [];
-  let jsonBroken = false;
-  if (typeof raw.models === "string" && raw.models.trim() !== "") {
-    try {
-      models = JSON.parse(raw.models);
-    } catch (error) {
-      // The raw column value rides the row (one-element wrapper on the
-      // CRUD face) so the panel sees exactly what to repair — the warning
-      // alone would leave an unactionable bad row.
-      models = raw.models;
-      rowWarnings.push(
-        skipWarning(
-          raw.id,
-          `models is not valid JSON (${error instanceof Error ? error.message : String(error)})`,
-        ),
-      );
-      jsonBroken = true;
-    }
-  }
-  let decodedModels: RelayCatalogModel[] | RelayImageModel[] = [];
-  if (!jsonBroken) {
-    const decoded = decodeRowModels(raw.id, family, models);
-    decodedModels = decoded.models;
-    rowWarnings.push(...decoded.warnings);
-  }
-  let credential: RelayProviderCredential | undefined;
-  if (options.decrypt && ciphertext !== null) {
-    if (options.masterKey === undefined || options.masterKey === "") {
-      rowWarnings.push(
-        skipWarning(raw.id, "api_key_enc present but PROVIDER_CONFIG_MASTER_KEY is not configured"),
-      );
-    } else {
-      try {
-        credential = {
-          apiKey: await decryptProviderSecret(options.masterKey, ciphertext),
-          ...(raw.baseUrl !== null && raw.baseUrl !== "" ? { baseUrl: raw.baseUrl } : {}),
-        };
-      } catch (error) {
-        rowWarnings.push(
-          skipWarning(
-            raw.id,
-            `api_key_enc is not decryptable (${error instanceof Error ? error.message : String(error)})`,
-          ),
-        );
-      }
-    }
-  }
-  // A valid row with zero models is kept on the CRUD face but dropped
-  // from the effective catalog: a provider with no rows would make the
-  // selection resolver's "declared providers" vocabulary lie.
-  const dispatchable = decodedModels.length > 0;
-  if (!dispatchable && rowWarnings.length === 0) {
-    rowWarnings.push(
-      skipWarning(raw.id, "declares no models — not dispatchable until a model is added"),
-    );
-  }
-  if (declaredApi !== null && !isAdmittedProviderApi(declaredApi)) {
-    rowWarnings.push(
-      skipWarning(
-        raw.id,
-        `api "${declaredApi}" is not a known family (${[...relayApiValues, IMAGE_SOURCE_API_FAMILY].join(", ")}) — skipped`,
-      ),
-    );
-  }
-  let provider: RelayCatalogProvider | null = null;
-  if (dispatchable && (declaredApi === null || isAdmittedProviderApi(declaredApi))) {
-    const shell = {
-      ...(raw.displayName !== null ? { displayName: raw.displayName } : {}),
-      ...(raw.baseUrl !== null && raw.baseUrl !== "" ? { baseUrl: raw.baseUrl } : {}),
-      ...(raw.serviceTier ? { serviceTier: true } : {}),
-    };
-    // The decode above resolved the SAME family from the same declaredApi,
-    // so each branch's cast is the family pairing re-asserted for the type.
-    provider =
-      declaredApi === IMAGE_SOURCE_API_FAMILY
-        ? { ...shell, api: declaredApi, models: decodedModels as RelayImageModel[] }
-        : {
-            ...shell,
-            ...(declaredApi !== null ? { api: declaredApi } : {}),
-            models: decodedModels as RelayCatalogModel[],
-          };
-  }
-  const record: ProviderConfigRecord = {
-    id: raw.id,
-    displayName: raw.displayName,
-    baseUrl: raw.baseUrl,
-    api: raw.api,
-    serviceTier: raw.serviceTier,
-    // The contract face is an array; a row whose models column never
-    // parsed keeps its raw value visible inside a one-element wrapper.
-    models: Array.isArray(models) ? models : [models],
-    hasApiKey: raw.hasCredential,
-    status: rowWarnings.length > 0 ? "warning" : "ok",
-    warnings: rowWarnings,
-    dispatchable,
-    createdAt: raw.createdAt,
-    updatedAt: raw.updatedAt,
-  };
-  return {
-    record,
-    provider,
-    ...(credential !== undefined ? { credential } : {}),
-    warnings: rowWarnings,
-  };
-}
-
 /**
  * Read + decode every provider_configs row. `decrypt` controls whether
  * api_key_enc columns are decrypted into the credential half (dispatch
@@ -613,275 +491,167 @@ async function readProviderConfigs(
   env: ProviderConfigEnv,
   options: { decrypt: boolean },
 ): Promise<ProviderConfigLoad | null> {
-  const db = env.DB;
-  if (db === undefined) return null;
-  // #448 the 产图源 seat rides every load so a selection flip hot-applies
-  // through the same fingerprint gate as a row edit. ONE batch round trip
-  // with the rows read — the turn-boundary refresh awaits this loader, and
-  // an extra DO event-loop yield here races the read faces (observed: the
-  // L1 send→read tests see a completed mock turn where one round trip sees
-  // an in-flight one).
-  const [imageSourceResult, rowsResult, webSearchResult, toolCapabilitiesResult] = await db.batch([
-    db.prepare("SELECT provider_id FROM image_source WHERE id = 'image_source'"),
-    db.prepare(
-      "SELECT id, display_name, base_url, api, service_tier, api_key_enc, models, created_at, updated_at FROM provider_configs ORDER BY id",
-    ),
-    db.prepare(
-      `SELECT id, chain, timeout_seconds, engines, secrets_enc, secrets_meta, updated_at
-       FROM ${WEB_SEARCH_ROW_ID} WHERE id = '${WEB_SEARCH_ROW_ID}'`,
-    ),
-    // #502 the tool-capability seat rides the same single batch (one round
-    // trip — the turn-boundary refresh awaits this loader) so a gate flip
-    // hot-applies through the same fingerprint gate as a row edit.
-    db.prepare(
-      `SELECT id, external_thinking, context_notes, checkpoint, updated_at
-       FROM ${TOOL_CAPABILITIES_ROW_ID} WHERE id = '${TOOL_CAPABILITIES_ROW_ID}'`,
-    ),
-  ] as const);
-  // The seat row's cell: narrow at the boundary (unknown → string|null).
-  const seatRow: unknown = imageSourceResult?.results[0];
-  let imageSourceProviderId: string | null = null;
-  if (typeof seatRow === "object" && seatRow !== null && "provider_id" in seatRow) {
-    const seatValue: unknown = seatRow.provider_id;
-    if (typeof seatValue === "string") imageSourceProviderId = seatValue;
-  }
-  // One boundary cast: the rows statement is the SAME typed query the
-  // pre-batch `.all<ProviderConfigDbRow>()` trusted — batch erases the
-  // per-statement generic, this restores it.
-  const result = rowsResult as { results: ProviderConfigDbRow[] };
-  // Same boundary cast as `result` — the web_search statement returns 0..1 rows.
-  const webSearchRows = webSearchResult as { results: WebSearchDbRow[] };
-  const webSearchRow = webSearchRows.results[0];
-  // Same boundary cast — the tool_capabilities statement returns 0..1 rows.
-  const toolCapabilitiesRows = toolCapabilitiesResult as { results: ToolCapabilitiesDbRow[] };
-  const toolCapabilitiesRow = toolCapabilitiesRows.results[0];
+  const client = env.controlPlane;
+  if (client === undefined) return null;
+  // T7 #599: the four provider-settings domains arrive through the typed
+  // ControlPlane face. The ONE-round-trip shape is preserved (the snapshot
+  // is a single client call — the turn-boundary refresh awaits this loader,
+  // and an extra DO event-loop yield here races the read faces: observed,
+  // the L1 send→read tests see a completed mock turn where one round trip
+  // sees an in-flight one). The decode/decrypt/warning/fingerprint pipeline
+  // below is byte-identical to the D1-batch era.
+  const snapshot: AgentSnapshot = await client.getAgentSnapshot();
+  const { imageSourceProviderId, webSearch: webSearchRow } = snapshot;
   // Absent row = the ruled omp posture (all gates off — the shared defaults,
   // one owner), never an env override; the 0/1 decode is strict (the
   // service_tier precedent).
   const toolCapabilities: ToolCapabilitiesOverlayRow =
-    toolCapabilitiesRow === undefined
+    snapshot.toolCapabilities === null
       ? { ...DEFAULT_EXPERIMENTAL_TOOL_CONFIG, configured: false }
       : {
           configured: true,
-          externalThinking: toolCapabilitiesRow.external_thinking === 1,
-          contextNotes: toolCapabilitiesRow.context_notes === 1,
-          checkpoint: toolCapabilitiesRow.checkpoint === 1,
+          externalThinking: snapshot.toolCapabilities.externalThinking,
+          contextNotes: snapshot.toolCapabilities.contextNotes,
+          checkpoint: snapshot.toolCapabilities.checkpoint,
         };
-  // Map the D1 rows onto the seam-neutral shape the shared assembler decodes;
-  // the ciphertext re-attaches separately (the decrypt half's rowSecrets).
-  const rowSecrets: Record<string, string | null> = {};
-  const rawRows: ProviderConfigRawRow[] = result.results.map((row) => {
-    rowSecrets[row.id] = row.api_key_enc;
-    return {
-      id: row.id,
-      displayName: row.display_name,
-      baseUrl: row.base_url,
-      api: row.api,
-      serviceTier: row.service_tier === 1,
-      hasCredential: row.api_key_enc !== null,
-      models: row.models,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
-  });
+  const rows: ProviderConfigRecord[] = [];
+  const providers: Record<string, RelayCatalogProvider> = {};
+  const credentials: RelayProviderCredentialMap = {};
   const warnings: string[] = [];
-  const webSearchHalf = await legacyWebSearchHalf(
+  let maxUpdatedAt = 0;
+  for (const row of snapshot.providers) {
+    maxUpdatedAt = Math.max(maxUpdatedAt, row.updatedAt);
+    const rowWarnings: string[] = [];
+    const declaredApi = row.api !== null && row.api !== "" ? row.api : null;
+    // #485: the row-level api seat IS the model family (see decodeRowModels).
+    const family: ProviderModelFamily = declaredApi === IMAGE_SOURCE_API_FAMILY ? "image" : "chat";
+    let models: unknown = [];
+    let jsonBroken = false;
+    if (typeof row.models === "string" && row.models.trim() !== "") {
+      try {
+        models = JSON.parse(row.models);
+      } catch (error) {
+        // The raw column value rides the row (one-element wrapper on the
+        // CRUD face) so the panel sees exactly what to repair — the warning
+        // alone would leave an unactionable bad row.
+        models = row.models;
+        rowWarnings.push(
+          skipWarning(
+            row.id,
+            `models is not valid JSON (${error instanceof Error ? error.message : String(error)})`,
+          ),
+        );
+        jsonBroken = true;
+      }
+    }
+    let decodedModels: RelayCatalogModel[] | RelayImageModel[] = [];
+    if (!jsonBroken) {
+      const decoded = decodeRowModels(row.id, family, models);
+      decodedModels = decoded.models;
+      rowWarnings.push(...decoded.warnings);
+    }
+    if (options.decrypt && row.apiKeyEnc !== null) {
+      if (env.PROVIDER_CONFIG_MASTER_KEY === undefined || env.PROVIDER_CONFIG_MASTER_KEY === "") {
+        rowWarnings.push(
+          skipWarning(
+            row.id,
+            "api_key_enc present but PROVIDER_CONFIG_MASTER_KEY is not configured",
+          ),
+        );
+      } else {
+        try {
+          credentials[row.id] = {
+            apiKey: await decryptProviderSecret(env.PROVIDER_CONFIG_MASTER_KEY, row.apiKeyEnc),
+            ...(row.baseUrl !== null && row.baseUrl !== "" ? { baseUrl: row.baseUrl } : {}),
+          };
+        } catch (error) {
+          rowWarnings.push(
+            skipWarning(
+              row.id,
+              `api_key_enc is not decryptable (${error instanceof Error ? error.message : String(error)})`,
+            ),
+          );
+        }
+      }
+    }
+    // A valid row with zero models is kept on the CRUD face but dropped
+    // from the effective catalog: a provider with no rows would make the
+    // selection resolver's "declared providers" vocabulary lie.
+    const dispatchable = decodedModels.length > 0;
+    if (!dispatchable && rowWarnings.length === 0) {
+      rowWarnings.push(
+        skipWarning(row.id, "declares no models — not dispatchable until a model is added"),
+      );
+    }
+    if (declaredApi !== null && !isAdmittedProviderApi(declaredApi)) {
+      rowWarnings.push(
+        skipWarning(
+          row.id,
+          `api "${declaredApi}" is not a known family (${[...relayApiValues, IMAGE_SOURCE_API_FAMILY].join(", ")}) — skipped`,
+        ),
+      );
+    }
+    if (dispatchable && (declaredApi === null || isAdmittedProviderApi(declaredApi))) {
+      const shell = {
+        ...(row.displayName !== null ? { displayName: row.displayName } : {}),
+        ...(row.baseUrl !== null && row.baseUrl !== "" ? { baseUrl: row.baseUrl } : {}),
+        ...(row.serviceTier ? { serviceTier: true } : {}),
+      };
+      // The decode above resolved the SAME family from the same declaredApi,
+      // so each branch's cast is the family pairing re-asserted for the type.
+      providers[row.id] =
+        declaredApi === IMAGE_SOURCE_API_FAMILY
+          ? { ...shell, api: declaredApi, models: decodedModels as RelayImageModel[] }
+          : {
+              ...shell,
+              ...(declaredApi !== null ? { api: declaredApi } : {}),
+              models: decodedModels as RelayCatalogModel[],
+            };
+    }
+    warnings.push(...rowWarnings);
+    rows.push({
+      id: row.id,
+      displayName: row.displayName,
+      baseUrl: row.baseUrl,
+      api: row.api,
+      serviceTier: row.serviceTier,
+      // The contract face is an array; a row whose models column never
+      // parsed keeps its raw value visible inside a one-element wrapper.
+      models: Array.isArray(models) ? models : [models],
+      hasApiKey: row.apiKeyEnc !== null,
+      status: rowWarnings.length > 0 ? "warning" : "ok",
+      warnings: rowWarnings,
+      dispatchable,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    });
+  }
+  const webSearch = await assembleWebSearch(
     webSearchRow,
     options,
     env.PROVIDER_CONFIG_MASTER_KEY,
     warnings,
   );
-  return await assembleProviderConfigLoad(
-    {
-      rows: rawRows,
-      rowSecrets,
-      imageSourceProviderId,
-      toolCapabilities,
-      webSearch: webSearchHalf,
-    },
-    { decrypt: options.decrypt, masterKey: env.PROVIDER_CONFIG_MASTER_KEY },
-    warnings,
+  const fingerprint = await fingerprintOf(
+    providers,
+    credentials,
+    maxUpdatedAt,
+    imageSourceProviderId,
+    webSearch.fingerprint,
+    JSON.stringify(toolCapabilities),
   );
-}
-
-/**
- * The legacy D1 row's raw-cell decode into the shared half shape: JSON cells
- * parse with the skip-with-warning discipline, the ciphertext decrypts
- * (decrypt half only), and every failure maps to the loud decodeError half —
- * no default chain is ever silently substituted. The assembly itself
- * (resolution, projection, fingerprint) lives in assembleDecodedWebSearchHalf.
- */
-async function legacyWebSearchHalf(
-  row: WebSearchDbRow | undefined,
-  options: { decrypt: boolean },
-  masterKey: string | undefined,
-  warnings: string[],
-): Promise<WebSearchDecodedHalf | null> {
-  if (row === undefined) return null;
-  const loud = (reason: string): WebSearchDecodedHalf => {
-    warnings.push(`web_search config row: ${reason} — decodeError (row kept, no chain served)`);
-    return {
-      configured: true,
-      decodeError: true,
-      chain: [],
-      timeoutSeconds: null,
-      engines: null,
-      secrets: null,
-      secretsMeta: null,
-      updatedAt: row.updated_at,
-    };
-  };
-  let secrets: WebSearchStoredSecrets | undefined;
-  if (options.decrypt && row.secrets_enc !== null) {
-    if (masterKey === undefined || masterKey === "") {
-      warnings.push(
-        "web_search config row: secrets_enc present but PROVIDER_CONFIG_MASTER_KEY is not configured — engines needing secrets will report unconfigured",
-      );
-    } else {
-      try {
-        secrets = JSON.parse(
-          await decryptProviderSecret(masterKey, row.secrets_enc),
-        ) as WebSearchStoredSecrets;
-      } catch (error) {
-        return loud(
-          `secrets_enc is not decryptable (${error instanceof Error ? error.message : String(error)})`,
-        );
-      }
-    }
-  }
-  const storedEngines = parseJsonCell("engines", row.engines, warnings) as
-    WebSearchStoredEngines | undefined;
-  if (row.engines !== null && storedEngines === undefined) {
-    return loud("engines is not valid JSON");
-  }
-  const chain = parseJsonCell("chain", row.chain, warnings) as string[] | undefined;
-  if (chain === undefined) return loud("chain is not valid JSON");
-  // A broken presence-map cell skips with a warning (presence booleans read
-  // false) — the loud posture is reserved for the chain/engines/secrets
-  // halves that carry real content.
-  const meta = parseJsonCell("secrets_meta", row.secrets_meta, warnings) as
-    WebSearchSecretsMeta | undefined;
   return {
-    configured: true,
-    decodeError: false,
-    chain,
-    timeoutSeconds: row.timeout_seconds,
-    engines: storedEngines ?? null,
-    secrets: secrets ?? null,
-    secretsMeta: meta ?? null,
-    updatedAt: row.updated_at,
-  };
-}
-
-/**
- * Assemble the #449 web_search halves from the decoded half: the secret-free
- * overlay projection, the dispatch config (decrypt half only), and the
- * fingerprint content. Validation runs through resolveWebSearchConfig — the
- * SAME single path the panel write face uses, so a stored row can never
- * serve a chain the write face would have rejected. A broken half is a loud
- * decodeError (skip-with-warning discipline): the row stays in D1, the
- * projection faces report it, and no defaults are silently substituted.
- */
-function assembleDecodedWebSearchHalf(
-  half: WebSearchDecodedHalf | null,
-  decrypt: boolean,
-  warnings: string[],
-): WebSearchAssembly {
-  if (!half?.configured) {
-    return {
-      overlay: {
-        configured: false,
-        decodeError: false,
-        projection: projectWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG),
-        engines: null,
-      },
-      config: null,
-      fingerprint: null,
-    };
-  }
-  if (half.decodeError) {
-    return {
-      overlay: { configured: true, decodeError: true, projection: null, engines: null },
-      config: null,
-      fingerprint: JSON.stringify({ decodeError: true, updatedAt: half.updatedAt }),
-    };
-  }
-  let config: WebSearchConfig;
-  try {
-    config = resolveWebSearchConfig(DEFAULT_WEB_SEARCH_CONFIG, {
-      chain: half.chain,
-      ...(half.timeoutSeconds !== null ? { timeoutSeconds: half.timeoutSeconds } : {}),
-      engines: {
-        ...(half.secrets?.brave?.apiKey !== undefined
-          ? { brave: { apiKey: half.secrets.brave.apiKey } }
-          : {}),
-        ...(half.secrets?.exa?.apiKey !== undefined
-          ? { exa: { apiKey: half.secrets.exa.apiKey } }
-          : {}),
-        searxng: { ...half.engines?.searxng, ...half.secrets?.searxng },
-      },
-    });
-  } catch (error) {
-    warnings.push(
-      `web_search config row: ${error instanceof Error ? error.message : String(error)} — decodeError (row kept, no chain served)`,
-    );
-    return {
-      overlay: { configured: true, decodeError: true, projection: null, engines: null },
-      config: null,
-      fingerprint: JSON.stringify({ decodeError: true, updatedAt: half.updatedAt }),
-    };
-  }
-  // Presence map: the decrypt half derives it from the real secrets; the
-  // catalog half reads the plaintext meta column. The "(stored)" marker is
-  // presence-only — the projection emits booleans, never a value.
-  const meta = half.secretsMeta;
-  const faceEngines: WebSearchFaceEngines = {
-    brave: {
-      // The decrypt half reads the real secrets; the catalog half the meta.
-      hasApiKey: decrypt ? half.secrets?.brave?.apiKey !== undefined : meta?.brave?.apiKey === true,
+    rows,
+    catalog: {
+      providers,
+      imageSourceProviderId,
+      webSearch: webSearch.overlay,
+      toolCapabilities,
+      fingerprint,
     },
-    exa: {
-      hasApiKey: decrypt ? half.secrets?.exa?.apiKey !== undefined : meta?.exa?.apiKey === true,
-    },
-    searxng: {
-      endpoint: half.engines?.searxng?.endpoint ?? null,
-      categories: half.engines?.searxng?.categories ?? null,
-      language: half.engines?.searxng?.language ?? null,
-      safesearch: half.engines?.searxng?.safesearch ?? null,
-      hasToken: decrypt
-        ? half.secrets?.searxng?.token !== undefined
-        : meta?.searxng?.token === true,
-      hasBasicAuth: decrypt
-        ? (half.secrets?.searxng?.basicUsername ?? half.secrets?.searxng?.basicPassword) !==
-          undefined
-        : meta?.searxng?.basic === true,
-    },
-  };
-  const overlay: WebSearchOverlayRow = {
-    configured: true,
-    decodeError: false,
-    projection: decrypt
-      ? projectWebSearchConfig(config)
-      : projectWebSearchConfig({
-          ...config,
-          engines: {
-            brave: meta?.brave?.apiKey === true ? { apiKey: "(stored)" } : config.engines.brave,
-            exa: meta?.exa?.apiKey === true ? { apiKey: "(stored)" } : config.engines.exa,
-            searxng: config.engines.searxng,
-          },
-        }),
-    engines: faceEngines,
-  };
-  return {
-    overlay,
-    config: decrypt ? config : null,
-    fingerprint: JSON.stringify({
-      chain: config.chain,
-      timeoutSeconds: config.timeoutSeconds,
-      engines: half.engines ?? {},
-      secretsMeta: meta ?? {},
-      updatedAt: half.updatedAt,
-    }),
+    credentials,
+    webSearchConfig: webSearch.config,
+    warnings,
   };
 }
 

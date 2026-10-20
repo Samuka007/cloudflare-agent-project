@@ -1,15 +1,37 @@
 import { DurableObject } from "cloudflare:workers";
-import type { PromptContent, ThreadEventEnvelope } from "@cap/protocol";
+import type { DaemonThreadEventInput, PromptContent, ThreadEventEnvelope } from "@cap/protocol";
 import type { Conversation, SettledSubmissionRecord } from "@earendil-works/pi-durable";
 import { PiEventBridge } from "./events";
 import { resolveDurableAgentRuntime } from "./injection";
 import { DurableEventSink } from "./journal";
+import { foldPendingBadge, type PendingBadgeState } from "./pending";
 import { DurableThread } from "./thread";
 import type { HostExecutionUpdate } from "./tools";
 import type { DurableAgentRuntime } from "./types";
 import { foldCapRung } from "./provider";
 
 export const HEARTBEAT_MS = 60_000;
+
+/**
+ * Journal sink that re-derives the pending badge state after every append
+ * (#591 T8): interaction flips can land through any append path (the pi
+ * bridge today, the ask channel's rows later), so the fold trigger rides the
+ * sink instead of each call site.
+ */
+class PendingWatchSink extends DurableEventSink {
+  readonly #onAppend: () => void;
+
+  constructor(storage: DurableObjectStorage, threadId: string, onAppend: () => void) {
+    super(storage, threadId);
+    this.#onAppend = onAppend;
+  }
+
+  override async append(input: DaemonThreadEventInput): Promise<ThreadEventEnvelope> {
+    const envelope = await super.append(input);
+    this.#onAppend();
+    return envelope;
+  }
+}
 
 export type DurableAgentEnv = Record<string, unknown> & {
   readonly HUB?: DurableObjectNamespace;
@@ -56,6 +78,7 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
   #turnOrdinal = 0;
   #currentTurnId: string | undefined;
   #created = false;
+  #pendingBadge: PendingBadgeState | undefined;
 
   constructor(ctx: DurableObjectState, env: DurableAgentEnv) {
     super(ctx, env);
@@ -282,6 +305,20 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
     return resolveDurableAgentRuntime(env, ctx);
   }
 
+  /**
+   * Direct journal append for rows whose producers arrive with later tickets
+   * (the ask channel's interaction flips). Goes through the same sink as
+   * every other append, so the badge fold sees it.
+   */
+  protected async appendJournalRow(
+    input: Omit<DaemonThreadEventInput, "threadId">,
+  ): Promise<ThreadEventEnvelope> {
+    const sink = this.#sink;
+    const threadId = this.#threadId;
+    if (sink === undefined || threadId === undefined) throw new Error("journal not initialized");
+    return sink.append({ ...input, threadId });
+  }
+
   async #applyExecution(execution: DurableExecutionSelection | undefined): Promise<void> {
     if (execution?.providerId === undefined || execution.model === undefined) return;
     const thinkingLevel =
@@ -295,7 +332,9 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
   #journal(threadId: string): void {
     if (this.#sink !== undefined) return;
     this.#threadId = threadId;
-    this.#sink = new DurableEventSink(this.ctx.storage, threadId);
+    this.#sink = new PendingWatchSink(this.ctx.storage, threadId, () => {
+      this.#syncPendingBadge();
+    });
     this.#bridge = new PiEventBridge({
       threadId,
       sink: this.#sink,
@@ -303,6 +342,35 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
       ...(this.#currentTurnId === undefined ? {} : { initialTurnId: this.#currentTurnId }),
     });
     this.#watchReady = this.#attachWatcher();
+    // Rehydrate fold: a replayed journal re-derives the same badge state; the
+    // control-plane CAS turns the re-push into a no-op.
+    this.#syncPendingBadge();
+  }
+
+  /**
+   * #591 T8 pending push-write: fold the journal's interaction rows and push
+   * the badge state through the typed runtime seam. The in-memory watermark
+   * skips re-pushes of an already-pushed fold position; a push that does
+   * leave (DO replay after eviction) re-derives the identical
+   * (pendingSince, foldSeq) pair and the control-plane monotonic CAS lands
+   * it nowhere — a replay never rewrites the threads row. Best-effort: a
+   * failed push never fails the append that triggered it.
+   */
+  #syncPendingBadge(): void {
+    const sink = this.#sink;
+    const threadId = this.#threadId;
+    const pusher = this.#runtime.pendingState;
+    if (sink === undefined || threadId === undefined || pusher === undefined) return;
+    const next = foldPendingBadge(sink.readInteractionRows());
+    if (next === null || next.foldSeq === this.#pendingBadge?.foldSeq) return;
+    this.#pendingBadge = next;
+    this.ctx.waitUntil(
+      pusher
+        .push({ threadId, pendingSince: next.pendingSince, foldSeq: next.foldSeq })
+        .catch((error: unknown) => {
+          console.error("pending badge push failed", error);
+        }),
+    );
   }
 
   #attachWatcher(): Promise<void> {

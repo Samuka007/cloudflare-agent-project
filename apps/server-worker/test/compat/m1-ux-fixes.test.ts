@@ -202,7 +202,8 @@ describe("E9/A6: provider-clis/status answers the E8 crop as an empty state (#30
     expect(missing.status).toBe(404);
     expect((await missing.json<{ code: string }>()).code).toBe("host_not_found");
 
-    await env.DB.prepare(
+    // T5 (#597): the cli-status face's requireHostRow reads DB_V2.
+    await env.DB_V2.prepare(
       `INSERT INTO hosts (id, name, type, connect_machine_id, max_permission_mode, destroyed_at,
                           last_seen_at, last_rejected_protocol_version, created_at, updated_at)
        VALUES ('host_cli_status', 'cli-status-host', 'persistent', NULL, 'full', NULL, NULL, NULL, ?, ?)`,

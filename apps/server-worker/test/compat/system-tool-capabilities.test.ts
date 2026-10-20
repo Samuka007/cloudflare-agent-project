@@ -1,20 +1,24 @@
 import { beforeAll, afterEach, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate";
+import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
+import { providerConfigEnvFor } from "../../src/control-plane/server";
 import {
   systemConfigResponseSchema,
   systemToolCapabilitiesResponseSchema,
   type SystemToolCapabilitiesResponse,
 } from "../../src/contract/api/system";
 import type { Env } from "../../src/env";
-import { loadProviderConfigFaces } from "../../src/services/provider-config-faces";
+
+/** The rig env vs src Env: only the DO-namespace generics differ; the
+ * bindings are the same objects (thread-suspension-face.test.ts precedent). */
+const appEnv = env as unknown as Env;
 
 /**
- * #502 the experimental tool-capability write face (the drizzle-era
- * `settings_agent` gate columns — the collapsed successor of the legacy
- * single-row seat, the sole 正本; T6 re-point — the three AGENT_DO_* gate
- * envs are deleted): GET/PUT /api/v1/system/tool-capabilities. Acceptance
- * faces exercised:
+ * #502 the experimental tool-capability write face (the D1 `tool_capabilities`
+ * single-row seat, the sole 正本 — the three AGENT_DO_* gate envs are
+ * deleted): GET/PUT /api/v1/system/tool-capabilities. Acceptance faces
+ * exercised:
  *
  * - absent row = the omp posture (configured:false, all five tool families
  *   off — never an env override);
@@ -26,11 +30,6 @@ import { loadProviderConfigFaces } from "../../src/services/provider-config-face
  * - the strict 0/1 decode keeps a hand-edited non-0/1 value off;
  * - malformed payloads are refused 422 (rejection, never silent fallback).
  */
-
-// The rig env (cloudflare:workers) shares every binding object with the
-// module Env; only the DO namespace generics differ (the attachment-pickup
-// precedent for the cast).
-const moduleEnv = env as unknown as Env;
 
 beforeAll(ensureMigrations);
 
@@ -74,14 +73,14 @@ async function rawSeatRow(): Promise<{
   context_notes: number;
   checkpoint: number;
 } | null> {
-  return env.DB_V2.prepare(
-    "SELECT external_thinking, context_notes, checkpoint FROM settings_agent WHERE id = 'agent'",
+  return env.DB.prepare(
+    "SELECT external_thinking, context_notes, checkpoint FROM tool_capabilities WHERE id = 'tool_capabilities'",
   ).first<{ external_thinking: number; context_notes: number; checkpoint: number }>();
 }
 
 afterEach(async () => {
   // The seat is single-row; every case starts from the absent state.
-  await env.DB_V2.prepare("DELETE FROM settings_agent").run();
+  await env.DB.prepare("DELETE FROM tool_capabilities WHERE id = 'tool_capabilities'").run();
 });
 
 describe("GET /api/v1/system/tool-capabilities", () => {
@@ -96,8 +95,8 @@ describe("GET /api/v1/system/tool-capabilities", () => {
 
   it("reflects the stored gates; a hand-edited non-0/1 value stays off", async () => {
     // A direct D1 write outside the face: the decode is strict (=== 1).
-    await env.DB_V2.prepare(
-      "INSERT INTO settings_agent (id, external_thinking, context_notes, checkpoint, updated_at) VALUES ('agent', 2, 1, 0, ?)",
+    await env.DB.prepare(
+      "INSERT INTO tool_capabilities (id, external_thinking, context_notes, checkpoint, updated_at) VALUES ('tool_capabilities', 2, 1, 0, ?)",
     )
       .bind(Date.now())
       .run();
@@ -112,8 +111,8 @@ describe("GET /api/v1/system/tool-capabilities", () => {
 
 describe("PUT /api/v1/system/tool-capabilities", () => {
   it("replaces the seat; GET, the loader overlay and /system/config re-read the truth", async () => {
-    const before = await loadProviderConfigFaces(moduleEnv);
-    expect(before.catalog.toolCapabilities).toEqual({
+    const before = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(appEnv));
+    expect(before?.toolCapabilities).toEqual({
       configured: false,
       externalThinking: false,
       contextNotes: false,
@@ -139,9 +138,9 @@ describe("PUT /api/v1/system/tool-capabilities", () => {
     });
     // The loader overlay (the agent DO's input) carries the seat and a NEW
     // content fingerprint — the flip hot-applies at the next turn boundary.
-    const after = await loadProviderConfigFaces(moduleEnv);
-    expect(after.catalog.toolCapabilities).toEqual(put.face);
-    expect(after.catalog.fingerprint).not.toBe(before.catalog.fingerprint);
+    const after = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(appEnv));
+    expect(after?.toolCapabilities).toEqual(put.face);
+    expect(after?.fingerprint).not.toBe(before?.fingerprint);
     // The featureFlags projection (GET /system/config) resolves the seat.
     const config = await request("GET", "/api/v1/system/config");
     expect(config.status).toBe(200);
@@ -193,7 +192,7 @@ describe("PUT /api/v1/system/tool-capabilities", () => {
 
   it("an absent row again serves the honest posture (configured:false)", async () => {
     await putFace({ externalThinking: true, contextNotes: false, checkpoint: false });
-    await env.DB_V2.prepare("DELETE FROM settings_agent").run();
+    await env.DB.prepare("DELETE FROM tool_capabilities WHERE id = 'tool_capabilities'").run();
     expect(await getFace()).toEqual({
       configured: false,
       externalThinking: false,

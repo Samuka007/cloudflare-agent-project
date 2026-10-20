@@ -5,7 +5,7 @@ interface __BaseEnv_Env {
 	DAEMON_EDGE_KV: KVNamespace;
 	BLOBS: R2Bucket;
 	DB: D1Database;
-	HOSTS_DB: D1Database;
+	CONTROL_PLANE: Fetcher;
 	DB_V2: D1Database;
 	ASSETS: Fetcher;
 	HUB: DurableObjectNamespace<import("./src/index").NotificationHubDO>;

@@ -19,8 +19,7 @@ import {
 import { createHostId } from "../shared/ids";
 import { ApiError } from "../shared/api-error";
 import { parseOr422, requireJsonBody } from "../shared/route-utils";
-import { getHostRow, listNonDestroyedHostRows, updateHostRow } from "../db/hosts";
-import { deleteProjectSourceRowsByHost } from "../db/project-sources";
+import { workerRepos } from "../db/repositories/worker-repos";
 import { toHostRecord } from "../services/host-records";
 import { requirePublicStandardProject } from "../services/entity-lookup";
 import { pathsExistResponseSchema } from "../contract/hdc/local";
@@ -75,7 +74,7 @@ export function registerHostRoutes(app: Hono<AppEnv>): void {
   });
 
   routes.get("/hosts", async (ctx) => {
-    const rows = await listNonDestroyedHostRows(ctx.env);
+    const rows = await workerRepos(ctx.env).hosts.listActive();
     return ctx.json(await Promise.all(rows.map((row) => toHostRecord(ctx.env, row))));
   });
 
@@ -190,7 +189,7 @@ export function registerHostRoutes(app: Hono<AppEnv>): void {
   routes.patch("/hosts/:id", async (ctx) => {
     const payload = await requireJsonBody(ctx, updateHostRequestSchema);
     await requireMutableHost(ctx.env, ctx.req.param("id"));
-    const updated = await updateHostRow(ctx.env, ctx.req.param("id"), {
+    const updated = await workerRepos(ctx.env).hosts.update(ctx.req.param("id"), {
       name: payload.name,
     });
     if (!updated) {
@@ -205,7 +204,7 @@ export function registerHostRoutes(app: Hono<AppEnv>): void {
   routes.patch("/hosts/:id/permission-ceiling", async (ctx) => {
     const payload = await requireJsonBody(ctx, updateHostPermissionCeilingRequestSchema);
     await requireMutableHost(ctx.env, ctx.req.param("id"));
-    const updated = await updateHostRow(ctx.env, ctx.req.param("id"), {
+    const updated = await workerRepos(ctx.env).hosts.update(ctx.req.param("id"), {
       maxPermissionMode: payload.maxPermissionMode,
     });
     if (!updated) {
@@ -278,7 +277,7 @@ export function registerHostRoutes(app: Hono<AppEnv>): void {
       });
     }
     // bb delete marks destroyedAt (soft destroy), it does not hard-delete.
-    await updateHostRow(ctx.env, hostId, { destroyedAt: Date.now() });
+    await workerRepos(ctx.env).hosts.update(hostId, { destroyedAt: Date.now() });
     // #468: bb's soft destroy (its only delete face) tombstones the host and
     // leaves referencing rows in place; the port splits the consequence by
     // table. SOURCES are the port's load-bearing binding default
@@ -291,7 +290,7 @@ export function registerHostRoutes(app: Hono<AppEnv>): void {
     // chose. ENVIRONMENTS stay, per the #445 data-hygiene ruling: the list
     // face already hides tombstoned-host rows, the id face keeps existing
     // threads readable, and dispatch answers host_offline (#436 posture).
-    const affectedProjectIds = await deleteProjectSourceRowsByHost(ctx.env, hostId);
+    const affectedProjectIds = await workerRepos(ctx.env).projects.deleteSourcesByHost(hostId);
     // bb destroyHost broadcasts host-disconnected (data/hosts.ts:229-230);
     // bb ships this second frame even when the close above already did.
     await hub(ctx.env).notifyHost(ctx.req.param("id"), ["host-disconnected"]);
@@ -312,7 +311,7 @@ export function registerHostRoutes(app: Hono<AppEnv>): void {
  * distinguishes the tombstone.
  */
 async function requireMutableHost(env: Env, hostId: string) {
-  const row = await getHostRow(env, hostId);
+  const row = await workerRepos(env).hosts.get(hostId);
   if (row?.destroyedAt !== null) {
     throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
   }

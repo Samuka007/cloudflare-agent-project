@@ -1,10 +1,8 @@
 import { CLOUD_PLACEHOLDER_HOST_ID, type CreateThreadEnvironmentArgs } from "@cap/protocol";
 import { ApiError } from "../shared/api-error";
 import { createEnvironmentId } from "../shared/ids";
-import { getHostRow } from "../db/hosts";
-import { findOrCreateEnvironmentRow, getEnvironmentRow } from "../db/environments";
-import { getDefaultProjectSource } from "../db/project-sources";
 import type { EnvironmentDbRow } from "../db/rows";
+import { workerRepos } from "../db/repositories/worker-repos";
 import type { Env } from "../env";
 
 /**
@@ -44,7 +42,7 @@ async function requireNonDestroyedHost(env: Env, hostId: string): Promise<void> 
   // Explicit choices only (#468): the default-binding face must not fail on
   // a dangling stored reference — that branch skips to the placeholder
   // below instead of surfacing the dead machine as the caller's error.
-  const row = await getHostRow(env, hostId);
+  const row = await workerRepos(env).hosts.get(hostId);
   if (row === null) {
     throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
   }
@@ -62,7 +60,7 @@ async function materializeWorkspaceRow(
     workspaceProvisionType: EnvironmentDbRow["workspaceProvisionType"];
   },
 ): Promise<EnvironmentDbRow> {
-  const row = await findOrCreateEnvironmentRow(env, {
+  const row = await workerRepos(env).environments.findOrCreate({
     id: createEnvironmentId(),
     projectId: args.projectId,
     hostId: args.hostId,
@@ -85,7 +83,7 @@ export async function resolveThreadBinding(
   if (requested?.type === "reuse") {
     // bb thread-provisioning-environment.ts:1153-1163: 404 on unknown, 409 on
     // a cross-project reuse.
-    const row = await getEnvironmentRow(env, requested.environmentId);
+    const row = await workerRepos(env).environments.get(requested.environmentId);
     if (row === null) {
       throw new ApiError({
         status: 404,
@@ -144,7 +142,7 @@ export async function resolveThreadBinding(
   // `project-default` or omitted: the project's default source checkout, then
   // the cloud placeholder row (zero D1 on the deployment default, #377;
   // the row itself seeded by #386).
-  const source = await getDefaultProjectSource(env, args.projectId);
+  const source = await workerRepos(env).projects.getDefaultSource(args.projectId);
   // #468: a stored default whose host row is missing or tombstoned is a
   // dangling reference, not a bindable machine — the hosts read face hides
   // both shapes, so resolution answers them the same way: the deployment
@@ -155,7 +153,7 @@ export async function resolveThreadBinding(
   if (source === null) {
     return { machineId: CLOUD_PLACEHOLDER_HOST_ID, environmentId: null, environment: null };
   }
-  const hostRow = await getHostRow(env, source.hostId);
+  const hostRow = await workerRepos(env).hosts.get(source.hostId);
   // Optional chain: a missing row degrades exactly like a tombstoned one.
   if (hostRow?.destroyedAt !== null) {
     return { machineId: CLOUD_PLACEHOLDER_HOST_ID, environmentId: null, environment: null };

@@ -2,18 +2,22 @@ import { beforeAll, afterEach, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate";
 import { ensureRigProviderRow, removeRigProviderRow } from "../helpers";
+import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
 import type { ProviderConfigCatalogOverlay } from "@cap/provider-app";
+import { providerConfigEnvFor } from "../../src/control-plane/server";
 import { systemProviderProjectionsResponseSchema } from "../../src/contract/api/system";
 import { buildProviderProjections } from "../../src/routes/system";
 import type { Env } from "../../src/env";
-import { loadProviderConfigFaces } from "../../src/services/provider-config-faces";
+
+/** The rig env vs src Env: only the DO-namespace generics differ; the
+ * bindings are the same objects (thread-suspension-face.test.ts precedent). */
+const appEnv = env as unknown as Env;
 
 /**
  * Ticket #266: GET /system/provider-projections — the read-only provider
- * status face (#255 solution C; T6 re-point: the faces assemble from the
- * drizzle-era database through the T4 repositories). The web_search row is
- * chain order + credential-gate booleans + browser-backed exclusions (#449:
- * it projects the web_search seat — the AGENT_DO_WEB_SEARCH env path is deleted,
+ * status face (#255 solution C). The web_search row is chain order +
+ * credential-gate booleans + browser-backed exclusions (#449: it projects
+ * the D1 `web_search` seat — the AGENT_DO_WEB_SEARCH env path is deleted,
  * edits ride the /system/web-search write face). #450: the catalog row
  * projects the D1 provider_configs rows (the env seed is deleted — no
  * decodeError state, no defaultProviderId). #500: the legacy
@@ -23,11 +27,6 @@ import { loadProviderConfigFaces } from "../../src/services/provider-config-face
  * Acceptance: zero secret values anywhere in the response, and no PUT on
  * this aggregate face.
  */
-// The rig env (cloudflare:workers) shares every binding object with the
-// module Env; only the DO namespace generics differ (the attachment-pickup
-// precedent for the cast).
-const moduleEnv = env as unknown as Env;
-
 beforeAll(async () => {
   await ensureMigrations();
   await ensureRigProviderRow();
@@ -41,15 +40,16 @@ const EMPTY_OVERLAY = {
 } satisfies Pick<ProviderConfigCatalogOverlay, "providers" | "imageSourceProviderId" | "webSearch">;
 
 async function loadedOverlay(): Promise<ProviderConfigCatalogOverlay> {
-  const faces = await loadProviderConfigFaces(moduleEnv);
-  return faces.catalog;
+  const overlay = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(appEnv));
+  if (overlay === null) throw new Error("the rig D1 binding must load an overlay");
+  return overlay;
 }
 
 afterEach(async () => {
   // The seat is single-row; every case starts from the unconfigured state.
-  await env.DB_V2.prepare("DELETE FROM settings_agent").run();
+  await env.DB.prepare("DELETE FROM web_search WHERE id = 'web_search'").run();
   // Suite-seeded catalog rows never leak onto later files' projections.
-  await env.DB_V2.prepare("DELETE FROM provider_configs WHERE id = 'projcat'").run();
+  await env.DB.prepare("DELETE FROM provider_configs WHERE id = 'projcat'").run();
 });
 
 describe("GET /api/v1/system/provider-projections", () => {
@@ -153,8 +153,8 @@ describe("GET /api/v1/system/provider-projections", () => {
     // rejection, never silent fallback) — a hand-edited row carrying one is
     // a loud decodeError: no chain is served, the error text is dropped
     // (it can quote raw row content — zero-secret discipline).
-    await env.DB_V2.prepare(
-      "INSERT INTO settings_agent (id, web_search_chain, web_search_timeout_seconds, web_search_engines, web_search_secrets_enc, web_search_secrets_meta, updated_at) VALUES ('agent', '[\"google\"]', 60, NULL, NULL, NULL, ?)",
+    await env.DB.prepare(
+      "INSERT INTO web_search (id, chain, timeout_seconds, engines, secrets_enc, secrets_meta, updated_at) VALUES ('web_search', '[\"google\"]', 60, NULL, NULL, NULL, ?)",
     )
       .bind(Date.now())
       .run();
@@ -208,7 +208,7 @@ describe("GET /api/v1/system/provider-projections", () => {
   });
 
   it("#450 reports configured rows' ids without leaking declared values", async () => {
-    await env.DB_V2.prepare(
+    await env.DB.prepare(
       "INSERT INTO provider_configs (id, display_name, base_url, api, service_tier, api_key_enc, models, created_at, updated_at) VALUES ('projcat', 'GLM Relay', NULL, 'anthropic-messages', 0, NULL, ?, ?, ?)",
     )
       .bind(

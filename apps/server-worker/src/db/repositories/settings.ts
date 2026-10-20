@@ -214,6 +214,21 @@ export interface SettingsRepository {
   /** Upsert the selection (null clears it). */
   setImageSourceProviderId(providerId: string | null): Promise<void>;
   /**
+   * The RAW stored web-search cells (the agent-snapshot feed, #600 wiring):
+   * chain/engines/secrets stay unparsed ciphertext-bearing text — the
+   * provider-app loader owns decode/decrypt byte-identically. Null = the
+   * absent-seat ruled defaults. The decoded state lives in
+   * {@link getWebSearchConfig}.
+   */
+  getWebSearchRaw(): Promise<{
+    chain: string;
+    timeoutSeconds: number | null;
+    engines: string | null;
+    secretsEnc: string | null;
+    secretsMeta: string | null;
+    updatedAt: number;
+  } | null>;
+  /**
    * The decoded web-search half; `configured: false` when unwritten,
    * `decodeError: true` when a stored cell failed decode/decrypt.
    */
@@ -617,6 +632,19 @@ function buildSettingsRepository(
     async getImageSourceProviderId(): Promise<string | null> {
       const row = await selectAgentRow();
       return row?.imageSourceProviderId ?? null;
+    },
+
+    async getWebSearchRaw() {
+      const row = await selectAgentRow();
+      if (row?.webSearchChain == null) return null;
+      return {
+        chain: row.webSearchChain,
+        timeoutSeconds: row.webSearchTimeoutSeconds,
+        engines: row.webSearchEngines,
+        secretsEnc: row.webSearchSecretsEnc,
+        secretsMeta: row.webSearchSecretsMeta,
+        updatedAt: row.updatedAt,
+      };
     },
 
     async setImageSourceProviderId(providerId: string | null): Promise<void> {

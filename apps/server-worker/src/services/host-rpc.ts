@@ -1,7 +1,7 @@
 import type { DaemonServiceDO, HostRpcCommand } from "@cap/daemon-service";
 import { ApiError } from "../shared/api-error";
-import { getHostRow } from "../db/hosts";
-import type { HostDbRow } from "../db/rows";
+import type { HostRecord } from "../db/repositories";
+import { workerRepos } from "../db/repositories/worker-repos";
 import type { Env } from "../env";
 
 /**
@@ -21,9 +21,11 @@ export const HOST_COMMAND_TIMEOUT_MS = 30_000;
  * 404 host_not_found; destroyed → 404 host_unavailable with the destroyed
  * details (lifecycle-api-errors.ts:149-158) so the SPA's destroyed-host
  * branch renders instead of the generic fallback.
+ *
+ * T5 (#597): reads the drizzle-era control plane through the HostsRepo.
  */
-export async function requireHostRow(env: Env, hostId: string): Promise<HostDbRow> {
-  const row = await getHostRow(env, hostId);
+export async function requireHostRow(env: Env, hostId: string): Promise<HostRecord> {
+  const row = await workerRepos(env).hosts.get(hostId);
   if (row === null) {
     throw new ApiError({ status: 404, code: "host_not_found", message: "Host not found" });
   }
@@ -49,7 +51,7 @@ export async function requireHostRow(env: Env, hostId: string): Promise<HostDbRo
  * dispatch-time concern. The cloud placeholder (type "placeholder") is
  * refused with bb's unusableHostError — it holds no daemon to ask.
  */
-export async function requireUsableHostRow(env: Env, hostId: string): Promise<HostDbRow> {
+export async function requireUsableHostRow(env: Env, hostId: string): Promise<HostRecord> {
   const row = await requireHostRow(env, hostId);
   if (row.type !== "persistent") {
     throw new ApiError({

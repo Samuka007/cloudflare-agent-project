@@ -89,7 +89,9 @@ async function seedHost(): Promise<HostSeed> {
   hostCounter += 1;
   const id = `host288_${hostCounter}_${Math.random().toString(36).slice(2, 8)}`;
   const now = Date.now();
-  await env.DB.prepare(
+  // T5 (#597): the registry + environments the binding face serves live on
+  // the drizzle-era DB_V2 (the binding face's FKs anchor rows there).
+  await env.DB_V2.prepare(
     "INSERT INTO hosts (id, name, type, connect_machine_id, max_permission_mode, destroyed_at, last_seen_at, last_rejected_protocol_version, created_at, updated_at) VALUES (?, ?, 'persistent', NULL, 'full', NULL, ?, NULL, ?, ?)",
   )
     .bind(id, `288-${id}`, now, now, now)
@@ -108,7 +110,7 @@ async function seedProjectWithSource(hostId: string, path: string): Promise<stri
 }
 
 async function environmentCount(): Promise<number> {
-  const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM environments").first();
+  const row = await env.DB_V2.prepare("SELECT COUNT(*) AS n FROM environments").first();
   return Number(row?.n ?? 0);
 }
 
@@ -359,7 +361,7 @@ describe("#468 dangling binding references fall to the cloud placeholder", () =>
 
     // The environments row survives (#445 hygiene): the tombstoned binding
     // stays id-resolvable for the pre-existing thread.
-    const kept = await env.DB.prepare("SELECT COUNT(*) AS n FROM environments WHERE host_id = ?")
+    const kept = await env.DB_V2.prepare("SELECT COUNT(*) AS n FROM environments WHERE host_id = ?")
       .bind(host.id)
       .first();
     expect(Number(kept?.n)).toBeGreaterThan(0);
@@ -398,7 +400,15 @@ describe("#468 dangling binding references fall to the cloud placeholder", () =>
     // tombstone is gone — the source row dangles on a missing host.
     const host = await seedHost();
     const projectId = await seedProjectWithSource(host.id, "/repo/468-cleared");
-    await env.DB.prepare("DELETE FROM hosts WHERE id = ?").bind(host.id).run();
+    // T5 (#597) documented inversion: the greenfield schema forbids the
+    // dangling source (project_sources.host_id FK, no cascade), so the
+    // legacy hard-delete-with-source shape is not representable on DB_V2 —
+    // the source row goes with the host. The observable pin survives on the
+    // now-source-less project: omitted-environment creation still lands on
+    // the cloud placeholder (the source===null fallback leg; the
+    // tombstone leg above keeps the dangling-host guard pinned).
+    await env.DB_V2.prepare("DELETE FROM project_sources WHERE host_id = ?").bind(host.id).run();
+    await env.DB_V2.prepare("DELETE FROM hosts WHERE id = ?").bind(host.id).run();
 
     const bare = await postJson("/api/v1/threads", {
       ...NO_TURN_CREATE,

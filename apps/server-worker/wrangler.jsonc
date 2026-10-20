@@ -23,14 +23,6 @@
       "database_id": "00000000-0000-0000-0000-000000000000",
     },
     {
-      // #62 liveness projection: the per-host daemon service DO stamps the
-      // registry's last_seen_at on daemon heartbeats (bb markHostSeen).
-      // Same database as DB; the second binding keeps the DO seam explicit.
-      "binding": "HOSTS_DB",
-      "database_name": "cap-control-plane",
-      "database_id": "00000000-0000-0000-0000-000000000000",
-    },
-    {
       // W6 db campaign (#591/#594): the drizzle-era control plane
       // (src/db/schema.ts → drizzle/ ledger, applied by the deploy hook —
       // see wrangler.staging.jsonc for the phase note). Placeholder id in
@@ -58,6 +50,20 @@
       { "name": "DAEMON_SERVICE", "class_name": "DaemonServiceDO" },
     ],
   },
+  "services": [
+    {
+      // T7 #599: the ControlPlane typed RPC face — a self service binding
+      // to this worker's `control_plane` named entrypoint. The daemon
+      // service DO's liveness projection rides it (hosts.markSeen); the
+      // provider-settings snapshot (agentSnapshot.get) serves any future
+      // consumer split. Named entrypoints are unreachable from public
+      // traffic — the binding IS the capability — so the retired
+      // HOSTS_DB D1 binding needed no replacement secret.
+      "binding": "CONTROL_PLANE",
+      "service": "cap-server-worker",
+      "entrypoint": "control_plane",
+    },
+  ],
   "r2_buckets": [
     {
       // #316 project attachment objects (key family

@@ -18,6 +18,17 @@ export class TestDurableAgentDO extends DurableAgentDO {
   state(): TestState {
     return readTestState(this.ctx);
   }
+
+  /** Test seam for journal rows whose producers arrive with later tickets
+   * (the ask channel's interaction flips, #591 T8's fold source). */
+  journalRow(input: {
+    id: string;
+    type: string;
+    data: Record<string, unknown>;
+    createdAt: number;
+  }) {
+    return this.appendJournalRow(input);
+  }
 }
 
 export default {
