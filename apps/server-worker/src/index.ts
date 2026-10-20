@@ -6,7 +6,7 @@ import {
   type WorkerEnv as DaemonServiceWorkerEnv,
 } from "@cap/daemon-service";
 import { createApp } from "./app";
-import { updateHostRow, upsertAttachedHost } from "./db/hosts";
+import { workerRepos } from "./db/repositories/worker-repos";
 import { projectAttachmentReader } from "./services/attachment-pickup";
 import { NotificationHubDO } from "./ws/hub";
 import { LeaseStoreDO } from "./leases/lease-do";
@@ -81,9 +81,13 @@ export default {
         DAEMON_EDGE_KV: env.DAEMON_EDGE_KV,
         // #49: daemon attach → control-plane host registry (the /hosts face);
         // #195 S3: protocol rejections stamp last_rejected_protocol_version.
-        onDaemonAttach: (hostId, info) => upsertAttachedHost(env, hostId, info),
+        // T5 (#597): the bridge writes the drizzle-era registry (DB_V2) the
+        // hosts face reads — the enroll bridge is the aggregate's producer.
+        onDaemonAttach: (hostId, info) => workerRepos(env).hosts.upsertAttached(hostId, info),
         onDaemonProtocolReject: async (hostId, protocolVersion) => {
-          await updateHostRow(env, hostId, { lastRejectedProtocolVersion: protocolVersion });
+          await workerRepos(env).hosts.update(hostId, {
+            lastRejectedProtocolVersion: protocolVersion,
+          });
         },
         // #318: the pickup route's thread→project cross-check + R2 read.
         readProjectAttachment: projectAttachmentReader(env),

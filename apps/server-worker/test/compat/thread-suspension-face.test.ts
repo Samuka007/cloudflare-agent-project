@@ -12,7 +12,7 @@ import {
 } from "../helpers";
 import { threadResponseSchema } from "../../src/contract/api/threads";
 import { threadListEntrySchema } from "../../src/contract/domain/thread";
-import { getEnvironmentRow } from "../../src/db/environments";
+import { createEnvironmentsRepo } from "../../src/db/repositories";
 import type { Env } from "../../src/env";
 import {
   resolveThreadRuntimeState,
@@ -51,7 +51,9 @@ async function seedHost(): Promise<HostSeed> {
   hostCounter += 1;
   const id = `host291_${hostCounter}_${Math.random().toString(36).slice(2, 8)}`;
   const now = Date.now();
-  await env.DB.prepare(
+  // T5 (#597): the hosts/environment rows the binding face serves live on
+  // the drizzle-era DB_V2 (the create face's environments FK requires it).
+  await env.DB_V2.prepare(
     "INSERT INTO hosts (id, name, type, connect_machine_id, max_permission_mode, destroyed_at, last_seen_at, last_rejected_protocol_version, created_at, updated_at) VALUES (?, ?, 'persistent', NULL, 'full', NULL, ?, NULL, ?, ?)",
   )
     .bind(id, `291-${id}`, now, now, now)
@@ -237,7 +239,7 @@ describe("#291 the sync echo stays byte-identical (rows 1-3 regression guard)", 
   it("the created environment row is the binding the face reads", async () => {
     const host = await seedHost();
     const thread = await createBoundThread(host.id, "face-binding-source");
-    const environment = await getEnvironmentRow(appEnv, thread.environmentId);
+    const environment = await createEnvironmentsRepo(appEnv.DB_V2).get(thread.environmentId);
     expect(environment?.hostId).toBe(host.id);
   });
 });

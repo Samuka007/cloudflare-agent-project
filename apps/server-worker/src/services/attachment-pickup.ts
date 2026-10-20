@@ -1,7 +1,6 @@
 import type { ProjectAttachmentContentResult, ProjectAttachmentReader } from "@cap/daemon-service";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
-import { getThreadRow } from "../db/control-plane";
-import { getEnvironmentRow } from "../db/environments";
+import { workerRepos } from "../db/repositories/worker-repos";
 import { readAttachment } from "./attachments";
 import { ApiError } from "../shared/api-error";
 import type { Env } from "../env";
@@ -26,7 +25,8 @@ import type { Env } from "../env";
  */
 export function projectAttachmentReader(env: Env): ProjectAttachmentReader {
   return async ({ hostId, query }): Promise<ProjectAttachmentContentResult> => {
-    const thread = await getThreadRow(env, query.threadId);
+    const repos = workerRepos(env);
+    const thread = await repos.threads.get(query.threadId);
     if (thread === null) {
       return { ok: false, status: 404, code: "not_found", message: "Thread not found" };
     }
@@ -44,7 +44,7 @@ export function projectAttachmentReader(env: Env): ProjectAttachmentReader {
 
     let boundHostId = CLOUD_PLACEHOLDER_HOST_ID;
     if (thread.environmentId !== null) {
-      const environment = await getEnvironmentRow(env, thread.environmentId);
+      const environment = await repos.environments.get(thread.environmentId);
       if (environment === null) {
         return {
           ok: false,

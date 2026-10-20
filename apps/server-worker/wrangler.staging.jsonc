@@ -32,10 +32,12 @@
     },
     {
       // #62 liveness projection: daemon heartbeats stamp hosts.last_seen_at
-      // (bb markHostSeen). Same database as DB; explicit DO seam binding.
+      // (bb markHostSeen). T5 (#597) reader cutover: same database as DB_V2 —
+      // the drizzle-era registry the hosts face serves; explicit DO seam
+      // binding (T7 folds markHostSeen into the typed client).
       "binding": "HOSTS_DB",
-      "database_name": "cap-control-plane",
-      "database_id": "4e823d64-cc93-4922-b576-ec1a455c02aa",
+      "database_name": "cap-control-plane-v2",
+      "database_id": "d112159b-bcba-411c-821e-28342314174b",
     },
     {
       // W6 db campaign (#591/#594): the drizzle-era control plane —
