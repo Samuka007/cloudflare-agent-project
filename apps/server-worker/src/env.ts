@@ -3,8 +3,6 @@
  * programs against the seam in `src/seam/agent-do.ts`.
  */
 export interface Env {
-  /** Control-plane tables (threads, projects, sections, hosts, settings). */
-  DB: D1Database;
   /**
    * T7 #599: the ControlPlane typed RPC face — the self service binding to
    * this worker's `control_plane` named entrypoint (public traffic cannot
@@ -15,7 +13,11 @@ export interface Env {
    */
   readonly CONTROL_PLANE?: Fetcher;
 
-  /** Drizzle-era control plane (db campaign #591): the repositories' database. */
+  /**
+   * The control plane (db campaign #591, closed by T9 #601): the
+   * repositories' sole database — the legacy `DB` binding retired with the
+   * old layer; the legacy database itself is torn down by the deploy chain.
+   */
   DB_V2: D1Database;
   /** Public WS fan-out + event waiters + disconnect grace. */
   HUB: DurableObjectNamespace;

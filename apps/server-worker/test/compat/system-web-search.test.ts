@@ -7,7 +7,7 @@ import {
   systemWebSearchResponseSchema,
   type SystemWebSearchResponse,
 } from "../../src/contract/api/system";
-import { setWebSearchConfig } from "../../src/db/web-search";
+import { createSettingsRepository } from "../../src/db/repositories";
 import type { Env } from "../../src/env";
 
 /** The rig env vs src Env: only the DO-namespace generics differ; the
@@ -296,10 +296,9 @@ describe("PUT /api/v1/system/web-search", () => {
     expect(exaCleared.face?.engines.exa.hasApiKey).toBe(false);
   });
 
-  it("guards the master-key gate at the db layer (fail-closed)", async () => {
+  it("guards the master-key gate at the repository seam (fail-closed)", async () => {
     await expect(
-      setWebSearchConfig(
-        { DB: env.DB, PROVIDER_CONFIG_MASTER_KEY: undefined },
+      createSettingsRepository(env.DB_V2, undefined).setWebSearchConfig(
         {
           chain: ["brave"],
           timeoutSeconds: 60,

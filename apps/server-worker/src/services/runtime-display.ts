@@ -1,8 +1,8 @@
 import type { Env } from "../env";
-import type { ThreadDbRow } from "../db/rows";
-// Type-only legacy shapes: repo records are structural supersets, so every
-// T5 call site passes repo records into these assemblies unchanged.
-import type { ThreadListRow } from "../db/control-plane";
+// The repository record types (T5 cutover): repo records are the stored
+// twins — structural supersets of the legacy mappers these assemblies
+// originally took.
+import type { ThreadListRecord, ThreadRecord } from "../db/repositories";
 import { workerRepos } from "../db/repositories/worker-repos";
 import type { ThreadListEntry, ThreadRuntimeState } from "../contract/domain/thread";
 import type { ThreadResponse } from "../contract/api/threads";
@@ -28,7 +28,7 @@ export const MAX_THREAD_HIERARCHY_DEPTH = 4;
  * 30s active-work grace governs the pre-#148 waiting-for-host design, not
  * the half-stop face — see host-broadcast.test.ts).
  */
-export function resolveThreadRuntimeState(row: ThreadDbRow): ThreadRuntimeState {
+export function resolveThreadRuntimeState(row: ThreadRecord): ThreadRuntimeState {
   return { displayStatus: row.status, hostReconnectGraceExpiresAt: null };
 }
 
@@ -37,7 +37,7 @@ export function resolveThreadRuntimeState(row: ThreadDbRow): ThreadRuntimeState 
  * open turn — rows 1-3 forbid the banner there (#148, preserved verbatim);
  * everything else has no active turn, so a down host is the honest display.
  */
-function admitsHostFace(status: ThreadDbRow["status"]): boolean {
+function admitsHostFace(status: ThreadRecord["status"]): boolean {
   return status !== "active" && status !== "stopping";
 }
 
@@ -57,7 +57,7 @@ function admitsHostFace(status: ThreadDbRow["status"]): boolean {
  */
 export async function resolveThreadRuntimeStateAsync(
   env: Env,
-  row: ThreadDbRow,
+  row: ThreadRecord,
 ): Promise<ThreadRuntimeState> {
   if (row.environmentId === null || !admitsHostFace(row.status)) {
     return resolveThreadRuntimeState(row);
@@ -73,7 +73,7 @@ export async function resolveThreadRuntimeStateAsync(
 }
 
 /** bb toPublicThread (thread-runtime-display.ts:143-166). */
-export function toPublicThread(row: ThreadDbRow) {
+export function toPublicThread(row: ThreadRecord) {
   return {
     id: row.id,
     projectId: row.projectId,
@@ -100,7 +100,7 @@ export function toPublicThread(row: ThreadDbRow) {
 
 export async function toThreadResponseWithSpawnCheck(
   env: Env,
-  row: ThreadDbRow,
+  row: ThreadRecord,
 ): Promise<ThreadResponse> {
   const depth = await workerRepos(env).threads.hierarchyDepth(row.id);
   return {
@@ -110,7 +110,7 @@ export async function toThreadResponseWithSpawnCheck(
 }
 
 /** bb ThreadResponse assembly with the #291 host face on the runtime leg. */
-async function toThreadResponseAsync(env: Env, row: ThreadDbRow): Promise<ThreadResponse> {
+async function toThreadResponseAsync(env: Env, row: ThreadRecord): Promise<ThreadResponse> {
   return {
     ...toPublicThread(row),
     runtime: await resolveThreadRuntimeStateAsync(env, row),
@@ -124,7 +124,7 @@ async function toThreadResponseAsync(env: Env, row: ThreadDbRow): Promise<Thread
  * provisioning — the environment* fields come from the #288 binding join;
  * activity counters zero (background tasks are a daemon surface).
  */
-function toThreadListEntry(row: ThreadListRow): ThreadListEntry {
+function toThreadListEntry(row: ThreadListRecord): ThreadListEntry {
   return {
     ...toPublicThread(row),
     runtime: resolveThreadRuntimeState(row),
@@ -154,7 +154,7 @@ function toThreadListEntry(row: ThreadListRow): ThreadListEntry {
  */
 export async function toThreadListEntries(
   env: Env,
-  rows: readonly ThreadListRow[],
+  rows: readonly ThreadListRecord[],
 ): Promise<ThreadListEntry[]> {
   const hostIds = new Set<string>();
   for (const row of rows) {

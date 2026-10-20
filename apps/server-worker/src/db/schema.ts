@@ -13,12 +13,12 @@ import {
  * Control-plane D1 schema — the drizzle-era single source (W6 db campaign,
  * #591 spec / #593 design-it-twice ruling 2026-10-20: design B skeleton).
  *
- * Expand-phase coexistence (#594): this schema is the GREENFIELD control
- * plane. It applies to its own D1 database (`cap-control-plane-v2`, binding
- * DB_V2) through the drizzle ledger (`drizzle/` + `wrangler d1 migrations
- * apply`, CI deploy hook). The legacy 14-file replay chain (`migrations/*.sql`
- * → legacy `src/db` mappers) keeps serving the old database untouched; reader
- * cutover and legacy retirement happen in later campaign tickets (contract).
+ * Contract phase (T9, #601): this schema IS the control plane. It applies to
+ * its own D1 database (`cap-control-plane-v2`, binding DB_V2) through the
+ * drizzle ledger (`drizzle/` + `wrangler d1 migrations apply`, CI deploy
+ * hook). The legacy 14-file replay chain and the hand-written db layer are
+ * deleted; the old cap-control-plane database's tables are torn down by the
+ * deploy chain's DROP block.
  *
  * Rulings encoded here (see the #591 comment for the full record):
  * - 18 legacy tables → 10 + `system_experiments` kept as an open k/v table
@@ -53,8 +53,8 @@ import {
  * Maintenance contract: drizzle-kit owns every DDL byte. Change this file,
  * then `pnpm --filter @cap/server-worker db:generate` — never hand-edit
  * `drizzle/*.sql` DDL or the meta/ snapshots. Seeds are data, not DDL: they
- * ride a ledger-tracked custom migration (`drizzle/0001_*`) with INSERT OR
- * IGNORE, per the #591 ruling.
+ * ride a ledger-tracked custom migration (`drizzle/0001_*`) with insert-or-
+ * ignore semantics, per the #591 ruling.
  */
 
 // ─── Vocabulary ──────────────────────────────────────────────────────────────
@@ -97,7 +97,7 @@ export const projects = sqliteTable(
     index("projects_sort_idx").on(t.sortKey, t.id),
     // The personal singleton (seeded by the ledger migration): the partial
     // unique index is both the bb-parity invariant and the seed's idempotency
-    // anchor (INSERT OR IGNORE rides it).
+    // anchor (the insert-or-ignore seed rides it).
     uniqueIndex("projects_personal_singleton_idx")
       .on(t.kind)
       .where(sql`${t.kind} = 'personal'`),

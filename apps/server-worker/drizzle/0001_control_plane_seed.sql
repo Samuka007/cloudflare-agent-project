@@ -5,10 +5,11 @@
 -- migration. `wrangler d1 migrations apply DB_V2 --remote` records it in
 -- d1_migrations and never replays it.
 --
--- Values are verbatim the legacy chain's seeds (migrations/0001_control_plane.sql
--- proj_personal + migrations/0004_cloud_placeholder_host.sql cloud row): the
--- greenfield database restarts the same invariants, and the display strings
--- stay the property of the later reader-cutover tickets to change.
+-- Values are verbatim the legacy replay chain's seeds (its 0001 proj_personal
+-- + 0004 cloud row — the chain was deleted with the T9 contract shrink,
+-- #601): the greenfield database restarts the same invariants, and the
+-- display strings stay the property of the later reader-cutover tickets to
+-- change.
 --
 -- proj_personal: bb requires the personal singleton to exist (the sidebar
 -- bootstrap 500s otherwise). OR IGNORE rides projects_personal_singleton_idx

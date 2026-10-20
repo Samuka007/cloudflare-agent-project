@@ -19,7 +19,7 @@ import { hosts } from "../schema";
  *   and clears a stale protocol rejection on `clearRejected` — name, type and
  *   permission ceiling stay owner-controlled (bb upsertHost keeps the
  *   existing row's name, data/hosts.ts:70-91), and a destroyed host is never
- *   resurrected by a re-attach (setWhere on the upsert's DO UPDATE).
+ *   resurrected by a re-attach (setWhere on the upsert's conflict arm).
  * - #386 defense in depth: the cloud placeholder row is born once (ledger
  *   seed) and never becomes a machine — the attach bridge refuses the id
  *   outright (no insert, no presence refresh, no rejection clear).
@@ -126,7 +126,7 @@ export function createHostsRepo(db: D1Database): HostsRepo {
         // bb: enroll's upsert preserves the rejection (data/hosts.ts:84 keeps
         // existing columns); only a successful open clears it
         // (internal/session.ts:96-98) — and `clearRejected` rides only the
-        // DO UPDATE arm, exactly like the port's conditional SET fragment.
+        // conflict-update arm, exactly like the port's conditional SET fragment.
         .onConflictDoUpdate({
           target: hosts.id,
           set: {

@@ -1,4 +1,4 @@
-import type { ThreadListRow } from "../db/control-plane";
+import type { ThreadListRecord } from "../db/repositories";
 import type { ThreadSearchHighlightRange, ThreadSearchMatch } from "../contract/api/threads";
 
 /**
@@ -22,7 +22,7 @@ const THREAD_SEARCH_HIGHLIGHT_RANGE_LIMIT = 8;
 
 type SearchSegmentSourceKind = "title" | "title_fallback";
 
-export type ThreadSearchCandidateRow = ThreadListRow;
+export type ThreadSearchCandidateRow = ThreadListRecord;
 
 /** Matched row plus its bb segment matches; the route maps rows to entries. */
 interface ThreadSearchGroup {

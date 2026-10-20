@@ -8,7 +8,7 @@ import {
   type DiscoveredModelEntry,
   type HostDiscoverModelsCommand,
 } from "@cap/daemon-service";
-import { listNonDestroyedHostRows } from "../db/hosts";
+import { workerRepos } from "../db/repositories/worker-repos";
 import { HOST_COMMAND_TIMEOUT_MS, daemonServiceStubOrNull } from "./host-files";
 import type { Env } from "../env";
 import { z } from "zod";
@@ -290,7 +290,7 @@ export async function discoverProviderModelsEnriched(
   const hostIds =
     target.hostId !== undefined
       ? [target.hostId]
-      : (await listNonDestroyedHostRows(env))
+      : (await workerRepos(env).hosts.listActive())
           .filter((row) => row.type !== "placeholder")
           .slice(0, DISCOVERY_HOST_CANDIDATES_MAX)
           .map((row) => row.id);
