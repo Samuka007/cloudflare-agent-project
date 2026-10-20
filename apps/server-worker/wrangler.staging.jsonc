@@ -76,8 +76,12 @@
       "tag": "v2",
       "new_sqlite_classes": ["ComposedDurableAgentDO"],
     },
-    // v3 withdrawn (see wrangler.jsonc) — restored in the immediate follow-up
-    // commit once the live script no longer binds the legacy classes.
+    {
+      // Legacy loop / manager / orchestrator classes are deleted with their
+      // DO storage (#590; three-step deploy sequence — see wrangler.jsonc).
+      "tag": "v3",
+      "deleted_classes": ["ComposedAgentDO", "ComposedHostOrchestratorDO", "ManagerDo"],
+    },
   ],
   "r2_buckets": [
     {
