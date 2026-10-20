@@ -13,6 +13,7 @@ import { loadProviderConfigOverlay } from "@cap/provider-app";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import { createRegistry, defineExtension } from "@earendil-works/pi-durable";
 import { providerConfigEnvFor } from "./control-plane/server";
+import { createThreadsRepo } from "./db/repositories/threads";
 import type { Env } from "./env";
 
 interface DaemonDispatchRpc {
@@ -117,10 +118,22 @@ export async function createDurableRuntime(
   const registry = createRegistry();
   registry.install(defineExtension({ name: "cap-host", tools }));
 
+  // #591 db campaign T8: the DO's pending-badge flips land on the threads
+  // row through the monotonic CAS (a replayed fold lands nowhere).
+  const threadsRepo = createThreadsRepo(env.DB_V2);
+
   return {
     models,
     registry,
     agent: { model: { provider: first.providerId, modelId: firstModel.id } },
     hostTools: dispatcher,
+    pendingState: {
+      push: async (push) => {
+        await threadsRepo.pushPendingState(push.threadId, {
+          pendingSince: push.pendingSince,
+          foldSeq: push.foldSeq,
+        });
+      },
+    },
   };
 }

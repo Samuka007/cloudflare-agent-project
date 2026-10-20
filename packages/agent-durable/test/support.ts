@@ -12,6 +12,7 @@ import {
   defineTool,
   type JsonObject,
 } from "@earendil-works/pi-durable";
+import type { PendingBadgePush } from "../src/pending";
 import type { DurableAgentRuntime } from "../src/types";
 
 export type TestScriptStep =
@@ -35,6 +36,7 @@ export const TEST_KEYS = {
   markerCount: "markerCount",
   toolStarted: "toolStarted",
   hanging: "testHanging",
+  pendingPushes: "testPendingPushes",
 } as const;
 
 export function writeScript(ctx: DurableObjectState, steps: TestScriptStep[]): void {
@@ -51,6 +53,12 @@ function markerStarted(ctx: DurableObjectState): boolean {
 
 function requestHanging(ctx: DurableObjectState): boolean {
   return ctx.storage.kv.get<boolean>(TEST_KEYS.hanging) ?? false;
+}
+
+/** Pending-badge pushes recorded by the test runtime's push seam (kv-backed,
+ * so the log survives an eviction and reads after the replay). */
+export function readPendingPushes(ctx: DurableObjectState): PendingBadgePush[] {
+  return ctx.storage.kv.get<PendingBadgePush[]>(TEST_KEYS.pendingPushes) ?? [];
 }
 
 export function readTestState(ctx: DurableObjectState): TestState {
@@ -107,10 +115,24 @@ export function createTestRuntime(ctx: DurableObjectState): DurableAgentRuntime 
 
   const registry = createRegistry();
   registry.install(defineExtension({ name: "test", tools: [marker] }));
+  // Concurrent pushes (registered + resolved inside one turn) serialize here
+  // so the kv log records them in flip order instead of racing a
+  // read-modify-write.
+  let pushChain: Promise<void> = Promise.resolve();
 
   return {
     models,
     registry,
     agent: { model: { provider: "faux", modelId: "faux-1" } },
+    pendingState: {
+      push: (push: PendingBadgePush) => {
+        pushChain = pushChain.then(() => {
+          const log = readPendingPushes(ctx);
+          log.push(push);
+          ctx.storage.kv.put(TEST_KEYS.pendingPushes, log);
+        });
+        return pushChain;
+      },
+    },
   };
 }

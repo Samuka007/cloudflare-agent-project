@@ -191,6 +191,14 @@ describe("ThreadsRepo aggregate (#595)", () => {
     expect(pushed?.outcome).toBe("applied");
     const after = (await threads.list({ projectId: project })).find((row) => row.id === bound.id);
     expect(after?.hasPendingInteraction).toBe(true);
+
+    // The badge read half (#591 T8): per-id pending field reads; ids with no
+    // drizzle-era row (and the empty batch) answer nothing/false.
+    const badges = await threads.pendingBadges([bound.id, loose.id]);
+    expect(badges.get(bound.id)).toBe(true);
+    expect(badges.get(loose.id)).toBe(false);
+    expect(await threads.pendingBadges([uid("thr_ghost")])).toEqual(new Map());
+    expect(await threads.pendingBadges([])).toEqual(new Map());
   });
 
   it("maps update writes onto bb change kinds for the hub broadcast", async () => {

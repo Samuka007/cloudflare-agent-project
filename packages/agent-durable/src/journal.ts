@@ -1,5 +1,5 @@
 import type { DaemonThreadEventInput, ThreadEventEnvelope } from "@cap/protocol";
-import { asc, desc, eq, gt, lte, max } from "drizzle-orm";
+import { asc, desc, eq, gt, like, lte, max } from "drizzle-orm";
 import { drizzle, type DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
 import { ensureJournalSchema } from "./db/bootstrap";
 import { events } from "./db/schema";
@@ -85,6 +85,18 @@ export class DurableEventSink implements ThreadEventSink {
       .from(events)
       .get();
     return row?.latest ?? 0;
+  }
+
+  /** #591 T8: the journal's interaction-lifecycle rows in seq order — the
+   * pending badge fold source (pending.ts foldPendingBadge). */
+  readInteractionRows(): ThreadEventEnvelope[] {
+    const rows = this.#db
+      .select()
+      .from(events)
+      .where(like(events.type, "interaction.%"))
+      .orderBy(asc(events.seq))
+      .all();
+    return rows.map((row) => this.#toEnvelope(row));
   }
 
   #rowById(id: string): EventRow | undefined {
