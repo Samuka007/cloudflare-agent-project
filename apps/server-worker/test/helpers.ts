@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { encryptProviderSecret } from "@cap/provider-app";
+import { createProviderConfigsRepository } from "../src/db/repositories";
 import { ensureMigrations } from "./migrate";
 
 /** Base URL for SELF requests; any origin works inside the pool. */
@@ -32,11 +33,14 @@ export const RIG_MASTER_KEY = "l1-rig-master-key";
 const RIG_WIRE_KEY = "l1-rig-relay-key";
 
 /**
- * Seed (idempotent) the rig's provider row: id "rig", api anthropic-messages,
- * models [rig-model], and a stored credential the loader decrypts with the
- * rig master key. The row is what makes the rig a CONFIGURED deployment —
- * thread creates resolve the rig selection against it and turns dispatch
- * through the registry exactly like production.
+ * Seed (idempotent) the rig's provider row — BOTH storage eras: the legacy
+ * D1 row feeds the DO's overlay loader (durable-runtime reads the legacy
+ * binding until the T7 typed client), the drizzle-era row (env.DB_V2) feeds
+ * the /system faces through the T4 repositories (T6 re-point). id "rig", api
+ * anthropic-messages, models [rig-model], and a stored credential the
+ * master key decrypts. The row is what makes the rig a CONFIGURED
+ * deployment — thread creates resolve the rig selection against it and
+ * turns dispatch through the registry exactly like production.
  */
 export async function ensureRigProviderRow(): Promise<void> {
   await ensureMigrations();
@@ -57,12 +61,27 @@ export async function ensureRigProviderRow(): Promise<void> {
       Date.now(),
     )
     .run();
+  const configs = createProviderConfigsRepository(env.DB_V2, RIG_MASTER_KEY);
+  if ((await configs.getTarget(RIG_PROVIDER_ID)) === null) {
+    await configs.insert(
+      RIG_PROVIDER_ID,
+      {
+        displayName: "L1 Rig Relay",
+        baseUrl: RIG_RELAY_BASE_URL,
+        api: "anthropic-messages",
+        serviceTier: false,
+        models: [{ id: RIG_MODEL_ID, reasoningLevels: ["none"], defaultReasoningLevel: "none" }],
+      },
+      { kind: "set", plaintext: RIG_WIRE_KEY },
+    );
+  }
 }
 
 /** The unconfigured-state analog of the retired unsetRigRelayCatalog. */
 export async function removeRigProviderRow(): Promise<void> {
   await ensureMigrations();
   await env.DB.prepare("DELETE FROM provider_configs WHERE id = ?").bind(RIG_PROVIDER_ID).run();
+  await createProviderConfigsRepository(env.DB_V2, RIG_MASTER_KEY).delete(RIG_PROVIDER_ID);
 }
 
 /**

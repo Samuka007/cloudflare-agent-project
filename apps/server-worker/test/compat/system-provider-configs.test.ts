@@ -5,7 +5,7 @@ import { decryptProviderSecret, resolveOverlayCatalog } from "@cap/provider-app"
 import type { RelayCatalogProvider } from "@cap/agent-config";
 import { ensureMigrations } from "../migrate";
 import { ensureRigProviderRow, removeRigProviderRow } from "../helpers";
-import { insertProviderConfig, type ProviderConfigEnv } from "../../src/db/provider-configs";
+import { createProviderConfigsRepository } from "../../src/db/repositories";
 import { PROBE_RATE_LIMIT_MAX, resetProbeRateLimiter } from "../../src/services/probe-rate-limit";
 import {
   providerConfigDiscoverResponseSchema,
@@ -18,8 +18,10 @@ import {
 } from "../../src/contract/api/system";
 
 /**
- * Ticket #362: the provider configurable panel's user-face 正本 — the D1
- * provider_configs table behind /api/v1/system/providers. Acceptance faces
+ * Ticket #362: the provider configurable panel's user-face 正本 — the
+ * provider_configs rows behind /api/v1/system/providers (T6 re-point: the
+ * drizzle-era database through the T4 repositories — same table name, same
+ * encrypted-column shape, zero SQL at the route layer). Acceptance faces
  * exercised here:
  *
  * - CRUD lifecycle with the credential null protocol (absent → keep,
@@ -80,13 +82,13 @@ async function listProviders(): Promise<ProviderRow[]> {
 async function rawD1Row(
   id: string,
 ): Promise<{ id: string; api_key_enc: string | null; models: string | null } | null> {
-  return env.DB.prepare("SELECT id, api_key_enc, models FROM provider_configs WHERE id = ?")
+  return env.DB_V2.prepare("SELECT id, api_key_enc, models FROM provider_configs WHERE id = ?")
     .bind(id)
     .first<{ id: string; api_key_enc: string | null; models: string | null }>();
 }
 
 async function insertRawRow(id: string, models: string, baseUrl?: string): Promise<void> {
-  await env.DB.prepare(
+  await env.DB_V2.prepare(
     "INSERT INTO provider_configs (id, display_name, base_url, api, service_tier, api_key_enc, models, created_at, updated_at) VALUES (?, ?, ?, ?, 0, NULL, ?, ?, ?)",
   )
     .bind(id, id, baseUrl ?? null, "anthropic", models, Date.now(), Date.now())
@@ -126,12 +128,12 @@ function stubProbeFetch(calls: { url: string; init: RequestInit }[]): void {
 afterEach(async () => {
   // The suite shares one worker (isolate:false): a leftover D1 row would
   // leak onto later files' execution-options faces.
-  await env.DB.prepare("DELETE FROM provider_configs").run();
+  await env.DB_V2.prepare("DELETE FROM provider_configs").run();
   // The rig's configured-deployment row is part of the shared state —
   // re-seed it for the later files (#450: the rig row IS the binding).
   await ensureRigProviderRow();
   // The #448 产图源 seat is separate 正本 state — the same leak discipline.
-  await env.DB.prepare("DELETE FROM image_source").run();
+  await env.DB_V2.prepare("DELETE FROM settings_agent").run();
 });
 
 describe("#434 point 6: the CRUD display face lists ONLY user rows", () => {
@@ -410,13 +412,9 @@ describe("#362 key encryption at rest (D1 direct read)", () => {
   it("refuses plaintext key writes when the master secret is absent (db-layer backstop)", async () => {
     // The write half reads the secret off the passed env; a deployment
     // without it must not silently store plaintext.
-    const envWithoutMasterKey: ProviderConfigEnv = {
-      DB: env.DB,
-      PROVIDER_CONFIG_MASTER_KEY: undefined,
-    };
+    const unarmed = createProviderConfigsRepository(env.DB_V2, undefined);
     await expect(
-      insertProviderConfig(
-        envWithoutMasterKey,
+      unarmed.insert(
         "no-master",
         { displayName: null, baseUrl: null, api: null, serviceTier: false, models: [] },
         { kind: "set", plaintext: PANEL_KEY },
@@ -564,6 +562,10 @@ describe("#362 test-connection and /models discovery faces", () => {
     // assertions below need an EMPTY registry so the degraded fallback is
     // the deterministic path (same hygiene as wipeRealHosts in
     // cloud-placeholder-host.test.ts — the placeholder row stays).
+    // Hosts stay on the LEGACY database: the discovery delegation reads
+    // them through services (the daemon-service writer is legacy until the
+    // T7 typed client) — this suite only re-points the provider/settings
+    // seats.
     await env.DB.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
   });
 
@@ -1080,7 +1082,7 @@ describe("#485 row/model family split (chat vs openai-images)", () => {
   });
 
   async function insertRawRowWithApi(id: string, api: string, models: string): Promise<void> {
-    await env.DB.prepare(
+    await env.DB_V2.prepare(
       "INSERT INTO provider_configs (id, display_name, base_url, api, service_tier, api_key_enc, models, created_at, updated_at) VALUES (?, ?, NULL, ?, 0, NULL, ?, ?, ?)",
     )
       .bind(id, id, api, models, Date.now(), Date.now())

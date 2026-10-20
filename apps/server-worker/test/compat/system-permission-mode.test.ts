@@ -9,10 +9,11 @@ import { resolveThreadDefaultExecutionOptions } from "../../src/services/executi
 import { BASE } from "../helpers";
 
 /**
- * #500 the permission-mode default write face (the D1 `permission_mode`
- * single-row seat, the sole 正本 — the retired deployment env scalar is
- * deleted): GET/PUT /api/v1/system/permission-mode. Acceptance faces
- * exercised:
+ * #500 the permission-mode default write face (the drizzle-era
+ * `settings_agent.permission_mode` column — the collapsed successor of the
+ * legacy single-row seat, the sole 正本; T6 re-point — the retired deployment
+ * env scalar is deleted): GET/PUT /api/v1/system/permission-mode. Acceptance
+ * faces exercised:
  *
  * - absent row = the ruled "full" default (configured:false — never an env
  *   override);
@@ -25,8 +26,6 @@ import { BASE } from "../helpers";
  */
 
 beforeAll(ensureMigrations);
-
-const SEAT = "permission_mode";
 
 async function request(method: string, path: string, body?: unknown): Promise<Response> {
   return exports.default.fetch(`${BASE}${path}`, {
@@ -61,7 +60,7 @@ async function putFace(
 
 afterEach(async () => {
   // The seat is single-row; every case starts from the absent state.
-  await env.DB.prepare(`DELETE FROM ${SEAT} WHERE id = '${SEAT}'`).run();
+  await env.DB_V2.prepare("DELETE FROM settings_agent").run();
 });
 
 describe("GET /api/v1/system/permission-mode", () => {
@@ -71,13 +70,13 @@ describe("GET /api/v1/system/permission-mode", () => {
 
   it("reflects the stored mode; a hand-edited value outside the enum falls back", async () => {
     // A direct D1 write outside the face: the decode is strict.
-    await env.DB.prepare(
-      `INSERT INTO ${SEAT} (id, mode, updated_at) VALUES ('${SEAT}', 'sandboxed', ?)`,
+    await env.DB_V2.prepare(
+      "INSERT INTO settings_agent (id, permission_mode, updated_at) VALUES ('agent', 'sandboxed', ?)",
     )
       .bind(Date.now())
       .run();
     expect(await getFace()).toEqual({ configured: true, mode: "full" });
-    await env.DB.prepare(`UPDATE ${SEAT} SET mode = 'accept-edits' WHERE id = '${SEAT}'`).run();
+    await env.DB_V2.prepare("UPDATE settings_agent SET permission_mode = 'accept-edits'").run();
     expect(await getFace()).toEqual({ configured: true, mode: "accept-edits" });
   });
 });

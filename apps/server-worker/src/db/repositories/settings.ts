@@ -214,6 +214,21 @@ export interface SettingsRepository {
   /** Upsert the selection (null clears it). */
   setImageSourceProviderId(providerId: string | null): Promise<void>;
   /**
+   * The RAW stored web-search cells (the agent-snapshot feed, #600 wiring):
+   * chain/engines/secrets stay unparsed ciphertext-bearing text — the
+   * provider-app loader owns decode/decrypt byte-identically. Null = the
+   * absent-seat ruled defaults. The decoded state lives in
+   * {@link getWebSearchConfig}.
+   */
+  getWebSearchRaw(): Promise<{
+    chain: string;
+    timeoutSeconds: number | null;
+    engines: string | null;
+    secretsEnc: string | null;
+    secretsMeta: string | null;
+    updatedAt: number;
+  } | null>;
+  /**
    * The decoded web-search half; `configured: false` when unwritten,
    * `decodeError: true` when a stored cell failed decode/decrypt.
    */
@@ -477,12 +492,18 @@ function buildSettingsRepository(
         return { configured: false, mode: DEFAULT_PERMISSION_MODE };
       }
       const raw = row.permissionMode;
+      // Column-scoped configured bit (legacy table-presence parity, the
+      // web-search/tool-gate halves' discipline): the collapsed row is
+      // SHARED with the sibling agent domains — their writes must never
+      // report the permission posture as configured (surfaced by the T6
+      // re-point; a row-presence key would flip the bit on any sibling
+      // write). NULL = the ruled default, never written.
       // Strict vocabulary decode (the #502 seat precedent): a hand-edited
       // value outside the enum is not a posture — it falls back to the ruled
       // default while `configured` stays true (the value IS stored).
       const mode =
         permissionModeValues.find((candidate) => candidate === raw) ?? DEFAULT_PERMISSION_MODE;
-      return { configured: true, mode };
+      return { configured: raw !== null, mode };
     },
 
     async setPermissionMode(mode: PermissionMode): Promise<void> {
@@ -611,6 +632,19 @@ function buildSettingsRepository(
     async getImageSourceProviderId(): Promise<string | null> {
       const row = await selectAgentRow();
       return row?.imageSourceProviderId ?? null;
+    },
+
+    async getWebSearchRaw() {
+      const row = await selectAgentRow();
+      if (row?.webSearchChain == null) return null;
+      return {
+        chain: row.webSearchChain,
+        timeoutSeconds: row.webSearchTimeoutSeconds,
+        engines: row.webSearchEngines,
+        secretsEnc: row.webSearchSecretsEnc,
+        secretsMeta: row.webSearchSecretsMeta,
+        updatedAt: row.updatedAt,
+      };
     },
 
     async setImageSourceProviderId(providerId: string | null): Promise<void> {

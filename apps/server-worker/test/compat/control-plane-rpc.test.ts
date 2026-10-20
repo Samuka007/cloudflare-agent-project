@@ -52,7 +52,7 @@ function okData(envelope: unknown): unknown {
 type Row = Record<string, string | number | null>;
 
 async function seed(sql: string, ...binds: (string | number | null)[]): Promise<void> {
-  await appEnv.DB.prepare(sql)
+  await appEnv.DB_V2.prepare(sql)
     .bind(...binds)
     .run();
 }
@@ -75,9 +75,7 @@ async function hostsRow(sql: string, ...binds: (string | number | null)[]): Prom
 
 afterEach(async () => {
   await seed("DELETE FROM provider_configs WHERE id = 'rpc-face-rig'");
-  await seed("DELETE FROM image_source WHERE id = 'image_source'");
-  await seed("DELETE FROM web_search WHERE id = 'web_search'");
-  await seed("DELETE FROM tool_capabilities WHERE id = 'tool_capabilities'");
+  await seed("DELETE FROM settings_agent WHERE id = 'agent'");
   await seedHosts("DELETE FROM hosts WHERE id = 'rpc-face-rig-host'");
 });
 
@@ -86,23 +84,14 @@ describe("CONTROL_PLANE binding → control_plane entrypoint (#599)", () => {
     const now = Date.now();
     await seed(
       `INSERT INTO provider_configs (id, display_name, base_url, api, service_tier, api_key_enc, models, created_at, updated_at)
-       VALUES ('rpc-face-rig', 'RPC Rig', 'https://upstream.example', 'anthropic-messages', 1, 'enc-payload', '[{"id":"m1"}]', ?, ?)`,
+       VALUES ('rpc-face-rig', 'RPC Rig', 'https://upstream.example', 'anthropic-messages', TRUE, 'enc-payload', '[{"id":"m1"}]', ?, ?)`,
       now,
       now,
     );
     await seed(
-      "INSERT INTO image_source (id, provider_id, updated_at) VALUES ('image_source', 'rpc-face-rig', ?)",
+      "INSERT INTO settings_agent (id, image_source_provider_id, web_search_chain, web_search_timeout_seconds, web_search_secrets_enc, web_search_secrets_meta, external_thinking, context_notes, checkpoint, updated_at) VALUES ('agent', 'rpc-face-rig', '[\"public\"]', 45, 'sealed', '{\"brave\":{\"apiKey\":true}}', TRUE, FALSE, TRUE, ?)",
       now,
     );
-    await seed(
-      "INSERT INTO web_search (id, chain, timeout_seconds, engines, secrets_enc, secrets_meta, updated_at) VALUES ('web_search', '[\"public\"]', 45, NULL, 'sealed', '{\"brave\":{\"apiKey\":true}}', ?)",
-      now,
-    );
-    await seed(
-      "INSERT INTO tool_capabilities (id, external_thinking, context_notes, checkpoint, updated_at) VALUES ('tool_capabilities', 1, 0, 1, ?)",
-      now,
-    );
-
     const { status, envelope } = await rpc({ method: "agentSnapshot.get" });
     expect(status).toBe(200);
     const snapshot = agentSnapshotSchema.parse(okData(envelope));

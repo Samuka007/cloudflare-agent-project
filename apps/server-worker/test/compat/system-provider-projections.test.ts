@@ -47,9 +47,9 @@ async function loadedOverlay(): Promise<ProviderConfigCatalogOverlay> {
 
 afterEach(async () => {
   // The seat is single-row; every case starts from the unconfigured state.
-  await env.DB.prepare("DELETE FROM web_search WHERE id = 'web_search'").run();
+  await env.DB_V2.prepare("DELETE FROM settings_agent WHERE id = 'agent'").run();
   // Suite-seeded catalog rows never leak onto later files' projections.
-  await env.DB.prepare("DELETE FROM provider_configs WHERE id = 'projcat'").run();
+  await env.DB_V2.prepare("DELETE FROM provider_configs WHERE id = 'projcat'").run();
 });
 
 describe("GET /api/v1/system/provider-projections", () => {
@@ -153,8 +153,8 @@ describe("GET /api/v1/system/provider-projections", () => {
     // rejection, never silent fallback) — a hand-edited row carrying one is
     // a loud decodeError: no chain is served, the error text is dropped
     // (it can quote raw row content — zero-secret discipline).
-    await env.DB.prepare(
-      "INSERT INTO web_search (id, chain, timeout_seconds, engines, secrets_enc, secrets_meta, updated_at) VALUES ('web_search', '[\"google\"]', 60, NULL, NULL, NULL, ?)",
+    await env.DB_V2.prepare(
+      "INSERT INTO settings_agent (id, web_search_chain, web_search_timeout_seconds, updated_at) VALUES ('agent', '[\"google\"]', 60, ?)",
     )
       .bind(Date.now())
       .run();
@@ -208,7 +208,7 @@ describe("GET /api/v1/system/provider-projections", () => {
   });
 
   it("#450 reports configured rows' ids without leaking declared values", async () => {
-    await env.DB.prepare(
+    await env.DB_V2.prepare(
       "INSERT INTO provider_configs (id, display_name, base_url, api, service_tier, api_key_enc, models, created_at, updated_at) VALUES ('projcat', 'GLM Relay', NULL, 'anthropic-messages', 0, NULL, ?, ?, ?)",
     )
       .bind(

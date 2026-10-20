@@ -7,9 +7,11 @@ import {
 } from "../../src/contract/api/system";
 
 /**
- * #506 the origin-allowlist seat (the D1 `origin_allowlist` single-row row,
- * the sole 正本 — the APP_EXTRA_ORIGINS env input is deleted, zero-env
- * ruling). Acceptance faces exercised:
+ * #506 the origin-allowlist seat (the drizzle-era `settings_app.origin_allowlist`
+ * column — the collapsed successor of the legacy single-row seat; T6
+ * re-point: the guard reads the same database the write face lands in — the
+ * APP_EXTRA_ORIGINS env input is deleted, zero-env ruling). Acceptance faces
+ * exercised:
  *
  * - the guard matrix (same-origin / extra / reject) is ROW-DRIVEN over the
  *   seat content: a PUT through /system/origin-allowlist hot-applies on the
@@ -56,7 +58,7 @@ async function getFace(): Promise<SystemOriginAllowlistResponse> {
 
 afterEach(async () => {
   // The seat is single-row; every case starts from the absent-row posture.
-  await env.DB.prepare("DELETE FROM origin_allowlist").run();
+  await env.DB_V2.prepare("DELETE FROM settings_app").run();
 });
 
 interface GuardRow {
@@ -220,9 +222,9 @@ describe("fail-closed seat decode (#506)", () => {
   const PANEL = "https://panel.example";
 
   async function seedCell(raw: string): Promise<void> {
-    await env.DB.prepare(
-      "INSERT INTO origin_allowlist (id, origins, updated_at) VALUES ('origin_allowlist', ?, ?)" +
-        " ON CONFLICT(id) DO UPDATE SET origins = excluded.origins",
+    await env.DB_V2.prepare(
+      "INSERT INTO settings_app (id, origin_allowlist, updated_at) VALUES ('app', ?, ?)" +
+        " ON CONFLICT(id) DO UPDATE SET origin_allowlist = excluded.origin_allowlist",
     )
       .bind(raw, Date.now())
       .run();
