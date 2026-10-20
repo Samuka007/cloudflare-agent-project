@@ -5,6 +5,8 @@
 export interface Env {
   /** Control-plane tables (threads, projects, sections, hosts, settings). */
   DB: D1Database;
+  /** Drizzle-era control plane (db campaign #591): the repositories' database. */
+  DB_V2: D1Database;
   /** Public WS fan-out + event waiters + disconnect grace. */
   HUB: DurableObjectNamespace;
   /** Preview/file leases with alarm-based TTL eviction (bb previewLeases). */
