@@ -1,12 +1,18 @@
-import {
-  createModels,
-  createProvider,
-  type Model,
-  type Models,
-  type ModelThinkingLevel,
-  type Provider,
-  type ProviderStreams,
-  type ThinkingLevelMap,
+// Value bindings come from the ./models subpath, NOT the root barrel: the
+// barrel is `export *` re-exports, and wrangler's esbuild tree-shakes the
+// barrel chunk away while hoisting `createModels` out of pi-ai's lazy
+// `init_models()` wrapper — leaving its `ModelsImpl` dependency unassigned at
+// request time ("ModelsImpl is not a constructor" inside the deployed DO).
+// A direct subpath import pins the models.js chunk edge, so the init call
+// lands at app top-level. Type-only imports may stay on the barrel (erased).
+import { createModels, createProvider } from "@earendil-works/pi-ai/models";
+import type {
+  Model,
+  Models,
+  ModelThinkingLevel,
+  Provider,
+  ProviderStreams,
+  ThinkingLevelMap,
 } from "@earendil-works/pi-ai";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
