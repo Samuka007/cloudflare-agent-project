@@ -80,13 +80,16 @@
       "tag": "v2",
       "new_sqlite_classes": ["ComposedDurableAgentDO"],
     },
-    // v3 (deleted_classes ComposedAgentDO/ComposedHostOrchestratorDO/ManagerDo)
-    // is TEMPORARILY WITHDRAWN: the live remote script still binds
-    // AGENT_DO→ComposedAgentDO, and applying --delete-class against that state
-    // fails with CF error 10061 — deploys have been red since #590. Two-step
-    // retirement: this deploy swaps the script+bindings (old class unbound,
-    // unexported, dormant); the immediate follow-up commit restores v3 and the
-    // deletion applies cleanly against a script with zero references.
+    {
+      // The legacy agent loop, provider manager, and host orchestrator are
+      // gone (#590). Retirement ran as a three-step deploy sequence (10061 →
+      // 10064 → clean delete): bindings were swapped first (#605), then the
+      // dormant classes were stub-exported (#606) so the pi-durable script
+      // could ship; with zero references left on the live script, this
+      // migration now deletes the dormant classes and their DO storage.
+      "tag": "v3",
+      "deleted_classes": ["ComposedAgentDO", "ComposedHostOrchestratorDO", "ManagerDo"],
+    },
   ],
   "kv_namespaces": [
     {
