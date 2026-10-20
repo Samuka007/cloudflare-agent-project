@@ -1,0 +1,13 @@
+diff --git a/dist/api/openai-responses.js b/dist/api/openai-responses.js
+index 2ab985c7da1e377bff0355a460e6f6ab5c70df66..e5cae41e4f2d318a1b05bd0c57d2a66a138a6040 100644
+--- a/dist/api/openai-responses.js
++++ b/dist/api/openai-responses.js
+@@ -259,7 +259,7 @@ function buildParams(model, context, options, compat, grammarToolInputProperties
+         prompt_cache_key: cacheRetention === "none" ? undefined : clampOpenAIPromptCacheKey(options?.sessionId),
+         prompt_cache_retention: omitUnsupportedFields ? undefined : getPromptCacheRetention(compat, cacheRetention),
+         prompt_cache_options: omitUnsupportedFields ? undefined : getPromptCacheOptions(compat, cacheRetention),
+-        store: false,
++        store: true,
+     };
+     if (options?.maxTokens && compat.supportsMaxOutputTokens && !omitUnsupportedFields) {
+         params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS);
