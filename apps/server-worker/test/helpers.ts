@@ -1,6 +1,5 @@
 import { vi } from "vitest";
 import { env, exports } from "cloudflare:workers";
-import { encryptProviderSecret } from "@cap/provider-app";
 import { createProviderConfigsRepository } from "../src/db/repositories";
 import { ensureMigrations } from "./migrate";
 
@@ -33,34 +32,17 @@ export const RIG_MASTER_KEY = "l1-rig-master-key";
 const RIG_WIRE_KEY = "l1-rig-relay-key";
 
 /**
- * Seed (idempotent) the rig's provider row — BOTH storage eras: the legacy
- * D1 row feeds the DO's overlay loader (durable-runtime reads the legacy
- * binding until the T7 typed client), the drizzle-era row (env.DB_V2) feeds
- * the /system faces through the T4 repositories (T6 re-point). id "rig", api
- * anthropic-messages, models [rig-model], and a stored credential the
- * master key decrypts. The row is what makes the rig a CONFIGURED
- * deployment — thread creates resolve the rig selection against it and
- * turns dispatch through the registry exactly like production.
+ * Seed (idempotent) the rig's provider row through the T4 repository (T9
+ * #601: the legacy-era D1 seed is retired with the old layer — the typed
+ * client serves the loader and the repositories serve the /system faces
+ * from the same drizzle-era row). id "rig", api anthropic-messages, models
+ * [rig-model], and a stored credential the master key decrypts. The row is
+ * what makes the rig a CONFIGURED deployment — thread creates resolve the
+ * rig selection against it and turns dispatch through the registry exactly
+ * like production.
  */
 export async function ensureRigProviderRow(): Promise<void> {
   await ensureMigrations();
-  const apiKeyEnc = await encryptProviderSecret(RIG_MASTER_KEY, RIG_WIRE_KEY);
-  await env.DB.prepare(
-    "INSERT OR IGNORE INTO provider_configs (id, display_name, base_url, api, service_tier, api_key_enc, models, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)",
-  )
-    .bind(
-      RIG_PROVIDER_ID,
-      "L1 Rig Relay",
-      RIG_RELAY_BASE_URL,
-      "anthropic-messages",
-      apiKeyEnc,
-      JSON.stringify([
-        { id: RIG_MODEL_ID, reasoningLevels: ["none"], defaultReasoningLevel: "none" },
-      ]),
-      Date.now(),
-      Date.now(),
-    )
-    .run();
   const configs = createProviderConfigsRepository(env.DB_V2, RIG_MASTER_KEY);
   if ((await configs.getTarget(RIG_PROVIDER_ID)) === null) {
     await configs.insert(
@@ -80,7 +62,6 @@ export async function ensureRigProviderRow(): Promise<void> {
 /** The unconfigured-state analog of the retired unsetRigRelayCatalog. */
 export async function removeRigProviderRow(): Promise<void> {
   await ensureMigrations();
-  await env.DB.prepare("DELETE FROM provider_configs WHERE id = ?").bind(RIG_PROVIDER_ID).run();
   await createProviderConfigsRepository(env.DB_V2, RIG_MASTER_KEY).delete(RIG_PROVIDER_ID);
 }
 

@@ -1,7 +1,7 @@
 import { CLOUD_PLACEHOLDER_HOST_ID, type CreateThreadEnvironmentArgs } from "@cap/protocol";
 import { ApiError } from "../shared/api-error";
 import { createEnvironmentId } from "../shared/ids";
-import type { EnvironmentDbRow } from "../db/rows";
+import type { EnvironmentRecord } from "../db/repositories";
 import { workerRepos } from "../db/repositories/worker-repos";
 import type { Env } from "../env";
 
@@ -33,7 +33,7 @@ export interface ResolvedThreadBinding {
    * default (no row materializes for the deployment machine — §2.3). */
   environmentId: string | null;
   /** The full row when one was found-or-created. */
-  environment: EnvironmentDbRow | null;
+  environment: EnvironmentRecord | null;
 }
 
 async function requireNonDestroyedHost(env: Env, hostId: string): Promise<void> {
@@ -57,9 +57,9 @@ async function materializeWorkspaceRow(
     projectId: string;
     hostId: string;
     path: string | null;
-    workspaceProvisionType: EnvironmentDbRow["workspaceProvisionType"];
+    workspaceProvisionType: EnvironmentRecord["workspaceProvisionType"];
   },
-): Promise<EnvironmentDbRow> {
+): Promise<EnvironmentRecord> {
   const row = await workerRepos(env).environments.findOrCreate({
     id: createEnvironmentId(),
     projectId: args.projectId,

@@ -14,15 +14,15 @@
 # with a plain `deploy` was never verified (docs/research/deployable-units.md
 # U1 缺口 3).
 #
-# D1 migrations (#295): every deploy replays apps/server-worker/migrations/*.sql
-# (lexical order; zero-padded numeric prefixes) against the staging database
-# BEFORE `wrangler deploy`, so a worker version never goes live against a
-# schema its code assumes but the DB lacks (#288 walkthrough outage: 0002
-# merged, never applied, /environments 500'd). Files MUST stay idempotent —
-# see the header of 0001_control_plane.sql for the contract; this is also
-# what absorbs the pre-#295 baseline where 0001 was hand-applied (no ledger
-# table to backfill: replay of idempotent DDL against an already-migrated DB
-# is a no-op). Docs: docs/ops/staging-d1-migrations.md.
+# D1 migrations (#295 → #591/#594 → #601): the control plane migrates through
+# the drizzle ledger (apps/server-worker/drizzle/, applied by `wrangler d1
+# migrations apply DB_V2 --remote` below BEFORE `wrangler deploy` — a worker
+# version never goes live against a schema its code assumes but the DB lacks;
+# the #288 walkthrough outage's lesson). The ledger records one apply per
+# migration tag and never replays; the legacy 14-file replay chain and the
+# hand-written db layer were deleted in T9 (#601), which also lands the
+# one-shot DROP teardown of the legacy database. Docs:
+# docs/ops/staging-d1-migrations.md.
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -59,14 +59,20 @@ if [[ $SKIP_SPA -eq 0 ]]; then
   bash scripts/stage-bb-spa.sh
 fi
 
-echo "== applying D1 migrations to cap-control-plane (staging) =="
+echo "== dropping legacy control-plane tables on cap-control-plane (staging, T9 #601) =="
+# W6 db campaign T9 (#601): the legacy replay chain (migrations/*.sql, the
+# hand-written db layer, the 0011-unregistered-file drift class) is deleted
+# with the code — the drizzle ledger on cap-control-plane-v2 below is the
+# only migration apparatus. What remains here is the one-shot teardown of
+# the LEGACY cap-control-plane database: every old table dropped (children
+# before parents for the FK-enabled D1), idempotent via IF EXISTS, so the
+# stale schema cannot outlive its readers. The database itself is deleted
+# in the campaign closeout — delete this block together with it.
 (
   cd apps/server-worker
-  for migration in migrations/*.sql; do
-    echo "--- $migration"
-    pnpm exec wrangler d1 execute cap-control-plane --remote -y \
-      -c wrangler.staging.jsonc --file "$migration"
-  done
+  pnpm exec wrangler d1 execute cap-control-plane --remote -y \
+    -c wrangler.staging.jsonc \
+    --command "DROP TABLE IF EXISTS pending_interactions; DROP TABLE IF EXISTS thread_tabs; DROP TABLE IF EXISTS host_daemon_sessions; DROP TABLE IF EXISTS threads; DROP TABLE IF EXISTS environments; DROP TABLE IF EXISTS thread_sections; DROP TABLE IF EXISTS project_sources; DROP TABLE IF EXISTS app_settings; DROP TABLE IF EXISTS app_theme; DROP TABLE IF EXISTS web_search; DROP TABLE IF EXISTS tool_capabilities; DROP TABLE IF EXISTS origin_allowlist; DROP TABLE IF EXISTS permission_mode; DROP TABLE IF EXISTS compaction_settings; DROP TABLE IF EXISTS image_source; DROP TABLE IF EXISTS provider_configs; DROP TABLE IF EXISTS hosts; DROP TABLE IF EXISTS projects;"
 )
 
 # W6 db campaign (#591/#594): the drizzle-era control plane migrates through
@@ -74,10 +80,9 @@ echo "== applying D1 migrations to cap-control-plane (staging) =="
 # d1_migrations table and applies every pending migration exactly once
 # (second run is a tracked no-op). The migration set is drizzle-kit generated
 # (apps/server-worker/src/db/schema.ts → drizzle/); migrations_dir comes from
-# the DB_V2 entry in wrangler.staging.jsonc. EXPAND phase: this runs against
-# the separate cap-control-plane-v2 database and never touches the legacy
-# cap-control-plane chain above; the reader cutover retires that chain in a
-# later campaign ticket.
+# the DB_V2 entry in wrangler.staging.jsonc. T9 (#601): the worker's sole
+# control plane — the legacy cap-control-plane database only hosts the
+# teardown DROP block above until the closeout deletes it.
 echo "== applying drizzle ledger migrations to cap-control-plane-v2 (staging) =="
 (
   cd apps/server-worker

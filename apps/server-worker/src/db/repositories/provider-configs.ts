@@ -108,7 +108,7 @@ export interface ProviderConfigCipherRow {
 // ─── Interface ───────────────────────────────────────────────────────────────
 
 export interface ProviderConfigsRepository {
-  /** Create the row; a duplicate id throws (legacy INSERT parity). */
+  /** Create the row; a duplicate id throws (legacy insert parity). */
   insert(
     id: string,
     fields: ProviderConfigWriteFields,
@@ -128,8 +128,8 @@ export interface ProviderConfigsRepository {
   ): Promise<void>;
   delete(id: string): Promise<void>;
   /**
-   * Every stored row in (id) order — the CRUD display face's input (legacy
-   * `SELECT … FROM provider_configs ORDER BY id` parity). Zero ciphertext:
+   * Every stored row in (id) order — the CRUD display face's input (the
+   * legacy id-ordered listing parity). Zero ciphertext:
    * `hasCredential` presence only.
    */
   list(): Promise<ProviderConfigStoredRow[]>;

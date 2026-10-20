@@ -1,67 +1,69 @@
 # staging D1 迁移（部署链的迁移一节）
 
-- 工单：Samuka007/cloudflare-agent-project#295（#288 走查发现的事故修复）
-- 日期：2026-10-05
-- 关联：`scripts/deploy-staging.sh`、`apps/server-worker/migrations/`、docs/engineering.md 实践 12、docs/research/deployable-units.md U1
+- 工单：Samuka007/cloudflare-agent-project#295（#288 走查发现的事故修复）→
+  #591/#594（drizzle 账本制换代）→ #601（T9 contract 收缩，旧装置退役）
+- 日期：2026-10-05（账本制本文：2026-10-20）
+- 关联：`scripts/deploy-staging.sh`、`apps/server-worker/drizzle/`、
+  `apps/server-worker/src/db/schema.ts`、docs/engineering.md 实践 12、
+  docs/research/deployable-units.md U1
 
-## 事故背景（#288 走查，2026-10-05）
+## 机制（账本制，#594 起）
 
-`0001_control_plane.sql` 是早期手工应用到 staging 的；`#288` 的
-`0002_environments.sql` 合并进 main 后部署链没有任何迁移步骤，staging 库缺
-`environments` 表，`/api/v1/environments` 500。修复 = 把迁移变成部署链的
-固定步骤（本文件）+ 幂等契约 + CD 冒烟防回归。
+控制面持久层 = D1 `cap-control-plane-v2`（binding `DB_V2`）：
 
-## 机制
+- **schema 单源**：`apps/server-worker/src/db/schema.ts`（drizzle 定义）。
+- **迁移单源**：`drizzle/` 账本（drizzle-kit 从 schema 生成 + 每迁移一条
+  `meta/_journal.json` 记录）；ALTER 合法，座表成因消失。
+- **apply 单源**：`scripts/deploy-staging.sh` 在 `wrangler deploy` **之前**
+  跑 `wrangler d1 migrations apply DB_V2 --remote` ——
+  `d1_migrations` 表是唯一应用记录，每迁移恰好一次，重放即跳过
+  （second run is a tracked no-op）。任何一条失败 →
+  `set -euo pipefail` 中止部署（fail closed，#288 的教训不变：worker 代码
+  永不面对"代码假设表存在但 DB 没有"的窗口）。
+- **种子**：数据不进 schema——`drizzle/0001_control_plane_seed.sql`
+  （`INSERT OR IGNORE`）是唯一 sanctioned 手写文件。
+- **漂移守卫**：`test/migrations-ledger.ts` 在模块加载时校验静态导入清单
+  与 journal 完全一致（含顺序），漂移即硬错误；旧重放链的
+  "0011 文件未注册"缺陷类结构性消失。
+- **测试侧**：`test/migrate.ts` 的 `ensureMigrations` 复放同一 apply 语义
+  （miniflare 无法调 wrangler CLI，harness 见 `test/migrations-ledger.ts`）；
+  fresh-apply / re-apply-no-op / ledger-count 契约由
+  `test/migrations-ledger.test.ts` 钉住。
 
-`scripts/deploy-staging.sh` 在 `wrangler deploy` **之前**，按字典序把
-`apps/server-worker/migrations/*.sql` 逐文件重放到 staging D1
-（`cap-control-plane`）：
+### 如何加迁移
 
-```bash
-wrangler d1 execute cap-control-plane --remote -y \
-  -c wrangler.staging.jsonc --file "migrations/<file>.sql"
-```
+1. 改 `src/db/schema.ts`；
+2. `pnpm --dir apps/server-worker run db:generate`（drizzle-kit 生成
+   `drizzle/NNNN_*.sql` + journal 条目；种子类数据走
+   `drizzle-kit generate --custom`，文件头注记裁决）；
+3. `pnpm --dir apps/server-worker test` 绿（账本计数/幂等测试）；
+4. push → merge main → CD 自动 apply。
 
-- 任何一条失败 → `set -euo pipefail` 中止部署，worker 新版本不上线
-  （fail closed）。
-- 先迁移后部署：worker 代码永不面对"代码假设表存在但 DB 没有"的窗口。
-- 新迁移文件只要落进 `migrations/` 即被部署链自动拾取（glob），无需改脚本。
+## T9 退役记录（#601，contract 收缩）
 
-## 幂等契约
+旧装置已于 T9 全部删除：
 
-迁移文件在**每次部署**都会全量重放，DB 状态可以从裸库到已完全迁移
-（#295 之前 0001 就是手工应用的基线），因此**每个语句必须幂等**：
+- **旧 db 层**：`src/db/{rows,control-plane,settings,hosts,environments,
+thread-tabs,provider-configs,project-sources,web-search,tool-capabilities,
+origin-allowlist,permission-mode,compaction-settings,image-source}.ts`
+  （手写 SQL/mapper，原 ~2,453 行）——控制面数据访问唯一正本是
+  `src/db/repositories/`（drizzle 藏在实现内）。
+- **旧重放迁移链**：`migrations/0001…0011_*.sql`（14 文件全量重放、无账本）
+  连同其注册清单（旧 `test/migrate.ts` MIGRATION_FILES）一起删除。
+- **旧表 DROP**：部署链每次跑一遍对 `cap-control-plane`（旧库，binding 已
+  随 `DB` 移除）的幂等 `DROP TABLE IF EXISTS` 清单（含
+  `pending_interactions` 镜像表与 `host_daemon_sessions` 孤儿表）——staging
+  走查确认后随战役收口删除该块与库本身。
+- **回放语义退役**：`migrations-replay.test`（全量重放钉幂等）由
+  `migrations-ledger.test`（fresh apply / no-op re-apply / ledger count）
+  替代。
 
-- DDL 一律 `CREATE TABLE / CREATE INDEX IF NOT EXISTS`；
-- 种子数据用 `INSERT OR IGNORE`，且必须骑在唯一约束上（例：0001 的
-  `projects_personal_singleton_idx` 部分唯一索引保证 `proj_personal`
-  只种一次）；
-- 需要非幂等步骤的迁移（ALTER、数据回填）必须自门控：先查
-  `sqlite_master` / 目标行存在与否再执行。
+## 历史档案（#295–#500 时代的重放契约）
 
-**无账本表**：幂等重放天然吸收任何基线——重放已应用文件是 no-op，缺失的
-文件被补上——无需维护"已应用记录"表，也就没有账本与实际 schema 漂移的
-第二真相源问题。
-
-## 如何加迁移
-
-1. 新建 `apps/server-worker/migrations/<NNNN>_<name>.sql`（四位零填充序号，
-   字典序 = 应用序），每个语句遵守幂等契约（文件头有契约注记）。
-2. 在 `apps/server-worker/test/migrate.ts` 的 `MIGRATION_FILES` 注册（测试侧
-   显式清单，防新文件漏应用）；需要读面时同步 `src/db/rows.ts` 与
-   contract schema。
-3. `pnpm --dir apps/server-worker test` 绿——
-   `test/migrations-replay.test.ts` 在已迁移库上全量重放全部迁移文件，
-   钉住幂等契约（重复种子/丢行即红）。
-4. push → merge main → CD 自动重放；部署后冒烟含
-   `GET /api/v1/environments` 200（deploy-staging.yml post-deploy smoke）。
-
-## 本地验证（不碰远端库）
-
-```bash
-cd apps/server-worker
-rm -rf /tmp/d1verify
-pnpm exec wrangler d1 execute cap-control-plane --local --persist-to /tmp/d1verify \
-  --file migrations/0001_control_plane.sql -y
-# 依次重放 0002、再重放 0001/0002 各一遍——全部零错即幂等成立
-```
+旧机制（2026-10-05 起，#601 止）：部署链按字典序把 `migrations/*.sql`
+全量重放到 `cap-control-plane`，幂等契约 = `CREATE … IF NOT EXISTS` +
+骑唯一约束的 `INSERT OR IGNORE`、无账本表。事故背景：`0001` 早期手工应用，
+`#288` 的 `0002` 合并后部署链无迁移步骤，staging 缺 `environments` 表、
+`/api/v1/environments` 500 —— 修复即"迁移成为部署链固定步骤"。该契约的
+两个实际缺陷（清单漂移：0011 未注册；禁 ALTER 逼出 9 张单行座表）由
+#591 持久层第一性重构整体退役。

@@ -95,7 +95,7 @@ import { consumeProbeSlot } from "../services/probe-rate-limit";
 import { resolvePrimaryHostId } from "../services/host-records";
 import { validateThreadExecutionSelection } from "../services/execution-selection";
 import { applyAppKeybindingOverrides } from "../contract/domain/app-keybindings";
-import { listStoredThreadModelOverrides } from "../db/control-plane";
+import { createThreadsRepo } from "../db/repositories";
 import type { AppEnv, Env } from "../app-types";
 
 /**
@@ -478,7 +478,7 @@ export function registerSystemRoutes(app: Hono<AppEnv>): void {
         buildExecutionOptions(
           overlay?.providers ?? {},
           projectStoredOverrideRows(
-            await listStoredThreadModelOverrides(ctx.env, query.providerId),
+            await createThreadsRepo(ctx.env.DB_V2).listStoredModelOverrides(query.providerId),
           ),
         ),
       ),

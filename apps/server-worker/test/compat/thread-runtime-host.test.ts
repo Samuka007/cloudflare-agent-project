@@ -3,7 +3,7 @@ import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate";
 import { createThread, holdRigWire, send, TEST_ENROLL_KEY, TEST_HOST_KEY } from "../helpers";
 import { threadResponseSchema } from "../../src/contract/api/threads";
-import type { ThreadDbRow } from "../../src/db/rows";
+import type { ThreadRecord } from "../../src/db/repositories";
 import { resolveThreadRuntimeState } from "../../src/services/runtime-display";
 
 /**
@@ -92,7 +92,7 @@ async function readThread(id: string) {
 
 describe("#148 resolver mapping (echo-only display, §9.3)", () => {
   // The resolver reads only the row's status; the rest of the row is inert here.
-  const row = (status: ThreadDbRow["status"]) => ({ status }) as ThreadDbRow;
+  const row = (status: ThreadRecord["status"]) => ({ status }) as ThreadRecord;
 
   it("every status echoes itself — an active turn never renders a host banner", () => {
     for (const status of ["active", "idle", "starting", "stopping", "error"] as const) {

@@ -27,7 +27,6 @@ import {
   threadCompactRequestSchema,
   type ThreadResponse,
 } from "../contract/api/threads";
-import { getPermissionMode } from "../db/permission-mode";
 import { promptHistoryResponseSchema } from "../contract/api/projects";
 import {
   PROMPT_HISTORY_ENTRY_LIMIT,
@@ -65,19 +64,14 @@ import { createDurableThreadId } from "../shared/ids";
 /**
  * T5 route migration A (#597): the five aggregates (threads/tabs, projects,
  * hosts, environments, sections) ride the repositories on the drizzle-era
- * control plane (env.DB_V2, worker-repos.ts). The imports below are the one
- * face OUTSIDE this batch's aggregates, kept on the legacy DB on purpose:
- * the single-row seat reads (permission mode / app settings / compaction
- * order) move with the system/settings face in T6 (#598). (The pending
- * mirror left with T8, #600 — the interactions face rides the pushed row
- * fields now.)
+ * control plane (env.DB_V2, worker-repos.ts). T9 (#601) closed the campaign:
+ * the remaining single-row seat reads (permission mode / app settings /
+ * compaction order) ride the settings repository like every other face.
  */
 import type { ThreadRecord } from "../db/repositories";
 import { workerRepos } from "../db/repositories/worker-repos";
 import { environmentSchema } from "../contract/domain/environment";
 
-import { getAppSettingsRow, toAppSettings } from "../db/settings";
-import { getCompactionSettings } from "../db/compaction-settings";
 import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
 import { providerConfigEnvFor } from "../control-plane/server";
 import { toThreadListEntries, toThreadResponseWithSpawnCheck } from "../services/runtime-display";
@@ -533,7 +527,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
   routes.get("/threads/:id/default-execution-options", async (ctx) => {
     const row = await requirePublicThread(ctx);
     const overlay = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(ctx.env));
-    const permissionMode = (await getPermissionMode(ctx.env)).mode;
+    const permissionMode = (await workerRepos(ctx.env).settings.getPermissionMode()).mode;
     return ctx.json(
       resolvedThreadExecutionOptionsSchema
         .nullable()
@@ -856,7 +850,7 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     row: ThreadRecord,
     explicitMode?: CompactMode,
   ): Promise<{ ok: true }> {
-    const seat = await getCompactionSettings(ctx.env);
+    const seat = await workerRepos(ctx.env).settings.getCompactionSettings();
     const remoteOf = async (): Promise<{ providerId: string; model: string } | null> => {
       if (seat.remote === null) return null;
       const overlay = await loadProviderConfigCatalogOverlay(providerConfigEnvFor(ctx.env));
@@ -942,9 +936,8 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     // packaged staging Worker has no dev term, so the flag alone decides).
     // Read per-request, so unlike bb's server-start constant the latest-rows
     // delta cache below MUST key on it (bb data.ts:334-337).
-    const includeUnhandledProviderEvents = toAppSettings(
-      await getAppSettingsRow(ctx.env),
-    ).showUnhandledProviderEvents;
+    const includeUnhandledProviderEvents = (await workerRepos(ctx.env).settings.getAppSettings())
+      .showUnhandledProviderEvents;
     let segmentLimit = THREAD_TIMELINE_DEFAULT_SEGMENT_LIMIT;
     if (query.segmentLimit !== undefined) {
       const parsed = Number(query.segmentLimit);

@@ -18,7 +18,7 @@ import {
   resolveThreadRuntimeState,
   resolveThreadRuntimeStateAsync,
 } from "../../src/services/runtime-display";
-import type { ThreadDbRow } from "../../src/db/rows";
+import type { ThreadRecord } from "../../src/db/repositories";
 
 /**
  * #291 execution-suspension display face (streaming contract §9.3 row 4,
@@ -132,8 +132,8 @@ async function settleTurn(threadId: string): Promise<void> {
 }
 
 describe("#291 resolver mapping (§9.3 row-4 face)", () => {
-  const row = (over: Partial<ThreadDbRow>): ThreadDbRow =>
-    ({ status: "idle", environmentId: null, ...over }) as ThreadDbRow;
+  const row = (over: Partial<ThreadRecord>): ThreadRecord =>
+    ({ status: "idle", environmentId: null, ...over }) as ThreadRecord;
 
   it("unbound rows echo regardless of any host state — the zero-D1 default never banners", async () => {
     const idle = await resolveThreadRuntimeStateAsync(appEnv, row({ status: "idle" }));
@@ -229,7 +229,7 @@ describe("#291 wiring: the suspension face rides detail and list reads", () => {
 describe("#291 the sync echo stays byte-identical (rows 1-3 regression guard)", () => {
   it("resolveThreadRuntimeState still echoes every status verbatim", () => {
     for (const status of ["active", "idle", "starting", "stopping", "error"] as const) {
-      expect(resolveThreadRuntimeState({ status } as ThreadDbRow)).toEqual({
+      expect(resolveThreadRuntimeState({ status } as ThreadRecord)).toEqual({
         displayStatus: status,
         hostReconnectGraceExpiresAt: null,
       });

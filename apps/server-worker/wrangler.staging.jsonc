@@ -26,18 +26,14 @@
   },
   "d1_databases": [
     {
-      "binding": "DB",
-      "database_name": "cap-control-plane",
-      "database_id": "4e823d64-cc93-4922-b576-ec1a455c02aa",
-    },
-    {
       // W6 db campaign (#591/#594): the drizzle-era control plane —
       // src/db/schema.ts → drizzle-kit ledger (drizzle/) → `wrangler d1
       // migrations apply DB_V2 --remote` in scripts/deploy-staging.sh (the
       // d1_migrations table is the only apply record; nothing replays).
-      // EXPAND phase: this database is apply-only until the reader-cutover
-      // tickets repoint the repositories; the legacy cap-control-plane
-      // database (DB) and its 14-file replay chain stay untouched.
+      // T9 (#601) is the contract phase: the worker reads ONLY this
+      // database; the legacy cap-control-plane database's tables are torn
+      // down by the deploy chain (DROP block in deploy-staging.sh) and the
+      // database itself is deleted in the campaign closeout.
       "binding": "DB_V2",
       "database_name": "cap-control-plane-v2",
       "database_id": "d112159b-bcba-411c-821e-28342314174b",

@@ -2,8 +2,8 @@ import type { DaemonServiceDO } from "@cap/daemon-service";
 import { CLOUD_PLACEHOLDER_HOST_ID } from "@cap/protocol";
 import { hostSchema } from "../contract/domain/host";
 import type { Host } from "../contract/domain/host";
-import { listNonDestroyedHostRows } from "../db/hosts";
-import type { HostDbRow } from "../db/rows";
+import type { HostRecord } from "../db/repositories";
+import { workerRepos } from "../db/repositories/worker-repos";
 import type { Env } from "../env";
 import { ApiError } from "../shared/api-error";
 
@@ -23,7 +23,7 @@ import { ApiError } from "../shared/api-error";
  * (runtime-display suspension banners, tool dispatch) keep answering the
  * honest offline.
  */
-export async function toHostRecord(env: Env, row: HostDbRow): Promise<Host> {
+export async function toHostRecord(env: Env, row: HostRecord): Promise<Host> {
   return hostSchema.parse({
     id: row.id,
     name: row.name,
@@ -62,7 +62,7 @@ export async function daemonConnected(env: Env, hostId: string): Promise<boolean
  * the unique connected host, else the only remaining host, else null.
  */
 export async function resolvePrimaryHostId(env: Env): Promise<string | null> {
-  const rows = await listNonDestroyedHostRows(env);
+  const rows = await workerRepos(env).hosts.listActive();
   if (rows.length === 0) return null;
   const placeholder = rows.find((row) => row.id === CLOUD_PLACEHOLDER_HOST_ID);
   if (placeholder !== undefined) return placeholder.id;

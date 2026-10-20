@@ -562,11 +562,9 @@ describe("#362 test-connection and /models discovery faces", () => {
     // assertions below need an EMPTY registry so the degraded fallback is
     // the deterministic path (same hygiene as wipeRealHosts in
     // cloud-placeholder-host.test.ts — the placeholder row stays).
-    // Hosts stay on the LEGACY database: the discovery delegation reads
-    // them through services (the daemon-service writer is legacy until the
-    // T7 typed client) — this suite only re-points the provider/settings
-    // seats.
-    await env.DB.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
+    // T9 (#601): the legacy hosts registry is retired with the old layer —
+    // discovery reads the drizzle-era DB_V2 fleet (T7 typed client).
+    await env.DB_V2.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
   });
 
   it("test-connection answers honest pre-flight verdicts without hitting the wire", async () => {
@@ -632,7 +630,7 @@ describe("#362 test-connection and /models discovery faces", () => {
 
 describe("#447 discover enrichment: host delegation + degradation fallback", () => {
   beforeEach(async () => {
-    await env.DB.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
+    await env.DB_V2.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
     resetProbeRateLimiter();
   });
 
@@ -761,7 +759,7 @@ describe("SEC-W5-003: stored-credential probe binding", () => {
   beforeEach(async () => {
     // #447: the discovery face's exact-url assertions assume the degraded
     // no-host path (the enrichment delegation never touches the wire).
-    await env.DB.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
+    await env.DB_V2.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
   });
 
   afterEach(() => {
@@ -1074,7 +1072,7 @@ describe("#362 scope absorption: per-model thinking budget + openai-images rows"
 describe("#485 row/model family split (chat vs openai-images)", () => {
   beforeEach(async () => {
     // Deterministic degraded discovery (the #447 no-host pattern).
-    await env.DB.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
+    await env.DB_V2.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
     resetProbeRateLimiter();
   });
   afterEach(() => {

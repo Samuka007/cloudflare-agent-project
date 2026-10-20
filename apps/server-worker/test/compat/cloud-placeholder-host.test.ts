@@ -52,11 +52,10 @@ async function deleteHost(hostId: string): Promise<Response> {
  * exact-fleet assertions see the fresh-deploy shape; the seeded placeholder
  * survives — production can never reach a placeholder-less fleet. */
 async function wipeRealHosts(): Promise<void> {
-  // T5 (#597): the hosts faces read the drizzle-era DB_V2; the /system/config
-  // primaryHostId pin keeps reading the legacy seat until T6 — so both
-  // registries wipe. V2 declares the FKs: child-first (sources, then
-  // environments — the referencing threads unbind via SET NULL).
-  await env.DB.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
+  // T5 (#597) moved the hosts faces onto the drizzle-era DB_V2 (T9 #601
+  // retired the legacy registry with the old layer). DB_V2 declares the
+  // FKs: child-first (sources, then environments — the referencing threads
+  // unbind via SET NULL).
   await env.DB_V2.prepare("DELETE FROM project_sources WHERE host_id <> 'cloud'").run();
   await env.DB_V2.prepare("DELETE FROM environments WHERE host_id <> 'cloud'").run();
   await env.DB_V2.prepare("DELETE FROM hosts WHERE id <> 'cloud'").run();
