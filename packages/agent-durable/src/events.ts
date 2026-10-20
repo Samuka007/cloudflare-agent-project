@@ -180,6 +180,22 @@ export class PiEventBridge {
         const turnId = this.#turnId();
         const message = assistantMessage(event.entry);
         if (message === undefined) return [];
+        if (message.stopReason === "error") {
+          // #619: a provider-stream failure arrives as an assistant message
+          // with stopReason "error" (empty content) — surface it instead of
+          // journaling a silent empty bubble and sealing the turn as
+          // completed. Deduped per distinct message: the sink drops rows
+          // whose source id repeats (auto-retry re-emits the same text).
+          this.#turnFailed = true;
+          this.#turnError = message.errorMessage ?? "provider stream error";
+          return [
+            await this.#append({
+              id: `pi-msg-error-${stableHash(this.#turnError)}`,
+              type: "system/error",
+              data: { message: this.#turnError, category: "internal" },
+            }),
+          ];
+        }
         return [
           await this.#append({
             id: `pi-entry-${event.entry.id}`,

@@ -180,6 +180,57 @@ describe("pi event bridge", () => {
     });
   });
 
+  it("surfaces a provider stream error instead of an empty bubble (#619)", async () => {
+    const sink = new MemorySink();
+    const bridge = new PiEventBridge({ threadId: "thread-1", sink, now: () => 10 });
+    const failed: AssistantMessage = {
+      ...assistant,
+      content: [],
+      stopReason: "error",
+      errorMessage: "Connection error.",
+    };
+    const envelopes = await bridge.ingest([
+      { type: "turn_start" },
+      { type: "message_start", message: failed },
+      { type: "message_end", entry: entry(1, "pi.assistant", [failed]) },
+      { type: "turn_end" },
+    ]);
+    expect(envelopes.map((envelope) => envelope.type)).toEqual([
+      "turn/started",
+      "system/error",
+      "turn/completed",
+    ]);
+    expect(envelopes[1]?.data).toEqual({
+      message: "Connection error.",
+      category: "internal",
+    });
+    expect(envelopes[2]?.data).toMatchObject({
+      status: "failed",
+      error: { category: "internal", message: "Connection error." },
+    });
+    expect(sink.envelopes.some((envelope) => envelope.type === "item/completed")).toBe(false);
+  });
+
+  it("deduplicates repeated provider errors from auto-retry attempts", async () => {
+    const sink = new MemorySink();
+    const bridge = new PiEventBridge({ threadId: "thread-1", sink, now: () => 10 });
+    const failed: AssistantMessage = {
+      ...assistant,
+      content: [],
+      stopReason: "error",
+      errorMessage: "model_not_found",
+    };
+    await bridge.ingest([
+      { type: "turn_start" },
+      { type: "message_start", message: failed },
+      { type: "message_end", entry: entry(1, "pi.assistant", [failed]) },
+      { type: "message_start", message: failed },
+      { type: "message_end", entry: entry(2, "pi.assistant", [failed]) },
+    ]);
+    const errors = sink.envelopes.filter((envelope) => envelope.type === "system/error");
+    expect(errors).toHaveLength(1);
+  });
+
   it("maps a compaction entry to thread/compacted with the head seq", async () => {
     const sink = new MemorySink();
     await sink.append({
