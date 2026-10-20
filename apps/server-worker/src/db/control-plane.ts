@@ -12,6 +12,7 @@ import {
   type ThreadDbRow,
   type ThreadSectionRow,
 } from "./rows";
+import { createThreadsRepo } from "./repositories/threads";
 
 /**
  * Control-plane queries against D1, ported from bb
@@ -187,8 +188,9 @@ export interface ThreadListRow extends ThreadDbRow {
  * Filters per bb buildListThreadsFilters: deleted_at always NULL, visible-only
  * unless includeHidden, archived/hasParent tri-state; ordering per
  * buildListThreadsOrderBy (archived → [archivedAt desc, id desc]; else pinned
- * block → createdAt desc, id desc). Pending-interaction existence is joined as
- * a boolean like listThreadsWithPendingInteractionState.
+ * block → createdAt desc, id desc). The pending badge rides the threads row's
+ * pending fields on the drizzle-era control plane (#591 T8) — the
+ * pending_interactions mirror's EXISTS probe is retired.
  */
 export async function listThreads(env: Env, filters: ThreadListFilters): Promise<ThreadListRow[]> {
   const where: string[] = ["t.deleted_at IS NULL"];
@@ -260,8 +262,7 @@ export async function listThreads(env: Env, filters: ThreadListFilters): Promise
     .map((c) => `t.${c}`)
     .join(", ")}, e.host_id AS environment_host_id, e.name AS environment_name,
        e.branch_name AS environment_branch_name, e.is_worktree AS environment_is_worktree,
-       e.workspace_provision_type AS environment_workspace_provision_type,
-       EXISTS(SELECT 1 FROM pending_interactions pi WHERE pi.thread_id = t.id AND pi.status IN ('pending','resolving')) AS has_pending_interaction
+       e.workspace_provision_type AS environment_workspace_provision_type
      FROM threads t LEFT JOIN environments e ON t.environment_id = e.id
      WHERE ${where.join(" AND ")} ORDER BY ${orderBy}`;
   if (filters.limit !== undefined) {
@@ -276,6 +277,11 @@ export async function listThreads(env: Env, filters: ThreadListFilters): Promise
   const { results } = await env.DB.prepare(sql)
     .bind(...binds)
     .all();
+  // #591 T8: the badge field the AgentDO flip push-write maintains — the
+  // mirror table's read half is this lookup now (table drop = T9).
+  const badges = await createThreadsRepo(env.DB_V2).pendingBadges(
+    results.map((row) => String(row.id)),
+  );
   return results.map((row) => ({
     ...toThreadDbRow(row),
     environmentHostId: strOrNull(row, "environment_host_id"),
@@ -288,7 +294,7 @@ export async function listThreads(env: Env, filters: ThreadListFilters): Promise
           EnvironmentDbRow["workspaceProvisionType"] | null,
       },
     }),
-    hasPendingInteraction: row.has_pending_interaction === 1,
+    hasPendingInteraction: badges.get(String(row.id)) ?? false,
   }));
 }
 

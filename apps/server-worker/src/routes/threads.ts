@@ -80,7 +80,6 @@ import { getEnvironmentRow } from "../db/environments";
 import { environmentSchema } from "../contract/domain/environment";
 import { getHostRow } from "../db/hosts";
 import { getStoredThreadTabs, replaceStoredThreadTabs } from "../db/thread-tabs";
-import { mirrorPendingInteraction } from "../db/pending-interactions";
 import { getAppSettingsRow, toAppSettings } from "../db/settings";
 import { getCompactionSettings } from "../db/compaction-settings";
 import { loadProviderConfigCatalogOverlay } from "@cap/provider-app";
@@ -1407,16 +1406,13 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
 
   // --- interactions (bb routes/threads/interactions.ts; source = the agent
   // DO journal fold, #225 — bb's D1 row source is the per-thread journal
-  // here, and the mirror only feeds the list-query EXISTS probe) ------------
+  // here; the list badge rides the threads row's pushed pending fields,
+  // #591 T8) ---------------------------------------------------------------
 
   routes.get("/threads/:id/interactions", async (ctx) => {
     const row = await requirePublicThread(ctx);
     const { interactions } = await agentDoFor(ctx.env, row.id).listInteractions();
-    const pending = toPublicPendingInteractions(interactions);
-    for (const interaction of interactions) {
-      await mirrorPendingInteraction(ctx.env, interaction);
-    }
-    return ctx.json(pending);
+    return ctx.json(toPublicPendingInteractions(interactions));
   });
 
   routes.get("/threads/:id/interactions/:interactionId", async (ctx) => {
@@ -1424,7 +1420,6 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
     const interactionId = ctx.req.param("interactionId");
     const { interactions } = await agentDoFor(ctx.env, row.id).listInteractions();
     const found = requirePublicInteractionRow(interactions, row.id, interactionId);
-    await mirrorPendingInteraction(ctx.env, found);
     return ctx.json(toPublicPendingInteraction(found));
   });
 
@@ -1472,7 +1467,6 @@ export function registerThreadRoutes(app: Hono<AppEnv>): void {
       row.id,
       interactionId,
     );
-    await mirrorPendingInteraction(ctx.env, updated);
     return ctx.json(toPublicPendingInteraction(updated));
   });
 

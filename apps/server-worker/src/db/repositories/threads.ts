@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { z } from "zod";
 import type { ThreadTabsResponse, ThreadTab } from "../../contract/api/thread-tabs";
@@ -202,6 +202,12 @@ export interface ThreadsRepo {
    * legacy mirror never moved thread bookkeeping either).
    */
   pushPendingState(threadId: string, input: PendingPushInput): Promise<PendingPushResult | null>;
+  /**
+   * #591 T8: the pending badge half of the list face — the read side of
+   * pushPendingState (`pending_since IS NOT NULL`). Unknown ids (threads that
+   * predate the drizzle-era control plane) answer false.
+   */
+  pendingBadges(threadIds: readonly string[]): Promise<Map<string, boolean>>;
 
   /** Missing row answers {revision: 0, tabs: []}. */
   getTabs(threadId: string): Promise<ThreadTabsResponse>;
@@ -543,6 +549,18 @@ export function createThreadsRepo(db: D1Database): ThreadsRepo {
         return null;
       }
       return { outcome: result.meta.changes > 0 ? "applied" : "stale", row };
+    },
+
+    async pendingBadges(threadIds) {
+      if (threadIds.length === 0) {
+        return new Map();
+      }
+      const rows = await drizzleDb
+        .select({ id: threads.id, pendingSince: threads.pendingSince })
+        .from(threads)
+        .where(inArray(threads.id, [...threadIds]))
+        .all();
+      return new Map(rows.map((row) => [row.id, row.pendingSince !== null]));
     },
 
     async getTabs(threadId) {

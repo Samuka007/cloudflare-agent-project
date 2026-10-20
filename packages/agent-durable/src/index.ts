@@ -38,3 +38,4 @@ export type {
 } from "./tools";
 export { PiEventBridge } from "./events";
 export type { ThreadEventSink } from "./events";
+export type { PendingBadgePush, PendingBadgeState } from "./pending";
