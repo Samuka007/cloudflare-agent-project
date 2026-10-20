@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { createHostsRepo } from "../db/repositories/hosts";
 
 /**
  * The hosts-registry liveness stamp, server side (db campaign T7, #599).
@@ -12,8 +13,10 @@ import type { Env } from "../env";
  * registry's write quota (staleness ceiling while connected stays this
  * window + heartbeat jitter).
  *
- * T9 (#601) moves the write into HostsRepository.markSeen (drizzle); the
- * face does not move.
+ * The write lives in HostsRepository.markSeen (drizzle, DB_V2) since the T5
+ * reader cutover put the hosts face on the same database — the raw env.DB
+ * UPDATE the T7 branch shipped landed the stamp on the legacy table the
+ * hosts face no longer reads.
  */
 
 /** bb stamps per WS message into its local SQLite; the port projects the 5s
@@ -21,9 +24,5 @@ import type { Env } from "../env";
 export const LIVENESS_PROJECTION_INTERVAL_MS = 30_000;
 
 export async function markHostSeenInRegistry(env: Env, hostId: string, at: number): Promise<void> {
-  await env.DB.prepare(
-    "UPDATE hosts SET last_seen_at = ?, updated_at = ? WHERE id = ? AND (last_seen_at IS NULL OR ? - last_seen_at >= ?)",
-  )
-    .bind(at, at, hostId, at, LIVENESS_PROJECTION_INTERVAL_MS)
-    .run();
+  await createHostsRepo(env.DB_V2).markSeen(hostId, at, LIVENESS_PROJECTION_INTERVAL_MS);
 }
