@@ -5,6 +5,12 @@ export default defineConfig({
   plugins: [
     cloudflareTest({
       wrangler: { configPath: "./wrangler.jsonc" },
+      miniflare: {
+        // The drizzle-kit generated journal DDL (#602) is a static text
+        // import replayed by src/db/bootstrap.ts — same rule as the
+        // server-worker rig.
+        modulesRules: [{ type: "Text", include: ["**/*.sql"], fallThrough: true }],
+      },
     }),
   ],
   test: {

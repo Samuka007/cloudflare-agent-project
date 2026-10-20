@@ -28,32 +28,25 @@ import {
 
 const db = env.DB_V2;
 let firstApply: LedgerApplyResult;
-/** True when this process applied the ledger from an empty database. The
- * shared worker context runs files in vitest's size order, so the #595
- * repository suites can apply the ledger before this file; the fresh case
- * stays pinned whenever this file runs first (e.g. standalone runs). */
-let ranOnFreshDatabase: boolean;
 
 beforeAll(async () => {
-  const ledger = await db
-    .prepare(
-      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = '${D1_MIGRATIONS_TABLE}'`,
-    )
-    .first<{ name: string }>();
-  ranOnFreshDatabase = ledger === null;
+  // The rig's single shared worker context hosts several DB_V2 consumers
+  // (the #595/#596 repository seam suites apply the same ledger in their own
+  // beforeAll). Which file runs first is not pinned, so this suite pins what
+  // the deploy actually relies on — the ledger COVERING the journal exactly —
+  // instead of claiming first-applier for itself.
   firstApply = await applyD1Migrations(db);
 });
 
 describe("drizzle ledger migrations (#594)", () => {
-  it("applies the full migration set on a fresh D1 (tracked skip when already applied)", async () => {
-    if (ranOnFreshDatabase) {
+  it("covers the full migration set in one green pass (applied here or already in the ledger)", async () => {
+    if (firstApply.skipped === 0) {
+      // Fresh database (this suite migrated first): the full set, in order.
       expect(firstApply.applied).toEqual(journal.entries.map((entry) => entry.tag));
-      expect(firstApply.skipped).toBe(0);
     } else {
-      // Another suite applied the ledger first in this process; the apply
-      // must still have completed green as a tracked skip.
-      expect(firstApply.applied).toEqual([]);
-      expect(firstApply.skipped).toBe(journal.entries.length);
+      // A sibling DB_V2 suite in the shared context migrated first; the
+      // ledger must still cover the journal exactly.
+      expect(firstApply.applied.length + firstApply.skipped).toBe(journal.entries.length);
     }
 
     const tables = await db

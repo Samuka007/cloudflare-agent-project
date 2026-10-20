@@ -10,3 +10,4 @@ pnpm-lock.yaml
 **/worker-configuration.d.ts
 apps/server-worker/public/
 apps/server-worker/drizzle/meta/
+packages/agent-durable/drizzle/meta/
