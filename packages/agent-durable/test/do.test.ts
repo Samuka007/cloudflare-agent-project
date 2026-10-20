@@ -5,6 +5,14 @@ import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "c
 import { describe, expect, it, vi } from "vitest";
 import type { TestDurableAgentDO } from "./worker";
 
+function completedAgentText(event: { type: string; data: Record<string, unknown> }): string | null {
+  if (event.type !== "item/completed") return null;
+  const item = event.data.item;
+  if (typeof item !== "object" || item === null || !("text" in item)) return null;
+  const text = item.text;
+  return typeof text === "string" ? text : null;
+}
+
 describe("DurableAgentDO", () => {
   it("creates a thread and streams pi events into the derived journal", async () => {
     const stub = env.AGENT_DO.get(env.AGENT_DO.newUniqueId());
@@ -85,6 +93,49 @@ describe("DurableAgentDO", () => {
     expect(result.count).toBe(1);
     expect(result.settled.status).toBe("done");
     expect(JSON.stringify(result.settled)).toContain("done");
+  });
+
+  it("dispatches against the swapped runtime over the same storage (#623)", async () => {
+    const stub = env.AGENT_DO.get(env.AGENT_DO.newUniqueId());
+    await runInDurableObject(stub, async (instance: TestDurableAgentDO) => {
+      instance.script([{ kind: "text", text: "from-v1" }]);
+      await instance.createThread({ threadId: "thread-swap", title: "T" });
+      await instance.sendMessage({
+        clientRequestId: "req-v1",
+        content: [{ type: "text", text: "hi" }],
+        mode: "start",
+      });
+      await vi.waitFor(
+        async () => {
+          const current = await instance.getEvents({ sinceSeq: 0 });
+          if (!current.events.some((event) => completedAgentText(event) === "from-v1")) {
+            throw new Error("first turn not committed yet");
+          }
+        },
+        { timeout: 10_000, interval: 50 },
+      );
+      // The catalog write happened; the next dispatch must see it.
+      instance.script([{ kind: "text", text: "from-v2" }]);
+      await instance.swapForTest();
+      const sent = await instance.sendMessage({
+        clientRequestId: "req-v2",
+        content: [{ type: "text", text: "hi again" }],
+        mode: "start",
+      });
+      expect(sent.turnId).toBe("turn-thread-swap-2");
+    });
+    const page = await runInDurableObject(stub, async (instance: TestDurableAgentDO) => {
+      await vi.waitFor(
+        async () => {
+          const current = await instance.getEvents({ sinceSeq: 0 });
+          if (current.events.length < 9) throw new Error("second turn not committed yet");
+        },
+        { timeout: 10_000, interval: 50 },
+      );
+      return instance.getEvents({ sinceSeq: 0 });
+    });
+    const texts = page.events.map(completedAgentText).filter((text) => text !== null);
+    expect(texts).toEqual(["from-v1", "from-v2"]);
   });
 
   it("recovers a turn an eviction cut off mid-stream through the heartbeat alarm", async () => {

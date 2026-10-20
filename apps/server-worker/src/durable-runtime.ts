@@ -30,15 +30,14 @@ interface DaemonDispatchRpc {
 }
 
 /**
- * Production runtime for `ComposedDurableAgentDO`: D1 provider rows →
- * pi-ai Models; cap's host registry rows → per-tool wrappers over the
- * daemon-service dispatch seam. Only daemon-dispatch rows are registered;
- * edge-owned executors are intentionally absent from this runtime.
+ * The D1 provider catalog projected onto the DO's source list, plus a change
+ * fingerprint over the projection (including resolved keys — a key rotation
+ * must reach the next dispatch too, #623). Sorted by provider id so the hash
+ * is stable against row-order jitter.
  */
-export async function createDurableRuntime(
+export async function loadProviderSources(
   env: Env,
-  ctx: DurableObjectState,
-): Promise<DurableAgentRuntime> {
+): Promise<{ sources: DurableProviderSource[]; fingerprint: string }> {
   const overlay = await loadProviderConfigOverlay(providerConfigEnvFor(env));
   if (overlay === null) throw new Error("durable_runtime_no_provider_config");
 
@@ -60,6 +59,41 @@ export async function createDurableRuntime(
     });
   }
   if (sources.length === 0) throw new Error("durable_runtime_no_chat_providers");
+
+  const material: string[] = [];
+  for (const source of [...sources].sort((a, b) => a.providerId.localeCompare(b.providerId))) {
+    const key = await source.resolveApiKey?.();
+    material.push(
+      JSON.stringify([
+        source.providerId,
+        source.baseUrl,
+        source.api ?? "anthropic-messages",
+        source.models,
+        key ?? "",
+      ]),
+    );
+  }
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(material.join("\n")),
+  );
+  const fingerprint = Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return { sources, fingerprint };
+}
+/**
+ * Production runtime for `ComposedDurableAgentDO`: D1 provider rows →
+ * pi-ai Models; cap's host registry rows → per-tool wrappers over the
+ * daemon-service dispatch seam. Only daemon-dispatch rows are registered;
+ * edge-owned executors are intentionally absent from this runtime.
+ */
+export async function createDurableRuntime(
+  env: Env,
+  ctx: DurableObjectState,
+): Promise<DurableAgentRuntime> {
+  const { sources, fingerprint } = await loadProviderSources(env);
+  ctx.storage.kv.put("providerCatalogFingerprint", fingerprint);
 
   const first = sources[0];
   const firstModel = first?.models[0];
