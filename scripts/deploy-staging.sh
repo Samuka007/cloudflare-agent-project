@@ -69,6 +69,23 @@ echo "== applying D1 migrations to cap-control-plane (staging) =="
   done
 )
 
+# W6 db campaign (#591/#594): the drizzle-era control plane migrates through
+# the LEDGER — `wrangler d1 migrations apply` records each file in the D1
+# d1_migrations table and applies every pending migration exactly once
+# (second run is a tracked no-op). The migration set is drizzle-kit generated
+# (apps/server-worker/src/db/schema.ts → drizzle/); migrations_dir comes from
+# the DB_V2 entry in wrangler.staging.jsonc. EXPAND phase: this runs against
+# the separate cap-control-plane-v2 database and never touches the legacy
+# cap-control-plane chain above; the reader cutover retires that chain in a
+# later campaign ticket.
+echo "== applying drizzle ledger migrations to cap-control-plane-v2 (staging) =="
+(
+  cd apps/server-worker
+  # Non-interactive runs skip wrangler's confirm step on their own.
+  pnpm exec wrangler d1 migrations apply DB_V2 --remote \
+    -c wrangler.staging.jsonc
+)
+
 SHA="$(git rev-parse --short HEAD)"
 echo "== deploying cap-server-staging @ $SHA (SERVER_VERSION=$SHA) =="
 
