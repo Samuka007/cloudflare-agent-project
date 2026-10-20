@@ -5,6 +5,7 @@ dist/
 .dev.vars
 .dev.vars.*
 .staging-daemon.env
+.searxng-access.env
 .env.local
 .pm-leases.jsonl*
 .pm-closeouts.jsonl
