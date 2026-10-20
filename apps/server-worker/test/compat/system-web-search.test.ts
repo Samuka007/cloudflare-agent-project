@@ -2,11 +2,17 @@ import { beforeAll, afterEach, describe, expect, it } from "vitest";
 import { env, exports } from "cloudflare:workers";
 import { ensureMigrations } from "../migrate";
 import { decryptProviderSecret, loadProviderConfigOverlay } from "@cap/provider-app";
+import { providerConfigEnvFor } from "../../src/control-plane/server";
 import {
   systemWebSearchResponseSchema,
   type SystemWebSearchResponse,
 } from "../../src/contract/api/system";
 import { setWebSearchConfig } from "../../src/db/web-search";
+import type { Env } from "../../src/env";
+
+/** The rig env vs src Env: only the DO-namespace generics differ; the
+ * bindings are the same objects (thread-suspension-face.test.ts precedent). */
+const appEnv = env as unknown as Env;
 
 /**
  * #449 the web-search engine-chain write face (the D1 `web_search` row, the
@@ -185,9 +191,9 @@ describe("GET /api/v1/system/web-search", () => {
 
 describe("PUT /api/v1/system/web-search", () => {
   it("bumps the overlay fingerprint so warm DO isolates hot-apply (#449)", async () => {
-    const before = (await loadProviderConfigOverlay(env))?.fingerprint;
+    const before = (await loadProviderConfigOverlay(providerConfigEnvFor(appEnv)))?.fingerprint;
     await putFace({ chain: ["public"] });
-    const after = (await loadProviderConfigOverlay(env))?.fingerprint;
+    const after = (await loadProviderConfigOverlay(providerConfigEnvFor(appEnv)))?.fingerprint;
     expect(before).toBeDefined();
     expect(after).not.toBe(before);
   });
