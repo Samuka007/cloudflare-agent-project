@@ -25,8 +25,10 @@ export const RIG_PROVIDER_ID = "rig";
 export const RIG_MODEL_ID = "rig-model";
 export const RIG_RELAY_BASE_URL = "https://rig-relay.example.com";
 
-/** The rig master key (vitest.config miniflare bindings) and wire credential. */
-const RIG_MASTER_KEY = "l1-rig-master-key";
+/** The rig master key (vitest.config miniflare bindings) and wire credential.
+ * Exported for the repository seam suites (#596), which arm the encrypt/decrypt
+ * path directly against env.DB_V2. */
+export const RIG_MASTER_KEY = "l1-rig-master-key";
 const RIG_WIRE_KEY = "l1-rig-relay-key";
 
 /**

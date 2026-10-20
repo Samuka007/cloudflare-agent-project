@@ -1,7 +1,11 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
 import journal from "../drizzle/meta/_journal.json";
-import { applyD1Migrations, D1_MIGRATIONS_TABLE, type LedgerApplyResult } from "./migrations-ledger";
+import {
+  applyD1Migrations,
+  D1_MIGRATIONS_TABLE,
+  type LedgerApplyResult,
+} from "./migrations-ledger";
 
 /**
  * #594 ledger-migration contract: the drizzle-era control plane
@@ -26,13 +30,24 @@ const db = env.DB_V2;
 let firstApply: LedgerApplyResult;
 
 beforeAll(async () => {
+  // The rig's single shared worker context hosts several DB_V2 consumers
+  // (the #595/#596 repository seam suites apply the same ledger in their own
+  // beforeAll). Which file runs first is not pinned, so this suite pins what
+  // the deploy actually relies on — the ledger COVERING the journal exactly —
+  // instead of claiming first-applier for itself.
   firstApply = await applyD1Migrations(db);
 });
 
 describe("drizzle ledger migrations (#594)", () => {
-  it("applies the full migration set to a fresh D1 in one green pass", async () => {
-    expect(firstApply.applied).toEqual(journal.entries.map((entry) => entry.tag));
-    expect(firstApply.skipped).toBe(0);
+  it("covers the full migration set in one green pass (applied here or already in the ledger)", async () => {
+    if (firstApply.skipped === 0) {
+      // Fresh database (this suite migrated first): the full set, in order.
+      expect(firstApply.applied).toEqual(journal.entries.map((entry) => entry.tag));
+    } else {
+      // A sibling DB_V2 suite in the shared context migrated first; the
+      // ledger must still cover the journal exactly.
+      expect(firstApply.applied.length + firstApply.skipped).toBe(journal.entries.length);
+    }
 
     const tables = await db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -67,9 +82,7 @@ describe("drizzle ledger migrations (#594)", () => {
     const personal = await db
       .prepare("SELECT id, kind, name FROM projects WHERE kind = 'personal'")
       .all<{ id: string; kind: string; name: string }>();
-    expect(personal.results).toEqual([
-      { id: "proj_personal", kind: "personal", name: "Personal" },
-    ]);
+    expect(personal.results).toEqual([{ id: "proj_personal", kind: "personal", name: "Personal" }]);
 
     const cloud = await db
       .prepare("SELECT id, type, max_permission_mode FROM hosts WHERE type = 'placeholder'")
@@ -80,12 +93,8 @@ describe("drizzle ledger migrations (#594)", () => {
   });
 
   it("pins the settings singleton CHECK constraints (A-item of the #593 ruling)", async () => {
-    await db
-      .prepare("INSERT INTO settings_app (id, updated_at) VALUES ('app', 1)")
-      .run();
-    await db
-      .prepare("INSERT INTO settings_agent (id, updated_at) VALUES ('agent', 1)")
-      .run();
+    await db.prepare("INSERT INTO settings_app (id, updated_at) VALUES ('app', 1)").run();
+    await db.prepare("INSERT INTO settings_agent (id, updated_at) VALUES ('agent', 1)").run();
     await expect(
       db.prepare("INSERT INTO settings_app (id, updated_at) VALUES ('other', 1)").run(),
     ).rejects.toThrow();
