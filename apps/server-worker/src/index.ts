@@ -11,7 +11,7 @@ import { projectAttachmentReader } from "./services/attachment-pickup";
 import { NotificationHubDO } from "./ws/hub";
 import { LeaseStoreDO } from "./leases/lease-do";
 import type { Env } from "./env";
-import { createDurableRuntime } from "./durable-runtime";
+import { createDurableRuntime, loadProviderSources } from "./durable-runtime";
 import { control_plane } from "./control-plane/entrypoint";
 
 /**
@@ -39,6 +39,23 @@ export class ComposedDurableAgentDO extends DurableAgentDO {
     ctx: DurableObjectState,
   ): Promise<DurableAgentRuntime> {
     return createDurableRuntime(env as unknown as Env, ctx);
+  }
+
+  /**
+   * #623: the runtime caches the provider catalog from DO init; a row write
+   * used to be invisible until eviction. Fingerprint the D1 projection on
+   * every dispatch and swap synchronously on drift — a PATCH followed by an
+   * immediate send observes the new catalog (or fails loudly while unreadable).
+   */
+  protected override async refreshRuntimeBeforeDispatch(
+    env: DurableAgentEnv,
+    ctx: DurableObjectState,
+  ): Promise<void> {
+    const { fingerprint } = await loadProviderSources(env as unknown as Env);
+    if (fingerprint === ctx.storage.kv.get<string>("providerCatalogFingerprint")) {
+      return;
+    }
+    await this.swapRuntime(env, ctx);
   }
 }
 

@@ -29,6 +29,11 @@ export class TestDurableAgentDO extends DurableAgentDO {
   }) {
     return this.appendJournalRow(input);
   }
+
+  /** #623 seam test: rebuild the runtime over the same storage. */
+  async swapForTest(): Promise<void> {
+    await this.swapRuntime(this.env, this.ctx);
+  }
 }
 
 export default {

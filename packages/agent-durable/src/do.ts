@@ -103,12 +103,49 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
     this.#thread.resume();
   }
 
+  /**
+   * Subclass seam (#623): the runtime caches the provider catalog built at DO
+   * init; a row write must reach the next dispatch. The production override
+   * fingerprints the D1 catalog and calls `swapRuntime` on a mismatch —
+   * synchronously inside the dispatching RPC, so a PATCH followed by an
+   * immediate send observes the new projection (or fails loudly while the
+   * catalog is unreadable, never silently routes the old one).
+   */
+  protected async refreshRuntimeBeforeDispatch(
+    _env: DurableAgentEnv,
+    _ctx: DurableObjectState,
+  ): Promise<void> {
+    // Default deployments own their catalog for the DO's lifetime; only
+    // overlay-backed deployments override this. Non-empty keeps lint honest.
+    return Promise.resolve();
+  }
+
+  /** Rebuild the runtime and reopen the thread over the same storage. */
+  protected async swapRuntime(env: DurableAgentEnv, ctx: DurableObjectState): Promise<void> {
+    // Release the old harness's storage writer first: two live harnesses over
+    // one sqlite backend collide on entry ids.
+    await this.#thread.close();
+    this.#runtime = await this.createRuntime(env, ctx);
+    this.#thread = await DurableThread.open(ctx, this.#runtime);
+    // The journal watcher is bound to the old harness's event stream; the
+    // sink/bridge are storage-backed and carry over untouched. Re-attach the
+    // watch to the new thread and resume its pending work.
+    this.#watchStarted = false;
+    this.#watchReady = undefined;
+    if (this.#threadId !== undefined) {
+      this.#watchReady = this.#attachWatcher();
+      await this.#watchReady;
+      this.#thread.resume();
+    }
+  }
+
   async createThread(args: {
     threadId: string;
     title: string;
     machineId?: string;
     execution?: DurableExecutionSelection;
   }): Promise<{ threadId: string; duplicated: boolean }> {
+    await this.refreshRuntimeBeforeDispatch(this.env, this.ctx);
     const duplicated = this.#created;
     if (!duplicated) {
       this.#journal(args.threadId);
@@ -173,6 +210,7 @@ export class DurableAgentDO extends DurableObject<DurableAgentEnv> {
     if (existing !== undefined) {
       return { turnId: existing, steer: args.mode === "steer", duplicated: true };
     }
+    await this.refreshRuntimeBeforeDispatch(this.env, this.ctx);
     const steer = args.mode === "steer";
     let turnId = this.#currentTurnId;
     if (!steer) {
